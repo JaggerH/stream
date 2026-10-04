@@ -1,0 +1,38 @@
+{
+  "name": "@streamapp/hackernews",
+  "version": "1.0.0",
+  "type": "module",
+  "author": "stream",
+  "scripts": {
+    "bundle": "node ../../scripts/bundle-code-packages.mjs .",
+    "prepack": "node ../../scripts/assert-npm-artifact.mjs"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "keywords": [
+    "stream-recipe"
+  ],
+  "stream": {
+    "type": "recipe",
+    "id": "hackernews",
+    "name": "Hacker News",
+    "tagline": "帖子的原文与评论树",
+    "facility": "hackernews",
+    "schemaVersion": 1,
+    "code": {
+      "entry": "dist/index.js",
+      "normalizers": [
+        "hackernews"
+      ],
+      "enrichers": [
+        "hackernews-comments"
+      ]
+    },
+    "rsshubNamespaces": [
+      "hackernews"
+    ]
+  },
+  "license": "Apache-2.0"
+}

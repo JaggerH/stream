@@ -1,0 +1,34 @@
+{
+  "name": "@streamapp/omdb",
+  "version": "1.0.0",
+  "type": "module",
+  "author": "stream",
+  "scripts": {
+    "bundle": "node ../../scripts/bundle-code-packages.mjs .",
+    "prepack": "node ../../scripts/assert-npm-artifact.mjs"
+  },
+  "files": [
+    "dist",
+    "manifests.yaml",
+    "README.md"
+  ],
+  "keywords": [
+    "stream-recipe"
+  ],
+  "stream": {
+    "type": "recipe",
+    "hostVersion": ">=0.1.0",
+    "id": "omdb",
+    "name": "OMDb",
+    "tagline": "影视元数据与海报（BYOK，补 TMDb 的空）",
+    "facility": "omdb",
+    "schemaVersion": 1,
+    "code": {
+      "entry": "dist/index.js",
+      "adapters": [
+        "omdb"
+      ]
+    }
+  },
+  "license": "Apache-2.0"
+}

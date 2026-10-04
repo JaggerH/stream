@@ -1,0 +1,34 @@
+# Firecrawl 抓正文：宿主 `article-extract` 梯子的降级档成员（Defuddle 抽不出正文才走）。
+# 执行后端是本包代码槽位里的 `firecrawl` adapter（activate.ts → adapter.ts）。
+- id: article-firecrawl
+  adapter: firecrawl
+  title: 网页正文抽取（Firecrawl）
+  description: 网页 URL → 正文 markdown（云端跑 JS）；`article-extract` 梯子的降级档——Defuddle 抽不出正文才走。keyless 免费档可直接用，配 key 只是把额度记在自己账上。
+  topics: [网页, 正文, 抓取, markdown, firecrawl, spa]
+  categories: [transform]
+  # capabilities 非空 + cadence_hint_seconds 都是 manifestSchema 的硬要求，
+  # 漏任一个是**启动即 crash**，而 per-source 单测绕过 schema 察觉不到。
+  capabilities: [anchor]
+  cadence_hint_seconds: 3600
+  auth: { type: none }
+  discoverable: false
+  # 云端 JS 渲染 + 抽取比裸 HTTP 慢一档;2 分钟给足余量,别被全局默认 25s 掐死。
+  member_timeout_ms: 120000
+  # 产出是**一个**归形对象（{ text, … }），不是条目批。漏了这行，梯子会把整个数组
+  # 当赢家交出去：成员其实成功了，调用方读 .text 却是 undefined，而且因为它"赢"了，
+  # 后面的成员根本不会跑——活体上表现成"所有成员都没产出"，最难查的一种。
+  output: object
+  params_schema:
+    baseUrl:
+      type: string
+      required: false
+      description: Firecrawl 端点，默认 `https://api.firecrawl.dev`。只有自托管才需要改。
+  runtime_config:
+    ref: firecrawl
+    fields:
+      apiKey:
+        type: secret
+        label: Firecrawl API Key
+        required: false
+        description: 可留空——keyless 免费档（1000 credits/月）不需要 key。但 keyless 按**出口 IP** 记账、与同节点的他人共享，额度可能被先吃掉且只表现为 429；注册一个免费账号填在这里，额度相同但记在自己账上、可预期。
+        helpUrl: https://www.firecrawl.dev/app/api-keys

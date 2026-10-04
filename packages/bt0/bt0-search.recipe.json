@@ -1,0 +1,69 @@
+{
+  "version": 1,
+  "kind": "http",
+  "sourceId": "bt0-search",
+  "request": {
+    "url": "https://web2.mukaku.com/prod/api/v1/getVideoList?sb={keyword}&page={page}&limit=24&app_id=83768d9ad4&identity=23734adac0301bccdcb107c4aa21f96c",
+    "method": "GET"
+  },
+  "pagination": {
+    "mode": "increment",
+    "param": "page",
+    "start": 1,
+    "step": 1,
+    "itemsAt": "data.data",
+    "maxPages": 2
+  },
+  "assert": [
+    {
+      "path": "data.data",
+      "desc": "mukaku getVideoList returned data.data array"
+    }
+  ],
+  "mapping": {
+    "title": "title",
+    "guid": "mukaku-mv-{idcode}",
+    "link": "https://web2.mukaku.com/mv/{idcode}",
+    "description": "<img src=\"{image}\"><br>{production_area} / {class} / {language}<br>豆瓣评分：{doub_score}<br>{abstract}",
+    "category": "class"
+  },
+  "meta": {
+    "normalizer": "rsshub",
+    "type": "post",
+    "description": "不太灵影视 — 关键词搜索",
+    "topics": [
+      "不太灵",
+      "影视",
+      "磁力",
+      "搜索",
+      "movie",
+      "bt",
+      "search"
+    ],
+    "categories": [
+      "multimedia"
+    ],
+    "facility": {
+      "key": "bt0",
+      "label": "不太灵影视"
+    },
+    "capabilities": [
+      "search"
+    ],
+    "key_param": "keyword",
+    "priority": 80,
+    "discoverable": true,
+    "cadence_hint_seconds": 3600,
+    "auth": {
+      "type": "none"
+    },
+    "homepage": "mukaku.com",
+    "params_schema": {
+      "keyword": {
+        "type": "string",
+        "required": true,
+        "description": "搜索关键词（片名）"
+      }
+    }
+  }
+}

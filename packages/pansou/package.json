@@ -1,0 +1,55 @@
+{
+  "name": "@streamapp/pansou",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "bundle": "node ../../scripts/bundle-code-packages.mjs .",
+    "prepack": "node ../../scripts/assert-npm-artifact.mjs"
+  },
+  "files": [
+    "dist",
+    "*.recipe.json",
+    "manifests.yaml",
+    "README.md"
+  ],
+  "stream": {
+    "id": "pansou",
+    "name": "PanSou",
+    "tagline": "网盘资源聚合搜索",
+    "description": "Telegram 频道 + 异步插件的网盘资源聚合搜索 API。支持百度网盘、阿里云盘、夸克网盘、 天翼云盘、UC 网盘、115 网盘、123 网盘、移动云盘、迅雷云盘、PikPak、磁力、ed2k 等 多种网盘类型，按类型分类、智能排序、二级缓存。搜索无需登录态。",
+    "repository": "https://github.com/fish2018/pansou",
+    "backend": {
+      "image": "ghcr.io/jaggerh/pansou@sha256:67cf2436270a524b536190b5ac2faa4d6a798a5dab477f27e196b8cd93e23070",
+      "port": 8888,
+      "health": "/api/health",
+      "env": {
+        "CHANNELS": "Aliyun_4K_Movies,BaiduCloudDisk,Oscar_4Kmovies,Quark_Movies, alyp_1,bdbdndn11,bsbdbfjfjff,cloudtianyi,dianyingshare, gotopan,hdhhd21,jdjdn1111,leoziyuan,oneonefivewpfx, peccxinpd,pikpakpan,qixingzhenren,sbsbsnsqq,shareAliyun, taoxgzy,tianyifc,tianyirigeng,tgsearchers3,txtyzy, tyypzhpd,tyysypzypd,ucquark,ucwpzy,wp123zy,xx123pan, ydypzyfx,yggpan,yingshifenxiang123,yp123pan,yunpan139, yunpan189,yunpanuc,yunpanx,yunpanxunlei,zaihuayun,zyfb123",
+        "ENABLED_PLUGINS": "labi,zhizhen,shandian,duoduo,muou"
+      },
+      "standby": {
+        "idleMinutes": 30
+      }
+    },
+    "normalizer": "pansou",
+    "code": {
+      "entry": "dist/index.js",
+      "adapters": [
+        "pansou"
+      ],
+      "normalizers": [
+        "pansou"
+      ]
+    },
+    "searchSources": [
+      {
+        "source": "pansou-search",
+        "key": "pansou",
+        "label": "盘搜",
+        "param": "keyword",
+        "kind": "digest"
+      }
+    ]
+  },
+  "license": "Apache-2.0"
+}

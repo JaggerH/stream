@@ -1,0 +1,46 @@
+{
+  "version": 1,
+  "kind": "http",
+  "sourceId": "zuna-album",
+  "request": { "url": "https://music.znnu.com/api/album", "method": "POST" },
+  "compute": {
+    "capabilities": ["hmacSha256", "aesGcmDecrypt"],
+    "prefetch": [
+      { "as": "keyResp", "request": { "url": "https://music.znnu.com/api/key", "method": "GET", "headers": { "X-Referer": "musicParser" } } },
+      { "as": "ipResp", "request": { "url": "https://music.znnu.com/api/ip", "method": "GET" } }
+    ],
+    "sign": "(() => { const p = { act: 'album', id: input.params.id, rawInput: input.params.id, ip: input.pre.ipResp.ip || '' }; let s = input.now + 'music.znnu.com'; for (const k of Object.keys(p).sort()) s += k + '=' + p[k]; const signature = hmacSha256('a09d0f3700a279584e1515354fbe08a7ee1c617f919543142fa625b82f1b5ad0', s); const enc = (o) => Object.keys(o).map(k => encodeURIComponent(k) + '=' + encodeURIComponent(o[k])).join('&'); return { body: enc(Object.assign({}, p, { signature, timestamp: String(input.now), domain: 'music.znnu.com' })), headers: { 'content-type': 'application/x-www-form-urlencoded', 'X-Referer': 'musicParser', 'X-Key-Token': input.pre.keyResp.data.keyToken } }; })()",
+    "decode": "(() => { const d = input.body && input.body.data; if (!d || d.enc !== 1) return input.body; return JSON.parse(aesGcmDecrypt({ key: input.pre.keyResp.data.key, iv: d.iv, ciphertext: d.ciphertext, tag: d.tag })); })()"
+  },
+  "pagination": { "mode": "increment", "param": "page", "start": 1, "step": 1, "itemsAt": "songs", "maxPages": 1 },
+  "assert": [{ "path": "songs", "desc": "decrypted zuna album has songs[] (one request, full tracklist)" }],
+  "mapping": {
+    "guid": "id",
+    "title": "name",
+    "author": "artists",
+    "link": "https://music.163.com/song?id={id}",
+    "description": "album",
+    "image": "picUrl"
+  },
+  "meta": {
+    "normalizer": "rsshub",
+    "type": "post",
+    "title": "专辑曲目",
+    "description": "Zuna 网易云解析 — 专辑曲目（整张一次取回；每首歌的文件地址在播放/下载时由 netease-track 现解）",
+    "topics": ["zuna", "网易云", "音乐", "专辑", "music", "netease"],
+    "categories": ["music"],
+    "facility": { "key": "zuna", "label": "Zuna" },
+    "capabilities": ["timeline"],
+    "mode": "collection",
+    "key_param": "id",
+    "priority": 90,
+    "discoverable": true,
+    "cadence_hint_seconds": 86400,
+    "auth": { "type": "none" },
+    "homepage": "music.znnu.com",
+    "params_schema": {
+      "id": { "type": "string", "required": true, "description": "网易云专辑 ID（取自 music.163.com/album?id=…）" }
+    },
+    "radar": ["music.163.com/album"]
+  }
+}

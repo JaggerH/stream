@@ -1,0 +1,51 @@
+# hosts/dsh/cordis.patch.yml
+#
+# 本包是一个 DSH **bundle**：用户 `dsh plugin --profile <name> add @streamapp/dsh-plugin-stream-ui`
+# 后，DSH 把这份 patch 叠在那个 profile 上（`package.json#dsh.bundle.patch`）。这就是"Stream 在
+# DSH 里长什么样"的全部声明——Stream 后端不再替 DSH 生成任何配置（spec 2026-09-05 §3）。
+#
+# 要改地址（后端不在本机 / 换了口）：在你自己的 profile 层 `cordis.patch.yml` 里对同一个行 id
+# 写 config，DSH 的分层覆盖会替你合并，别改这个文件。
+#
+# 行 id 不要改：docs、测试、用户已有的覆盖层都按这些名字引用。
+
+# 关掉 web-app 自带的整页布局壳与侧栏——由本包的 client 半接管整页（Stream 内容流为主面、
+# 对话为侧列）。root 是 single 槽，子槽重复声明会 throw，所以两个壳不能共存；ui-sidebar 是
+# 直接 register 不等声明，槽没人声明就在装载期抛，整批客户端插件跟着失败——必须一起关。
+- id: ui-layout
+  disabled: true
+- id: ui-sidebar
+  disabled: true
+
+# 目录选择器钉 browse 面（页内浏览目录树）。auto 探测看的是引擎进程宿主的显示环境，
+# WSLg + zenity 下会在服务器侧弹原生对话框、页面毫无动静还攒孤儿进程。
+- id: directory-picker
+  disabled: true
+
+- insert:
+    # browse 面的两半：host 半提供服务，client 半提供对话框——只插 host 那行的症状是
+    # 点「选择工作区」毫无动静、零报错。
+    - id: directory-picker-browse
+      name: '@deepseek-ai/dsh-host-directory-picker-browse'
+    - id: directory-picker-browse-ui
+      name: '@deepseek-ai/dsh-client-ui-directory-picker-browse'
+
+    # 工具面：Stream 的 MCP。模型看到的名字是 mcp__stream__<raw>，本包按这个前缀渲染定制卡。
+    - id: stream-mcp
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: stream
+        transport: streamable-http
+        url: http://127.0.0.1:8900/api/mcp
+        failOnStartupError: false
+        # 每次 callTool 的超时（默认 60000）。它是 extract「在服务端等到好」那条路的天花板：
+        # 必须 ≥ 2 × Stream 的 EXTRACT_SETTLE_BUDGET_MS（90s），由 Stream 仓库的
+        # src/http/dsh-bundle.contract.test.ts 钉着。别为了追长尾往上抬——它是整个工具面共用的。
+        toolCallTimeoutMs: 200000
+
+    # 本包自己。streamBaseUrl 给的是 host 半（经 webServer.tapIndex 注入页面常量），
+    # 浏览器半靠它去取面板资产 /panel/*。缺席不崩：主区画一句说明。
+    - id: stream-ui
+      name: '@streamapp/dsh-plugin-stream-ui'
+      config:
+        streamBaseUrl: http://127.0.0.1:8900

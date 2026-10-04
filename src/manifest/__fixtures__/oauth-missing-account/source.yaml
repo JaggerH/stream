@@ -1,0 +1,16 @@
+id: oauth-missing-account
+adapter: native
+description: A login:oauth session source that forgot to declare account.
+topics: [test]
+example_queries:
+  - oauth missing account fixture
+capabilities: [timeline]
+auth:
+  type: session
+  facility: groq
+  login: oauth
+  loginUrl: https://console.groq.com/login
+  oauthButton: '#oauth-google'
+  accountSelector: '[data-identifier="{email}"]'
+cadence_hint_seconds: 1800
+params_schema: {}

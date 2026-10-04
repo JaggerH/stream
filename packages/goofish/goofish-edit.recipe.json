@@ -1,0 +1,102 @@
+{
+  "version": 2,
+  "kind": "browser",
+  "sourceId": "goofish-edit",
+  "_why": "编辑 = 改一件在售商品的标题 / 描述 / 价格，itemId 不变，想要 / 浏览 / 成交记录都留着——不用「删了重发」。接口 `mtop.idle.pc.idleitem.edit` v1.0（2026-09-14 在网页版 /publish?itemId= 的「发布」按钮上 hook lib.mtop 抓到），payload 和 publish 完全同形，多一个 `itemId`。图片不重传：先 `mtop.taobao.idle.pc.detail` 读回现有 imageInfos（url / widthSize / heightSize / major），原样塞回 imageInfoDOList。",
+  "_why_titleDescSeparate": "**必须 `titleDescSeparate:true`。** false 时闲鱼无视 title 字段、拿描述前 30 字当标题（`titleIsUserInput:false`）——publish 曾经这么发，六件商品的标题全成了描述的前半句，搜索里根本搜不到我们堆的关键词。true 才是「标题是用户自己填的」。编辑完回读一次 detail 核标题，不符就抛。",
+  "_why_action": "动作 recipe：改闲鱼上一条在售商品，归 write。只经 run_action_recipe / /api/recipes/action 跑；调用方是 data-packs 的 list.py --edit。",
+  "cookieDomain": "goofish.com",
+  "entryUrl": "https://www.goofish.com/publish",
+  "_why_entryUrl": "和 goofish-publish 同一页：lib.mtop 在这页可用、自签，登录判据现成。编辑走 mtop 直调，不驱动编辑表单。",
+  "entryWait": "load",
+  "loginCheck": {
+    "loggedIn": "input[type=\"file\"]",
+    "wall": "iframe[src*=\"mini_login\"]",
+    "challenge": ".baxia-dialog",
+    "_why_challenge": "阿里风控的滑块遮罩。它是**挑战**不是墙：登录态好好的，用户要做的是拖一下滑块、等 facility 冷却，不是去登录——原来并在 wall 里，2026-09-14 一小时写了 11 次弹滑块时被报成 needs-login，把人支去白登录。"
+  },
+  "session": {
+    "facility": "goofish",
+    "lifecycle": "one-shot",
+    "visibility": "unattended"
+  },
+  "steps": [
+    {
+      "kind": "evaluate",
+      "_why": "读详情 → 拼 payload → edit → 回读核标题。没给的字段沿用详情里的旧值（title / desc / soldPrice / quantity），所以只改价格也行。类目写死电子资料，和 publish 一致。",
+      "call": "async (cursor, num, params) => { const sleep = ms => new Promise(r => setTimeout(r, ms)); for (let i=0;i<20 && !(window.lib&&window.lib.mtop);i++) await sleep(300); if(!(window.lib&&window.lib.mtop)) throw new Error('[goofish-edit] lib.mtop 未就绪'); const itemId=String(params.itemId||'').trim(); if(!/^\\d+$/.test(itemId)) throw new Error('[goofish-edit] itemId 要是纯数字'); const req=(api,v,data)=>window.lib.mtop.request({api,v,type:'POST',data}); let det; try{ det=await req('mtop.taobao.idle.pc.detail','1.0',{itemId}); }catch(e){ throw new Error('[goofish-edit] 读商品详情失败: '+JSON.stringify(e&&e.ret||e)); } const it=det&&det.data&&det.data.itemDO; if(!it) throw new Error('[goofish-edit] 详情里没有 itemDO（不是自己的商品或已删除）'); const imgs=(it.imageInfos||[]).map(i=>({ url:i.url, widthSize:i.widthSize, heightSize:i.heightSize, major:!!i.major, type:0, status:'done', isQrCode:false, extraInfo:{isH:'false',isT:'false',raw:'false'} })); if(imgs.length===0) throw new Error('[goofish-edit] 详情里没有图片，拒绝把商品改成无图'); const title=params.title!=null&&params.title!==''?String(params.title):it.title; const desc=params.desc!=null&&params.desc!==''?String(params.desc):it.desc; const cent=params.priceYuan!=null&&params.priceYuan!==''?String(Math.round(Number(params.priceYuan)*100)):String(Math.round(parseFloat(it.soldPrice)*100)); const payload={ freebies:false, itemTypeStr:'b', quantity:String(it.quantity||1), simpleItem:'true', imageInfoDOList:imgs, itemTextDTO:{ title, desc, titleDescSeparate:true }, itemPriceDTO:{ priceInCent:cent }, itemCatDTO:{ catId:'50023914', channelCatId:'202036301', catName:'电子资料' }, itemLabelExtList:[{ channelCateId:'202036301', channelCateName:'电子资料', propertyId:'-10000', propertyName:'分类', text:'电子资料', properties:'-10000##分类:202036301##电子资料', from:'newPublishChoice', labelFrom:'newPublish', labelType:'common', isUserClick:'1' }], itemPostFeeDTO:{ canFreeShipping:false, supportFreight:false, onlyTakeSelf:false, templateId:'0' }, userRightsProtocols:[], defaultPrice:false, itemId, uniqueCode:String(Date.now())+String(Math.floor(Math.random()*1000)).padStart(3,'0'), sourceId:'pcMainPublish', bizcode:'pcMainPublish', publishScene:'pcMainPublish' }; let r; try{ r=await req('mtop.idle.pc.idleitem.edit','1.0',payload); }catch(e){ r=e; } const ok=Array.isArray(r&&r.ret)&&r.ret.some(x=>/SUCCESS/.test(x)); if(!ok) throw new Error('[goofish-edit] 编辑被拒（可能含违禁词/参数不符）: '+JSON.stringify(r&&r.ret)); await sleep(800); let after=null; try{ const d2=await req('mtop.taobao.idle.pc.detail','1.0',{itemId}); after=d2&&d2.data&&d2.data.itemDO; }catch(e){} const titleNow=after?after.title:null; if(titleNow!==null&&titleNow!==title) throw new Error('[goofish-edit] 编辑回 SUCCESS 但回读标题不符: '+JSON.stringify(titleNow)); return { items:[{ guid:itemId, itemId, title, link:'https://www.goofish.com/item?id='+itemId, status: after?String(after.itemStatus):'' }], cursor:'' }; }",
+      "itemsAt": "items",
+      "maxPages": 1
+    }
+  ],
+  "observers": [],
+  "output": {
+    "itemsAt": "items",
+    "dedupeBy": "guid",
+    "targetCount": 1,
+    "mapping": {
+      "guid": "guid",
+      "itemId": "itemId",
+      "title": "title",
+      "link": "link",
+      "status": "status"
+    },
+    "assert": [
+      {
+        "path": "items.0.itemId",
+        "desc": "编辑未回传 itemId（编辑失败或响应结构变了）"
+      }
+    ]
+  },
+  "policy": {
+    "minActionIntervalMs": 500,
+    "maxTaskMs": 60000
+  },
+  "meta": {
+    "action": true,
+    "effects": [
+      "write"
+    ],
+    "type": "post",
+    "title": "闲鱼编辑商品",
+    "description": "改一件在售商品的标题 / 描述 / 价格（mtop.idle.pc.idleitem.edit），itemId 不变、图片沿用，回读标题核对。",
+    "facility": {
+      "key": "goofish",
+      "label": "闲鱼"
+    },
+    "key_param": "itemId",
+    "discoverable": false,
+    "pick_in": [],
+    "_why_rateLimit": "和上架同一档：都是写商品，低频。",
+    "rateLimit": { "burst": 2, "perMinute": 0.5, "perHour": 6, "bucket": "goofish-write" },
+    "member_timeout_ms": 75000,
+    "auth": {
+      "type": "session",
+      "facility": "goofish",
+      "login": "cookie",
+      "cookieDomain": "goofish.com"
+    },
+    "params_schema": {
+      "itemId": {
+        "type": "string",
+        "required": true,
+        "description": "要改的商品 itemId（纯数字）。"
+      },
+      "title": {
+        "type": "string",
+        "required": false,
+        "description": "新标题，≤30 字；不给就沿用现有标题。禁用词规则同 publish。"
+      },
+      "desc": {
+        "type": "string",
+        "required": false,
+        "description": "新描述，≤1500 字；不给就沿用。"
+      },
+      "priceYuan": {
+        "type": "number",
+        "required": false,
+        "description": "新价格（元）；不给就沿用。"
+      }
+    }
+  }
+}

@@ -1,0 +1,25 @@
+{
+  "name": "@streamapp/photopea",
+  "version": "1.0.0",
+  "author": "stream",
+  "keywords": [
+    "stream-recipe"
+  ],
+  "stream": {
+    "type": "recipe",
+    "name": "Photopea",
+    "tagline": "免费网页版 PS · 按边线抠图、按数值摆放",
+    "facility": "photopea",
+    "schemaVersion": 1,
+    "_why_cookieDomain": "Photopea 免费版不登录也能用完整脚本 API；这一格只是浏览器 recipe 的必填项，让 lane 落在这个站。",
+    "cookieDomain": "photopea.com",
+    "_why_rateLimit": "整段是本机浏览器里的 postMessage + canvas，不打 Photopea 的任何接口（首次载入除外，之后 iframe 常热）。闸只防两条 lane 互相抢同一个热 iframe——它们本来就串行在一条 lane 上，所以数字给得宽。",
+    "rateLimit": {
+      "burst": 4,
+      "perMinute": 20,
+      "perHour": 300,
+      "maxWaitMs": 5000
+    }
+  },
+  "license": "Apache-2.0"
+}

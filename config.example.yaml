@@ -1,0 +1,92 @@
+# Stream configuration — copy to config.yaml (gitignored)
+
+# Login cookies (bilibili, weibo, ...) are NOT configured here.
+# It lives in the Settings page / the browser extension's one-click Connect, which write
+# `data/settings.json`. That overlay always wins, so a copy in this file would only ever be
+# a default nobody maintains — and one that silently takes over if the overlay is ever lost.
+
+# Where stream items get written (markdown files)
+vault_root: /path/to/your/obsidian/vault/streams
+
+# Set false to disable markdown vault writes while keeping the app sqlite read model.
+vault_enabled: true
+
+# Where downloaded lossless audio files are archived. The play route serves a track from
+# here (local) instead of re-resolving from the CDN whenever the file is present. Persist this
+# on durable storage (a NAS/mounted volume) — the archive DB survives restarts, so if the files
+# live on ephemeral storage they vanish while the DB still claims them, and playback silently
+# falls back to CDN. **A host path**: the backend is a native process, so a container path here
+# leaves the root non-existent (`GET /api/settings/archive` → `exists:false`) and every archived
+# track silently falls back to the CDN. Default (unset): <Stream 根目录>/music（发行形态即 ~/.stream/music；
+# 也可用环境变量 AUDIO_ARCHIVE_ROOT）。只有要放 NAS / 别的盘时才写这一行。
+audio_archive_root: /home/you/nas-music
+
+# Databases. Defaults: ./data/items.db, ./data/dedup.db
+item_db: ./data/items.db
+dedup_db: ./data/dedup.db
+
+# Builtin Stream packages directory — plugin packages and recipe packages live in the SAME
+# layer; what a package fills (backend / code / manifests.yaml / *.recipe.json) decides which
+# projection consumes it. Third-party packages you install are NOT here (they land under
+# <data dir>/recipes/). Default: ./packages
+packages_dir: ./packages
+
+# 抖音容器的显式地址覆盖走环境变量 DOUYIN_API_URL（包自己读）；默认由 Stream 托管的容器解析。
+
+# Item-level ad filter (optional). Matched items are FOLDED into the 广告 channel,
+# never dropped. Deterministic — no ML.
+#   keywords: case-insensitive substring match against title + body + the source's
+#             own category tags (RSSHub item.category). The category match is the
+#             high-precision signal — e.g. v2ex's 推广 node tags promos there even
+#             when the title looks innocent (broker referral, paid relay, …).
+#   domains:  matched against item urls; an entry also matches its subdomains
+#             (taobao.com also folds shop.taobao.com, but NOT nottaobao.com)
+#
+# A canonical default rule set ships built-in (src/content/ad-rules.default.ts:
+# 推广/赞助/软文/恰饭/安利/抽奖/瓜分/sponsored/#ad + taobao/jd/tmall/pinduoduo).
+# Runtime rules = those defaults ⊕ whatever you add here (deduped). So this block
+# is OPTIONAL — use it only to EXTEND with your own keywords/domains.
+#
+# CAVEAT: broad topic words like 广告 substring-match NEWS ABOUT advertising on
+# news sources (e.g. 36kr "广告主数增长200%") — a false positive. Prefer ad-specific
+# phrases and lean on category over generic keywords.
+# ad_filter:
+#   keywords: [内部专属]
+#   domains: [weidian.com]
+
+# Optional AList (netdisk direct-link playback). Point at your own AList instance;
+# generate the permanent token in AList 设置页. Env overrides: ALIST_URL / ALIST_TOKEN.
+# alist_url: http://127.0.0.1:5244
+# alist_token: alist-xxxx
+
+# 登录态导出（src/credentials/session-export.ts）——把 Stream 从你自己 Chrome 里取到的登录态，
+# 按一个**进程外消费者**的约定写成磁盘文件，由内置任务 `session-export` 每 10 分钟刷一次。
+#
+# 什么时候需要它：本机某个脚本/程序要用你在某个站点的登录态，而它今天为此自己开了一个
+# 浏览器登录。Stream 已经在取那份登录态了（cookiePull，见 docs/ARCHITECTURE.md），
+# 这里只是把它交出去，那个浏览器就可以退休。
+#
+# 三条边界（都不是装饰，改之前先读 session-export.ts 的头注）：
+#   - **只在这个文件里声明**。它把凭证写进磁盘上一个任意路径，没有 API/UI 入口。
+#   - `extras[].url` 的 host 必须落在 `domain` 之内，且必须是公网 http(s)（SSRF 闸）。
+#   - 写出的文件是 0600。
+#
+# 声明的每个 domain 会自动并进「扩展该同步哪些域」的清单——不写在这里的域取不到 cookie，
+# 而且**不会报错**（症状和"用户没登录"一字不差）。
+#
+# 注意周期：每 10 分钟那一发带 cookie 的 GET 同时把站点的 session idle 计时器按回零，
+# 也就是说这条声明会让那个登录态**一直活着**。券商/网银这类站点想清楚再开。
+#
+# session_exports:
+#   - name: dfcf                 # 文件名 cookies_<name>_<alias>.json
+#     alias: someone
+#     domain: eastmoneysec.com
+#     out_dir: /path/to/consumer/data
+#     extras:                    # 不是 cookie、但消费者需要的字段：进一次页面读出来
+#       validatekey:
+#         url: https://jywg.eastmoneysec.com/Trade/Buy
+#         selector: ['input[name="em_validatekey"]', '#em_validatekey']
+#         attr: value
+#         # headers: 可选。有些站点对裸 HTTP 的 UA 挑食，回一个 WAF 挑战页/登录页——那长得
+#         # 就像"选择器没命中"。要用就**现测**哪种 UA 能过，别抄一个结论（它会在你脚下变）。
+#         # headers: { user-agent: "..." }

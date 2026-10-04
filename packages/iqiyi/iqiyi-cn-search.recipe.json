@@ -1,0 +1,71 @@
+{
+  "version": 1,
+  "kind": "http",
+  "sourceId": "iqiyi-cn-search",
+  "request": {
+    "url": "https://mesh.if.iqiyi.com/portal/lw/search/homePageV3?key={keyword}&current_page=1&mode=1&source=input&pageNum=1&pageSize=20&u=aaa&scale=150&dataType=webSearch",
+    "method": "GET"
+  },
+  "pagination": {
+    "mode": "increment",
+    "param": "page",
+    "start": 1,
+    "step": 1,
+    "itemsAt": "data.templates",
+    "maxPages": 1
+  },
+  "assert": [
+    {
+      "path": "data.templates",
+      "desc": "iqiyi search returned data.templates array"
+    }
+  ],
+  "mapping": {
+    "title": "albumInfo.title",
+    "link": "albumInfo.pageUrl",
+    "guid": "iqiyi-{albumInfo.qipuId}",
+    "description": "<img src=\"{albumInfo.img}\"><br>频道：{albumInfo.channel}<br>albumId：{albumInfo.qipuId}（分集订阅：/iqiyi/cn/album/{albumInfo.qipuId}）"
+  },
+  "meta": {
+    "normalizer": "rsshub",
+    "type": "post",
+    "description": "爱奇艺（国内站）— 关键词搜索",
+    "topics": [
+      "爱奇艺",
+      "iqiyi",
+      "影视",
+      "综艺",
+      "搜索",
+      "movie",
+      "search"
+    ],
+    "categories": [
+      "multimedia"
+    ],
+    "facility": {
+      "key": "iqiyi",
+      "label": "爱奇艺"
+    },
+    "capabilities": [
+      "search"
+    ],
+    "key_param": "keyword",
+    "priority": 80,
+    "discoverable": true,
+    "cadence_hint_seconds": 3600,
+    "auth": {
+      "type": "none"
+    },
+    "homepage": "iqiyi.com",
+    "params_schema": {
+      "keyword": {
+        "type": "string",
+        "required": true,
+        "description": "搜索关键词（片名）"
+      }
+    },
+    "radar": [
+      "iqiyi.com/search"
+    ]
+  }
+}

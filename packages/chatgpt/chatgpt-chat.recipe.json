@@ -1,0 +1,92 @@
+{
+  "version": 1,
+  "kind": "browser",
+  "sourceId": "chatgpt-chat",
+  "_why": "在用户自己登录着的 ChatGPT 网页版上问一句、读回整段回答（纯文本）：打开临时聊天 → 往 #prompt-textarea（ProseMirror）派一个 paste 事件写入提示词（execCommand insertText 实测写不进）→ 等发送按钮可用（长粘贴可能先变成附件）→ 点 [data-testid=send-button] → 等 [data-testid=stop-button] 消失、最后一条 [data-message-author-role=assistant] 正文稳定 → 读它 .markdown 的 innerText。2026-09-28 实测短问题约 3s 答完。",
+  "_why_action": "会在用户的ChatGPT账号里发一条消息（新对话）、消耗它的对话额度，归 write。只经 run_action_recipe / /api/recipes/action 跑。",
+  "cookieDomain": "chatgpt.com",
+  "entryUrl": "https://chatgpt.com/?temporary-chat=true",
+  "_why_entryUrl": "?temporary-chat=true = 临时聊天：不进用户的聊天历史、不进记忆。runner 见停在入口页也会重载，所以每轮都是新的临时对话。",
+  "entryWait": "load",
+  "loginCheck": {
+    "loggedIn": "#prompt-textarea",
+    "wall": "[data-testid=\"login-button\"]",
+    "_why_wall": "登录墙选择器**没有在退出登录的页面上逐个量过**；已确认它在登录态的页面上不存在（不会误报墙）。掉登录时如果报成 blocked 而不是 needs-login，先来量这个。"
+  },
+  "_why_session": "ChatGPT这个标签留着：persistent = 一条 lane 一个热标签；runner 见停在入口页也会重载（parked），所以每轮都是一条干净的新对话，读回的最后一条回复一定是这次的。",
+  "session": {
+    "facility": "chatgpt",
+    "lifecycle": "persistent",
+    "visibility": "unattended"
+  },
+  "steps": [
+    {
+      "kind": "evaluate",
+      "_why": "整段在页内做，按 cursor 分页只为绕开 relay 一次求值 30s 的上限（照 doubao-image）：第 1 页写入提示词并发送，之后每页等到 pageStart+26s；还没答完回 pending:true，runner 只推进 cursor、不当空页。完成判据：最后一条助手消息有字、页面不在生成、且正文 1.5s 内不再变——流式输出中途读到的是半截话，不数字数、不计时。发出 30s 后既没在生成也没有回复 = 限额 / 报错，把页面末尾几行抛出来，不报成 drift。",
+      "call": "async (cursor, num, params) => {\n  const sleep = ms => new Promise(r => setTimeout(r, ms));\n  const pageStart = Date.now();\n  const asst = () => [...document.querySelectorAll('[data-message-author-role=\"assistant\"]')];\n  const busy = () => !!document.querySelector('[data-testid=\"stop-button\"]');\n  if (!cursor) {\n    let pm = null;\n    for (let i = 0; i < 30 && !(pm = document.querySelector('#prompt-textarea')); i++) await sleep(300);\n    if (!pm) throw new Error('[chatgpt-chat] 没找到输入框 #prompt-textarea url=' + location.pathname + location.search);\n    if (asst().length) throw new Error('[chatgpt-chat] 入口页上已经有回复——这不是一条新对话');\n    const dt = new DataTransfer();\n    dt.setData('text/plain', params.prompt);\n    pm.focus();\n    pm.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));\n    let send = null;\n    const t0 = Date.now();\n    while (Date.now() - t0 < 15000) {\n      send = document.querySelector('[data-testid=\"send-button\"]');\n      if (send && !send.disabled) break;\n      await sleep(300);\n    }\n    if (!send || send.disabled) throw new Error('[chatgpt-chat] 粘贴后 15s 发送按钮仍不可用（输入框字数 ' + pm.textContent.length + '）');\n    const sent = () => document.querySelectorAll('[data-message-author-role=\"user\"]').length > 0 || busy();\n    const tries = [\n      ['click', () => send.click()],\n      ['requestSubmit', () => { const f = send.closest('form'); if (f) f.requestSubmit(send); }],\n      ['enter', () => pm.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true }))],\n    ];\n    const used = [];\n    for (const [name, fire] of tries) {\n      used.push(name);\n      fire();\n      for (let i = 0; i < 10 && !sent(); i++) await sleep(300);\n      if (sent()) break;\n    }\n    if (!sent()) throw new Error('[chatgpt-chat] 试过 ' + used.join(' / ') + ' 都没把消息发出去（输入框字数 ' + pm.textContent.length + '）');\n    window.__cgSentBy = used.at(-1);\n    window.__cgT0 = Date.now();\n    window.__cgSeenBusy = false;\n  }\n  const deadline = Math.min(Date.now() + 22000, pageStart + 26000);\n  let lastText = null, since = 0;\n  while (Date.now() < deadline) {\n    const b = busy();\n    if (b) window.__cgSeenBusy = true;\n    const a = asst().at(-1);\n    const txt = a ? ((a.querySelector('.markdown') || a).innerText || '').trim() : '';\n    if (a && !b && txt) {\n      if (txt === lastText) {\n        if (Date.now() - since > 1500) return { items: [{ guid: a.getAttribute('data-message-id') || ('m' + Date.now()), text: txt, model: a.getAttribute('data-message-model-slug') || '' }], cursor: '' };\n      } else { lastText = txt; since = Date.now(); }\n    }\n    await sleep(500);\n  }\n  const elapsed = Date.now() - (window.__cgT0 || pageStart);\n  if (!busy() && !asst().length && elapsed > 30000) {\n    const main = (document.querySelector('main') || document.body).innerText.trim().split('\\n').filter(Boolean);\n    throw new Error('[chatgpt-chat] 发出 ' + Math.round(elapsed / 1000) + 's 后既没在生成、也没有回复（限额 / 报错？）页面末尾: ' + main.slice(-4).join(' / ').slice(0, 300));\n  }\n  if (elapsed > 300000) throw new Error('[chatgpt-chat] 300s 内没等到完整回复');\n  return { items: [], pending: true, cursor: String(Number(cursor || 0) + 1) };\n}",
+      "itemsAt": "items",
+      "cursorField": "cursor",
+      "pendingField": "pending",
+      "maxPages": 14,
+      "_why_pending": "14 页 ≈ 26 + 13×22 = 312s，盖住页内 300s 的上限（长提示词 + 长回答）。"
+    }
+  ],
+  "observers": [],
+  "output": {
+    "itemsAt": "items",
+    "dedupeBy": "guid",
+    "targetCount": 1,
+    "mapping": {
+      "guid": "guid",
+      "body_text": "text",
+      "url": "url",
+      "model": "model"
+    },
+    "assert": [
+      {
+        "path": "items.0.text",
+        "desc": "没有读到回复正文（页面结构变了，或生成失败）"
+      }
+    ]
+  },
+  "policy": {
+    "minActionIntervalMs": 500,
+    "maxTaskMs": 330000
+  },
+  "meta": {
+    "action": true,
+    "effects": [
+      "write"
+    ],
+    "type": "post",
+    "title": "ChatGPT对话",
+    "description": "在你自己的 ChatGPT 网页版里开一条临时聊天（不进历史），发一段提示词，回它的完整回答正文（纯文本）。",
+    "facility": {
+      "key": "chatgpt",
+      "label": "ChatGPT"
+    },
+    "key_param": "prompt",
+    "discoverable": false,
+    "pick_in": [],
+    "rateLimit": {
+      "burst": 2,
+      "perMinute": 3,
+      "perHour": 60,
+      "bucket": "chatgpt-chat"
+    },
+    "member_timeout_ms": 340000,
+    "auth": {
+      "type": "session",
+      "facility": "chatgpt",
+      "login": "cookie",
+      "cookieDomain": "chatgpt.com"
+    },
+    "params_schema": {
+      "prompt": {
+        "type": "string",
+        "required": true,
+        "description": "提示词，原样写进输入框发出去。"
+      }
+    }
+  }
+}

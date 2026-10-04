@@ -1,0 +1,29 @@
+{
+  "name": "@streamapp/1lou",
+  "version": "1.0.0",
+  "author": "stream",
+  "keywords": [
+    "stream-recipe"
+  ],
+  "stream": {
+    "type": "recipe",
+    "name": "BT 之家 1LOU",
+    "tagline": "关键词搜索",
+    "facility": "1lou",
+    "schemaVersion": 1,
+    "retires": {
+      "rsshub:1lou/search/:keyword": "已由本包 1lou-search 承接（同一个站的关键词搜索）；RSSHub 那条路由的选择器随站点改版失效，资源搜索改由本包的 recipe 经 provides:search-download 收进来"
+    },
+    "searchSources": [
+      {
+        "source": "1lou-search",
+        "key": "1lou",
+        "label": "BT之家",
+        "param": "keyword",
+        "kind": "flat",
+        "searchUrl": "https://www.1lou.me/search/?q={q}"
+      }
+    ]
+  },
+  "license": "Apache-2.0"
+}

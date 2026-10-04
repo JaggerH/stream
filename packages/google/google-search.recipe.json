@@ -1,0 +1,127 @@
+{
+  "_why_version_2": "版本号从 1 提到 2 不是形式：`RepairLedger` 的检疫**只有更高的 recipe 版本才解除**。v1 因为「Google 说没有也抛错」被隔离过（见下面等待步的头注），不提版本的话这条腿会一直静默 DECLINED。",
+  "version": 2,
+  "kind": "browser",
+  "sourceId": "google-search",
+  "_why_allow_empty": "**「Google 明确说没有」是一个成功的 0 条，不是失败。** 这条腿的 0 条有两种来源，处置完全相反：真的没有 → 成功空（allowEmpty 收下，梯子据此告诉模型「确实没搜到」）；选择器漂了/被拦 → 抛错（等待步自己判，见它的头注）。allowEmpty 在这里**不会**把「静默 0 条」放回来，因为漂移那条路根本走不到这里。",
+  "allowEmpty": true,
+  "cookieDomain": "google.com",
+  "_why_browser": "Google 的结果页从这台机器上「不像浏览器」地取是取不到的——不带浏览器的免费元搜索在这台机器上能用的引擎大多被反爬挡着，能答的那一两家回的是买词广告站。而用户自己那个 Chrome 打同一条查询，9 条全切题、无验证码。挡住的不是 IP，是 TLS 指纹 + 令牌那一层，所以正解是用他本来就在用的那个浏览器去打。",
+  "_why_entry_is_homepage": "entryUrl 是**首页**、搜索 URL 在 step#0 的 goto 上，这不是绕路：expect 的判据必须有区分力——动作前为假、动作后为真（write-recipe/references/authoring.md §3.5）。首页上 `#rso > div:has(h3)` 命中 0（实测），搜索页上命中 9，于是这个 expect 是真监督。直接把搜索 URL 当 entryUrl 的话，唯一能写的 expect 在动作之前就已经成立，引擎会当场判它恒真（StepExpectVacuousError）——换句话说那条路上根本没有闸门可挂。",
+  "entryUrl": "https://www.google.com/",
+  "entryWait": "load",
+  "_why_login_check": "这个源不需要登录，两个信号因此各自换了个更有用的意思：loggedIn 用搜索框（首页和结果页都在，命中 = 我们拿到的是 Google 真页面），wall 用「异常流量」拦截页那张表单（form#captcha-form 是 google.com/sorry 的）。撞上拦截时判成 needsLogin 而不是回 0 条——两者的处置完全不同，混在一起就只剩一句「什么都没搜到」。loggedIn 选一个首页也在的选择器还有一层实际好处：detectLoginState 判 UNKNOWN 时会多睡一轮再看，白等。",
+  "loginCheck": {
+    "loggedIn": "textarea[name=\"q\"], input[name=\"q\"]",
+    "wall": "form#captcha-form, #recaptcha, div.g-recaptcha"
+  },
+  "_why_one_shot": "session.lifecycle = one-shot：查完就关。这条腿是对话里临时补一发搜索，不是持续采集——没有账本要留、没有 feed 要骑，留一个常驻标签只会白占用户浏览器里的一格。",
+  "session": {
+    "facility": "google",
+    "lifecycle": "one-shot",
+    "visibility": "unattended"
+  },
+  "steps": [
+    {
+      "_why": "{query} 由调用方按 URL 组件编码好再传进来（substitute 是纯文本替换，不编码）——查询词里一个 # 就会把 querystring 截断，而截断之后 Google 照样回一页结果，于是「搜错了」长得和「搜到了」一模一样。num=20 保留但**实测 Google 已经忽略它**：带不带都是 9 条自然结果。",
+      "kind": "goto",
+      "url": "https://www.google.com/search?q={query}&num=20",
+      "_why_expect_is_the_page_not_the_results": "这道闸门只判「我们拿到了一张真的 Google 结果页」，**不判它有没有结果**——两件事必须分开，否则「Google 确实没有」和「选择器漂了」会合并成同一个失败，而那正是这条链路上最贵的一种混淆。实测三态：首页 rso=0/topstuff=0（所以这个 expect 非恒真）、有结果页 rso=1/topstuff=1/自然结果 9、**没有结果的页 rso 压根不存在、topstuff=1**。所以 union 命中 = 页面到了，两种 SERP 都算。谁是谁由下一步分辨。timeout 8s：实测渲染 2s 出头，15s 只是把「Google 没有这条」的等待拖长一倍。",
+      "expect": {
+        "selector": "#rso, #topstuff",
+        "timeout": 8000
+      }
+    },
+    {
+      "_why": "**这一步只做一件事：等结果列表不再长了。** Google 的结果是渐进出现的，实测撞见过页面还没 load 完时 #rso 里只有 2 条（完整是 9 条）的一刻——observer 早读一步就少读几条，而少读不会报错。所以在读之前先在页面里数着 `#rso > div:has(h3)`，连着 3 次 200ms 读数不变才算画完，封顶 3s。它不产 item（items 恒空），产出全在下面那个 dom observer 里。",
+      "_why_not_scroll_or_settle": "**这个等待刻意不用 settle，也不用 scroll——两条都实测过，代价在这台机器上是 30 秒起。** settle 靠逐帧截图比字节，落到 `Page.captureScreenshot`，而对着后台标签这条 relay 命令在这里稳定挂到 30s 超时（deadline 只在两次读之间检查，写 timeout:1500 实测跑了 38.5s）。scroll 当年那次报 `ext-relay command timed out: Page.captureScreenshot` 是因为 scrollOnce 那时带着逼帧——**今天 driver 一帧都不逼，scroll 本身已经不贵了**；但它照旧不该出现在这里：本步只是「等结果区 DOM 稳定」，滚动对它没有意义，白等一个 dwell。同一条 recipe 换成下面这个纯 `Runtime.evaluate` 的等待是几十毫秒。**判据：需要真帧的东西才配付这个价**，而「等 DOM 稳定」根本不需要帧——它是 Tier A。",
+      "_why_it_also_judges": "**这一步负责把「Google 确实没有」和「我们读不到了」分开，而且必须分成「成功空」和「抛错」两种收场**——因为失败在这条链路上不只是一句话，**它带着检疫**：`RepairLedger` 见到一个源反复失败就把它隔离，之后 `ReplayAdapter.fetch` 直接 `return DECLINED`（`src/adapters/replay/adapter.ts`），**连浏览器都不开、也不报错**，表现就是第二档从此静默返回空。2026-08-12 活体撞过：把「Google 说没有」也做成抛错，两条真的没有结果的查询就把整条腿隔离了，之后每次 1.4s 回空、日志里一个字都没有。判据是实测出来的形状差异——没有结果的页 **`#rso` 整个不存在**（Google 换了一张「找不到相符内容」的页），而结果页 `#rso` 一定在。所以：`#rso` 不在 = Google 明确说没有 → **正常返回空**（配 `allowEmpty`，是一个成功的 0 条）；`#rso` 在却一条自然结果都读不到 = 真的漂了 → **抛错**（该响、也该被检疫）。**字段也要在这里验一次**（第一张卡里必须取得出 h3 和 a[href]）：开了 `allowEmpty` 之后，observer 的**字段**选择器漂了会表现成「条目在、link 取不到 → 被 dedupe 丢光 → 0 条」，而 0 条现在是合法的成功——不在这一步拦住，它就变成一个安静的空答案。这一步和 observer 用同一批选择器不是重复：这里是**判据**（漂了就响），那里是**取数**。",
+      "kind": "evaluate",
+      "call": "async () => { const sel = '#rso > div:has(h3)'; let last = -1, stable = 0; for (let i = 0; i < 15 && stable < 3; i++) { const c = document.querySelectorAll(sel).length; stable = (c > 0 && c === last) ? stable + 1 : 0; last = c; await new Promise(r => setTimeout(r, 200)); } const cards = document.querySelectorAll(sel); if (cards.length === 0) { if (document.querySelector('#rso')) throw new Error('[google] 结果页在，但一条自然结果都没读到 —— 条目选择器漂了'); return { items: [] }; } const first = cards[0]; if (!first.querySelector('h3') || !first.querySelector('a[href]')) { throw new Error('[google] 读到了条目，但取不出标题或链接 —— 字段选择器漂了'); } return { items: [] }; }",
+      "itemsAt": "items",
+      "maxPages": 1
+    }
+  ],
+  "observers": [
+    {
+      "_why_selectors": "2026-08-12 对活体重定过：`#rso > div:has(h3)` 恰好命中 9 条自然结果，每一条都同时含 h3 和 [data-sncf]（标题数 = 摘要数 = 9）。**刻意不用 class**：.MjjYud / .yuRUbf / .zReHs 这些同样命中 9，但它们是混淆过的、随时会换；#rso 是 Google 多年不动的结果容器 id，data-sncf 是摘要块的属性。`#search div.MjjYud` 是 20（掺着子链接和占位），不能当条目单位。",
+      "_why_dom": "Google 的结果是 SSR 进 HTML 的，页面不为它发 XHR——network observer 在这里没有东西可拦。",
+      "kind": "dom",
+      "itemSelector": "#rso > div:has(h3)",
+      "fields": {
+        "title": {
+          "selector": "h3"
+        },
+        "link": {
+          "selector": "a:has(h3)",
+          "attr": "href"
+        },
+        "snippet": {
+          "selector": "[data-sncf]"
+        }
+      },
+      "trigger": "final"
+    }
+  ],
+  "output": {
+    "itemsAt": "items",
+    "_why_dedupe_link": "dom observer 产出的「原始条目」就是上面那张扁平卡片，所以 dedupeBy 走 link（页内唯一、也是这条结果的身份）。**注意这条路自己不会喊**：选择器漂了 → link 取不到 → 每条都因缺身份被丢 → 0 条，而 `allowEmpty` 开着，0 条是合法的成功。所以「漂了要响」这件事**不由这里保证**，由上面那个等待步的判据保证（它验条目数、也验第一张卡里取不取得出 h3 和 a[href]）。两处的分工写在那一步的 `_why_it_also_judges` 里——改任何一边之前先读它。",
+    "dedupeBy": "link",
+    "targetCount": 10,
+    "mapping": {
+      "title": "title",
+      "link": "link",
+      "snippet": "snippet",
+      "guid": "link"
+    },
+    "assert": [
+      {
+        "path": "items",
+        "desc": "google #rso 里一条自然结果都没读到 —— 选择器漂移或撞上了拦截页"
+      }
+    ]
+  },
+  "policy": {
+    "minActionIntervalMs": 500,
+    "maxTaskMs": 60000
+  },
+  "meta": {
+    "description": "Google 网页搜索 — 在用户自己登录着的 Chrome 里打开结果页，读 SSR 出来的自然结果（title/link/snippet）",
+    "type": "post",
+    "title": "网页搜索",
+    "topics": [
+      "google",
+      "搜索",
+      "search",
+      "web"
+    ],
+    "categories": [
+      "news"
+    ],
+    "facility": {
+      "key": "google",
+      "label": "Google"
+    },
+    "capabilities": [
+      "search"
+    ],
+    "provides": [
+      "search-content"
+    ],
+    "key_param": "query",
+    "priority": 50,
+    "_why_not_discoverable": "不进发现列表：它不是一个「可订阅的信息源」（没人要一条定时跑的 Google 搜索），只是 web_search 第二档借的一条腿。",
+    "discoverable": false,
+    "_why_pick_in": "只在 Provider 成员面挑得到，不在频道订阅面——web_search 第二档的一条腿",
+    "pick_in": ["provider"],
+    "cadence_hint_seconds": 300,
+    "homepage": "google.com",
+    "params_schema": {
+      "query": {
+        "type": "string",
+        "required": true,
+        "description": "搜索词，**已按 URL 组件编码**（调用方负责 encodeURIComponent）"
+      }
+    }
+  }
+}

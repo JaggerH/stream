@@ -1,0 +1,101 @@
+{
+  "version": 2,
+  "kind": "browser",
+  "sourceId": "doubao-image",
+  "_why": "在用户自己登录着的豆包网页版上生一组图：新建对话 → 点「图像生成」技能——**lane 标签的窗口只有 650×338**,输入栏的技能芯片折进「更多」里(2026-09-19 踩过:整页只剩「对话 / 工作 / 更多」三个字,报没找到按钮),所以找不到就点输入栏底部那个「更多」再找;首页顶部还有「对话 / 工作」两个模式(`[data-conversation-mode-switch]` 里两个 button,当前那个带 `data-active=true`),「图像生成」芯片**只在「对话」模式下有**;用户开着项目文件夹时新对话常默认停在「工作」,所以找芯片之前先读这个标记,不是「对话」就点它、等它变成 active 再找芯片,切不过去直接抛;芯片是水合后才渲染,每步等最多 2–4s。报错时把主区域的短文案和窗口尺寸一起抛出来,下次改版直接看→ 把 prompt 打进 ProseMirror → 回车 → 等 4 张预览图出现，把它们的签名 URL 读回来。2026-09-14 实测：一次约 18s 出 4 张 2048² 预览图（`rc_gen_image/<id>.jpeg~tplv-…-cpreview_wm1.png`），签名 URL 不带 cookie 也能下载。它经 meta.produces:\"images\" 申报成 `/v1/images/generations` 的一个模型（spec 2026-09-14-doubao-image-openai-bridge-design），去水印在那条路上做，不在这里。",
+  "_why_action": "会在用户的豆包账号里新建一条对话、消耗它的生图额度，归 write。只经 run_action_recipe / /api/recipes/action / 那条 OpenAI 形状的口跑。",
+  "cookieDomain": "doubao.com",
+  "entryUrl": "https://www.doubao.com/chat/",
+  "_why_entryUrl": "不带对话 id 的 /chat/ 就是「新建对话」：每次都在一条干净的对话里生，页面上除了这一轮没有别的 rc_gen_image，读回来的一定是这次的。上一轮跑完标签停在 /chat/<id>，runner 按 pathname 判不在入口页、会自己 goto 回来。",
+  "entryWait": "load",
+  "loginCheck": {
+    "loggedIn": "[contenteditable=\"true\"]",
+    "wall": "[class*=\"login-modal\"], [class*=\"loginModal\"], [data-testid=\"login_modal\"]",
+    "_why_wall": "登录弹层的选择器**没有在退出登录的页面上量过**（写 recipe 时账号一直登着）；已确认它在登录态的页面上不存在（不会误报墙）。掉登录时如果报成 blocked 而不是 needs-login，先来量这个。"
+  },
+  "_why_session": "豆包这个标签留着：一张图接一张图地出，每轮都新开再关一个标签既慢（预加载 + 登录判定）又像脚本。persistent = 一条 lane 一个热标签，跑完停在 /chat/<id>，下一轮 runner 见 pathname 不是 /chat/ 就 goto 回去 = 新建对话；对话本身不关、留在用户的豆包历史里。",
+  "session": {
+    "facility": "doubao",
+    "lifecycle": "persistent",
+    "visibility": "unattended"
+  },
+  "steps": [
+    {
+      "kind": "evaluate",
+      "_why": "整段在页内做，按 cursor 分页只为绕开 relay 一次求值 30s 的上限：第 1 页发送后等到 pageStart+26s，之后每页 22s；还没出图的页回 pending:true(见 pendingField),runner 只推进 cursor、不当空页,最多 maxPages 页。完成判据读页面自己的数据，不数图、不计时：每条生图消息的 React props 里有 imageList，生成完成那一刻整个列表一起出现（纯文生图 4 项、带参考图 1 项、豆包自己也可能只出 1 张），每项 image_ori_raw.url 是无水印原图；生成期间页面有「正在生成图片」。「正在生成图片」不在 + 出现了发送前没有的 imageList = 这轮完成，条数 = 列表长度。它出现过又消失、却没有新列表 = 豆包没出图（审核 / 只回文字），把它回的话抛出来，不报成 drift。写 prompt 走 tiptap 的 editor.commands.setContent（不看焦点，lane 是后台标签）；发送点 #flow-end-msg-send（输入框有字才渲染），不发合成回车。带参考图时（params.images，data URL 按行拼）：点完「图像生成」后把图塞进隐藏的 input[type=file]（DataTransfer + change 事件），等**每张图的服务端预处理回执**再写 prompt。一张参考图的上传链是:prepare_upload → ApplyImageUpload → POST tos 字节 → CommitImageUpload → **pre_handle_v2_without_conv**(回 {code:0, data:{pre_generate_id}},消息就是带着这个 id 发的)。缩略图上的 loadingMask / 百分比只盖到 tos 传完,**不等于 pre_handle 回来了**;pre_handle 没回就点发送,消息在本地渲染出来(带 blob: 缩略图)但服务端不落库:对话 id 一直是 local_ 临时 id、豆包一个字不回、也不弹任何提示,下一轮开新对话时它就留成一条草稿(2026-09-20 后台 lane 里连撞 6 次,同样的图同样的 prompt 在前台标签里发就通)。所以钩住 XHR 数 pre_handle 的 200/code 0 回执,数够张数才发;回执非 0 直接抛内容。上限仍是 pageStart+25s(整页求值有 relay 30s 上限)——参考图多就先缩小再传。发送 20s 后仍是 local_ 且没见过「正在生成图片」也直接抛,别干等 150s。",
+      "call": "async (cursor, num, params) => { const sleep = ms => new Promise(r => setTimeout(r, ms)); const pageStart = Date.now(); const imageLists = () => { const lists = new Map(); for (const img of document.querySelectorAll('img')) { if (!/rc_gen_image/.test(img.src)) continue; const fk = Object.keys(img).find(k => k.startsWith('__reactFiber')); let f = fk && img[fk]; for (let i = 0; i < 25 && f; i++) { const p = f.memoizedProps; if (p && Array.isArray(p.imageList) && p.imageList.length) { lists.set(p.imageList.map(x => String(x.key || '')).join('|'), p.imageList); break; } f = f.return; } } return lists; }; const generating = () => !!document.evaluate('//*[contains(text(),\"正在生成图片\")]', document, null, 9, null).singleNodeValue; if (!cursor) { const findSkill = () => { const all = [...document.querySelectorAll('button,[role=\"button\"],[role=\"menuitem\"],[role=\"option\"],li,div,span')].filter(e => e.textContent.trim() === '图像生成'); return all.find(e => e.childElementCount === 0) || all.pop(); }; const leafByText = (t, pick) => { const c = [...document.querySelectorAll('button,[role=\"button\"],[role=\"tab\"],div,span')].filter(e => e.childElementCount === 0 && e.textContent.trim() === t); return pick === 'bottom' ? c.filter(e => e.getBoundingClientRect().y > innerHeight / 2).pop() : c[0]; }; const waitSkill = async (ms) => { const t0 = Date.now(); let k = findSkill(); while (!k && Date.now() - t0 < ms) { await sleep(400); k = findSkill(); } return k; }; const modeSwitch = () => document.querySelector('[data-conversation-mode-switch]'); const activeMode = () => { const s = modeSwitch(); const b = s && [...s.querySelectorAll('button')].find(b => b.getAttribute('data-active') === 'true'); return b ? b.textContent.trim() : ''; }; for (let i = 0; i < 10 && !modeSwitch(); i++) await sleep(300); if (modeSwitch() && activeMode() !== '对话') { const b = [...modeSwitch().querySelectorAll('button')].find(b => b.textContent.trim() === '对话'); if (!b) throw new Error('[doubao-image] 模式开关上没有「对话」按钮,现有: ' + [...modeSwitch().querySelectorAll('button')].map(b => b.textContent.trim()).join('/')); b.click(); for (let i = 0; i < 10 && activeMode() !== '对话'; i++) await sleep(300); if (activeMode() !== '对话') throw new Error('[doubao-image] 点了「对话」模式没切过去,仍是「' + activeMode() + '」'); } let skill = await waitSkill(4000); if (!skill) { const more = leafByText('更多', 'bottom'); if (more) { more.click(); skill = await waitSkill(2500); } } if (!skill) { const tab = leafByText('对话', 'top'); if (tab) { tab.click(); skill = await waitSkill(2500); } } if (!skill) { const more = leafByText('更多', 'bottom'); if (more) { more.click(); skill = await waitSkill(2500); } } if (!skill) { const seen = [...document.querySelectorAll('button,[role=\"button\"],div,span,a')].filter(e => e.childElementCount === 0 && e.textContent.trim() && e.textContent.trim().length < 20 && e.getBoundingClientRect().x > 320).map(e => e.textContent.trim() + '@' + Math.round(e.getBoundingClientRect().x) + ',' + Math.round(e.getBoundingClientRect().y)).filter((t, i, arr) => arr.indexOf(t) === i).slice(0, 60).join('/') + ' win=' + innerWidth + 'x' + innerHeight + ' vis=' + document.visibilityState; throw new Error('[doubao-image] 没找到「图像生成」技能按钮（首页停在「工作」模式也没切回「对话」；界面改版？）url=' + location.pathname + ' 页面上的短文案: ' + seen); } skill.click(); await sleep(800); const ce = document.querySelector('[contenteditable=\"true\"]'); if (!ce) throw new Error('[doubao-image] 没找到输入框'); if (params.images) { const urls = params.images.split('\\n').filter(Boolean); if (!window.__doubaoPre) { window.__doubaoPre = { ok: 0, bad: [] }; const ox = XMLHttpRequest.prototype.open, sx = XMLHttpRequest.prototype.send; XMLHttpRequest.prototype.open = function (m, u) { this.__doubaoU = String(u); return ox.apply(this, arguments); }; XMLHttpRequest.prototype.send = function () { if (/pre_handle_v2_without_conv/.test(this.__doubaoU || '')) this.addEventListener('loadend', () => { let code = -1; try { code = JSON.parse(this.responseText).code; } catch (e) {} if (this.status === 200 && code === 0) window.__doubaoPre.ok++; else window.__doubaoPre.bad.push(this.status + ':' + String(this.responseText).slice(0, 120)); }); return sx.apply(this, arguments); }; } window.__doubaoPre.ok = 0; window.__doubaoPre.bad = []; const inp = document.querySelector('input[type=file]'); if (!inp) throw new Error('[doubao-image] 没找到上传框（input[type=file]）'); const dt = new DataTransfer(); for (let i = 0; i < urls.length; i++) { const blob = await (await fetch(urls[i])).blob(); dt.items.add(new File([blob], 'ref' + i + '.' + (blob.type.split('/')[1] || 'png'), { type: blob.type })); } inp.files = dt.files; inp.dispatchEvent(new Event('change', { bubbles: true })); await sleep(800); const upT0 = Date.now(); const upMax = Math.min(15000 + 15000 * urls.length, pageStart + 25000 - Date.now()); while (document.querySelector('[class*=\"loadingMask\"]') && Date.now() - upT0 < upMax) await sleep(400); if (document.querySelector('[class*=\"loadingMask\"]')) throw new Error('[doubao-image] 参考图 ' + Math.round(upMax / 1000) + 's 内没传完（' + urls.length + ' 张）'); if (![...document.querySelectorAll('img')].some(i => i.src.startsWith('blob:'))) throw new Error('[doubao-image] 参考图没挂到输入框上（没看到 blob: 缩略图）'); while (window.__doubaoPre.ok < urls.length && !window.__doubaoPre.bad.length && Date.now() < pageStart + 25000) await sleep(300); if (window.__doubaoPre.bad.length) throw new Error('[doubao-image] 参考图预处理(pre_handle_v2)被拒: ' + window.__doubaoPre.bad.join(' | ')); if (window.__doubaoPre.ok < urls.length) throw new Error('[doubao-image] 参考图预处理(pre_handle_v2)只完成 ' + window.__doubaoPre.ok + '/' + urls.length + ' 张就到了页内时限'); } const ed = ce.editor; if (ed && ed.commands) { ed.commands.setContent(params.prompt); } else { ce.focus(); document.execCommand('insertText', false, params.prompt); } await sleep(400); if (!ce.textContent.trim()) throw new Error('[doubao-image] prompt 没能写进输入框（tiptap editor ' + (ed ? '在' : '不在') + '，document.hasFocus=' + document.hasFocus() + '）'); window.__doubaoBefore = new Set(imageLists().keys()); const send = document.querySelector('#flow-end-msg-send'); if (!send) throw new Error('[doubao-image] 输入框有字但发送按钮（#flow-end-msg-send）没出现'); send.click(); await sleep(1500); if (ce.textContent.trim()) throw new Error('[doubao-image] 点了发送按钮输入框没清空，消息可能没发出去'); window.__doubaoT0 = Date.now(); window.__doubaoSeenGenerating = false; } const before = window.__doubaoBefore || new Set(); const deadline = Math.min(Date.now() + 22000, pageStart + 26000); let fresh = null; while (Date.now() < deadline) { if (generating()) window.__doubaoSeenGenerating = true; for (const [k, list] of imageLists()) if (!before.has(k)) fresh = list; if (fresh && !generating()) break; fresh = null; await sleep(800); } if (fresh) { return { items: fresh.map((x, index) => { const guid = String(x.key || '').replace(/\\.\\w+$/, '') || ('img' + index); const raw = x.image_ori_raw && x.image_ori_raw.url; const preview = (x.image_preview && x.image_preview.url) || (x.image_thumb && x.image_thumb.url) || ''; return { guid, url: raw || preview, watermarked: raw ? 'false' : 'true', index: String(index) }; }), cursor: '' }; } const elapsed = Date.now() - (window.__doubaoT0 || pageStart); if (window.__doubaoSeenGenerating && !generating() && elapsed > 8000) { const texts = [...document.querySelectorAll('[data-testid*=\"message\"],[class*=\"message-content\"],[class*=\"messageContent\"]')].map(e => e.textContent.trim()).filter(Boolean); throw new Error('[doubao-image] 豆包没出图：' + (texts[texts.length - 1] || '（没读到回复文字）').slice(0, 200)); } if (!window.__doubaoSeenGenerating && elapsed > 20000 && /\\/chat\\/local_/.test(location.pathname)) throw new Error('[doubao-image] 消息发出 20s 后服务端没接收（对话仍是 local_ 临时 id、没出现「正在生成图片」）——多半是参考图还没真正传完就点了发送'); if (elapsed > 150000) throw new Error('[doubao-image] 150s 内没等到生成图'); return { items: [], pending: true, cursor: String(Number(cursor || 0) + 1) }; }",
+      "itemsAt": "items",
+      "cursorField": "cursor",
+      "pendingField": "pending",
+      "maxPages": 8,
+      "_why_pending": "等待页标 pending:true,runner 不把它算空页、不进 assert(否则连两页没图就 drift、报成 blocked,带 3 张参考图的生成(上传 20s + 生成 40s+)永远跑不完)。8 页 ≈ 26 + 7×22 = 180s,盖住页内 150s 的上限。"
+    }
+  ],
+  "observers": [],
+  "output": {
+    "itemsAt": "items",
+    "dedupeBy": "guid",
+    "targetCount": 4,
+    "mapping": {
+      "guid": "guid",
+      "url": "url",
+      "index": "index",
+      "watermarked": "watermarked"
+    },
+    "assert": [
+      {
+        "path": "items.0.url",
+        "desc": "没有读到任何生成图的 URL（页面结构变了，或生成失败）"
+      }
+    ],
+    "_why_targetCount": "4 是纯文生图的上限（页面一次最多 4 张）；带参考图一轮只出 1 张，条数不到 4 也是正常收尾。"
+  },
+  "policy": {
+    "minActionIntervalMs": 500,
+    "maxTaskMs": 200000
+  },
+  "meta": {
+    "action": true,
+    "produces": "images",
+    "effects": [
+      "write"
+    ],
+    "type": "post",
+    "title": "豆包生图",
+    "description": "在你自己的豆包网页版里用「图像生成」出一组 4 张图（可带参考图做图生图），回它们的无水印原图 URL（image_ori_raw；挖不到时退回带水印的预览图并标 watermarked=true）。",
+    "facility": {
+      "key": "doubao",
+      "label": "豆包"
+    },
+    "key_param": "prompt",
+    "discoverable": false,
+    "pick_in": [],
+    "_why_rateLimit": "网页版按账号计生图额度，数字没公开；每分钟 2 是「人手点」的量级。",
+    "rateLimit": {
+      "burst": 2,
+      "perMinute": 2,
+      "perHour": 30,
+      "bucket": "doubao-image"
+    },
+    "member_timeout_ms": 210000,
+    "auth": {
+      "type": "session",
+      "facility": "doubao",
+      "login": "cookie",
+      "cookieDomain": "doubao.com"
+    },
+    "params_schema": {
+      "prompt": {
+        "type": "string",
+        "required": true,
+        "description": "生图提示词，原样打进豆包的输入框。"
+      },
+      "images": {
+        "type": "string",
+        "required": false,
+        "description": "参考图（图生图）：data URL，多张按换行拼。由 /v1/images/edits 递进来；不给就是纯文生图。"
+      }
+    }
+  },
+  "_why_raw": "豆包每张生成图在消息数据（React props 里的 creation 块）带四个变体：image_thumb / image_preview（`_wm1`，页面显示的、左上「AI 生成」标）、image_ori（`cdld_wm3`，「下载」按钮给的、右下「豆包AI生成」）、**image_ori_raw（`image_raw`，没有任何水印的原图，PNG 全分辨率）**。都是签名 URL、不带 cookie 也能下。所以正路是从 DOM 上那张预览图的 fiber 往上挖出同 id 的 image_ori_raw，直接拿原图，去水印那一步整个省掉；只有挖不到（页面结构变了）才退回预览图并标 watermarked=true，让路由去补。2026-09-14 实测四张全挖到，原图 2304×1728 / 4MB、四角干净。"
+}

@@ -1,0 +1,96 @@
+{
+  "version": 1,
+  "kind": "http",
+  "sourceId": "zuna-search",
+  "request": {
+    "url": "https://music.znnu.com/api/search",
+    "method": "POST"
+  },
+  "compute": {
+    "capabilities": [
+      "hmacSha256",
+      "aesGcmDecrypt"
+    ],
+    "prefetch": [
+      {
+        "as": "keyResp",
+        "request": {
+          "url": "https://music.znnu.com/api/key",
+          "method": "GET",
+          "headers": {
+            "X-Referer": "musicParser"
+          }
+        }
+      },
+      {
+        "as": "ipResp",
+        "request": {
+          "url": "https://music.znnu.com/api/ip",
+          "method": "GET"
+        }
+      }
+    ],
+    "sign": "(() => { const p = { act: 'search', keyword: input.params.keyword, limit: '100', offset: '0', ip: input.pre.ipResp.ip || '' }; let s = input.now + 'music.znnu.com'; for (const k of Object.keys(p).sort()) s += k + '=' + p[k]; const signature = hmacSha256('a09d0f3700a279584e1515354fbe08a7ee1c617f919543142fa625b82f1b5ad0', s); const enc = (o) => Object.keys(o).map(k => encodeURIComponent(k) + '=' + encodeURIComponent(o[k])).join('&'); return { body: enc(Object.assign({}, p, { signature, timestamp: String(input.now), domain: 'music.znnu.com' })), headers: { 'content-type': 'application/x-www-form-urlencoded', 'X-Referer': 'musicParser', 'X-Key-Token': input.pre.keyResp.data.keyToken } }; })()",
+    "decode": "(() => { const d = input.body && input.body.data; if (!d || d.enc !== 1) return input.body; return JSON.parse(aesGcmDecrypt({ key: input.pre.keyResp.data.key, iv: d.iv, ciphertext: d.ciphertext, tag: d.tag })); })()"
+  },
+  "pagination": {
+    "mode": "increment",
+    "param": "page",
+    "start": 1,
+    "step": 1,
+    "itemsAt": "songs",
+    "maxPages": 1
+  },
+  "assert": [
+    {
+      "path": "songs",
+      "desc": "decrypted zuna search payload has songs[]"
+    }
+  ],
+  "mapping": {
+    "guid": "id",
+    "title": "name",
+    "author": "artists",
+    "link": "https://music.163.com/song?id={id}",
+    "description": "artists",
+    "image": "coverImgUrl"
+  },
+  "meta": {
+    "normalizer": "rsshub",
+    "type": "post",
+    "description": "Zuna 聚合搜索 — 网易云歌曲",
+    "topics": [
+      "zuna",
+      "网易云",
+      "音乐",
+      "搜索",
+      "music",
+      "netease"
+    ],
+    "categories": [
+      "music"
+    ],
+    "facility": {
+      "key": "zuna",
+      "label": "Zuna"
+    },
+    "capabilities": [
+      "search"
+    ],
+    "key_param": "keyword",
+    "priority": 80,
+    "discoverable": true,
+    "cadence_hint_seconds": 3600,
+    "auth": {
+      "type": "none"
+    },
+    "homepage": "music.znnu.com",
+    "params_schema": {
+      "keyword": {
+        "type": "string",
+        "required": true,
+        "description": "搜索关键词（歌名/歌手/专辑）"
+      }
+    }
+  }
+}

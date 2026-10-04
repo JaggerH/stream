@@ -1,0 +1,74 @@
+{
+  "version": 1,
+  "kind": "html",
+  "sourceId": "btbtla-search",
+  "request": {
+    "url": "https://www.btbtla.com/search/{name}",
+    "method": "GET"
+  },
+  "list": {
+    "selector": ".module-item-titlebox a[href^=\"/detail/\"]",
+    "limit": 20,
+    "fields": {
+      "title": {
+        "text": true
+      },
+      "detailUrl": {
+        "attr": "href",
+        "resolve": true
+      }
+    }
+  },
+  "pagination": {
+    "mode": "increment",
+    "param": "page",
+    "start": 1,
+    "step": 1,
+    "maxPages": 1
+  },
+  "assert": [
+    {
+      "selector": ".module-item-titlebox a[href^=\"/detail/\"]",
+      "desc": "btbtla search season cards present"
+    }
+  ],
+  "meta": {
+    "normalizer": "rsshub",
+    "type": "post",
+    "description": "BT影视 — 关键词搜索（季卡片）",
+    "topics": [
+      "btbtla",
+      "BT影视",
+      "影视",
+      "磁力",
+      "网盘",
+      "搜索",
+      "movie"
+    ],
+    "categories": [
+      "multimedia"
+    ],
+    "facility": {
+      "key": "btbtla",
+      "label": "BT影视"
+    },
+    "capabilities": [
+      "search"
+    ],
+    "key_param": "name",
+    "priority": 80,
+    "discoverable": true,
+    "cadence_hint_seconds": 3600,
+    "auth": {
+      "type": "none"
+    },
+    "homepage": "btbtla.com",
+    "params_schema": {
+      "name": {
+        "type": "string",
+        "required": true,
+        "description": "搜索关键词（片名）"
+      }
+    }
+  }
+}

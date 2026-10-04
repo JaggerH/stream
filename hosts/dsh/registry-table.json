@@ -1,0 +1,303 @@
+{
+  "$comment": [
+    "渲染注册表 —— spec 2026-08-17-dsh-conversation-surface-design §2 条 3 的那份「具名名单」。",
+    "每一行是一个 Stream MCP 工具名（wire 名是 `mcp__stream__<tool>`，见 src/registry.ts）。",
+    "treatment 只有两个值，对应 AGENTS.md 的三种合法结论：",
+    "  custom  = 定制卡已做（src/client/cards/ 里有对应组件，client/index.tsx 注册它）；",
+    "  generic = 不该吃定制卡，理由写在 why 里（回落 DSH 通用卡，不是空卡）。",
+    "「该做、这就补上」不留在这里 —— 补完就变成 custom 行。",
+    "这张表与真实 MCP 工具面的双向差集由根仓库的 src/mcp/dsh-ui-registry-parity.test.ts 钉住：",
+    "MCP 多一个 → 红（没登记）；表里多一个 → 红（工具没了表没跟上）。",
+    "\"server\": \"stream\" 的行来自可选能力包（stream add @streamapp/<x>）：同一个 /api/mcp、",
+    "同一种 wire 名，但用户没装那个包时它不存在，所以不参与上面那条差集；它们另有一条守卫",
+    "钉着必须是某个已知能力包 tools.ts 里真有的动词。"
+  ],
+  "tools": [
+    {
+      "tool": "extract",
+      "treatment": "custom",
+      "why": "结果就是一篇正文（status/branch/text/segments）。通用 JSON 卡会把整篇文章塞进一段折行代码块——渲染价值最高的一格。"
+    },
+    {
+      "tool": "stream_subscribe",
+      "treatment": "custom",
+      "why": "一次写操作的确认：订了什么、几点刷一次、去哪看。有可验证的深链 /c/<id>（app/src/lib/route.ts 的 `c` 分支）。"
+    },
+    {
+      "tool": "content_search",
+      "treatment": "custom",
+      "why": "返回一批 StoredItem（标题/作者/时间/url/stream_id）。列表形态天然要卡片：每行一个外链 + 一个回 Stream 频道的深链。"
+    },
+    {
+      "tool": "inbox_search",
+      "treatment": "custom",
+      "why": "命中的是用户自己库里的条目，每行都有站外原文 url + 回 /c/<stream_id> 的深链，而且 matched>returned 这件事（还有多少没给你看）只有卡片说得清。形状和 content_search 同族但语义相反（存量 vs 现搜），共用一张卡会把两者混成一件事。"
+    },
+    {
+      "tool": "stream_list",
+      "treatment": "custom",
+      "why": "订阅清单是用户最常「点进去看看」的一屏，每行都有可验证的 /c/<id> 深链。"
+    },
+    {
+      "tool": "get_events",
+      "treatment": "custom",
+      "why": "通知列表：severity + 时间 + 标题的定型结构，通用 JSON 卡读不出轻重缓急。ref.kind==='stream' 的那几条还能深链。"
+    },
+
+    {
+      "tool": "stream_search",
+      "treatment": "generic",
+      "why": "返回的是源清单（id + capabilities + 调用 schema），是给模型选源用的中间产物，不是给人看的终态。"
+    },
+    {
+      "tool": "stream_sources",
+      "treatment": "generic",
+      "why": "同 stream_search：源目录浏览，中间产物。"
+    },
+    {
+      "tool": "stream_categories",
+      "treatment": "generic",
+      "why": "一串分类字符串，通用卡已经够读。"
+    },
+    {
+      "tool": "stream_read",
+      "treatment": "generic",
+      "why": "读一个源的原始条目（形状随源而变，没有稳定字段可排版）。稳定形状的那条是 content_search，定制卡做在那儿。"
+    },
+    {
+      "tool": "stream_status",
+      "treatment": "generic",
+      "why": "调度状态的少量键值，通用卡够读。"
+    },
+    {
+      "tool": "stream_unsubscribe",
+      "treatment": "generic",
+      "why": "退订确认只有一个 id；订阅那格值得一张卡（有跳转落点），退订没有——落点刚被删掉。"
+    },
+    {
+      "tool": "stream_fetch_url",
+      "treatment": "generic",
+      "why": "媒体探测结果（platform + media[]），是下载/播放链路的中间产物；v1 不把播放器搬进工作台（spec §7）。"
+    },
+    {
+      "tool": "web_search",
+      "treatment": "generic",
+      "why": "title/url/snippet 三件套正是 DSH 自带 web 卡的形状，重做一张只会和它不一致。"
+    },
+    {
+      "tool": "read_url",
+      "treatment": "generic",
+      "why": "一段网页正文文本，DSH 通用卡的文本回落已经是对的形态；正文卡的价值在 extract（那条带 branch/segments）。"
+    },
+    {
+      "tool": "video_search",
+      "treatment": "generic",
+      "why": "磁力/网盘资源的分面结果，形状复杂且随 provider 变；等真用出痛感再做（spec §4 同款判据）。"
+    },
+    {
+      "tool": "video_resolve",
+      "treatment": "generic",
+      "why": "把一条资源解析成 magnet/直链——一串链接，通用卡够读。"
+    },
+    {
+      "tool": "get_conversions",
+      "treatment": "generic",
+      "why": "两种模式（精简索引 / 带正文），正文那一档和 extract 同源；先只在 extract 上做一张卡，别做两张会漂移的。"
+    },
+    {
+      "tool": "subscribe_source",
+      "treatment": "custom",
+      "why": "和 stream_subscribe 是同一件事的两种入口（一个给全 Stream、一个给 source id），回执形状一样——共用 stream_subscribe 那张订阅确认卡，别做第二张会漂移的。"
+    },
+    {
+      "tool": "note_unonboardable",
+      "treatment": "generic",
+      "why": "回执只有一个 id。它的价值在「真的调了没有」，那要看副作用（/api/onboard/wishlist）不是看卡。"
+    },
+    {
+      "tool": "identify_speakers",
+      "treatment": "generic",
+      "why": "起任务的轮询式回执（status + conversionId），没有内容可画；名字要看得见是 read_content 那一步的事。"
+    },
+    {
+      "tool": "read_content",
+      "treatment": "generic",
+      "why": "回的就是一份排好序的稿子（`script` 一个长字符串 + 三层 state），通用卡直接读得下来；真要做卡，该做的是把三层 state 画成三个徽标——等这个工具在工作台里被真用出痛感再说。"
+    },
+    {
+      "tool": "list_person_appearances",
+      "treatment": "generic",
+      "why": "声纹出现账本（itemId + 秒数 + 段数），表格型数据；没有可验证的 item 级深链（Stream 没有通用 item 路由，见 src/deep-links.ts 头注），做成卡也点不动。"
+    },
+    {
+      "tool": "resolve",
+      "treatment": "generic",
+      "why": "把一个 target 解析成候选源，判路中间产物。"
+    },
+    {
+      "tool": "resolve_intent",
+      "treatment": "generic",
+      "why": "意图分类的 {targetType,key}，两个字段。"
+    },
+    {
+      "tool": "list_sources",
+      "treatment": "generic",
+      "why": "源清单，同 stream_sources。"
+    },
+    {
+      "tool": "intent_create",
+      "treatment": "generic",
+      "why": "写操作的确认（一个 id）；档案的可读形态在 intent_dossier，那条已经是 markdown 直出。"
+    },
+    {
+      "tool": "intent_list",
+      "treatment": "generic",
+      "why": "意图清单；Stream 前端没有意图页，做了卡也没有落点可跳。"
+    },
+    {
+      "tool": "intent_dossier",
+      "treatment": "generic",
+      "why": "后端直接返回 markdown 原文（server.ts 里 bespoke 注册，不套 json 信封）——DSH 通用卡的文本回落就是它要的渲染。"
+    },
+    {
+      "tool": "netdisk_bindings",
+      "treatment": "generic",
+      "why": "网盘匹配是运维面，操作者是 agent 不是读者；四条 netdisk_* 一起留通用卡。"
+    },
+    {
+      "tool": "netdisk_browse",
+      "treatment": "generic",
+      "why": "列目录的原始回执（entries[] 或 shape+sample），读者是正在挑目录的 agent 自己；人要浏览网盘有目录选择器，不看这张卡。"
+    },
+    {
+      "tool": "netdisk_residue",
+      "treatment": "generic",
+      "why": "未配上的文件/条目残差，排错用的原始数据，越原始越好。"
+    },
+    {
+      "tool": "netdisk_preview_spec",
+      "treatment": "generic",
+      "why": "MatchSpec 试跑的逐条 diff，读者是写 spec 的 agent 自己。"
+    },
+    {
+      "tool": "netdisk_apply_spec",
+      "treatment": "generic",
+      "why": "把 MatchSpec 落库后的计数回执，读者同样是写 spec 的 agent 自己，不是人。"
+    },
+    {
+      "tool": "netdisk_transcribe",
+      "treatment": "generic",
+      "why": "采样转写的原始回执（两段带时间位置的原文 + 一句「中间没听」），读者是正在判这份文件是哪一集的 agent；它凭这段话下结论、把依据写进对话正文，人读的是那段正文而不是一张转写卡。"
+    },
+    {
+      "tool": "reconcile_open",
+      "treatment": "generic",
+      "why": "一次性的接线回执（showId/bindingId/两个货架地址/created 三格），agent 拿完就往下走 reconcile_status；人要看的是接完之后的状态，不是这张接线单。"
+    },
+    {
+      "tool": "reconcile_status",
+      "treatment": "generic",
+      "why": "待决卡清单 + 计数，读者是要下裁决的 agent；证据全文（转写/引文）的人读版留在面板的只读状态卡上（spec 2026-08-24-conversational-reconcile §3.2），工作台先不重做。待决卡专属渲染归前端批次，届时再升 custom。"
+    },
+    {
+      "tool": "reconcile_decide",
+      "treatment": "generic",
+      "why": "单条裁决的 {ok:true} 回执，agent 自己消费；对人的交代由 agent 在对话正文里说（裁决了什么、依据是什么），不靠卡片。"
+    },
+    {
+      "tool": "reconcile_execute",
+      "treatment": "generic",
+      "why": "执行搬运的计数回执（moved/deleted/pending/errors），agent 据此向人汇报；数字级信息通用卡够读。"
+    },
+    {
+      "tool": "reconcile_undo_run",
+      "treatment": "generic",
+      "why": "整轮撤销的计数回执（undone/skipped/resynced），数字级信息通用卡够读；要紧的那句「删的撤不回来」由 agent 在正文里说，不是卡片能替它说的。"
+    },
+    {
+      "tool": "reconcile_adjudicate",
+      "treatment": "generic",
+      "why": "轮末裁决的计数回执（asked/applied/rejected/unsure/skipped?/failed?），数字级信息通用卡够读；模型不删文件这条边界由 agent 在正文里说，不靠卡片。"
+    },
+    {
+      "tool": "reconcile_revoke_adjudication",
+      "treatment": "generic",
+      "why": "整批撤回的计数回执（{ok,revoked}），与 reconcile_undo_run 同一档——数字够说明问题，不需要定制卡。"
+    },
+    {
+      "tool": "netdisk_sync",
+      "treatment": "generic",
+      "why": "按季的 matched/total + 缺集清单，读者是正在判「这部剧齐没齐」的 agent；人看这件事有作品页的绑定面板，工作台不重做一份。"
+    },
+    {
+      "tool": "netdisk_share_verify",
+      "treatment": "generic",
+      "why": "一条分享的验活回执（validity + 文件清单），是 agent 决定「值不值得转存」的中间产物；人不看别人分享里的原始文件树。"
+    },
+    {
+      "tool": "netdisk_follow",
+      "treatment": "generic",
+      "why": "追更状态/一轮的计数回执，读者是 agent；人看追更有绑定页上的追更面板（开关、缺集、历轮账本），那才是它的人读版。"
+    },
+    {
+      "tool": "harvest_capability",
+      "treatment": "generic",
+      "why": "采集能力诊断的快判字段 + chrome 块，是排错读数；有 Stream 自己的诊断页承接，工作台不重做一份。"
+    },
+    {
+      "tool": "capability_status",
+      "treatment": "generic",
+      "why": "缺哪把 key、谁能修——判决在 state 那一格，模型要把它翻译成一句「要我帮你申请还是你自己配」的问话。人读的是那句问话，不是这份 JSON；真正要点的按钮在配置卡上（那儿已经有「一键帮我完成」）。"
+    },
+    {
+      "tool": "provision_capability_key",
+      "treatment": "generic",
+      "why": "两步：第一步回的是一段要模型念给用户听的 effects（人读的是那段话），第二步回的是 done / ran-but-empty 一个判决字。两步都没有值得画成卡的结构。"
+    },
+    {
+      "tool": "search_agent",
+      "treatment": "generic",
+      "why": "只回一个 runId（异步起活），没有内容可渲染。"
+    },
+    {
+      "tool": "enumerate_candidates",
+      "treatment": "generic",
+      "why": "同 search_agent：只回一个 runId（异步起活），清单要等 get_agent_run 才拿得到。"
+    },
+    {
+      "tool": "get_agent_run",
+      "treatment": "custom",
+      "why": "purchase 档（purchase_decide 起的 run）的读口：跑着时画阶段进度（卡在枚举/读横评/比价哪一步），跑完把 receipt 交给和 purchase_decide 同一个 ReceiptView——对比表只有一份。发现档（search_agent / enumerate_candidates）在这张卡里只摆原文回落：它们的轨迹 DSH 自己有视图，不重做。"
+    },
+    {
+      "tool": "cdp_look",
+      "treatment": "generic",
+      "why": "页面读数（DOM/尺寸/值），调试面；四条 cdp_* 一起留通用卡。"
+    },
+    {
+      "tool": "cdp_shot",
+      "treatment": "generic",
+      "why": "返回一张 base64 截图——DSH 通用卡已经会渲染 image content block，自己做一张只会更差。"
+    },
+    {
+      "tool": "cdp_act",
+      "treatment": "generic",
+      "why": "动作回执（confirmed/expect），调试面。"
+    },
+    {
+      "tool": "cdp_pages",
+      "treatment": "generic",
+      "why": "tab 清单，调试面。"
+    },
+    {
+      "tool": "purchase_decide",
+      "treatment": "custom",
+      "why": "购买决策 job 的发起回执（{runId,status}）：画一张「已发起、约 2–3 分钟」的小卡，让人知道后台在跑什么。终态（前沿 × 被斩 × 价格 × 依据 × 覆盖率）经 get_agent_run 回来，那张卡和这张共用 ReceiptView（spec 2026-09-02-purchase-decision-job）。"
+    },
+    {
+      "tool": "price_search",
+      "treatment": "generic",
+      "why": "回执是瘦身报价行（title=商品 author=平台 excerpt=价格行），单模型直查价时通用卡的行形态够读；要选型时模型该走 purchase_decide，不该拿这些行手工组装。"
+    }
+  ]
+}

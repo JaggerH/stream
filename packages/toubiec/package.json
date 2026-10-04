@@ -1,0 +1,16 @@
+{
+  "name": "@streamapp/toubiec",
+  "version": "1.0.0",
+  "author": "stream",
+  "keywords": [
+    "stream-recipe"
+  ],
+  "stream": {
+    "type": "recipe",
+    "name": "Toubiec",
+    "tagline": "搜歌 + 解析网易云直链",
+    "facility": "toubiec",
+    "schemaVersion": 1
+  },
+  "license": "Apache-2.0"
+}

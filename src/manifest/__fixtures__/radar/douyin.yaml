@@ -1,0 +1,10 @@
+id: douyin-user
+adapter: dtdl
+description: douyin user timeline feed source for radar tests
+capabilities: [timeline]
+auth: { type: none }
+cadence_hint_seconds: 1800
+params_schema:
+  sec_user_id: { type: string, required: true }
+radar:
+  - source: ["douyin.com/user/:sec_user_id"]

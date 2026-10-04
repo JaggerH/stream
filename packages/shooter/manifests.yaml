@@ -1,0 +1,13 @@
+# 射手字幕搜刮：宿主 `subtitle-search` 行按 `provides: [search-subtitle]` 自动收进来（宿主不点名）。
+# 执行后端是本包代码槽位里的 `shooter-subtitle` adapter。
+- id: shooter-subtitle
+  adapter: shooter-subtitle
+  title: 射手字幕
+  description: 按视频内容指纹（filehash）精确查射手字幕库（零注册）。索引老，多数无命中——当彩票。
+  topics: [字幕, subtitle, 射手]
+  categories: [subtitle]
+  capabilities: [search]
+  provides: [search-subtitle]
+  auth: { type: none }
+  discoverable: false
+  cadence_hint_seconds: 3600

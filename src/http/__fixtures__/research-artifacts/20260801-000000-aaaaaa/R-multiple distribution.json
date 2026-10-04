@@ -1,0 +1,3 @@
+{ "schema": "artifact/v1", "view": "distribution", "name": "R-multiple distribution",
+  "data": { "values": [-1.0, 2.0, -1.0, 0.6151342554922637, 2.0, -0.5006940588561872] },
+  "config": { "title": "R 分布" } }

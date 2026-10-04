@@ -1,0 +1,86 @@
+{
+  "version": 1,
+  "kind": "http",
+  "sourceId": "zhuanzhuan-recycle",
+  "_why_this_endpoint": "转转回收 H5（m.zhuanzhuan.com/u/bmmain/recycle-home）搜索框背后的接口：型号关键词 → 命中的型号列表，每个带 `maxPrice`（站上标注「最高回收价」= 最好机况的回收报价）。裸 GET、无签名、无登录、无 cookie，实测 2026-09-03 直 curl 即通；同一站的 `queryMaxPrice` 则回「服务异常」，别换过去。它自带型号归一：『红米 Turbo 5』分得出 Turbo 5 / Turbo 5 Max，『一加 Ace 6』连上一代 Ace 5 一起回，所以**消费端要按名字精确对**，不能拿第一行当答案。",
+  "request": {
+    "url": "https://app.zhuanzhuan.com/zzopen/zzbmlogic/getWordkeySearchResultNew?keyword={keyword}",
+    "method": "GET",
+    "headers": {
+      "referer": "https://m.zhuanzhuan.com/"
+    }
+  },
+  "pagination": {
+    "mode": "increment",
+    "param": "page",
+    "start": 1,
+    "step": 1,
+    "itemsAt": "respData.keyWordResult",
+    "maxPages": 1
+  },
+  "assert": [
+    {
+      "path": "respData",
+      "desc": "转转回收搜索回了 respData（无命中时 keyWordResult 为 [] 或 null，属正常空手）"
+    }
+  ],
+  "mapping": {
+    "guid": "zhuanzhuan-model-{modelId}",
+    "title": "{name}",
+    "_why_author_literal": "`=` 开头是字面量（interpret.ts mapItem）：响应里没有平台名字段，而 author 一栏在残值格里就是「哪家给的价」。不带 `=` 会被当成 dot-path、取成 undefined、这一栏静默消失。",
+    "author": "=转转回收",
+    "link": "https://m.zhuanzhuan.com/u/bmmain/recycle-home?bizType=c2b",
+    "description": "{remark} ¥{maxPrice}｜{brandName} · {cateName}",
+    "image": "https://pic1.zhuanstatic.com/zhuanzh/{pic}"
+  },
+  "meta": {
+    "normalizer": "rsshub",
+    "type": "post",
+    "description": "转转回收 · 型号最高回收价 —— 给一个型号名，返回转转对它（及同系列相近型号）的最高回收报价，一行一个型号",
+    "topics": [
+      "zhuanzhuan",
+      "转转",
+      "回收",
+      "二手",
+      "残值",
+      "保值",
+      "resale",
+      "recycle"
+    ],
+    "categories": [
+      "shopping"
+    ],
+    "facility": {
+      "key": "zhuanzhuan",
+      "label": "转转"
+    },
+    "capabilities": [
+      "search"
+    ],
+    "provides": [
+      "search-resale"
+    ],
+    "key_param": "keyword",
+    "priority": 80,
+    "discoverable": true,
+    "cadence_hint_seconds": 3600,
+    "example_queries": [
+      "iQOO Z11 Turbo 回收价",
+      "iPhone 17 能卖多少"
+    ],
+    "auth": {
+      "type": "none"
+    },
+    "homepage": "zhuanzhuan.com",
+    "params_schema": {
+      "keyword": {
+        "type": "string",
+        "required": true,
+        "description": "型号名（品牌 + 型号，如「iQOO Z11 Turbo」；带容量/颜色反而会搜空）"
+      }
+    },
+    "radar": [
+      "app.zhuanzhuan.com/zzopen/zzbmlogic/getWordkeySearchResultNew"
+    ]
+  }
+}

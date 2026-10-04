@@ -1,0 +1,163 @@
+{
+  "version": 6,
+  "kind": "browser",
+  "sourceId": "douyin-search",
+  "cookieDomain": "douyin.com",
+  "_why_human_entry": "**入口是首页 + 像人一样搜，不是把关键词拼进 URL 直达 /search。** 直达导航（v5 的写法）在高频使用下反复触发风控挑战（活体 2026-08-24：challenge 冷却 ~761s、成员 25s 超时,一天内多次;用户拍板改回拟人输入）。人肉路径活体全链验证过（2026-08-24,零验证码）:首页点搜索框 → 打字 → 点「搜索」按钮 → SPA 落到 /jingxuan/search/<词>（发 general/search/single）→ 点「视频」筛选 tab（`#search-toolbar-container span[data-key=video]`,语义 data-key,不是压缩类名）→ 页面自己发 `/aweme/v1/web/search/item/`（offset=0&count=20,带 search_id）——正是 network observer 和 evaluate 模板要的那一发。首页有静音自动播放视频,不出声。",
+  "entryUrl": "https://www.douyin.com/",
+  "_why_entry_wait": "`load`:首页水合出搜索框要 2-3s,click step 自带 CLICK_WAIT 轮询兜住剩余;别用 domcontentloaded 徒增第一步的等待轮数。",
+  "entryWait": "load",
+  "_why_wall_vs_challenge": "**`wall` 和 `challenge` 是两件事，必须分开声明。** 抖音挡下一发请求的方式不是回错误码，是弹一个验证码遮罩、让请求的 Promise 一直悬着（steps[0] 的 5s race 就是为它加的）。这两种拦截对**用户的动作要求正好相反**：墙 = 你得去登录；挑战 = 你什么都不用做、等冷却。并成一个选择器就只能说一句模糊话，而模糊话会把真的「需要登录」一起藏掉，比现在更坏。\n\n**为什么必须分出来（代价是活体撞出来的）**：并进 `wall` 的那一版，风控挑战会被报成「需要重新登录」，把人支去重登一个完全正常的账号；而在此之前它是 `drift`，连着三次就被 `RepairLedger` **静默隔离**——隔离之后返回 `items:0 + errors:[]`，和「跑成功了、但确实没搜到」一模一样（failure-atlas 附录 B.3）。2026-08-15 两种都真撞过（隔离那次是第四发 0.005s 秒回空）。分开之后：`challenge` 命中 → `challenged` → `SiteChallengeError` → 归 `blocked` 类 + facility 冷却（退让多久由这个站点的撞墙台账喂，见 `BlockEpisodeLog`），到点自己回来。\n\n**为什么 `exists` 就够、不需要哨兵值**（夸克那条 wall 用哨兵，是因为它的登录弹层常驻 DOM，`exists` 一用就每轮误报）：实测两组页面，`#captcha_container` 在**干净页上根本不存在**——\n· 干净页（刚加载、没发过任何 API 调用，2 次取样）：`#captcha_container` 0 个、`.captcha_verify_container` 0 个，`iframe[src*=verify]` 只有 1 个 0×0 `display:none` 的空壳。\n· 被挑战的页（2 次取样）：`#captcha_container` 1 个、`display:block`、**1680×893**，里面套一个 380×428 的 verify iframe。\n**所以选择器必须钉死在 `#captcha_container`，别图省事写成 `[id*=captcha], iframe[src*=verify]` 那种宽的**——宽的在干净页上就命中那个空壳 iframe，等于每轮都误报被挑战，比不加更坏。",
+  "loginCheck": {
+    "loggedIn": "[data-e2e=\"live-avatar\"]",
+    "wall": "#login-panel-new",
+    "challenge": "#captcha_container"
+  },
+  "_why_browser": "**这条 recipe 不需要帧，也不需要滚动**——第一批由点「视频」tab 时页面自己发的那一发 XHR 给（network observer 拦它），之后每一批由 evaluate step 在页面里调站点自己的签名客户端直接取。取数两段都是 Tier-A（render-independent）；前面的 click/type 是可信输入,靠 focus 仿真在后台标签照样走（见 xhs _why_unattended 的数字），窗口被盖住、最小化都照跑。\n\n**为什么这件事值得单独说**：本站曾经是**已知唯一**「下一批必须有真帧才来」的站点。2026-08-15 三臂活体（每轮换没用过的关键词、两臂交替、开关带计数落盘）钉死过这一点：dwell 期间保持逼帧 → 9/9 够 30 条；只留 dwell 那一处心跳 → 5/5 够数；连心跳也摘掉 → 13 轮里 11 轮只有 20（少一整批），而且**不报错**（outcome=ok，只是条数少）。同批对照里 xhs 三臂无差别。少收的那些轮次 scroll 步花的墙钟反而**更长**（6.3–9.2s vs 3.2–4.7s）——自变量是帧，不是时长。而帧由 OS 那层「这扇 Chrome 窗口显不显示」说了算，于是「用户把窗口收起来 → 定时采集静默少收一批」是一个没法在本层修的缺口。**改走站内直调正是为了让这个缺口不存在**：现在一帧都不要，用户的窗口显不显示与本 recipe 无关。\n\n没有 click、没有 scroll，所以不需要前台、也就不该去抢用户的屏（visibility 保持 unattended）。登录态：douyin.com 在扩展的 DEFAULT_DOMAINS 里，用户自己的 Chrome 本来就登着；签名照旧**由页面自己算**（见 steps[0] 的 _why_no_reverse_engineering），不碰逆向红线。",
+  "_why_one_shot": "搜索没有常驻的必要（用户拍板 2026-08-24）:没有定时流骑这个 tab、没有 detail 骑它的账本,搜完 tab 留着只是风控的活靶子。one-shot = 跑完 release 即关;下一次搜索从首页重新走一遍人肉路径,恰好也是最像人的形状。",
+  "session": {
+    "facility": "douyin",
+    "lifecycle": "one-shot",
+    "visibility": "unattended"
+  },
+  "steps": [
+    {
+      "_why": "先点搜索框——人就是这么做的,而且 click 自带 CLICK_WAIT 轮询,首页水合没完成时它会等到搜索框出现,兼作整条链的入场闸门(type 不等元素,所以不能让 type 打头)。",
+      "kind": "click",
+      "selector": "[data-e2e=\"searchbar-input\"]"
+    },
+    {
+      "kind": "type",
+      "selector": "[data-e2e=\"searchbar-input\"]",
+      "text": "{keyword}"
+    },
+    {
+      "_why_expect": "点「搜索」后 SPA 导航到搜索结果页;判据用筛选 toolbar 的「视频」tab——首页上它不存在(动作前为假),结果页才有(动作后为真),区分力成立。",
+      "kind": "click",
+      "selector": "[data-e2e=\"searchbar-button\"]",
+      "expect": {
+        "selector": "#search-toolbar-container span[data-key=\"video\"]"
+      }
+    },
+    {
+      "_why": "点「视频」筛选——落到瀑布流档,页面自己发 /aweme/v1/web/search/item/(offset=0&count=20,自带 search_id),network observer 拦它当第一批,evaluate 从 performance entries 抄它当参数模板。data-key 是站点自己的语义标识,别换成压缩类名。",
+      "kind": "click",
+      "selector": "#search-toolbar-container span[data-key=\"video\"]"
+    },
+    {
+      "_why": "**取代了原来那个 scroll step**（2026-08-15）。原来的路子是「模拟滚动 → 等页面自己去拉下一批」，而本站的下一批要合成器真产出一帧才触发（数字见顶上 _why_browser），于是用户一把窗口盖住就静默少收一整批。这一步把「下一批」从**页面行为**换成**我们主动发的一次请求**：在已登录的页面里调站点自己的签名客户端要 offset 之后的那一批。零滚动、零帧、零 dwell。\n\n**offset 从哪来**：点「视频」tab 时页面自己发的那一发是 offset=0&count=20（network observer 拦的就是它），所以本步第一页从 offset=20 起，之后按返回的行数往后推；`has_more` 为假就停。cursor 传的是下一个 offset 的字符串，空串终止翻页（runner 的既有语义）。\n\n**为什么 items 是已经映射好的形状**：evaluate step 产出的 items 直接过 recipe 的 `output` 映射（`observer-pipeline.ts` 的 stepFed 用的就是 output），不经 network observer 那份 `input` 映射。所以这里必须自己把 aweme_info 摊成 guid/title/link/author/author_avatar/pubDate/douyin ——和上面 network observer 的 mapping 逐字段对齐，两批才能按 guid 合并成一批。改任一边就要改另一边。",
+      "_why_no_reverse_engineering": "**签名一行都不在我们这儿**：a_bogus / msToken / verifyFp / fp 由站点自己的 axios 拦截器在页面里现算。判据是「我们有没有实现签名算法」——没有，我们只是调用页面已经加载好的那个函数。硬证据（2026-08-15 活体）：把这四个参数从入参里**删掉**再调，照样 200 + status_code:0 + 10 条，说明拦截器现签了新的。**永远不要**把任何签名逻辑抄进这个文件或仓库任何地方。",
+      "_why_semantic_module_scan": "**别把模块 id（当时是 706726）、导出名（当时是 U2）、或 webpackChunk 全局名（曾写死 `webpackChunkdouyin_search`）写死**——全是 minifier/构建的产物，站点一次重新构建、或者换个 SPA 壳就换。活体代价（2026-08-24）：拟人路径落在 /jingxuan/search（jingxuan 壳），那里根本没有 `webpackChunkdouyin_search` 这个全局,`undefined.push` 当场 TypeError。所以三层全按**语义**扫:window 上凡是 `webpackChunk*` 开头的 runtime 逐个进,模块源码同时含 `window.axiosInstance=` 和 `skipCheckCode` 的那一个,再在它的导出里挑源码含 `window.axiosInstance=` 的那个函数。活体实测唯一命中、16–24ms（6016 个模块全扫一遍），成本可以忽略。扫不到就显式抛错 → EvaluateDriftError → 报到 drift，不会静默变成 0 条。",
+      "_why_wait_for_first_request": "**入口那一发不是同步的，这一步得等它——但等待必须在页外，页内一个 `setTimeout` 都不许有。** 三轮活体逼出来的，三轮各否掉一个想当然的写法：\n\n① **不等 → 两批全丢**。拿到 load 时页面还没发它自己那发 search/item（实测：dcl 1.0s、load 2.0s、那发落地 3.4s）。第一版没等，整条 recipe 3.3s 跑完报「没有可抄的参数模板」——evaluate 没模板，network observer 也还没等到响应。原来 scroll 的 dwell 顺带提供了这段时间，摘掉滚动就得显式补回来。\n\n② **页内等 8s → `Detached while handling command.`**（failure-atlas §4.3.66 那条）。\n\n③ **页内等「1.5s」→ 还是 detach，因为那不是 1.5s**：采集 tab 是后台标签，**后台标签的 `setTimeout` 被浏览器钳到约 1 秒一跳**，6×250ms 实际跑了 **5.3s**（扩展侧账本 `channel:ext-cdp` 的 slow-command 记着这个数）。所以「把页内等待写短」这条路根本走不通——你写的毫秒数不是它睡的毫秒数。\n\n**落法：页内零 await。** 模板不在就立刻返回空 + `cursor:'wait'`，把这一轮让掉；真正的等待由 runner 在**页外**做（`runEvaluateStep` 的翻页间隔，吃 `policy.minActionIntervalMs`，见那里的 _why）。**只让一次**——连着两页 fresh=0 runner 就收手，所以第二轮还等不到就显式抛错（drift，响的），不会静默变成半批。",
+      "_why_race_timeout": "**这个 5s 超时不是多余的，删了会让失败慢 6 倍且没人说得清原因。** 参数给不全或被风控盯上时，抖音不是回错误码——它在页面上弹一个验证码遮罩（`#captcha_container`，实测 1680×893），而站点客户端内部的 checkCode 那步会**一直等人去过验证**，Promise 永不 settle。活体实测：入参从 43 个砍到 12 个，调用就再也不回来了。没有这道 race，表现是 evalJson 一路烧满中继 30s 上界才报错；有了它，5s 就带着一句说得出因果的话失败。",
+      "kind": "evaluate",
+      "itemsAt": "items",
+      "cursorField": "cursor",
+      "pageSize": 10,
+      "maxPages": 2,
+      "call": "async (cursor, num, params) => { const P = '/aweme/v1/web/search/item/'; const url = performance.getEntriesByType('resource').map(x => x.name).filter(n => n.indexOf(P) > -1)[0]; if (!url) { if (!cursor) return { items: [], cursor: 'wait' }; throw new Error('douyin: page never fired its own search/item request by the second evaluate round — no params to copy'); } let mod = null; for (const ck of Object.keys(window)) { if (ck.indexOf('webpackChunk') !== 0) continue; const chunk = window[ck]; if (!chunk || typeof chunk.push !== 'function') continue; let req; try { chunk.push([[Math.random()], {}, r => req = r]); } catch (e) { continue; } if (!req || !req.m) continue; for (const id of Object.keys(req.m)) { let s; try { s = req.m[id].toString(); } catch (e) { continue; } if (s.includes('window.axiosInstance=') && s.includes('skipCheckCode')) { mod = req(id); break; } } if (mod) break; } if (!mod) throw new Error('douyin: signed-request module not found in any webpackChunk global (webpack layout moved)'); const send = Object.keys(mod).map(k => mod[k]).find(f => { try { return typeof f === 'function' && f.toString().includes('window.axiosInstance='); } catch (e) { return false; } }); if (!send) throw new Error('douyin: signed-request fn not found in module'); const q = new URLSearchParams(url.split('?')[1]); const drop = ['a_bogus', 'msToken', 'verifyFp', 'fp', 'X-Bogus', '_signature']; const base = {}; q.forEach((v, k) => { if (drop.indexOf(k) < 0) base[k] = v; }); const offset = (cursor && cursor !== 'wait') ? Number(cursor) : Number(base.offset || 0) + Number(base.count || 20); const body = await Promise.race([send(P, Object.assign({}, base, { offset: String(offset), count: String(num) }), {}, void 0, null, {}), new Promise((_, rej) => setTimeout(() => rej(new Error('douyin: search/item did not settle in 5s — risk-control challenge (captcha overlay) swallows the promise')), 5000))]); const rows = (body && body.data) || []; const items = rows.filter(r => r && r.aweme_info).map(r => { const a = r.aweme_info; const av = a.author || {}; const th = (av.avatar_thumb && av.avatar_thumb.url_list) || []; return { guid: a.aweme_id, title: a.desc, link: 'https://www.douyin.com/video/' + a.aweme_id, author: av.nickname, author_avatar: th[0], pubDate: a.create_time, douyin: a }; }); return { items: items, cursor: (body && body.has_more && rows.length) ? String(offset + rows.length) : '' }; }"
+    }
+  ],
+  "observers": [
+    {
+      "_why": "**它管的是第一批**：点「视频」筛选 tab 时页面自己发一发 `/aweme/v1/web/search/item/`（offset=0&count=20,带 search_id）,拦它即可。第一批**特意留给它**而不是也交给 evaluate step：页面自己发的那一发本来就不需要帧，而原样重放一次 offset=0 实测会撞验证码（2026-08-15，两个可能没分开：缺 search_id / 重放检测），绕开它比查清它便宜。首个响应常是空壳 data:[],真正带条目的是随后那次,所以 windowMs 要盖住整段。响应是 snake_case wire 形状,每个元素把作品裹在 aweme_info 下(用户/直播卡没有这层 → dedupeBy 取不到 id → 自动丢弃,正好只留视频)。**它也会顺带拦到 evaluate step 自己发的那几发**（同一个 urlPattern）——同一批条目由两条路各映射一次，按 guid 合并，重复不会进 feed。",
+      "kind": "network",
+      "_why_pattern": "放宽到 `*/aweme/v1/web/*search*`：原来钉死在 general 那个接口上（*/aweme/v1/web/general/search/single*），而 entryUrl 改成 type=video 之后页面发的很可能不是同一个端点——钉太死就直接拦不到、整条 recipe 空手而归。宽到只认「aweme web 搜索类」这一层，两种 type 都覆盖。代价是可能连别的搜索类请求也匹配上，由 assert（data 非空）+ mapping 兜底：形状不对的响应产不出 item，不会污染结果。",
+      "urlPattern": "*/aweme/v1/web/*search*",
+      "windowMs": 120000,
+      "maxBodyBytes": 8000000,
+      "input": {
+        "itemsAt": "data",
+        "dedupeBy": "aweme_info.aweme_id",
+        "targetCount": 30,
+        "mapping": {
+          "guid": "aweme_info.aweme_id",
+          "title": "aweme_info.desc",
+          "link": "https://www.douyin.com/video/{aweme_info.aweme_id}",
+          "author": "aweme_info.author.nickname",
+          "author_avatar": "aweme_info.author.avatar_thumb.url_list.0",
+          "pubDate": "aweme_info.create_time",
+          "douyin": "aweme_info"
+        },
+        "assert": [
+          {
+            "path": "data",
+            "desc": "douyin general/search/single data[]"
+          }
+        ]
+      }
+    }
+  ],
+  "output": {
+    "itemsAt": "items",
+    "dedupeBy": "guid",
+    "targetCount": 30,
+    "mapping": {
+      "guid": "guid",
+      "title": "title",
+      "link": "link",
+      "author": "author",
+      "author_avatar": "author_avatar",
+      "pubDate": "pubDate",
+      "douyin": "douyin"
+    }
+  },
+  "_why_min_action_interval": "900 → 2500：这条 recipe 里它**兼着一个等待器**。`runEvaluateStep` 每翻一页之间睡 `max(minActionIntervalMs, 900+抖动)`，而这个睡是在**页外**（Node 侧）——正因如此它不受后台标签把 `setTimeout` 钳到 1 秒一跳的影响，也不会像页内长 await 那样被 hydration 撕掉（三轮活体，见 steps[0] 的 _why_wait_for_first_request）。2500ms 是按实测排的：load 2.0s + 2.5s = 4.5s，盖过页面自己那发 search/item 落地的 3.4s 还留一秒余量。**别把它调回 900**——那样第二轮 evaluate 会赶在那发请求之前，直接抛「没有可抄的参数模板」。",
+  "policy": {
+    "minActionIntervalMs": 2500,
+    "maxTaskMs": 180000
+  },
+  "meta": {
+    "auth": {
+      "type": "session",
+      "facility": "douyin",
+      "login": "cookie",
+      "cookieDomain": "douyin.com"
+    },
+    "normalizer": "douyin",
+    "_why_member_timeout": "拟人路径全程(首页 load 6-8s + 四步 click/type 各 0-14s + evaluate 翻页)实测 35-40s,默认 25s 的并发成员闸会在它跑完之前把结果丢掉(活体 2026-08-24:recipe 34.7s 收 28 项 ok,扇出层却报 timed out)。按源申报 60s,只慢自己这一格,别的源照常 25s。",
+    "member_timeout_ms": 60000,
+    "type": "post",
+    "title": "关键词搜索",
+    "description": "抖音关键词搜索 · 登录态浏览器从首页拟人输入（点搜索框→打字→点搜索→点视频筛选），拦第一批 search/item 返回体，其余批次在页内调站点自己的签名客户端直取；搜完即关标签",
+    "topics": [
+      "douyin",
+      "抖音",
+      "搜索",
+      "search",
+      "social-media",
+      "video",
+      "视频"
+    ],
+    "categories": [
+      "social-media",
+      "video"
+    ],
+    "facility": {
+      "key": "douyin",
+      "label": "抖音"
+    },
+    "capabilities": [
+      "search"
+    ],
+    "provides": [
+      "search-content"
+    ],
+    "key_param": "keyword",
+    "priority": 80,
+    "discoverable": true,
+    "cadence_hint_seconds": 1800,
+    "example_queries": [
+      "抖音搜 露营",
+      "douyin 关键词搜索"
+    ],
+    "homepage": "douyin.com",
+    "params_schema": {
+      "keyword": {
+        "type": "string",
+        "required": true,
+        "description": "搜索关键词"
+      }
+    }
+  }
+}

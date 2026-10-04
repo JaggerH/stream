@@ -1,0 +1,92 @@
+{
+  "version": 1,
+  "kind": "browser",
+  "sourceId": "deepseek-chat",
+  "_why": "在用户自己登录着的 DeepSeek 网页版上问一句、读回整段回答（纯文本）：打开首页 = 新对话 → 用原生 value setter 写 textarea（React 受控，直接赋值不触发 onChange）→ 点圆形主按钮发送 → 等回答完整 → 读 .ds-assistant-message-main-content 的 innerText。2026-09-28 实测：短问题 1–3s 答完，300 字约 3s。",
+  "_why_action": "会在用户的DeepSeek账号里发一条消息（新对话）、消耗它的对话额度，归 write。只经 run_action_recipe / /api/recipes/action 跑。",
+  "cookieDomain": "deepseek.com",
+  "entryUrl": "https://chat.deepseek.com/",
+  "_why_entryUrl": "首页 / 就是新对话；上一轮停在 /a/chat/s/<id>，runner 判不在入口页会自己 goto 回来。对话会留在用户的 DeepSeek 历史里。",
+  "entryWait": "load",
+  "loginCheck": {
+    "loggedIn": "textarea",
+    "wall": "input[type=\"tel\"], input[placeholder*=\"手机号\"]",
+    "_why_wall": "登录墙选择器**没有在退出登录的页面上逐个量过**；已确认它在登录态的页面上不存在（不会误报墙）。掉登录时如果报成 blocked 而不是 needs-login，先来量这个。"
+  },
+  "_why_session": "DeepSeek这个标签留着：persistent = 一条 lane 一个热标签；runner 见停在入口页也会重载（parked），所以每轮都是一条干净的新对话，读回的最后一条回复一定是这次的。",
+  "session": {
+    "facility": "deepseek",
+    "lifecycle": "persistent",
+    "visibility": "unattended"
+  },
+  "steps": [
+    {
+      "kind": "evaluate",
+      "_why": "整段在页内做，按 cursor 分页只为绕开 relay 一次求值 30s 的上限（照 doubao-image）：第 1 页写入提示词并发送，之后每页等到 pageStart+26s；还没答完回 pending:true，runner 只推进 cursor、不当空页。完成判据：最后一条助手消息有字、页面不在生成、且正文 1.5s 内不再变——流式输出中途读到的是半截话，不数字数、不计时。发出 30s 后既没在生成也没有回复 = 限额 / 报错，把页面末尾几行抛出来，不报成 drift。「在生成」的判据：发送按钮的 innerHTML 和发送前（有字、可发）那一刻不一样——生成中它换成停止图标，答完换回来（实测 X→I）。深度思考的思考过程不在 .ds-assistant-message-main-content 里，读回的只有正式回答。",
+      "call": "async (cursor, num, params) => {\n  const sleep = ms => new Promise(r => setTimeout(r, ms));\n  const pageStart = Date.now();\n  const SEND = '.ds-button--primary.ds-button--filled.ds-button--circle';\n  const answers = () => [...document.querySelectorAll('.ds-assistant-message-main-content')];\n  const busy = () => { const b = document.querySelector(SEND); return !!(b && window.__dsIdle && b.innerHTML !== window.__dsIdle); };\n  if (!cursor) {\n    let ta = null;\n    for (let i = 0; i < 30 && !(ta = document.querySelector('textarea')); i++) await sleep(300);\n    if (!ta) throw new Error('[deepseek-chat] 没找到输入框 textarea url=' + location.pathname);\n    if (answers().length) throw new Error('[deepseek-chat] 入口页上已经有回复——这不是一条新对话');\n    const setValue = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set;\n    setValue.call(ta, params.prompt);\n    ta.dispatchEvent(new Event('input', { bubbles: true }));\n    await sleep(500);\n    const send = document.querySelector(SEND);\n    if (!send) throw new Error('[deepseek-chat] 没找到发送按钮 ' + SEND);\n    if (send.getAttribute('aria-disabled') === 'true') throw new Error('[deepseek-chat] 写入提示词后发送按钮仍是禁用（输入框字数 ' + ta.value.length + '）');\n    window.__dsIdle = send.innerHTML;\n    send.click();\n    await sleep(1500);\n    window.__dsT0 = Date.now();\n  }\n  const deadline = Math.min(Date.now() + 22000, pageStart + 26000);\n  let lastText = null, since = 0;\n  while (Date.now() < deadline) {\n    const a = answers().at(-1);\n    const txt = a ? (a.innerText || '').trim() : '';\n    if (/^服务器繁忙|请稍后重试。?$/.test(txt)) throw new Error('[deepseek-chat] DeepSeek 回了：' + txt.slice(0, 100));\n    if (a && !busy() && txt) {\n      if (txt === lastText) {\n        if (Date.now() - since > 1500) {\n          const id = (location.pathname.match(/\\/s\\/([\\w-]+)/) || [])[1] || ('m' + Date.now());\n          return { items: [{ guid: id, text: txt, url: location.href }], cursor: '' };\n        }\n      } else { lastText = txt; since = Date.now(); }\n    }\n    await sleep(500);\n  }\n  const elapsed = Date.now() - (window.__dsT0 || pageStart);\n  if (!busy() && !answers().length && elapsed > 30000) {\n    const lines = document.body.innerText.trim().split('\\n').filter(Boolean);\n    throw new Error('[deepseek-chat] 发出 ' + Math.round(elapsed / 1000) + 's 后既没在生成、也没有回复 url=' + location.pathname + ' 页面末尾: ' + lines.slice(-4).join(' / ').slice(0, 300));\n  }\n  if (elapsed > 300000) throw new Error('[deepseek-chat] 300s 内没等到完整回复');\n  return { items: [], pending: true, cursor: String(Number(cursor || 0) + 1) };\n}",
+      "itemsAt": "items",
+      "cursorField": "cursor",
+      "pendingField": "pending",
+      "maxPages": 14,
+      "_why_pending": "14 页 ≈ 26 + 13×22 = 312s，盖住页内 300s 的上限（长提示词 + 长回答）。"
+    }
+  ],
+  "observers": [],
+  "output": {
+    "itemsAt": "items",
+    "dedupeBy": "guid",
+    "targetCount": 1,
+    "mapping": {
+      "guid": "guid",
+      "body_text": "text",
+      "url": "url",
+      "model": "model"
+    },
+    "assert": [
+      {
+        "path": "items.0.text",
+        "desc": "没有读到回复正文（页面结构变了，或生成失败）"
+      }
+    ]
+  },
+  "policy": {
+    "minActionIntervalMs": 500,
+    "maxTaskMs": 330000
+  },
+  "meta": {
+    "action": true,
+    "effects": [
+      "write"
+    ],
+    "type": "post",
+    "title": "DeepSeek对话",
+    "description": "在你自己的 DeepSeek 网页版里开一条新对话，发一段提示词，回它的完整回答正文（纯文本）。",
+    "facility": {
+      "key": "deepseek",
+      "label": "DeepSeek"
+    },
+    "key_param": "prompt",
+    "discoverable": false,
+    "pick_in": [],
+    "rateLimit": {
+      "burst": 2,
+      "perMinute": 3,
+      "perHour": 60,
+      "bucket": "deepseek-chat"
+    },
+    "member_timeout_ms": 340000,
+    "auth": {
+      "type": "session",
+      "facility": "deepseek",
+      "login": "cookie",
+      "cookieDomain": "deepseek.com"
+    },
+    "params_schema": {
+      "prompt": {
+        "type": "string",
+        "required": true,
+        "description": "提示词，原样写进输入框发出去。"
+      }
+    }
+  }
+}

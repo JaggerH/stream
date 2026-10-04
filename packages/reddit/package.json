@@ -1,0 +1,16 @@
+{
+  "name": "@streamapp/reddit",
+  "version": "1.0.0",
+  "author": "stream",
+  "keywords": [
+    "stream-recipe"
+  ],
+  "stream": {
+    "type": "recipe",
+    "name": "Reddit",
+    "tagline": "subreddit 热门帖流",
+    "facility": "reddit",
+    "schemaVersion": 1
+  },
+  "license": "Apache-2.0"
+}

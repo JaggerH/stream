@@ -1,0 +1,89 @@
+[package]
+name = "stream-desktop"
+version = "0.1.0"
+edition = "2021"
+description = "Stream Desktop — connects to /api/host and drives the OS a11y tree + input"
+
+[[bin]]
+name = "stream-desktop"
+path = "src/main.rs"
+
+# Platform-independent core: WS client, wire protocol, op dispatch, the Desktop trait.
+# These compile + unit-test on any OS (the trait is faked in tests).
+[dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time", "io-util", "sync"] }
+tokio-tungstenite = "0.24"
+futures-util = "0.3"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+base64 = "0.22"
+# 进程枚举（`ensureApp` 判"在不在跑"）。**不是 Windows 专属**：拉起一个进程这件事本身
+# 平台无关，放在通用依赖里，`launch.rs` 的决策逻辑才能在 Linux 上被 `cargo test` 覆盖。
+sysinfo = "0.32"
+# 模板匹配（`see.rs`）是纯算术，和 OS 无关——所以 `image` 也不能是 Windows 专属：
+# 放在通用依赖里，NCC 才能在 Linux 上被 `cargo test` 覆盖。png 是模板的入盘格式
+# （模板要无损，jpeg 的块效应会把分数压低），jpeg 是截图的出盘格式。
+image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
+# OCR 的 ONNX 推理。**放通用段而不是 `cfg(windows)`**：det 的尺度换算、DB 后处理、CTC 解码
+# 全是与 OS 无关的算术，而"跑对了没有"只有拿真模型对账才知道（`ocr.rs` 的 golden 测试）
+# ——放 Windows 专属段就等于这条唯一的验收闸门在 Linux 上跑不了。
+#
+# 推理引擎只有一个：ONNX Runtime，`load-dynamic`——构建期不链接任何东西，运行时 dlopen 随平台包出货的
+# 官方动态库（onnxruntime.dll / libonnxruntime.dylib，与模型同目录）。为什么不是 tract、为什么没有回落：
+# docs/superpowers/specs/2026-09-14-desktop-ocr-onnxruntime-design.md §1；两平台实测 docs/research/ocr-engine-benchmark.md。
+# `load-dynamic` 是交叉目标 x86_64-pc-windows-gnu 唯一走得通的路（ort-sys 的预编译表里 Windows 只有 msvc）。
+ort = { version = "2.0.0-rc.13", default-features = false, features = ["load-dynamic", "std"] }
+# 喂给 ort 的输入张量先在 ndarray 里摆好（NCHW），版本跟 ort 自己吃的那一档一致。
+ndarray = "0.17"
+# `ort_threads()` 的缺省值：物理核数（不是逻辑核——超线程分一个 48×320 的小卷积只会更慢）。
+num_cpus = "1"
+
+# Windows a11y backend (UIA) + input (enigo) + screenshot (xcap). #[cfg(windows)] only —
+# the Linux `cargo check`/`cargo test` never pulls these, so the protocol layer stays
+# verifiable off-Windows. Versions are pinned-plausible; verified by the Windows build.
+[target.'cfg(windows)'.dependencies]
+uiautomation = "0.16"
+enigo = "0.2"
+xcap = "0.0.14"
+# 指示条那个分层置顶窗口 + 全局热键。只用 User32/Gdi32 的几个函数，不引 winit/egui：
+# 一个 40px 高、不可交互的条子不值得一整套窗口框架，何况框架都会自带一个会抢焦点的事件循环
+# ——而"绝不夺焦"在这里是硬约束（guard_actuation 判的就是前台是不是目标窗口）。
+windows = { version = "0.58", features = [
+  "Win32_Foundation",
+  "Win32_Graphics_Gdi",
+  "Win32_UI_WindowsAndMessaging",
+  "Win32_UI_Input_KeyboardAndMouse",
+  "Win32_UI_HiDpi",
+  "Win32_System_LibraryLoader",
+  # 应用版本：GetFileVersionInfoW / VerQueryValueW（`windows.rs` 的 `file_version`）
+  "Win32_Storage_FileSystem",
+  # 识别层**不**走系统自带的 OCR，所以这里没有 Media / Graphics_Imaging / Storage_Streams
+  # 那一组 feature：唯一引擎是 `ocr.rs` 的 PP-OCR + ONNX Runtime，缺库 / 缺模型明着报错、
+  # 不回落（spec 2026-09-14 §1）。
+] }
+
+# macOS a11y 后端（AX）+ 输入（enigo）+ 截图（CGWindowList，裸 FFI）。#[cfg(target_os = "macos")] only。
+#
+# **和 Windows 那一段是两份独立的清单，不是共用的**：enigo 两边都要，但版本与特性各自
+# 演进；把它们提到通用依赖里会让 Linux 的 `cargo check`/`cargo test` 也去编原生输入栈，
+# 而协议层"能在 Linux 上被验证"正是分段的全部意义。
+#
+# a11y 走裸 FFI（accessibility-sys + core-foundation），**不引 objc2/AppKit 那一套**：
+# 这里只要 AXUIElement 的六七个函数和 CFString/CFArray/CFBoolean，为此拖进一整个
+# Objective-C 桥不划算——host agent 是要装到用户机器上的东西，依赖越少装不上的机会越少。
+# 「屏上有哪些进程」用 CGWindowList（一条 extern "C" 声明，见 `macos.rs` 的 `gui_processes`），
+# 也是同一个理由：它替掉了 NSWorkspace，省掉整个 AppKit。
+[target.'cfg(target_os = "macos")'.dependencies]
+accessibility-sys = "0.1"
+core-foundation = "0.10"
+enigo = "0.2"
+# 接管提示的渲染层（`overlay_mac.rs`）：AppKit 窗口只能经 Objective-C 消息建，`objc` 只是消息发送宏
+# 加运行时绑定，没有 AppKit 绑定——用到的十几个类和方法直接 `msg_send!`，同样不为此拖进 objc2/cocoa。
+objc = "0.2"
+# **这里没有 xcap，mac 的截图走 CGWindowList 的裸 FFI**（`macos.rs` 的 `mod cg`：
+# `CGWindowListCreateImage` 按窗口 id 截整窗，再画进自己开的 RGBA 位图）。不用 xcap 的理由：
+# Windows 那份钉在 xcap 0.0.14，而 0.0.14 在 macOS 上编不过（它自己的 `src/macos/boxed.rs`
+# 撞上新版 core-foundation 的 `ToVoid`，E0282）；Cargo 对同一个包只解一个版本，两个 target 段
+# 各写一个不兼容的版本号是解不出来的，升整体又等于把 Windows 那条已经验过的截图路径换成一个
+# 没验过的版本。CGWindowList 只要六七个函数，和 a11y 走 `accessibility-sys` 是同一个取舍——
+# 不为它拖进一整个绑定。`core-graphics` crate 也没引，同一个理由。

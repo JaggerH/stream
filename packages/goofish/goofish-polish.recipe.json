@@ -1,0 +1,70 @@
+{
+  "version": 2,
+  "kind": "browser",
+  "sourceId": "goofish-polish",
+  "_why": "擦亮 = 把在售商品的排序时间刷到现在，闲鱼一天允许一次；网页版没有这个按钮（只在 App 里），但接口是同一套 mtop：`mtop.taobao.idle.item.polish`，data 只要 itemId。2026-09-12 在真账号上验证：回 `FAIL_BIZ_ITEM_ERROR_POLISH_DUPLICATE::一天只能擦亮一次`，同一天再调回 `FAIL_BIZ_IDLEITEM_POLISH_AGAIN::宝贝已经擦亮过了`——同一件事两种回话，都当 already。",
+  "_why_action": "动作 recipe：改的是商品在闲鱼上的排序时间，归 write。只经 run_action_recipe / /api/recipes/action 跑；调用方是 data-packs 的 polish.py，按台账逐个 itemId 擦。",
+  "cookieDomain": "goofish.com",
+  "entryUrl": "https://www.goofish.com/publish",
+  "_why_entryUrl": "和 goofish-publish 同一页：lib.mtop 在这页可用、自签，登录判据也现成。擦亮不需要打开商品页。",
+  "entryWait": "load",
+  "loginCheck": {
+    "loggedIn": "input[type=\"file\"]",
+    "wall": "iframe[src*=\"mini_login\"]",
+    "challenge": ".baxia-dialog",
+    "_why_challenge": "阿里风控的滑块遮罩。它是**挑战**不是墙：登录态好好的，用户要做的是拖一下滑块、等 facility 冷却，不是去登录——原来并在 wall 里，2026-09-14 一小时写了 11 次弹滑块时被报成 needs-login，把人支去白登录。"
+  },
+  "session": {
+    "facility": "goofish",
+    "lifecycle": "one-shot",
+    "visibility": "unattended"
+  },
+  "steps": [
+    {
+      "kind": "evaluate",
+      "_why": "逐个 itemId 直调 polish。「一天只能擦亮一次」不算失败（目标状态已达成），记成 already；其它 ret 记成 error 带原文，让调用方看得见哪件没擦成。任何一件出错都不中断后面的。",
+      "call": "async (cursor, num, params) => { const sleep = ms => new Promise(r => setTimeout(r, ms)); for (let i=0;i<20 && !(window.lib&&window.lib.mtop);i++) await sleep(300); if(!(window.lib&&window.lib.mtop)) throw new Error('[goofish-polish] lib.mtop 未就绪'); const ids=JSON.parse(params.itemIds); if(!Array.isArray(ids)||ids.length===0) throw new Error('[goofish-polish] itemIds 要是一个非空的 JSON 数组字符串'); const AL=/POLISH_DUPLICATE|POLISH_AGAIN|一天只能擦亮一次|已经擦亮过/; const items=[]; for(const id of ids){ let status='ok', msg=''; try{ const r=await window.lib.mtop.request({ api:'mtop.taobao.idle.item.polish', v:'1.0', type:'POST', data:{ itemId:String(id) } }); const ret=Array.isArray(r&&r.ret)?r.ret.join(';'):''; if(!/SUCCESS/.test(ret)){ status=AL.test(ret)?'already':'error'; msg=ret; } }catch(e){ const ret=(e&&Array.isArray(e.ret))?e.ret.join(';'):String((e&&e.message)||e); status=AL.test(ret)?'already':'error'; msg=ret; } items.push({ guid:String(id), itemId:String(id), status, msg }); await sleep(800); } return { items, cursor:'' }; }",
+      "itemsAt": "items",
+      "maxPages": 1
+    }
+  ],
+  "observers": [],
+  "output": {
+    "itemsAt": "items",
+    "dedupeBy": "guid",
+    "targetCount": 1,
+    "mapping": {
+      "guid": "guid",
+      "itemId": "itemId",
+      "status": "status",
+      "msg": "msg"
+    },
+    "assert": [
+      { "path": "items.0.itemId", "desc": "擦亮未回传任何 itemId（响应结构变了）" }
+    ]
+  },
+  "policy": { "minActionIntervalMs": 500, "maxTaskMs": 60000 },
+  "meta": {
+    "action": true,
+    "effects": ["write"],
+    "type": "post",
+    "title": "闲鱼擦亮",
+    "description": "把一组在售商品逐个擦亮（mtop.taobao.idle.item.polish），每件回 ok / already（今天已擦过）/ error（带闲鱼原话）。",
+    "facility": { "key": "goofish", "label": "闲鱼" },
+    "key_param": "itemIds",
+    "discoverable": false,
+    "pick_in": [],
+    "_why_rateLimit": "一天一轮、一轮几件，比上架还低频；沿用上架那道闸的量级。",
+    "rateLimit": { "burst": 2, "perMinute": 0.5, "perHour": 6, "bucket": "goofish-write" },
+    "member_timeout_ms": 75000,
+    "auth": {
+      "type": "session",
+      "facility": "goofish",
+      "login": "cookie",
+      "cookieDomain": "goofish.com"
+    },
+    "params_schema": {
+      "itemIds": { "type": "string", "required": true, "description": "要擦亮的 itemId 列表，JSON 数组字符串，如 [\"1082086838345\"]。" }
+    }
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "name": "@streamapp/imdb",
+  "version": "1.0.0",
+  "author": "stream",
+  "keywords": [
+    "stream-recipe"
+  ],
+  "stream": {
+    "type": "recipe",
+    "name": "IMDb",
+    "tagline": "Charts 排行榜",
+    "facility": "imdb",
+    "schemaVersion": 1
+  },
+  "license": "Apache-2.0"
+}

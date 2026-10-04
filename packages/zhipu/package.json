@@ -1,0 +1,17 @@
+{
+  "name": "@streamapp/zhipu",
+  "version": "1.0.0",
+  "author": "stream",
+  "keywords": [
+    "stream-recipe"
+  ],
+  "stream": {
+    "type": "recipe",
+    "name": "智谱 BigModel",
+    "tagline": "在 bigmodel.cn 自助建 API key",
+    "facility": "zhipu",
+    "schemaVersion": 1,
+    "cookieDomain": "bigmodel.cn"
+  },
+  "license": "Apache-2.0"
+}

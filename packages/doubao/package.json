@@ -1,0 +1,25 @@
+{
+  "name": "@streamapp/doubao",
+  "version": "1.0.0",
+  "author": "stream",
+  "keywords": [
+    "stream-recipe"
+  ],
+  "stream": {
+    "type": "recipe",
+    "name": "豆包",
+    "tagline": "网页版生图 · 免费的 Seedream",
+    "facility": "doubao",
+    "schemaVersion": 1,
+    "_why_cookieDomain": "豆包网页版全部功能都在登录后；生图更是按账号计额度。填 doubao.com 覆盖 www 子域。",
+    "cookieDomain": "doubao.com",
+    "_why_rateLimit": "一次生图约 20s、一次出 4 张；网页版有按账号的日额度（数字没公开）。每分钟 2、每小时 30 是「一个人手点」的量级，超过就像脚本。排不上如实回，不硬顶。",
+    "rateLimit": {
+      "burst": 2,
+      "perMinute": 2,
+      "perHour": 30,
+      "maxWaitMs": 5000
+    }
+  },
+  "license": "Apache-2.0"
+}

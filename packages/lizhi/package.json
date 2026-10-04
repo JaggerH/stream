@@ -1,0 +1,31 @@
+{
+  "name": "@streamapp/lizhi",
+  "version": "1.0.0",
+  "author": "stream",
+  "keywords": [
+    "stream-recipe"
+  ],
+  "stream": {
+    "type": "recipe",
+    "name": "荔枝 FM",
+    "tagline": "某个用户的音频播客",
+    "facility": "lizhi",
+    "schemaVersion": 1,
+    "serving": [
+      {
+        "match": ".lizhi.fm",
+        "hosts": [
+          "cdn101.lizhi.fm",
+          "cdn102.lizhi.fm",
+          "cdn.gzlzfm.com",
+          "cdn101.gzlzfm.com"
+        ],
+        "reason": "接口 trackUrl 给的 cdn5 对冷对象一律 403；同一文件在 cdn101/102/gzlzfm 上 206。实测与 UA 排除法见 README「CDN」一节"
+      }
+    ],
+    "retires": {
+      "rsshub:lizhi/user/:id": "荔枝关掉了 web 端用户音频接口，该路由恒空；本包 lizhi-user 走 App 的 vodapi 顶上"
+    }
+  },
+  "license": "Apache-2.0"
+}

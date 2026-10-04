@@ -1,0 +1,30 @@
+# Cloudflare Workers AI 云端转写：宿主 `transcribe` 梯子的一档成员（顺序是宿主的成本判断，写在
+# src/providers/system/transcribe.ts）。执行后端是本包代码槽位里的 `cloudflare` adapter。
+- id: cf-whisper
+  adapter: cloudflare
+  title: Cloudflare Whisper
+  description: Cloudflare Workers AI whisper-large-v3-turbo 云端转写（多语，含中文；免费额度）。无说话人分离。
+  topics: [transcribe, speech, whisper, cloudflare, 转写, 语音]
+  categories: [transcribe]
+  capabilities: [anchor]
+  auth: { type: none }
+  discoverable: false
+  cadence_hint_seconds: 3600
+  # 整集音频一次成员调用,110min 音频实测 67.7s(见 src/transcribe/openai-stt.ts 头注);10 分钟给足余量,别被全局默认 25s 掐死。
+  member_timeout_ms: 600000
+  # tokenName 必须等于这里的 ref：宿主「这一档钥匙在不在」按梯子成员的 tokenName 问（conversions 域）。
+  runtime_config:
+    ref: cloudflare
+    fields:
+      apiKey:
+        type: secret
+        label: Cloudflare Workers AI Token
+        description: BYOK；不填则回退环境变量 CLOUDFLARE_WORKERS_AI_TOKEN。
+        helpUrl: https://dash.cloudflare.com/profile/api-tokens
+      accountId:
+        type: string
+        label: Cloudflare Account ID
+        # required：端点按账号寻址，没有它必然失败。宿主判「这一档配没配好」就读这一格（conversions 域）。
+        required: true
+        description: 你的 Cloudflare 账号 ID（Workers AI 端点按账号寻址）。不填则回退环境变量 CLOUDFLARE_ACCOUNT_ID。
+        helpUrl: https://dash.cloudflare.com/

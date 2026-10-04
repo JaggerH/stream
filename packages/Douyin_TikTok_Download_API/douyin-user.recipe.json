@@ -1,0 +1,113 @@
+{
+  "version": 2,
+  "kind": "browser",
+  "sourceId": "douyin-user",
+  "cookieDomain": "douyin.com",
+  "_why_recipe_at_all": "容器那条路对这个源已经死了，别再往回走。站方把 `/aweme/v1/web/aweme/post/` 挪到了 Argus 签名头（X-Argus/X-Gorgon/X-Ladon）后面，站外打恒 403，而容器把 403 包成一句无信息量的 `HTTP 400: An error occurred.`。**和 cookie 新旧无关**（活体 2026-09-22：把用户 Chrome 里完整的 72 个 cookie、含 UIFID / sessionid 整份递进容器直打，同样的 403 同样的文案）；补上 `Uifid` 请求头后文案变成 `Signature Not Found`，钉死了是签名头这一档。唯一不碰逆向红线的出路就是这里：**让页面自己算签名**——a_bogus / msToken / verifyFp / uifid 那一套由站点自己的 axios 拦截器在页面里现算，我们只是调用页面已经加载好的那个函数。**永远不要**把任何签名逻辑抄进这个文件或仓库任何地方。 （同一结论已经在 `douyin-collection`（listcollection，2026-08-29）与 `douyin-detail`（aweme/detail，2026-09-22）上各落过一次。）",
+  "_why_entry": "入口按 `sec_user_id` 拼主页链接。**参数是 `sec_user_id` 而不是一条自由 url，这一格由 radar 决定**：`meta.radar` 声明的模式是 `www.douyin.com/user/:sec_user_id`，用户贴一条主页链接时宿主按它抽出来的就是这个名字的参数——recipe 收别的名字，radar 那条路就会带着一个没人认的参数进来（而且不报错，只是采不到）。\n\n页内那段仍然从落地后的 `location.pathname` 里读 `sec_user_id`，不从参数读：这样站方把主页 301 到另一个 id 时我们跟得上，而且**「我以为在采谁」和「实际在采谁」永远是同一个**。",
+  "entryUrl": "https://www.douyin.com/user/{sec_user_id}",
+  "entryWait": "load",
+  "_why_login_signals": "三个信号沿用 douyin-search / douyin-collection 那份（`wall` 与 `challenge` 必须分开——墙是「你得去登录」，挑战是「你什么都别做、等冷却」，两者对用户的动作要求相反。完整代价见 douyin-search.recipe.json 的 _why_wall_vs_challenge）。",
+  "loginCheck": {
+    "loggedIn": "[data-e2e=\"live-avatar\"]",
+    "wall": "#login-panel-new",
+    "challenge": "#captcha_container"
+  },
+  "_why_lane": "`laneKey` 必须给，而且必须和 search / collection / detail 都不一样。一个 facility 一个 tab 且独占：不分 lane 的话，这条定时采集会把用户刚发起的搜索、或正在跑的收藏采集那个 feed 冲掉，表现是「操作随机地不生效」。one-shot：翻完就完了，没有常驻的必要。",
+  "session": {
+    "facility": "douyin",
+    "laneKey": "user",
+    "lifecycle": "one-shot",
+    "visibility": "unattended"
+  },
+  "steps": [
+    {
+      "_why": "在已登录的主页里调站点自己的签名客户端翻这个号的作品。零滚动、零帧、零 dwell——用户的窗口显不显示与本 recipe 无关。",
+      "_why_template": "**模板抄的是「这台机器这个会话的设备参数」，不是某个端点的参数。** `webid` / `uifid` / `verifyFp` / `browser_*` / `device_*` 这些我们一个都不重建，全部从页面自己发过的**任意一发** `www.douyin.com/aweme/v1/web/*` 请求里抄——活体 2026-09-22 证过这一点：在关注页拿 `mix/listcollection` 的模板去打 `follow/feed/`，照样 `status_code: 0`。所以这里不挑端点，取第一发即可。\n\n`drop` 里有两类：**一次性签名值**（`a_bogus` / `msToken` / `timestamp` / `x-secsdk-web-signature`…，留着会把回包换成 bdturing 挑战信封）和**端点自己的业务参数**（`aweme_id` / `cursor` / `count` / `sec_user_id`…，抄来的是别人的，必须由下面显式覆盖）。",
+      "_why_sec_user_id_must_be_set": "**抄来的模板里没有 `sec_user_id`，不补上就不是「这个人的作品」。** 活体 2026-09-22 实测：不带它打 `aweme/post` 照样回 `status_code: 0`，只是 `aweme_list` 里只有 1 条、`has_more: 0`——**一个看起来完全正常的错答案**。补上之后同一发回 20 条、`has_more: 1`。这正是「绿灯不证明走的是你以为的那条路」的形状，所以它在这里被显式覆盖、且 `drop` 里也列着它。",
+      "_why_retry_loop": "**「站方拒了」和「我们问早了」长得一模一样，所以不许一次就下结论。** 活体 2026-09-22 在 `douyin-detail` 上量到过：同一条作品、同一个浏览器、同一段页内代码，在探针标签里（页面稳下来几秒后）稳定回 `status_code: 0`，而在采集 lane 刚落地时回 `-999`。所以这一步是**一个带次数的重试循环**：拿不到模板、或站方回了非 0，就返回 `{ items: [], cursor: 'w<下一次>', pending: true }` 把这一轮让掉，真正的等待由 runner 在页外做（吃 `policy.minActionIntervalMs`）——页内一个 `setTimeout` 都不许有（后台标签的 setTimeout 被浏览器钳到约 1 秒一跳；本次侦察就真撞出过 `Detached while handling command.`）。\n\n**`pending: true` + `pendingField` 是命脉，不是装饰。** `runEvaluateStep` 对连着两轮 fresh=0 的反应是 `break`——**静默收工、0 条、不报错**，而 0 条和「这个号确实没作品」长得一模一样。声明了 `pendingField` 的那一轮不进这个账（`src/replay/recipe-runner.ts` 的 `pending` 分支）。**最后一轮必须抛**，让到底就是把一次真失败变成一次安静的 0 条。\n\n游标用前缀分两种：`w<n>` 是「让一轮」，其余是站方给的真游标——一个字段两种含义，但它们永远不会同时出现，而多开一个字段就得同时改 `cursorField` 与 runner。",
+      "kind": "evaluate",
+      "itemsAt": "items",
+      "cursorField": "cursor",
+      "pageSize": 20,
+      "maxPages": 10,
+      "_why_max_pages": "10 轮里最多 4 轮可能被重试吃掉（见 `_why_retry_loop`），剩下的足够翻到 `targetCount`。每轮之间睡 `max(minActionIntervalMs, 900+抖动)`，总时长封在 `maxTaskMs` 里。",
+      "call": "async (cursor, num, params) => { const TAG = 'douyin-user'; const P = '/aweme/v1/web/aweme/post/'; const ATTEMPTS = 5; const c = String(cursor || ''); const waiting = c.charAt(0) === 'w'; const attempt = waiting ? Number(c.slice(1)) : 1; const again = (why) => { if (attempt >= ATTEMPTS) throw new Error(TAG + ': ' + ATTEMPTS + ' 轮都没取到第一页（最后一次：' + why + '）'); return { items: [], cursor: 'w' + (attempt + 1), pending: true }; }; const sameSite = (n) => { try { const h = new URL(n).hostname; return h === 'douyin.com' || h.endsWith('.douyin.com'); } catch (e) { return false; } }; const all = performance.getEntriesByType('resource').map(x => x.name).filter(n => n.indexOf('/aweme/v1/web/') > -1 && sameSite(n)); const names = [...all.filter(n => n.indexOf('//www.douyin.com/') > -1), ...all]; if (!names.length) return again('这一页还没发过任何 /aweme/v1/web/ 请求——没有可抄的设备参数模板'); let mod = null; for (const ck of Object.keys(window)) { if (ck.indexOf('webpackChunk') !== 0) continue; const chunk = window[ck]; if (!chunk || typeof chunk.push !== 'function') continue; let req; try { chunk.push([[Math.random()], {}, r => req = r]); } catch (e) { continue; } if (!req || !req.m) continue; for (const id of Object.keys(req.m)) { let s; try { s = req.m[id].toString(); } catch (e) { continue; } if (s.includes('window.axiosInstance=') && s.includes('skipCheckCode')) { mod = req(id); break; } } if (mod) break; } if (!mod) return again('signed-request module not found in any webpackChunk global（页面还没加载完，或 webpack 布局变了）'); const send = Object.keys(mod).map(k => mod[k]).find(f => { try { return typeof f === 'function' && f.toString().includes('window.axiosInstance='); } catch (e) { return false; } }); if (!send) return again('signed-request fn not found in module'); const q = new URLSearchParams(names[0].split('?')[1]); const drop = ['a_bogus', 'msToken', 'verifyFp', 'fp', 'X-Bogus', '_signature', 'timestamp', 'x-secsdk-web-signature', 'aweme_id', 'spot_keys', 'cursor', 'count', 'max_cursor', 'sec_uid', 'sec_user_id', 'source', 'room_id']; const base = {}; q.forEach((v, k) => { if (drop.indexOf(k) < 0) base[k] = v; }); const sec = (location.pathname.match(/\\/user\\/([^/?#]+)/) || [])[1]; if (!sec) throw new Error(TAG + ': 落地的不是 /user/<sec_user_id> 页（现在在 ' + location.pathname + '）'); const at = waiting ? '0' : (c || '0'); const args = Object.assign({}, base, { sec_user_id: sec, max_cursor: at, count: String(num) }); let body; try { body = await Promise.race([send(P, args, {}), new Promise((_, rej) => setTimeout(() => rej(new Error('8s 没落地——多半是验证码遮罩把 promise 吞了')), 8000))]); } catch (e) { return again(String(e && e.message || e)); } if (!body || body.status_code !== 0) return again(P + ' refused status_code=' + (body && body.status_code) + ' body=' + JSON.stringify(body).slice(0, 300)); const rows = body.aweme_list || []; const items = rows.filter(a => a && a.aweme_id).map(a => { const av = a.author || {}; const th = (av.avatar_thumb && av.avatar_thumb.url_list) || []; return { guid: a.aweme_id, title: a.desc, link: 'https://www.douyin.com/video/' + a.aweme_id, author: av.nickname, author_avatar: th[0], pubDate: a.create_time, douyin: a }; }); return { items: items, cursor: (body.has_more && rows.length && body.max_cursor != null) ? String(body.max_cursor) : '' }; }",
+      "pendingField": "pending",
+      "_why_template_host": "**模板可能来自 `www-hj.douyin.com`，不是只有 `www.douyin.com`。** 活体 2026-09-23 真撞上：同一条作品页，有时两个主机各发一发 `aweme/detail`，有时**只有 `www-hj` 那一发**。而 `'www-hj.douyin.com'.indexOf('www.douyin.com')` 是 -1 —— 按字符串包含去挑模板，那一趟就一个模板都找不到，5 轮全让完然后报「作品页还没发它自己的 aweme/detail 请求」，而页面其实好好的、请求也真发了。**判据改成解析出主机名、看它是不是 `douyin.com` 的子域**，并优先取 `www.douyin.com` 那一发（我们自己的调用走的是当前 origin，取同源那份最贴近）。\n\n抄的是设备参数，两个主机的那一发形状一样，所以取谁都能用——但**判据必须覆盖两个**，否则失败得既随机又难看懂。"
+    }
+  ],
+  "_why_observers_empty": "**空数组不是省略**：canonical browser recipe 的校验要求 `steps` 和 `observers` 两个数组都在场（少一个就被当成 V1 形状，报「requires a harvest object」）。条目全部由 evaluate step 自己产出，一个观察者都不需要——`aweme/post` 的回包能拦，但拦下来的第一页和我们自己要的那一页是同一份，多一条路只是多一处要对齐的映射。",
+  "observers": [],
+  "_why_output_identity": "evaluate step 已经把 aweme 摊成了 DataItem 的形状，所以这里是恒等映射；`douyin` 那一格是**整条 aweme 自己**。字段名与 `douyin-collection` / `douyin-detail` 逐条对齐——三条 recipe 的产物流进同一个 `douyin` normalizer，分家了只会让其中一条静默少几格。",
+  "output": {
+    "itemsAt": "items",
+    "dedupeBy": "guid",
+    "targetCount": 60,
+    "mapping": {
+      "guid": "guid",
+      "title": "title",
+      "link": "link",
+      "author": "author",
+      "author_avatar": "author_avatar",
+      "pubDate": "pubDate",
+      "douyin": "douyin"
+    }
+  },
+  "policy": {
+    "minActionIntervalMs": 2000,
+    "maxTaskMs": 120000
+  },
+  "meta": {
+    "auth": {
+      "type": "session",
+      "facility": "douyin",
+      "login": "cookie",
+      "cookieDomain": "douyin.com"
+    },
+    "normalizer": "douyin",
+    "type": "post",
+    "categories": [
+      "social-media",
+      "video"
+    ],
+    "facility": {
+      "key": "douyin",
+      "label": "抖音"
+    },
+    "capabilities": [
+      "timeline"
+    ],
+    "homepage": "douyin.com",
+    "title": "指定用户作品",
+    "description": "某个抖音创作者主页发布的作品 · 登录态浏览器打开主页，在页内调站点自己的签名客户端翻 aweme/post",
+    "topics": [
+      "douyin",
+      "抖音",
+      "用户",
+      "作品",
+      "视频",
+      "博主",
+      "social-media",
+      "video"
+    ],
+    "example_queries": [
+      "某个抖音博主的最新视频",
+      "douyin user videos"
+    ],
+    "priority": 80,
+    "discoverable": true,
+    "cadence_hint_seconds": 3600,
+    "params_schema": {
+      "sec_user_id": {
+        "type": "string",
+        "required": true,
+        "description": "创作者的 sec_user_id（主页链接 www.douyin.com/user/<sec_user_id> 里的那一段；贴链接时由 radar 自动抽出）"
+      }
+    },
+    "_why_radar": "从旧 manifest 条目搬过来的（`radar: [{source: [\"www.douyin.com/user/:sec_user_id\"]}]`）。**搬源的时候最容易漏的就是这一格**：漏了不报错，只是「贴一个抖音主页链接、Stream 认不出这是什么」静静地没了——`src/resolve/radar.test.ts` 钉着它。`meta.radar` 是扁平串，宿主自己展开成结构化 radar 与 matchers（`src/replay/recipe-manifest.ts`）。",
+    "radar": [
+      "www.douyin.com/user/:sec_user_id"
+    ]
+  }
+}

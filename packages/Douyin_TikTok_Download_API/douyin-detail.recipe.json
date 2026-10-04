@@ -1,0 +1,108 @@
+{
+  "version": 7,
+  "kind": "browser",
+  "sourceId": "douyin-detail",
+  "cookieDomain": "douyin.com",
+  "_why_recipe_at_all": "容器那条路对**单个作品详情**已经死了，别再往回走。`/api/hybrid/video_data` 与 `/api/douyin/web/fetch_one_video` 都落在 `/aweme/v1/web/aweme/detail/` 上，站外打它恒 403，而容器把 403 包成一句无信息量的 `HTTP 400: An error occurred.`（用户看到的就是那一句）。403 的真身要在容器里直接打上游才看得见：先是 `Blocked by ArgusSecurityPlugin Uifid Not Found`，补上 `Uifid` 请求头之后变成 `Signature Not Found` —— 这个端点已经挪到 Argus 那套签名头（X-Argus/X-Gorgon/X-Ladon）后面。**和 cookie 新旧无关**：活体 2026-09-22 把用户 Chrome 里那份完整登录态（72 个 cookie，含 UIFID / sessionid）整份递进容器直打，同样的 403 同样的文案；换成容器自己现算的 ttwid+msToken 也一样。`/aweme/v1/web/aweme/post/`（用户作品列表）同期同样被挡，而评论端点与 bilibili 那半至今照常 200 —— 这道闸是按端点上的。唯一不碰逆向红线的出路就是这里：让页面自己算签名。（同一结论 2026-08-29 已经在 `packages/douyin/douyin-collection.recipe.json` 上落过一次，那条是 `listcollection`。）",
+  "_why_entry": "入口就是那条作品页本身。两个原因，第二个是硬的：\n\n① `url` 直接吃调用方给的链接，所以**短链 / 分享链接不用我们解析** —— 浏览器自己跟完跳转就落在作品页上（容器以前替我们做的就是这件事）。\n\n② **页面自己发的那一发 `aweme/detail` 是我们抄参数的模板**（`webid` / `uifid` / `verifyFp` 这些都是这台机器这个会话独有的，我们一个都不重建）。所以作品页不是「顺便打开的一页」，它是这条 recipe 的原料来源 —— 别为了省一次请求把入口换成首页，那样模板就没了。",
+  "entryUrl": "{url}",
+  "entryWait": "load",
+  "_why_login_signals": "三个信号沿用 douyin-search / douyin-collection 那份（`wall` 与 `challenge` 必须分开——墙是「你得去登录」，挑战是「你什么都别做、等冷却」，两者对用户的动作要求相反；并成一句会把真的需要登录藏掉。完整代价见 douyin-search.recipe.json 的 _why_wall_vs_challenge）。",
+  "loginCheck": {
+    "loggedIn": "[data-e2e=\"live-avatar\"]",
+    "wall": "#login-panel-new",
+    "challenge": "#captcha_container"
+  },
+  "_why_lane": "`laneKey` 必须给，而且必须和 search / collection 都不一样。一个 facility 一个 tab 且独占：不分 lane 的话，用户点开一条视频触发的这次 detail 会把定时跑的收藏采集（或用户刚发起的搜索）那个 feed 冲掉，反过来也一样，表现是「操作随机地不生效」。one-shot：一条作品读完就完了，没有常驻的必要，也没有别的 recipe 骑它的账本。",
+  "session": {
+    "facility": "douyin",
+    "laneKey": "detail",
+    "lifecycle": "one-shot",
+    "visibility": "unattended"
+  },
+  "steps": [
+    {
+      "_why": "在已登录的作品页里调站点自己的签名客户端要这一条的详情。零滚动、零帧、零 dwell —— 用户的窗口显不显示与本 recipe 无关。",
+      "_why_no_reverse_engineering": "签名一行都不在我们这儿：a_bogus / msToken / verifyFp / uifid / X-Argus 那一套由站点自己的 axios 拦截器在页面里现算，我们只是调用页面已经加载好的那个函数。判据是「我们有没有实现签名算法」——没有。**永远不要**把任何签名逻辑抄进这个文件或仓库任何地方。",
+      "_why_no_network_observer": "看起来这一发页面自己就在发、拦下来就行，**但拦不了**：`aweme/detail` 的回包里条目是 `aweme_detail` 这一个**对象**，而 `HarvestAccumulator.offer` 要求 `itemsAt` 指到**数组**，指到对象会被算成 malformed（`src/replay/harvest.ts`）。所以这条路只能走 evaluate —— 它返回什么形状由我们自己定。代价是每条作品比纯拦截多一次同样的请求（页面自己那一发 + 我们这一发），这是有意付的：模板本来就得从页面那一发里抄（见 `_why_entry` ②）。",
+      "_why_drop_one_shot_params": "`timestamp` 和 `x-secsdk-web-signature` 必须从抄来的模板里删掉，它们是**每请求一次性**的值；留着它们在 listcollection 那条上实测会把回包换成 bdturing 挑战信封（连 `status_code` 都没有，读它的代码只会静默产 0 条）。这里同样删，且删完活体 2026-09-22 一次通过（`status_code:0`，拿到 `aweme_detail` 与 3 条 `play_addr.url_list`）。**GET 不改 POST**：detail 这条走默认的 GET 就成（listcollection 那条必须 POST —— 两条 recipe 在这一格不一样，别互相照抄）。",
+      "_why_retry_loop": "**「站方拒了」和「我们问早了」长得一模一样，所以不许一次就下结论。** 活体 2026-09-22：同一条作品、同一个浏览器、同一段页内代码，在探针标签里（页面已经稳下来 3s 后）稳定回 `status_code: 0`，而在采集 lane 刚落地时回 `status_code: -999`（站方风控客户端给的负数码，和 listcollection 那条走 GET 时的 `-404` 同族）；另一趟连页面自己那一发 `aweme/detail` 都还没落进 `performance` 就被问了。两种都是「早了」。\n\n所以这一步是**一个带次数的重试循环**，不是一次性判断：拿不到模板、或站方回了非 0，就返回 `{ items: [], cursor: <下一次>, pending: true }` 把这一轮让掉，真正的等待由 runner 在页外做（吃 `policy.minActionIntervalMs`）——页内一个 `setTimeout` 都不许有（后台标签的 setTimeout 被浏览器钳到约 1 秒一跳，写 250ms 实际睡几秒，然后 `Detached while handling command.`）。\n\n**`pending: true` + `pendingField` 是这里的命脉，不是装饰。** `runEvaluateStep` 对连着两轮 fresh=0 的反应是 `break`——也就是**静默收工、0 条、不报错**，而 0 条和「这条作品没有内容」长得一模一样。声明了 `pendingField` 的那一轮不进这个账（`src/replay/recipe-runner.ts` 的 `pending` 分支），循环才真的能跑满 `maxPages` 轮。\n\n**最后一轮必须抛，不能再让。** 让到底就是把一次真失败变成一次安静的 0 条。",
+      "kind": "evaluate",
+      "itemsAt": "items",
+      "cursorField": "cursor",
+      "pageSize": 1,
+      "maxPages": 5,
+      "call": "async (cursor, num, params) => { const P = '/aweme/v1/web/aweme/detail/'; const ATTEMPTS = 5; const attempt = cursor ? Number(cursor) : 1; const last = attempt >= ATTEMPTS; const sameSite = (n) => { try { const h = new URL(n).hostname; return h === 'douyin.com' || h.endsWith('.douyin.com'); } catch (e) { return false; } }; const scene = () => { let eps = []; try { eps = [...new Set(performance.getEntriesByType('resource').map(x => x.name).filter(n => n.indexOf('/aweme/v1/web/') > -1).map(n => n.split('?')[0].replace('https://', '')))].slice(0, 10); } catch (e) { eps = ['<perf 读不到>']; } return ' | 落地页 ' + location.href + ' | 这一页发过的 aweme 端点：' + (eps.length ? eps.join(' , ') : '一个都没有'); }; const again = (why) => { if (last) throw new Error('douyin-detail: ' + ATTEMPTS + ' 轮都没取到（最后一次：' + why + '）' + scene()); return { items: [], cursor: String(attempt + 1), pending: true }; }; const names = performance.getEntriesByType('resource').map(x => x.name).filter(n => n.indexOf('/aweme/v1/web/') > -1 && sameSite(n)); const pick = (list) => list.filter(n => n.indexOf('//www.douyin.com/') > -1)[0] || list[0]; const ownTmpl = pick(names.filter(n => n.indexOf(P) > -1)); const genTmpl = pick(names.filter(n => n.indexOf(P) < 0)); const aid = (location.pathname.match(/\\/video\\/(\\d{6,})/) || [])[1]; const tmpl = ownTmpl || (aid ? genTmpl : null); if (!tmpl) return again(aid ? '这一页还没发过任何 aweme 请求——没有可抄的设备参数模板' : '落地页不是 /video/<id>，而且页面也没发过 detail 请求——短链可能没跟完跳转，或这不是一条作品'); let mod = null; for (const ck of Object.keys(window)) { if (ck.indexOf('webpackChunk') !== 0) continue; const chunk = window[ck]; if (!chunk || typeof chunk.push !== 'function') continue; let req; try { chunk.push([[Math.random()], {}, r => req = r]); } catch (e) { continue; } if (!req || !req.m) continue; for (const id of Object.keys(req.m)) { let s; try { s = req.m[id].toString(); } catch (e) { continue; } if (s.includes('window.axiosInstance=') && s.includes('skipCheckCode')) { mod = req(id); break; } } if (mod) break; } if (!mod) return again('signed-request module not found in any webpackChunk global（页面还没加载完，或 webpack 布局变了）'); const send = Object.keys(mod).map(k => mod[k]).find(f => { try { return typeof f === 'function' && f.toString().includes('window.axiosInstance='); } catch (e) { return false; } }); if (!send) return again('signed-request fn not found in module'); const q = new URLSearchParams(tmpl.split('?')[1]); const dropSig = ['a_bogus', 'msToken', 'verifyFp', 'fp', 'X-Bogus', '_signature', 'timestamp', 'x-secsdk-web-signature']; const dropEndpoint = ['aweme_id', 'spot_keys', 'cursor', 'count', 'max_cursor', 'sec_uid', 'sec_user_id', 'source', 'room_id']; const drop = ownTmpl ? dropSig : dropSig.concat(dropEndpoint); const base = {}; q.forEach((v, k) => { if (drop.indexOf(k) < 0) base[k] = v; }); const extra = ownTmpl ? {} : { aweme_id: aid, request_source: '600', origin_type: 'video_page', version_code: '190500', version_name: '19.5.0' }; let body; try { body = await Promise.race([send(P, Object.assign({}, base, extra), {}), new Promise((_, rej) => setTimeout(() => rej(new Error('8s 没落地——多半是验证码遮罩把 promise 吞了')), 8000))]); } catch (e) { return again(String(e && e.message || e)); } if (!body || body.status_code !== 0) return again('aweme/detail refused status_code=' + (body && body.status_code) + ' body=' + JSON.stringify(body).slice(0, 300)); const a = body.aweme_detail; if (!a || !a.aweme_id) { const fd = body.filter_detail || {}; const said = String(fd.detail_msg || fd.notice || '').trim(); return { items: [{ guid: aid || (fd.aweme_id ? String(fd.aweme_id) : 'unavailable'), unavailable: said || '作品被删 / 私密 / 仅粉丝可见' }], cursor: '' }; } const av = a.author || {}; const th = (av.avatar_thumb && av.avatar_thumb.url_list) || []; return { items: [{ guid: a.aweme_id, title: a.desc, link: 'https://www.douyin.com/video/' + a.aweme_id, author: av.nickname, author_avatar: th[0], pubDate: a.create_time, douyin: a }], cursor: '' }; }",
+      "pendingField": "pending",
+      "_why_max_pages": "5 轮 × `minActionIntervalMs` 2000ms ≈ 最多多等 8s，加上进场 ~4s 仍在 `maxTaskMs` 30s 之内。这条路径上有人当场在等（点开一条视频），所以上限按「人能忍的那几秒」定，不按「等到天荒地老」。",
+      "_why_scene_in_error": "失败信息里带**现场**（落地页的 URL + 这一页实际发过的 `/aweme/v1/web/` 端点清单），不是只带一句猜测。原因：这条 recipe 的失败面全是「页面和我以为的不一样」——短链跟完跳转落到了别处、被重定向到登录 / 风控页、站方换了端点，三者的报错本来一模一样（都是「没等到 aweme/detail」），而分辨它们要再跑一整轮活体才看得到页面。把现场编进异常，一次失败就说清是哪一类。",
+      "_why_site_own_words": "**站方自己的那句话就在同一个回包里**（`filter_detail.detail_msg` / `notice`，例如「因作品权限或已被删除，无法观看，去看看其他作品吧」，还带一个机器可读的 `filter_reason`，活体 2026-09-23 读到 `status_deleted`）。带出来交给用户，比我们自己编一句「作品被删 / 私密 / 仅粉丝可见」准得多——那句话是三种情况的并集，等于什么都没说。站方没给话时才回落到那句并集。\n\n（容器时代这句话要额外打一发 `fetch_one_video` 才拿得到，那条探针已随容器路一起删掉；现在它是**本来就在手里**的东西，不取白不取。）",
+      "_why_two_templates": "**不等页面自己那一发 `aweme/detail`。** 等它是这条 recipe 之前最大的延迟来源，也是最大的失败来源：活体 2026-09-23 同一条链接，一趟 5.1s 就绪、一趟等了 22s（整趟 25s，把 MCP 那侧的超时都撑爆了），还有几趟等满 5 轮直接失败。\n\n所以现在有两条路，第一条在就走第一条：\n① **页面自己那一发 detail**（`ownTmpl`）——参数最贴，原样抄、只删一次性签名值。\n② **任意一发 `/aweme/v1/web/*` 请求**（`genTmpl`，实测常是 `mix/listcollection`，页面一加载就发）+ 我们自己补端点参数（`aweme_id` 从落地页 pathname 里读，外加 `request_source` / `origin_type` / `version_code` / `version_name` 四格，抄自活体观察到的那一发）。这一条**既覆盖 deleted 作品页（它不一定发 detail），也把常态延迟压回一轮**。\n\n两条都活体验过（2026-09-23，只等 1.2s）：删掉的那条回 `status_code 0` + `filter_reason: status_deleted`；活着的那条回 `aweme_detail` + 3 条 play_addr。\n\n**`drop` 两条路不一样**：走 ① 时只能删签名值（`aweme_id` 正是我们要的那一格，删了就问了个空）；走 ② 时还要删掉模板自带的端点参数（那是**别人的** cursor / count / sec_uid），再由 `extra` 显式补上。",
+      "_why_template_host": "**按主机名判自家，别按字符串包含。** 活体 2026-09-23：有时只有 `www-hj.douyin.com` 发了 `aweme/detail`，而 `'www-hj.douyin.com'.indexOf('www.douyin.com')` 是 -1——按包含挑模板，那一趟一个都挑不到、5 轮全让完，报「页面没发 detail」，而页面好好的。优先取同源那一发（我们的调用走当前 origin），没有就取任意一个 douyin.com 子域的。",
+      "_why_unavailable_is_an_answer": "**「这条作品没了」是一个答案，不是一次采集失败——所以这里 `return`，不 `throw`。**\n\n活体 2026-09-23 的代价：之前这一格是抛异常，runner 把它判成 drift，`RepairLedger` 连吃三次就把**整个源隔离**了。表现极坏——连着试同一条已删除的链接，第 1–3 次如实说「作品已删除」，第 4 次起**秒回**、而且换了一句毫不相干的「recipe 跑完了但产出是空的」；此后**任何**抖音链接都是这句话，直到有人去清账。一条早就被删的视频，把整条能力拖下水。\n\n现在它走正常产出：一条带 `unavailable` 的条目，整趟 `ok`（健康账干净、不进隔离），由 `douyin-detail.ts` 把它翻成 `ContentUnavailableError` —— 调用点据此回 404 而不是 502。\n\n判据：**站方答了**（`status_code: 0`）就不是我们这条链路的故障，哪怕它答的是「没了」。真正该判 drift 的是「站方没答 / 答不上来」——那几档仍然走 `again()` 与最后的 throw。"
+    }
+  ],
+  "_why_observers_empty": "**空数组不是省略**：canonical browser recipe 的校验要求 `steps` 和 `observers` 两个数组都在场（少一个就被当成 V1 形状，报「requires a harvest object」）。这份 recipe 的条目全部由 evaluate step 自己产出，一个观察者都不需要——理由见 steps[0] 的 `_why_no_network_observer`（回包里条目是对象不是数组，network observer 接不住）。",
+  "observers": [],
+  "_why_output_identity": "evaluate step 已经把 aweme 摊成了 DataItem 的形状，所以这里是恒等映射；`douyin` 那一格是**整条 aweme 自己**（`video.play_addr` / `images` / `statistics` 都在里面），解析成员与抓媒体成员吃的就是它。字段名与 `douyin-collection` 逐条对齐——两条 recipe 的产物流进同一个 `douyin` normalizer，分家了只会让其中一条静默少几格。 `unavailable` 那一格只有「作品没了」那条产出会带（站方自己的判词），正常条目没有它——`douyin-detail.ts` 按它在不在分流，所以两边必须同时有这一格，少一边就只剩一条没有任何媒体的「成功」。",
+  "output": {
+    "itemsAt": "items",
+    "dedupeBy": "guid",
+    "targetCount": 1,
+    "mapping": {
+      "guid": "guid",
+      "title": "title",
+      "link": "link",
+      "author": "author",
+      "author_avatar": "author_avatar",
+      "pubDate": "pubDate",
+      "douyin": "douyin",
+      "unavailable": "unavailable"
+    }
+  },
+  "_why_policy": "`minActionIntervalMs` 在这条 recipe 里兼着重试之间那个等待器（见 steps[0] 的 `_why_retry_loop`）：`runEvaluateStep` 每轮之间睡 `max(minActionIntervalMs, 900+抖动)`，而这个睡在**页外**（Node 侧），不受后台标签把 setTimeout 钳到 1 秒一跳的影响。2000ms × 最多 5 轮 ≈ 8s。`maxTaskMs` 30s 与 xhs-detail 同档——同样是人在等。",
+  "policy": {
+    "minActionIntervalMs": 2000,
+    "maxTaskMs": 30000
+  },
+  "meta": {
+    "auth": {
+      "type": "session",
+      "facility": "douyin",
+      "login": "cookie",
+      "cookieDomain": "douyin.com"
+    },
+    "normalizer": "douyin",
+    "type": "post",
+    "title": "抖音作品详情",
+    "description": "一条抖音作品的详情 · 登录态浏览器打开作品页，在页内调站点自己的签名客户端取 aweme/detail（play_addr / 图集 / 作者 / 发布时间）",
+    "topics": [
+      "douyin",
+      "抖音",
+      "作品",
+      "详情",
+      "video"
+    ],
+    "categories": [
+      "video"
+    ],
+    "facility": {
+      "key": "douyin",
+      "label": "抖音"
+    },
+    "capabilities": [
+      "anchor"
+    ],
+    "priority": 80,
+    "discoverable": false,
+    "cadence_hint_seconds": 3600,
+    "homepage": "douyin.com",
+    "params_schema": {
+      "url": {
+        "type": "string",
+        "required": true,
+        "description": "作品链接（www.douyin.com/video/<id> / v.douyin.com 短链 / iesdouyin.com 分享链接都行，浏览器自己跟跳转）"
+      }
+    }
+  }
+}

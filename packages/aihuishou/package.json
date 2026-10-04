@@ -1,0 +1,25 @@
+{
+  "name": "@streamapp/aihuishou",
+  "version": "1.0.0",
+  "author": "stream",
+  "keywords": [
+    "stream-recipe"
+  ],
+  "stream": {
+    "type": "recipe",
+    "name": "爱回收",
+    "tagline": "二手回收 · 型号最高可卖价",
+    "facility": "aihuishou",
+    "schemaVersion": 1,
+    "_why_cookieDomain": "爱回收估价**不需要登录**，这一格填的是「这个包能走到哪些域」——装载器拿它卡 goto 的落点。填 aihuishou.com 以覆盖 m. 手机站。",
+    "cookieDomain": "aihuishou.com",
+    "_why_rateLimit": "一次购买决策会逐台查残值（4–10 台、每台最多 3 代），所以 burst 给到 12；持续每分钟 20 次以上就不像人在搜了。maxWaitMs 3000：残值格在 job 的并行取数里，桶空了等太久会拖整轮，3 秒排不上就如实回「这次没查成」，job 退到按买入价。perHour 是天花板不是闸门，没实测撞过墙。",
+    "rateLimit": {
+      "burst": 12,
+      "perMinute": 20,
+      "perHour": 200,
+      "maxWaitMs": 3000
+    }
+  },
+  "license": "Apache-2.0"
+}

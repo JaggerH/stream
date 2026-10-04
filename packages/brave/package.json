@@ -1,0 +1,26 @@
+{
+  "name": "@streamapp/brave",
+  "version": "1.0.0",
+  "author": "stream",
+  "keywords": [
+    "stream-recipe"
+  ],
+  "stream": {
+    "type": "recipe",
+    "name": "Brave",
+    "tagline": "网页搜索",
+    "facility": "brave",
+    "schemaVersion": 1,
+    "_why_cookieDomain": "Brave 搜索**不需要登录**，这一格填的不是「去哪儿取登录态」，而是「这个包能走到哪些域」——装载器拿它卡 goto 的落点（`src/replay/recipe-import.ts`：goto 的 host 必须落在 cookieDomain 之内，否则拒绝装载）。填 brave.com 而不是 search.brave.com，是因为它要覆盖 www/search 两个子域。",
+    "cookieDomain": "brave.com",
+    "_why_rateLimit": "和 google 那份同一个节奏、同一个理由：连着敲三次是正常的（burst 3），持续每分钟十次以上就不像人了（perMinute 10）。maxWaitMs 3000 是关键那条——这条腿长在对话热路径上（web_search 主腿的备胎），桶空了默认行为是「等」，等在对话里就是用户干瞪着 spinner；3 秒排不上就抛 RateLimitedError，梯子当场如实回一句「这次没查成」，不编结果。",
+    "_why_perHour": "**这个 100 不是量出来的，是照 google 那份抄的上限**（说明见 packages/google 的 _why_perHour：那边的 100 是实测撞墙点）。抄过来的理由是同一个出口：Google 累计打爆之后，同出口的 Brave 也跟着弹人机验证——所以 Brave 自己的累计量没有理由假定能更高。实际上它是备胎、只在 Google 那条腿断了时才跑，正常一小时远够不到 100，这一格是天花板不是闸门。哪天真在 Brave 上撞到拦截，就在这里改一个数、并把实测写进这段。",
+    "rateLimit": {
+      "burst": 3,
+      "perMinute": 10,
+      "perHour": 100,
+      "maxWaitMs": 3000
+    }
+  },
+  "license": "Apache-2.0"
+}

@@ -1,0 +1,77 @@
+{
+  "version": 2,
+  "kind": "fetch",
+  "sourceId": "reddit-sub",
+  "cookieDomain": "reddit.com",
+  "entryUrl": "https://www.reddit.com/r/{subreddit}/",
+  "entryWait": "domcontentloaded",
+  "request": {
+    "url": "https://www.reddit.com/r/{subreddit}/hot.json?limit=25&after={cursor}",
+    "method": "GET",
+    "headers": {
+      "accept": "application/json"
+    }
+  },
+  "pagination": {
+    "mode": "cursor",
+    "itemsAt": "data.children",
+    "cursorFrom": "data.after",
+    "cursorParam": "after",
+    "hasMore": "data.after",
+    "maxPages": 3
+  },
+  "assert": [
+    {
+      "path": "data.children",
+      "desc": "hot.json 返回 Listing data.children 数组 —— 登录墙 / IP 封锁 / 端点已变"
+    }
+  ],
+  "mapping": {
+    "guid": "data.id",
+    "title": "data.title",
+    "link": "https://www.reddit.com{data.permalink}",
+    "author": "data.author",
+    "like_count": "data.score",
+    "comment_count": "data.num_comments",
+    "pubDate": "data.created_utc",
+    "description": "data.selftext"
+  },
+  "meta": {
+    "type": "post",
+    "description": "Reddit — subreddit 热门帖流",
+    "topics": [
+      "reddit",
+      "subreddit",
+      "discussion",
+      "社区"
+    ],
+    "categories": [
+      "social-media"
+    ],
+    "facility": {
+      "key": "reddit",
+      "label": "Reddit"
+    },
+    "capabilities": [
+      "timeline"
+    ],
+    "key_param": "subreddit",
+    "priority": 80,
+    "discoverable": true,
+    "cadence_hint_seconds": 1800,
+    "auth": {
+      "type": "none"
+    },
+    "homepage": "reddit.com",
+    "params_schema": {
+      "subreddit": {
+        "type": "string",
+        "required": true,
+        "description": "subreddit 名称（如 selfhosted、LocalLLaMA）"
+      }
+    },
+    "radar": [
+      "reddit.com/r/:subreddit"
+    ]
+  }
+}

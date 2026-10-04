@@ -1,0 +1,76 @@
+# AList 的 source 声明。三条，分两类：
+#
+# **可订阅的 feed（discoverable:true）**——用户能在「添加来源」里挑到、加进一条订阅：
+#   - alist-audio  把某个网盘目录下的音频文件当成节目采进来。
+#
+# **内部能力（discoverable:false）**——它们不是 feed，只是被别的机制按 id 直接调用；
+# 露在浏览目录里只会让人挑到一个加进订阅也不会产出条目的东西：
+#   - alist-list  供绑定向导选目录、增量同步 diff 网盘目录；
+#   - alist-resolve 声明 provides:[netdisk-file]，作为 Provider 成员候选被选为播放兜底源
+#     （把网盘文件路径解析成临时直链；播放优先走网盘直链，官方源兜底）。
+#
+# 认证走 config alist_token / ALIST_TOKEN（adapter 内解析并注入 AlistClient），
+# 故 manifest 的 auth 为 none——没有 per-request 的用户登录流。
+- id: alist-list
+  adapter: alist
+  title: AList 目录浏览
+  description: 列出用户 AList 实例某路径下的文件；枚举网盘目录，供绑定向导选目录与增量同步 diff 新文件。
+  topics: [alist, 网盘, 目录, 文件, 枚举, netdisk, 夸克网盘, 阿里云盘, 百度网盘]
+  categories: [resource]
+  capabilities: [search]
+  auth: { type: none }
+  discoverable: false
+  cadence_hint_seconds: 3600
+  params_schema:
+    path:
+      type: string
+      required: false
+      description: AList 绝对路径，如 /夸克网盘/我的转存/某剧。默认根目录 /。
+  fixed_params: { mode: list }
+- id: alist-resolve
+  adapter: alist
+  title: AList 直链解析
+  description: 把 AList 里的一个文件路径解析成可直连播放的临时直链（raw_url）；作为播放兜底 Provider 成员，命中网盘映射时优先直链。
+  topics: [alist, 网盘, 直链, 播放, 解析, raw_url, netdisk, 后备, 兜底]
+  categories: [resource]
+  capabilities: [anchor]
+  auth: { type: none }
+  discoverable: false
+  cadence_hint_seconds: 3600
+  # provides 令本源出现在 netdisk-file 目标类型的 Provider 成员候选里（对齐 pansou 的
+  # provides:[search-download]）；key_param=path 表明解析键就是网盘文件路径。
+  provides: [netdisk-file]
+  key_param: path
+  params_schema:
+    path:
+      type: string
+      required: true
+      description: AList 绝对文件路径，如 /夸克网盘/我的转存/某剧/01.mp4。
+  fixed_params: { mode: resolve }
+- id: alist-audio
+  adapter: alist
+  # 这一条是**用户挑得到的入口**（唯一的 discoverable:true），文案照着「浏览目录里的一张卡」
+  # 写：说清它产出什么、什么时候该用它，不写实现口径。
+  # 不变量（不属于展示文案，所以留在注释里）：与网盘**绑定**正交，不做去重——同一个文件既被
+  # 这条源采成条目、又被绑定配到某一集上时不会互相察觉；不重复靠用户在网盘侧只放该来源独有
+  # 的文件保证。
+  title: 网盘目录（音频）
+  description: 把网盘某个目录下的音频文件直接当成节目采进来——源站没有的那些（已下架、独家、自己转存的）走它。填一个目录路径即可，此后目录里新增的文件会在下次采集时进来。
+  topics: [alist, 网盘, 音频, 播客, 歌单, 目录, 下架, netdisk, 夸克网盘, 阿里云盘, 百度网盘]
+  categories: [resource]
+  capabilities: [search]
+  auth: { type: none }
+  discoverable: true
+  normalizer: alist
+  cadence_hint_seconds: 86400
+  params_schema:
+    path:
+      type: string
+      required: true
+      # widget 是**通用机制**：声明「这个字符串参数用哪种控件填」，前端 SourceParamField
+      # 照登记表挑控件（见那里的 PARAM_WIDGETS）。哪个网盘、哪条路径是站点知识，留在这里；
+      # 「可以用目录选择器填」是机制，留在前端。没有它这个参数就退成纯文本框，用户得手敲
+      # `/quark/来自：分享/播客付费节目合集/春典 JARGON` 这种路径。
+      widget: netdisk-dir
+      description: AList 绝对目录路径，如 /夸克网盘/怡乐下架。目录下的音频文件会被采成条目。
+  fixed_params: { mode: audio }

@@ -1,0 +1,25 @@
+{
+  "name": "@streamapp/goofish",
+  "version": "1.0.0",
+  "author": "stream",
+  "keywords": [
+    "stream-recipe"
+  ],
+  "stream": {
+    "type": "recipe",
+    "name": "闲鱼",
+    "tagline": "二手交易 · 型号挂牌价",
+    "facility": "goofish",
+    "schemaVersion": 1,
+    "_why_cookieDomain": "闲鱼搜索**必须登录**（游客态永远「加载中」、弹登录框）；这一格既是「去哪儿取登录态」也是「这个包能走到哪些域」。填 goofish.com 覆盖 www / h5api 两个子域。",
+    "cookieDomain": "goofish.com",
+    "_why_rateLimit": "一次购买决策逐台查残值（4–10 台、每台最多 3 代），burst 给到 12；持续每分钟 20 次以上不像人在搜。阿里系风控敏感，maxWaitMs 3000：排不上就如实回「这次没查成」，别硬顶。",
+    "rateLimit": {
+      "burst": 12,
+      "perMinute": 20,
+      "perHour": 150,
+      "maxWaitMs": 3000
+    }
+  },
+  "license": "Apache-2.0"
+}

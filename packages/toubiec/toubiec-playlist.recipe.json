@@ -1,0 +1,49 @@
+{
+  "version": 1,
+  "kind": "http",
+  "sourceId": "toubiec-playlist",
+  "request": {
+    "url": "https://nextmusic.toubiec.cn/api/playlist_trackall",
+    "method": "POST",
+    "headers": { "content-type": "application/json" }
+  },
+  "compute": {
+    "capabilities": [],
+    "prefetch": [
+      { "as": "ipResp", "request": { "url": "https://nextmusic.toubiec.cn/api/ip", "method": "GET" } }
+    ],
+    "sign": "(() => { const ip = (input.pre.ipResp && input.pre.ipResp.data && input.pre.ipResp.data.ip) || '0.0.0.0'; return { body: JSON.stringify({ id: String(input.params.id), limit: 1000, offset: 0, ip }) }; })()"
+  },
+  "pagination": { "mode": "increment", "param": "page", "start": 1, "step": 1, "itemsAt": "data.songs", "maxPages": 1 },
+  "assert": [{ "path": "data.songs", "desc": "toubiec playlist_trackall returned data.songs[] (one request, full list)" }],
+  "mapping": {
+    "guid": "id",
+    "title": "name",
+    "author": "singer",
+    "link": "https://music.163.com/song?id={id}",
+    "description": "album",
+    "image": "picimg",
+    "pubDate": "time"
+  },
+  "meta": {
+    "normalizer": "rsshub",
+    "type": "post",
+    "title": "歌单曲目",
+    "description": "toubiec 网易云解析 — 歌单曲目（整份名单一次取回；每首歌的文件地址在播放/下载时由 netease-track 现解）",
+    "topics": ["toubiec", "网易云", "音乐", "歌单", "music", "netease"],
+    "categories": ["music"],
+    "facility": { "key": "toubiec", "label": "toubiec" },
+    "capabilities": ["timeline"],
+    "mode": "collection",
+    "key_param": "id",
+    "priority": 80,
+    "discoverable": true,
+    "cadence_hint_seconds": 86400,
+    "auth": { "type": "none" },
+    "homepage": "wyapi.toubiec.cn",
+    "params_schema": {
+      "id": { "type": "string", "required": true, "description": "网易云歌单 ID（取自 music.163.com/playlist?id=…）" }
+    },
+    "radar": ["music.163.com/playlist"]
+  }
+}

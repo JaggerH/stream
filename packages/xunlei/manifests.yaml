@@ -1,0 +1,13 @@
+# 迅雷字幕搜刮：宿主 `subtitle-search` 行按 `provides: [search-subtitle]` 自动收进来（宿主不点名）。
+# 执行后端是本包代码槽位里的 `xunlei-subtitle` adapter。
+- id: xunlei-subtitle
+  adapter: xunlei-subtitle
+  title: 迅雷字幕
+  description: 按视频文件名查迅雷字幕库（零注册）。接口匹配宽松，本包按 SxxExx 严格过滤防串台。
+  topics: [字幕, subtitle, 迅雷]
+  categories: [subtitle]
+  capabilities: [search]
+  provides: [search-subtitle]
+  auth: { type: none }
+  discoverable: false
+  cadence_hint_seconds: 3600

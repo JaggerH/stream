@@ -1,0 +1,43 @@
+# OMDb 影视元数据 / 海报：宿主 `video-metadata` / `video-images` 两行的成员（TMDb 优先、OMDb 补空——顺序
+# 是宿主的判断，写在 src/providers/system/video-{metadata,images}.ts）。执行后端是本包代码槽位里的 `omdb` adapter，
+# `fixed_params.mode` 告诉它是哪一个源。
+- id: omdb-metadata
+  adapter: omdb
+  title: OMDb 元数据
+  description: OMDb 影片/剧集查询，按 IMDb ID 或标题年份补充标准化元数据；video-metadata Provider 的成员。
+  topics: [omdb, imdb, 影视, 电影, 剧集, 元数据]
+  categories: [video]
+  capabilities: [anchor]
+  auth: { type: none }
+  discoverable: false
+  cadence_hint_seconds: 3600
+  runtime_config:
+    ref: omdb
+    fields:
+      apiKey:
+        type: secret
+        label: OMDb API Key
+        required: true
+        description: 免费计划每日 1,000 次请求；填写邮箱后按邮件链接激活。
+        helpUrl: https://www.omdbapi.com/apikey.aspx
+  fixed_params: { mode: omdb-metadata }
+- id: omdb-images
+  adapter: omdb
+  title: OMDb 图片
+  description: OMDb 影片/剧集查询，返回 OMDb 海报候选；video-images Provider 的成员。
+  topics: [omdb, imdb, 影视, 海报, 图片]
+  categories: [video]
+  capabilities: [anchor]
+  auth: { type: none }
+  discoverable: false
+  cadence_hint_seconds: 3600
+  runtime_config:
+    ref: omdb
+    fields:
+      apiKey:
+        type: secret
+        label: OMDb API Key
+        required: true
+        description: 免费计划每日 1,000 次请求；填写邮箱后按邮件链接激活。
+        helpUrl: https://www.omdbapi.com/apikey.aspx
+  fixed_params: { mode: omdb-images }

@@ -1,0 +1,51 @@
+{
+  "name": "@streamapp/alist",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "bundle": "node ../../scripts/bundle-code-packages.mjs .",
+    "prepack": "node ../../scripts/assert-npm-artifact.mjs"
+  },
+  "files": [
+    "dist",
+    "*.recipe.json",
+    "manifests.yaml",
+    "README.md"
+  ],
+  "stream": {
+    "id": "alist",
+    "name": "OpenList",
+    "tagline": "网盘聚合，转存内容直链播放",
+    "description": "内置 OpenList 实例（AList 的社区维护分支，同一套 /api；支持夸克、阿里云盘、百度网盘等 40+ 存储）， 把转存的播单内容变成可直链播放的后备源。播放优先走网盘直链，官方源兜底。 全默认配置：bootstrap 自动接管 admin 凭证，挂载网盘只需浏览器登录过。 ALIST_URL / ALIST_TOKEN env 仅作指向外部实例的调试逃生门，不出现在 UI。",
+    "repository": "https://github.com/OpenListTeam/OpenList",
+    "_why_image": "OpenList 不是 AList：2025-06 AList 易主后社区分出的 fork，/api 与 v3 逐端点一致（client 零改动），且内置只读 MCP（/mcp：fs.list / fs.get / fs.link）。选它是分发考虑——这个包会装到别人机器上。容器以 UID 1001 跑、启动时检查 data 目录可写，从 xhofe/alist 卷迁过来要先 chown 1001:1001 一次。",
+    "backend": {
+      "image": "openlistteam/openlist:latest",
+      "service": "alist",
+      "port": 5244,
+      "health": "/ping",
+      "env": {
+        "MCP_ENABLE": "true"
+      },
+      "volumes": [
+        "alist-data:/opt/openlist/data"
+      ],
+      "_why_user": "全新的 alist-data 命名卷是 root 属主，镜像以 UID 1001 跑、入口只查权限不 chown，容器秒退。以 root 起是最省的一条路（网盘 DSH 插件的 managed 档同样这么做）；本机单用户、卷只挂自己的数据，root 与否没有实际安全差别。",
+      "user": "0:0",
+      "standby": {
+        "idleMinutes": 240
+      }
+    },
+    "code": {
+      "entry": "dist/index.js",
+      "adapters": [
+        "alist"
+      ],
+      "normalizers": [
+        "alist"
+      ]
+    }
+  },
+  "license": "Apache-2.0"
+}

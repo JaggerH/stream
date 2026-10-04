@@ -1,0 +1,11 @@
+- id: netease-lyrics
+  adapter: netease-lyrics
+  title: 网易云歌词
+  description: 按已知曲目 id 或 (title, artist) 模糊匹配查网易云歌词；lyrics-search Provider 按 lyrics 类目自动收它。
+  topics: [netease, 网易云, 音乐, 歌词]
+  categories: [music, lyrics]
+  capabilities: [anchor]
+  auth: { type: none }
+  discoverable: false
+  cadence_hint_seconds: 3600
+  key_param: input

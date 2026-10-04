@@ -1,0 +1,74 @@
+{
+  "version": 1,
+  "kind": "browser",
+  "sourceId": "zhipu-create-key",
+  "cookieDomain": "bigmodel.cn",
+  "entryUrl": "https://bigmodel.cn/apikey/platform",
+  "entryWait": "load",
+  "loginCheck": {
+    "loggedIn": ".api-keys .header-right button",
+    "wall": "a[href*='/login']"
+  },
+  "session": {
+    "facility": "zhipu",
+    "lifecycle": "one-shot",
+    "visibility": "interactive"
+  },
+  "_selectors_verified": "2026-07-30 活体重定于 bigmodel.cn/apikey/platform（Element-UI，全站无 data-testid，只能靠语义祖先收敛）。这一页有两处「第一个命中就是错的」：(1) button.el-button--primary 命中 2 个，第一个是页面预渲染、不可见的「确 定」——所以开弹窗必须走 .api-keys .header-right 这个祖先；(2) 弹窗里 .el-message-box .el-button--default 命中 2 个，第一个是「取消」——确定键靠 --primary 区分。别用 data-v-* 属性做选择器：那是 Vue scoped-style 的构建哈希，站方重新发布就变。",
+  "_why_last_child": "新建的 key **追加在表尾**（列表按创建时间升序，实测两行：默认项目 2026-06-18 在前，新建的在后）。所以复制图标定位在 tr:last-child——不是第一行。",
+  "steps": [
+    {
+      "kind": "click",
+      "selector": ".api-keys .header-right button",
+      "expect": { "selector": ".el-message-box input.el-input__inner", "timeout": 10000 }
+    },
+    { "kind": "type", "selector": ".el-message-box input.el-input__inner", "text": "{name}" },
+    {
+      "_why_countIncreases": "这一步的判据只能是「表格多了一行」。第一版写的是「最后一行有复制图标」——**恒真**：列表里本来就有旧 key，那图标一直都在。于是「确定」根本没建成也照样判过，下一步点到旧那行的复制按钮上，失败最后以两步之外的「抽取命中 0 处」露面。四步全绿、结果全错。",
+      "kind": "click",
+      "selector": ".el-message-box__btns button.el-button--primary",
+      "expect": { "selector": ".el-table__body tr", "countIncreases": true, "errorSurface": ".el-message, .el-notification", "timeout": 15000 }
+    },
+    {
+      "_why": "明文只有这一下能拿到：列表接口返回的是**服务端掩码**（页面上永远是 be11...dE4X），点复制才会打 /api_keys/copy/<id> 单独取一次明文塞进剪贴板。实测点击前后 performance 资源记录只多出这一条请求——所以观察口就钉在它上面。",
+      "kind": "click",
+      "selector": ".el-table__body tr:last-child i.icon-wdapp_copy"
+    }
+  ],
+  "_why_no_observers": "本 recipe 一条 item 都不产，全部产出就是那把 key。凭证的捕获**不用**在这里声明 observer——引擎按 extract.from.network 的 glob 自己挂一份只捕获不累积的。曾经在这里挂过一个，结果它进了 items 管线、抓到的响应被空 output 判成 malformed → drift，drift 又盖住了 extract 的真实结论。",
+  "observers": [],
+  "output": { "itemsAt": "", "dedupeBy": "", "targetCount": 0, "mapping": {} },
+  "allowEmpty": true,
+  "extract": {
+    "field": "apiKey",
+    "pattern": "[0-9a-f]{32}\\.[A-Za-z0-9]{16}",
+    "from": { "network": "*/api_keys/copy/*" },
+    "timeout": 20000
+  },
+  "meta": {
+    "description": "在 bigmodel.cn 自助建一把 API key，并把只经剪贴板露面的明文落进 runtime_config（不产 item）",
+    "discoverable": false,
+    "_why_pick_in": "两个选择面都不出现——配置流程：用户在场自助建 key",
+    "pick_in": [],
+    "capabilities": ["anchor"],
+    "facility": { "key": "zhipu", "label": "智谱 BigModel" },
+    "params_schema": {
+      "name": {
+        "type": "string",
+        "required": true,
+        "description": "key 名。带一段随机后缀（如 stream-auto-7f3a）——建 key 不幂等，重跑会堆出一排看不出区别的同名 key"
+      }
+    },
+    "runtime_config": {
+      "ref": "zhipu",
+      "fields": {
+        "apiKey": {
+          "type": "secret",
+          "label": "智谱 API Key",
+          "description": "总结梯子与 OCR 梯子的智谱成员用它（GLM-4.7-Flash / GLM-4V-Flash 永久免费档）。可以手填，也可以让本 recipe 自己去建一把填进来。",
+          "helpUrl": "https://bigmodel.cn/apikey/platform"
+        }
+      }
+    }
+  }
+}

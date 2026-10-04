@@ -1,0 +1,116 @@
+{
+  "version": 3,
+  "kind": "browser",
+  "cookieDomain": "photopea.com",
+  "_why_cookieDomain": "Photopea 免费版不用登录，这一格只是浏览器 recipe 的必填项：它决定 lane 落在哪个站、cdp 的 domain 核对用哪个域。填裸域覆盖 www。",
+  "entryUrl": "https://www.photopea.com/api/",
+  "_why_entryUrl": "故意不落 photopea.com 首页：顶层的 Photopea **不听 postMessage**（脚本 API 只在被嵌成 iframe 时才接线，实测 2026-09-19：顶层 postMessage 只收到自己的回声，`app` 也不是全局）。所以 recipe 在一张**同源的轻页**（/api/ 是 9KB 的静态文档页）里自己嵌一个 photopea.com 的 iframe，从顶层 postMessage 驱动它、收它 postMessage 回来的 ArrayBuffer。同源是关键：跨源的宿主页收不到 iframe 的 `source` 比对、也没法 `contentWindow` 直投；用 Stream 自己的页面就得再过 CORS/信任源那道门，白多一层。",
+  "entryWait": "load",
+  "rideCurrentPage": true,
+  "_why_rideCurrentPage": "persistent lane 默认「已在入口页也重载」（上一轮的渲染视为过期），可这里页面上什么都不读——真正的状态是 evaluate 自己注入的那个热 iframe（Photopea 冷载要 2–20s，热的 4s 内应一声就复用）。骑着当前页不重载，iframe 就能跨轮活着；冷启时 lane 直接落在 entryUrl（runner 见 session-recipe-executor.ts 的 landing）。",
+  "loginCheck": {
+    "loggedIn": "body",
+    "wall": "#stream-photopea-never-wall",
+    "_why": "Photopea 没有登录墙：loggedIn 填 body（页面在就算登着），wall 填一个永远不存在的 id。这两格是 BrowserRecipe 的必填结构，不是这里真的在判登录。"
+  },
+  "session": {
+    "facility": "photopea",
+    "lifecycle": "persistent",
+    "visibility": "unattended",
+    "keepAlive": true
+  },
+  "_why_session": "所有 photopea-* 共用一条 lane、一张标签，**常驻**（keepAlive：不闲置回收、撞墙也不关）：每重开一次就是一次 ~10MB 的整页加载，开得勤了 photopea.com 会掐连接（ERR_CONNECTION_CLOSED）/ 出真人验证；而且跑完的 PSD 就留在这张标签里给人看、给人改。iframe 常热、铺满标签。unattended：整段是 postMessage + 页内 canvas，没有一次可信输入，后台标签照跑。后台标签的定时器被节流到 ≥1s 一跳，所以脚本里凡是等，都等事件（message）不轮询。",
+  "observers": [],
+  "policy": {
+    "minActionIntervalMs": 0,
+    "maxTaskMs": 120000
+  },
+  "sourceId": "photopea-cutout",
+  "_why": "在 Photopea（免费网页版 PS）里按**边线**抠白底：魔棒点背景（容差 + 连续）→（可选）从选区里减掉 keep 多边形护住已知的材质区域 → 删除选区 → 导出透明 PNG。为什么不用阈值抠：阈值把「近白且连到边」的像素一律置透明，不锈钢的高光、亮面被一起抠掉、材质破损（2026-09-19 用户在 counter-fit 上撞过）。魔棒本质也是阈值泛洪，但 (1) 只从种子点连通生长、(2) 边缘抗锯齿出半透明像素、(3) keep 多边形能把已知材质圈出来，让泛洪停在边线上。实测 不锈钢柜台03（2048×775）：容差 24、种子 (4,4)、不带 keep，导出图台面前沿那条纯白高光线（y 654–658）完整保住，腿的亮面也没被吃；带一个贴着轮廓内缩 3px 的 keep 多边形只多保住 44 个像素——keep 是保险，不是必需。",
+  "_why_action": "没有账号、没有副作用，但它是「跑一次做一件事」的动作形状（不是采集），只经 run_action_recipe / POST /api/recipes/action 跑；二次确认是那条口的统一规矩，这里不另开口子。",
+  "steps": [
+    {
+      "kind": "evaluate",
+      "_why": "整段一页跑完（实测 1–2s，远在 relay 一次求值 30s 上限之内；图大到几十 MB 才会撞）。驱动 Photopea 的每一段脚本都在末尾追加一句 echoToOE(随机标记)、等那个标记回来——**不等 `done`**：Photopea 的 `done` 在 `app.open` / `documents.add` 这类异步动作上会先于动作完成发出（实测 echo 出现在 done 之后），而脚本抛错时 Photopea **既不报错也不发 done**（表现是永远没有回音），所以每段都带超时并把已收到的回音抛出来。魔棒走 Photoshop 动作描述符 `setd`（Photopea 的 executeAction 认它；`AddT` 加选、`Trnf` 变换都不认，脚本会静默死掉），选区的 bounds 元素是 UnitValue、要取 `.value`。文档就绪靠轮询 `app.documents.length`（一段小脚本一问），不靠 done。导出的 ArrayBuffer 在顶层转 base64 放进 items[0].data 回宿主，宿主按 output.files 落盘、回执里换成路径（`items[0].file`）。",
+      "call": "async (cursor, num, params) => {\n  if (location.hostname !== 'www.photopea.com') throw new Error('[photopea-cutout] 这张标签没连上 photopea.com（现在是 ' + location.href.slice(0, 60) + '，多半是连接被掐断）：去那张标签按一次刷新，别关它');\n  if (window._cf_chl_opt || /请稍候|Just a moment|安全验证/.test(document.title + ' ' + (document.body ? document.body.innerText.slice(0, 200) : ''))) throw new Error('[photopea-cutout] Photopea 标签停在 Cloudflare 真人验证页：去那张「Photopea API」标签点一下验证（只需一次，标签常驻不关），再跑');\n  const sleep = ms => new Promise(r => setTimeout(r, ms));\n  const image = String(params.image || '');\n  if (!image.startsWith('data:image/')) throw new Error('[photopea-cutout] image 要是 data:image/... 的 data URL');\n  const tolerance = Math.max(0, Math.min(255, Number(params.tolerance || 24)));\n  const seeds = String(params.seed || '4,4').split(';').map(s => s.split(',').map(Number)).filter(p => p.length === 2 && p.every(Number.isFinite));\n  if (!seeds.length) throw new Error('[photopea-cutout] seed 要写成 \"x,y\"（多个用分号隔开）');\n  const contiguous = String(params.contiguous || 'true') !== 'false';\n  let keep = []; if (params.keep) { try { keep = JSON.parse(params.keep); } catch (e) { throw new Error('[photopea-cutout] keep 不是合法 JSON: ' + e.message); } if (!Array.isArray(keep) || !keep.every(p => Array.isArray(p) && p.length >= 3)) throw new Error('[photopea-cutout] keep 要是 [[[x,y],...],...]（每个多边形至少 3 点）'); }\n  const format = String(params.format || 'png');\n  // —— Photopea 宿主：同源 iframe（photopea.com 顶层不听 postMessage，嵌成 iframe 才听）——\n  const ensureFrame = async () => {\n    let f = document.getElementById('pp');\n    if (f) { // 上一轮留下的热 iframe：应一声就复用，不应就换新的\n      const alive = await new Promise(res => { const h = e => { if (e.source === f.contentWindow && e.data === 'pong') { window.removeEventListener('message', h); res(true); } }; window.addEventListener('message', h); setTimeout(() => { window.removeEventListener('message', h); res(false); }, 4000); f.contentWindow.postMessage('app.echoToOE(\"pong\");', '*'); });\n      if (alive) return f;\n      f.remove();\n    }\n    f = document.createElement('iframe'); f.id = 'pp'; f.style.cssText = 'position:fixed;left:0;top:0;width:100vw;height:100vh;border:0;background:#fff;z-index:2147483647';\n    const ready = new Promise((res, rej) => { const h = e => { if (e.source === f.contentWindow && e.data === 'done') { window.removeEventListener('message', h); res(); } }; window.addEventListener('message', h); setTimeout(() => { window.removeEventListener('message', h); rej(new Error('[photopea-cutout] Photopea iframe 25s 没就绪')); }, 25000); });\n    f.src = 'https://www.photopea.com/#' + encodeURIComponent(JSON.stringify({ environment: {} }));\n    document.body.appendChild(f);\n    await ready;\n    return f;\n  };\n  const f = await ensureFrame();\n  // 跑一段 Photopea 脚本，等它最后一句 echo 的标记；二进制（saveToOE）顺手收下\n  const pp = (script, ms) => new Promise((res, rej) => {\n    const mark = 'ok#' + Math.random().toString(36).slice(2, 8); let bin = null; const got = [];\n    const h = e => { if (e.source !== f.contentWindow) return; if (e.data instanceof ArrayBuffer) { bin = e.data; return; } if (typeof e.data !== 'string') return; got.push(e.data); if (e.data === mark) { window.removeEventListener('message', h); clearTimeout(t); res({ bin, got }); } };\n    const t = setTimeout(() => { window.removeEventListener('message', h); rej(new Error('[photopea-cutout] Photopea 脚本 ' + ms + 'ms 内没跑完（脚本出错时 Photopea 不报错、只是没有回音）: ' + script.slice(0, 120) + ' | 收到: ' + got.join('/'))); }, ms);\n    window.addEventListener('message', h);\n    f.contentWindow.postMessage(script + '\\napp.echoToOE(' + JSON.stringify(mark) + ');', '*');\n  });\n  let B = 0; // 清完临时文档后已有的文档数（用户自己开着的）；本轮的文档从 app.documents[B] 起\n  const probe = async () => (await pp('app.echoToOE(\"docs=\" + app.documents.length);', 5000)).got.find(s => s.startsWith('docs='));\n  const waitDocs = async (n, ms) => { const t0 = Date.now(); for (;;) { const s = await probe(); if (s === 'docs=' + (B + n)) return; if (Date.now() - t0 > ms) throw new Error('[photopea-cutout] 等文档就绪超时，现在 ' + s + '，要 docs=' + n); await sleep(300); } };\n  await pp('for (var i = app.documents.length - 1; i >= 0; i--) if (String(app.documents[i].name).indexOf(\"~stream~\") === 0) app.documents[i].close();', 8000, '清掉上轮残留的临时文档');\n  B = Number(((await probe()) || 'docs=0').slice(5).split(' ')[0]) || 0;\n  await waitDocs(0, 8000);\n  await pp('app.open(' + JSON.stringify(image) + ');', 20000);\n  await waitDocs(1, 20000);\n  await pp('app.activeDocument.name = \"~stream~cutout\";', 5000);\n  // 魔棒 = Photoshop 动作描述符 setd（Photopea 的 executeAction 认它；AddT 不认，所以多个种子各自 setd 后靠 keep 多边形收口，不做并集）\n  const wand = (x, y) => 'var c = charIDToTypeID; var desc = new ActionDescriptor(); var ref = new ActionReference(); ref.putProperty(c(\"Chnl\"), c(\"fsel\")); desc.putReference(c(\"null\"), ref); var pt = new ActionDescriptor(); pt.putUnitDouble(c(\"Hrzn\"), c(\"#Pxl\"), ' + x + '); pt.putUnitDouble(c(\"Vrtc\"), c(\"#Pxl\"), ' + y + '); desc.putObject(c(\"T   \"), c(\"Pnt \"), pt); desc.putInteger(c(\"Tlrn\"), ' + tolerance + '); desc.putBoolean(c(\"AntA\"), true); desc.putBoolean(c(\"Cntg\"), ' + contiguous + '); executeAction(c(\"setd\"), desc, DialogModes.NO);';\n  const bounds = 'var b = d.selection.bounds; app.echoToOE(\"sel=\" + [b[0].value, b[1].value, b[2].value, b[3].value].join(\",\"));';\n  const sels = [];\n  for (const [x, y] of seeds) {\n    let script = 'var d = app.activeDocument; ' + wand(x, y) + ' ' + bounds;\n    for (const poly of keep) script += ' d.selection.select(' + JSON.stringify(poly) + ', SelectionType.DIMINISH);';\n    script += ' d.selection.clear(); d.selection.deselect();';\n    const r = await pp(script, 15000);\n    sels.push((r.got.find(s => s.startsWith('sel=')) || 'sel=?').slice(4));\n  }\n  const { bin, got } = await pp('var d = app.activeDocument; var L = d.layers[0]; app.echoToOE(\"layer=\" + [L.bounds[0].value, L.bounds[1].value, L.bounds[2].value, L.bounds[3].value].join(\",\")); app.echoToOE(\"size=\" + d.width + \"x\" + d.height); d.saveToOE(' + JSON.stringify(format) + ');', 20000);\n  if (!bin) throw new Error('[photopea-cutout] saveToOE 没回二进制: ' + got.join('/'));\n\n  const keepName = String(params.keep || '');\n  if (keepName) await pp('app.activeDocument.name = ' + JSON.stringify(keepName) + '; var kd = app.activeDocument; ' + 'for (var i = app.documents.length - 1; i >= 0; i--) if (String(app.documents[i].name).indexOf(\"~stream~\") === 0) app.documents[i].close();' + ' app.activeDocument = kd;', 8000, '留下结果');\n  else await pp('for (var i = app.documents.length - 1; i >= 0; i--) if (String(app.documents[i].name).indexOf(\"~stream~\") === 0) app.documents[i].close();', 8000, '收尾');\n  const u8 = new Uint8Array(bin); let s = ''; for (let i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000));\n  const pick = k => (got.find(x => x.startsWith(k + '=')) || '').slice(k.length + 1);\n  return { items: [{ guid: 'cutout-' + Date.now(), format, size: pick('size'), bounds: pick('layer'), selections: sels.join(';'), bytes: String(u8.length), data: btoa(s) }], cursor: '' };\n}",
+      "itemsAt": "items",
+      "cursorField": "cursor",
+      "maxPages": 1
+    }
+  ],
+  "output": {
+    "itemsAt": "items",
+    "dedupeBy": "guid",
+    "targetCount": 1,
+    "mapping": {
+      "guid": "guid",
+      "format": "format",
+      "size": "size",
+      "bounds": "bounds",
+      "selections": "selections",
+      "bytes": "bytes",
+      "file": "data"
+    },
+    "files": {
+      "file": {
+        "extFrom": "format"
+      }
+    },
+    "_why_files": "页内只能把导出的二进制编成 base64 交出来；这一格让宿主把它写成文件、`items[0].file` 换成绝对路径。不留 base64 在结果里：结果会原样落进 agent-runs.db，而账本拒收超过 1MB 的 result——一张导出图几十 MB，曾把账本撑到 2GB、开机 OOM。扩展名取 format（`jpg:0.8` 取冒号前）。",
+    "assert": [
+      {
+        "path": "items.0.data",
+        "desc": "没有拿到导出的图（Photopea 脚本没回二进制）"
+      }
+    ]
+  },
+  "meta": {
+    "action": true,
+    "effects": [],
+    "_why_effects": "不写用户的任何账号或站点：Photopea 只在浏览器内存里开一份文档、导出后就关；没有 write/send 可申报。",
+    "type": "post",
+    "title": "Photopea 抠白底",
+    "description": "在 Photopea 里用魔棒按边线抠掉白底（容差 + 连续 + 可选 keep 多边形护材质），回透明 PNG 的文件（`items[0].file` 是落盘后的绝对路径）。",
+    "facility": {
+      "key": "photopea",
+      "label": "Photopea"
+    },
+    "key_param": "image",
+    "discoverable": false,
+    "pick_in": [],
+    "member_timeout_ms": 120000,
+    "params_schema": {
+      "image": {
+        "type": "string",
+        "required": true,
+        "description": "要抠的图，data:image/png;base64,... 的 data URL（PNG/JPEG 都行）。"
+      },
+      "tolerance": {
+        "type": "string",
+        "required": false,
+        "description": "魔棒容差 0–255，默认 24。白底不是纯白（这批豆包图的白底 min 通道低到 240），低于 16 会漏抠出白斑；越高越可能吃进亮材质。"
+      },
+      "seed": {
+        "type": "string",
+        "required": false,
+        "description": "魔棒种子点 \"x,y\"，默认 \"4,4\"（左上角）。多个用分号隔开时逐个 setd（Photopea 不认加选），每个种子各清一遍。"
+      },
+      "contiguous": {
+        "type": "string",
+        "required": false,
+        "description": "\"true\"（默认）只抠与种子连通的背景；\"false\" 全图抠近白像素——只在背景被物体切成几块、又能用 keep 护住材质时才用。"
+      },
+      "keep": {
+        "type": "string",
+        "required": false,
+        "default": "",
+        "description": "跑完把导出的那份文档改成这个名字**留在标签里**给人看、给人改（不给 = 本轮的临时文档全关掉）。这张 Photopea 标签常驻、人和脚本共用：脚本只碰自己建的 ~stream~ 临时文档，你开着的文档不动；但别在脚本跑的那几秒里切文档。"
+      },
+      "format": {
+        "type": "string",
+        "required": false,
+        "description": "导出格式，默认 png（透明）；也可 \"psd\"。"
+      }
+    }
+  }
+}

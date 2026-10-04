@@ -1,0 +1,81 @@
+{
+  "version": 1,
+  "kind": "http",
+  "sourceId": "lizhi-user",
+  "request": {
+    "url": "https://m.lizhi.fm/vodapi/user/{id}?pageNo={page}&pageSize=30",
+    "method": "GET",
+    "headers": {
+      "User-Agent": "okhttp/4.12.0"
+    }
+  },
+  "pagination": {
+    "mode": "increment",
+    "param": "page",
+    "start": 1,
+    "step": 1,
+    "itemsAt": "data",
+    "maxPages": 40
+  },
+  "assert": [
+    {
+      "path": "data",
+      "desc": "vodapi/user returned a data[] array"
+    }
+  ],
+  "mapping": {
+    "guid": "voiceInfo.voiceId",
+    "track_id": "voiceInfo.voiceId",
+    "title": "voiceInfo.name",
+    "description": "voiceDetailProperty.text",
+    "link": "https://www.lizhi.fm/vod/{voiceInfo.voiceId}",
+    "author": "userInfo.name",
+    "pubDate": "voiceInfo.createTime",
+    "itunes_item_image": "voiceInfo.imageUrl",
+    "itunes_duration": "voiceInfo.duration",
+    "enclosure_url": "voicePlayProperty.trackUrl",
+    "price": "voiceExProperty.voicePrice"
+  },
+  "meta": {
+    "normalizer": "rsshub",
+    "type": "post",
+    "description": "荔枝 FM — 用户音频",
+    "topics": [
+      "荔枝",
+      "lizhi",
+      "播客",
+      "电台",
+      "podcast",
+      "音频"
+    ],
+    "categories": [
+      "podcast"
+    ],
+    "facility": {
+      "key": "lizhi",
+      "label": "荔枝 FM"
+    },
+    "capabilities": [
+      "timeline"
+    ],
+    "key_param": "id",
+    "priority": 90,
+    "discoverable": true,
+    "cadence_hint_seconds": 1800,
+    "auth": {
+      "type": "none"
+    },
+    "homepage": "lizhi.fm",
+    "params_schema": {
+      "id": {
+        "type": "string",
+        "required": true,
+        "description": "用户 id（荔枝 FM 用户主页 URL lizhi.fm/user/<id> 中的数字）"
+      }
+    },
+    "radar": [
+      "lizhi.fm/user/:id",
+      "www.lizhi.fm/user/:id"
+    ]
+  }
+}

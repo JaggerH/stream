@@ -1,0 +1,74 @@
+{
+  "version": 1,
+  "kind": "http",
+  "sourceId": "bt0-tlist",
+  "request": {
+    "url": "https://web2.mukaku.com/prod/api/v1/getTList?sc={sc}&page={page}&app_id=83768d9ad4&identity=23734adac0301bccdcb107c4aa21f96c",
+    "method": "GET"
+  },
+  "pagination": {
+    "mode": "increment",
+    "param": "page",
+    "start": 1,
+    "step": 1,
+    "itemsAt": "data.list",
+    "maxPages": 1
+  },
+  "assert": [
+    {
+      "path": "data.list",
+      "desc": "mukaku getTList returned data.list array"
+    }
+  ],
+  "mapping": {
+    "title": "zname",
+    "guid": "zname",
+    "link": "https://web2.mukaku.com{aurl}",
+    "description": "《{title}》 导演: {daoyan}<br>编剧: {bianji}<br>演员: {yanyuan}<br>简介: {conta}",
+    "pubDate": "eztime",
+    "enclosure_url": "zlink",
+    "itunes_item_image": "epic"
+  },
+  "meta": {
+    "normalizer": "rsshub",
+    "type": "post",
+    "description": "不太灵影视 — 最新资源列表",
+    "topics": [
+      "不太灵",
+      "影视",
+      "磁力",
+      "电影",
+      "电视剧",
+      "movie",
+      "bt"
+    ],
+    "categories": [
+      "multimedia"
+    ],
+    "facility": {
+      "key": "bt0",
+      "label": "不太灵影视"
+    },
+    "capabilities": [
+      "timeline"
+    ],
+    "key_param": "sc",
+    "priority": 80,
+    "discoverable": true,
+    "cadence_hint_seconds": 3600,
+    "auth": {
+      "type": "none"
+    },
+    "homepage": "mukaku.com",
+    "params_schema": {
+      "sc": {
+        "type": "string",
+        "required": true,
+        "description": "分类 1:电影 2:电视剧 3:近日热门 4:本周热门 5:本月热门"
+      }
+    },
+    "radar": [
+      "mukaku.com/tlist/"
+    ]
+  }
+}

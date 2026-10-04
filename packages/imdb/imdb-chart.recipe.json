@@ -1,0 +1,75 @@
+{
+  "version": 1,
+  "kind": "http",
+  "sourceId": "imdb-chart",
+  "request": {
+    "url": "https://api.graphql.imdb.com/",
+    "method": "POST",
+    "headers": {
+      "content-type": "application/json",
+      "x-imdb-user-country": "US",
+      "x-imdb-user-language": "en-US"
+    },
+    "body": "{\"query\":\"query Chart($chartType: ChartTitleType!, $first: Int!) { chartTitles(chart: { chartType: $chartType }, first: $first) { edges { currentRank node { id titleText { text } originalTitleText { text } titleType { text } releaseYear { year endYear } primaryImage { url caption { plainText } } ratingsSummary { aggregateRating voteCount } certificate { rating } plot { plotText { plainText } } titleGenres { genres { genre { text } } } } } } }\",\"variables\":{\"chartType\":\"{chart}\",\"first\":250}}"
+  },
+  "pagination": {
+    "mode": "increment",
+    "param": "page",
+    "start": 1,
+    "step": 1,
+    "itemsAt": "data.chartTitles.edges",
+    "maxPages": 1
+  },
+  "assert": [
+    {
+      "path": "data.chartTitles.edges",
+      "desc": "GraphQL returned chartTitles.edges array"
+    }
+  ],
+  "mapping": {
+    "guid": "node.id",
+    "title": "{currentRank}. {node.titleText.text}",
+    "description": "<img src=\"{node.primaryImage.url}\" /><br/>Original title: {node.originalTitleText.text}<br/>IMDb RATING: {node.ratingsSummary.aggregateRating}/10 ({node.ratingsSummary.voteCount})<br/><br/>{node.plot.plotText.plainText}",
+    "link": "https://www.imdb.com/title/{node.id}"
+  },
+  "meta": {
+    "normalizer": "rsshub",
+    "type": "post",
+    "description": "IMDb Charts",
+    "topics": [
+      "imdb",
+      "charts",
+      "movies",
+      "tv"
+    ],
+    "categories": [
+      "multimedia"
+    ],
+    "facility": {
+      "key": "imdb",
+      "label": "IMDb"
+    },
+    "capabilities": [
+      "timeline"
+    ],
+    "key_param": "chart",
+    "priority": 90,
+    "discoverable": true,
+    "cadence_hint_seconds": 86400,
+    "auth": {
+      "type": "none"
+    },
+    "homepage": "imdb.com",
+    "params_schema": {
+      "chart": {
+        "type": "string",
+        "required": true,
+        "description": "The chart to display (e.g. MOST_POPULAR_MOVIES)"
+      }
+    },
+    "radar": [
+      "imdb.com/chart/:chart",
+      "www.imdb.com/chart/:chart"
+    ]
+  }
+}

@@ -1,0 +1,40 @@
+{
+  "name": "@streamapp/baidu",
+  "version": "1.0.0",
+  "author": "stream",
+  "keywords": [
+    "stream-recipe"
+  ],
+  "stream": {
+    "type": "recipe",
+    "_why_name": "叫「百度网盘」不叫「百度」：搜索那一份是隔壁的 packages/baidu-search（两件事只是域名同姓，见那份的 _why_own_package_not_packages_baidu）。面板上两条都摆着，名字不点明就只能靠 id 区分。",
+    "name": "百度网盘",
+    "tagline": "验分享链是否存活 + 列文件",
+    "facility": "baidu",
+    "schemaVersion": 1,
+    "providers": [
+      {
+        "id": "netdisk-verify-baidu",
+        "category": "resolve",
+        "serveKeys": [
+          "baidu-verify"
+        ],
+        "strategy": "sequential",
+        "label": "百度分享验活",
+        "description": "百度分享 id → 是否存活 + 文件列表（带提取码匿名解锁）",
+        "members": [
+          {
+            "source": "baidu-share",
+            "params": {
+              "pwd_id": "$input"
+            }
+          }
+        ],
+        "callsites": [
+          "netdisk.share.verify"
+        ]
+      }
+    ]
+  },
+  "license": "Apache-2.0"
+}

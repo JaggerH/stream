@@ -1,0 +1,12 @@
+{
+  "name": "@streamapp/plugin-sdk",
+  "version": "0.1.0",
+  "private": true,
+  "description": "SDK for Stream third-party package authors: the activate(ctx) type contract plus the shared/package-sdk runtime toolkit (errors, html helpers, media url).",
+  "type": "module",
+  "types": "index.ts",
+  "files": [
+    "index.ts",
+    "README.md"
+  ]
+}

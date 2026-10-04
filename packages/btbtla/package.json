@@ -1,0 +1,81 @@
+{
+  "name": "@streamapp/btbtla",
+  "version": "1.1.0",
+  "type": "module",
+  "author": "stream",
+  "keywords": [
+    "stream-recipe"
+  ],
+  "stream": {
+    "type": "recipe",
+    "hostVersion": ">=0.1.0",
+    "name": "BT影视",
+    "tagline": "关键词搜索，取季卡片",
+    "facility": "btbtla",
+    "schemaVersion": 1,
+    "providers": [
+      {
+        "id": "btbtla",
+        "category": "search",
+        "serveKeys": [
+          "btbtla"
+        ],
+        "strategy": "expand",
+        "expand": {
+          "map": {
+            "detailUrl": "$item.detailUrl"
+          },
+          "assemble": {
+            "url": "$item.link",
+            "type": "pathClassify",
+            "desc": "$item.title"
+          }
+        },
+        "provides": [
+          "search-download"
+        ],
+        "label": "BT影视",
+        "description": "关键词 → 季卡片，逐条钻详情页取下载行（expand 组合体）",
+        "members": [
+          {
+            "source": "btbtla-search",
+            "params": {
+              "name": "$input"
+            }
+          },
+          {
+            "source": "btbtla-detail"
+          }
+        ]
+      }
+    ],
+    "searchSources": [
+      {
+        "provider": "btbtla",
+        "key": "btbtla",
+        "label": "BT影视",
+        "param": "name",
+        "kind": "digest",
+        "searchUrl": "https://www.btbtla.com/search/{q}"
+      }
+    ],
+    "links": {
+      "hosts": [
+        "btbtla.com"
+      ],
+      "patterns": [
+        {
+          "kind": "download-page",
+          "pattern": "^https://(www\\.)?btbtla\\.com/tdown/\\d+\\.html$",
+          "yields": "magnet"
+        },
+        {
+          "kind": "download-page",
+          "pattern": "^https://(www\\.)?btbtla\\.com/pdown/\\d+\\.html$",
+          "yields": "unknown"
+        }
+      ]
+    }
+  },
+  "license": "Apache-2.0"
+}

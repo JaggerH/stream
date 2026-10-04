@@ -1,0 +1,15 @@
+id: decl-source
+adapter: Douyin_TikTok_Download_API
+description: A declarative api-binding source for tiktok user posts (test fixture).
+topics: [tiktok, test]
+example_queries: [tiktok user posts]
+capabilities: [timeline]
+auth: { type: none }
+cadence_hint_seconds: 3600
+params_schema: {}
+api:
+  endpoint: /api/tiktok/web/fetch_user_post
+  query:
+    secUid: { from: sec_uid, required: true }
+    count: { from: count, default: 35 }
+  unwrap: data.itemList

@@ -1,0 +1,17 @@
+{
+  "//": "这是模板，不是要发的那份。`private: true` 与占位 version 都由 scripts/publish-extension.mjs 的 buildNpmDir 在写出 extension/.output/npm/ 时改掉——留着 private 是为了让在这个目录里手滑跑一次 `npm publish` 被 npm 直接拒绝。",
+  "name": "@streamapp/chrome-extension",
+  "version": "0.0.0-template",
+  "private": true,
+  "type": "module",
+  "description": "Stream Companion — built Chrome extension (unpacked)",
+  "files": [
+    "chrome-mv3/",
+    "index.js"
+  ],
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
+  "main": "index.js"
+}

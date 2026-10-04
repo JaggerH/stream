@@ -1,0 +1,79 @@
+{
+  "version": 2,
+  "kind": "fetch",
+  "sourceId": "xueqiu-user",
+  "cookieDomain": "xueqiu.com",
+  "entryUrl": "https://xueqiu.com/u/{id}",
+  "entryWait": "load",
+  "_history_transport": "考古结论（2026-07-28）：42e1c9fb 当初把它 opt-out 回 cloak，**不是技术原因**——那天用户正在把 xhs 迁 cloak，原话是「行，把 xueqiu 那个也改了，我一起测，雪球还是 cdp，改 cloak」，纯粹为了一次测两条 cloak 路径。同一会话里唯一的实际抱怨（「cdp 一直新开页面」）是当年采集标签落在用户当前窗口的毛病，background 档出现后不成立。cloak 整体退役（42f707d0）后 transport 字段已不存在——只有一个浏览器：用户自己的 Chrome。留这段是防止将来有人再想给它「换个浏览器」。",
+  "request": {
+    "url": "https://xueqiu.com/v4/statuses/user_timeline.json?user_id={id}&page={page}",
+    "method": "GET"
+  },
+  "pagination": {
+    "mode": "increment",
+    "param": "page",
+    "start": 1,
+    "step": 1,
+    "itemsAt": "statuses",
+    "maxPages": 2
+  },
+  "assert": [
+    {
+      "path": "statuses",
+      "desc": "user_timeline returned a statuses[] array"
+    }
+  ],
+  "mapping": {
+    "guid": "id",
+    "title": "title",
+    "description": "description",
+    "link": "target",
+    "author": "user.screen_name",
+    "pubDate": "created_at",
+    "quoteText": "retweeted_status.description",
+    "quoteAuthor": "retweeted_status.user.screen_name",
+    "quotePermalink": "retweeted_status.target"
+  },
+  "meta": {
+    "normalizer": "xueqiu",
+    "type": "post",
+    "description": "雪球 — 用户动态",
+    "topics": [
+      "xueqiu",
+      "finance"
+    ],
+    "categories": [
+      "finance"
+    ],
+    "facility": {
+      "key": "xueqiu",
+      "label": "雪球"
+    },
+    "capabilities": [
+      "timeline"
+    ],
+    "key_param": "id",
+    "priority": 90,
+    "discoverable": true,
+    "cadence_hint_seconds": 1800,
+    "_why_uses": "转发帖里被截断的原帖全文不在这份 feed 里，是打开时由本包的 detail enricher 跑另一份 recipe（xueqiu-detail）现取的（packages/xueqiu/detail.ts）。申报它，detail 漂了才有人能回答「跟着哑的还有谁」。",
+    "uses": [
+      "xueqiu-detail"
+    ],
+    "auth": {
+      "type": "none"
+    },
+    "homepage": "xueqiu.com",
+    "params_schema": {
+      "id": {
+        "type": "string",
+        "required": true,
+        "description": "用户 id（雪球用户主页 URL xueqiu.com/u/<id> 中的数字）"
+      }
+    },
+    "radar": [
+      "xueqiu.com/u/:id"
+    ]
+  }
+}

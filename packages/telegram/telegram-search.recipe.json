@@ -1,0 +1,141 @@
+{
+  "version": 7,
+  "kind": "desktop",
+  "sourceId": "telegram-search",
+  "app": {
+    "process": "Telegram.exe",
+    "windowClass": "MainWindow"
+  },
+  "steps": [
+    {
+      "label": "复位：取消上一轮搜索",
+      "kind": "invoke",
+      "query": {
+        "role": "Button",
+        "name": "取消搜索"
+      },
+      "optional": true,
+      "blind": "**未补判据**：这一步该看见什么，需要在一台装了 Telegram 的机器上确认。本机没有，写不出经过验证的 expect；没验过的 expect 比没有 expect 更坏——它看起来严谨，其实是猜的。"
+    },
+    {
+      "label": "等复位生效",
+      "kind": "wait",
+      "ms": 400
+    },
+    {
+      "label": "左栏点进频道",
+      "kind": "invoke",
+      "query": {
+        "role": "ListItem",
+        "nameContains": "{channel}"
+      },
+      "blind": "**未补判据**：这一步该看见什么，需要在一台装了 Telegram 的机器上确认。本机没有，写不出经过验证的 expect；没验过的 expect 比没有 expect 更坏——它看起来严谨，其实是猜的。"
+    },
+    {
+      "label": "等频道打开",
+      "kind": "wait",
+      "ms": 800
+    },
+    {
+      "label": "点频道内搜索",
+      "kind": "invoke",
+      "query": {
+        "role": "Button",
+        "name": "搜索消息"
+      },
+      "blind": "**未补判据**：这一步该看见什么，需要在一台装了 Telegram 的机器上确认。本机没有，写不出经过验证的 expect；没验过的 expect 比没有 expect 更坏——它看起来严谨，其实是猜的。"
+    },
+    {
+      "label": "输入搜索词",
+      "kind": "type",
+      "text": "{q}",
+      "query": {
+        "role": "Edit",
+        "name": "搜索",
+        "className": "class Ui::InputField::Inner"
+      },
+      "blind": "**未补判据**：这一步该看见什么，需要在一台装了 Telegram 的机器上确认。本机没有，写不出经过验证的 expect；没验过的 expect 比没有 expect 更坏——它看起来严谨，其实是猜的。"
+    },
+    {
+      "label": "等搜索结果",
+      "kind": "wait",
+      "ms": 2000
+    },
+    {
+      "label": "点第一条命中",
+      "kind": "invoke",
+      "query": {
+        "role": "ListItem",
+        "nameContains": "频道, {channel}"
+      },
+      "blind": "**未补判据**：这一步该看见什么，需要在一台装了 Telegram 的机器上确认。本机没有，写不出经过验证的 expect；没验过的 expect 比没有 expect 更坏——它看起来严谨，其实是猜的。"
+    },
+    {
+      "label": "等主列表跳过去",
+      "kind": "wait",
+      "ms": 2500
+    }
+  ],
+  "observer": {
+    "itemQuery": {
+      "role": "ListItem",
+      "nameContains": "{q}"
+    },
+    "fields": {
+      "content": {
+        "read": "name"
+      }
+    },
+    "dedupeBy": "content"
+  },
+  "map": {
+    "content": {
+      "from": "content",
+      "match": "名称：[\\s\\S]+"
+    },
+    "title": {
+      "from": "content",
+      "match": "名称：(.+)"
+    },
+    "description": {
+      "from": "content",
+      "match": "描述：([\\s\\S]*?)(?:\\n\\n|$)"
+    },
+    "link": {
+      "from": "content",
+      "match": "https?://[^\\s]+"
+    }
+  },
+  "read": {
+    "dedupeBy": "link",
+    "targetCount": 30
+  },
+  "meta": {
+    "description": "在指定的 Telegram 频道里搜关键词：先复位（上一轮可能停在搜索模式）→ 从左栏会话列表按名字点进频道 → 频道内搜索 → 点第一条命中让主列表跳过去 → 从主列表读完整正文（搜索结果本身只有摘要，网盘链接被截断了）。桌面 recipe（a11y 词汇，Windows UIA 后端）。打字走 ValuePattern 写进输入框（不经键盘、不需要前台、锁屏也生效，已实测），所以 `type` 带 `query`——**必须指到里层的 `Ui::InputField::Inner`**，写外层容器 `Ui::InputField` 是收不下的。仍有一处会浮到前台：invoke「搜索消息」时 Telegram 自己 activate 窗口（不是 Stream 抢的）。实测见 2026-08-04-desktop-background-typing-design.md。",
+    "normalizer": "telegram",
+    "_why_member_timeout": "桌面采集不是网络请求:点开窗口、等界面渲染、逐步点进去,一趟约 12s。按流式路统一的 15s 量会贴着边被砍(而被砍的表现只是「这个源永远搜不到」,不报错)。按源申报 25s,只慢自己这一格。上限必须小于流式路的整体预算 DEFAULT_BUDGET_MS,否则预算先到,配多少都不生效。",
+    "member_timeout_ms": 25000,
+    "capabilities": [
+      "search"
+    ],
+    "key_param": "q",
+    "cadence_hint_seconds": 3600,
+    "discoverable": false,
+    "_why_pick_in": "只在 Provider 成员面挑得到，不在频道订阅面——按频道搜的一条腿",
+    "pick_in": [
+      "provider"
+    ],
+    "params_schema": {
+      "q": {
+        "type": "string",
+        "required": true,
+        "description": "搜索词"
+      },
+      "channel": {
+        "type": "string",
+        "required": true,
+        "description": "要搜哪个频道（左栏会话列表里的名字，包含匹配即可）。必填：不指定就等于「搜你此刻恰好开着的那个会话」，而定时轮和聚合调用都指望不上这一点。"
+      }
+    }
+  }
+}

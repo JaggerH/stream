@@ -1,0 +1,16 @@
+{
+  "name": "@streamapp/manmanbuy",
+  "version": "1.0.0",
+  "author": "stream",
+  "keywords": [
+    "stream-recipe"
+  ],
+  "stream": {
+    "type": "recipe",
+    "name": "慢慢买",
+    "tagline": "全网比价 · 关键词搜索",
+    "facility": "manmanbuy",
+    "schemaVersion": 1
+  },
+  "license": "Apache-2.0"
+}

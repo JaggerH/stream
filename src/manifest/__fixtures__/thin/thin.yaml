@@ -1,0 +1,8 @@
+id: thin-source
+adapter: rsshub
+description: ""
+topics: []
+capabilities: [timeline]
+auth:
+  type: none
+cadence_hint_seconds: 1800

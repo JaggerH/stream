@@ -1,0 +1,24 @@
+{
+  "name": "@streamapp/groq",
+  "version": "1.1.0",
+  "type": "module",
+  "author": "stream",
+  "keywords": [
+    "stream-recipe"
+  ],
+  "files": [
+    "*.recipe.json",
+    "manifests.yaml",
+    "README.md"
+  ],
+  "stream": {
+    "type": "recipe",
+    "id": "groq",
+    "name": "Groq",
+    "tagline": "云端转写 whisper-large-v3 + 自助建 API key",
+    "facility": "groq",
+    "schemaVersion": 1,
+    "cookieDomain": "groq.com"
+  },
+  "license": "Apache-2.0"
+}

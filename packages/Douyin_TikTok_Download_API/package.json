@@ -1,0 +1,152 @@
+{
+  "name": "@streamapp/douyin-tiktok-download-api",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "bundle": "node ../../scripts/bundle-code-packages.mjs .",
+    "prepack": "node ../../scripts/assert-npm-artifact.mjs"
+  },
+  "files": [
+    "dist",
+    "*.recipe.json",
+    "manifests.yaml",
+    "README.md"
+  ],
+  "stream": {
+    "id": "Douyin_TikTok_Download_API",
+    "name": "抖音 / TikTok",
+    "tagline": "视频平台搜索与解析服务",
+    "description": "抖音搜索、用户作品、关注流、合集与视频媒体解析。",
+    "backend": {
+      "image": "ghcr.io/jaggerh/douyin_tiktok_download_api:latest",
+      "service": "douyin-tiktok-download-api",
+      "port": 80,
+      "health": "/health",
+      "standby": {
+        "idleMinutes": 30
+      }
+    },
+    "credentials": [
+      "douyin.com",
+      "tiktok.com"
+    ],
+    "links": {
+      "hosts": [
+        {
+          "host": "douyin.com",
+          "platform": "douyin"
+        },
+        {
+          "host": "iesdouyin.com",
+          "platform": "douyin"
+        },
+        {
+          "host": "tiktok.com",
+          "platform": "tiktok"
+        }
+      ],
+      "shortHosts": [
+        "v.douyin.com",
+        "vm.tiktok.com"
+      ]
+    },
+    "normalizer": "douyin",
+    "sourceGrouping": {
+      "enabled": true,
+      "resolver": "manifest.facility"
+    },
+    "code": {
+      "entry": "dist/index.js",
+      "adapters": [
+        "Douyin_TikTok_Download_API"
+      ],
+      "normalizers": [
+        "douyin",
+        "tiktok",
+        "bilibili-web"
+      ],
+      "enrichers": [
+        "douyin-comments"
+      ],
+      "connect": [
+        "douyin.com"
+      ]
+    },
+    "providers": [
+      {
+        "id": "video-douyin",
+        "category": "resolve",
+        "serveKeys": [
+          "douyin-video"
+        ],
+        "strategy": "sequential",
+        "label": "douyin 视频解析",
+        "description": "作品 id → play_addr 直连 CDN（带 Referer，range 串流）",
+        "members": [
+          {
+            "source": "douyin-resolve"
+          }
+        ],
+        "callsites": [
+          "video.resolve"
+        ]
+      },
+      {
+        "id": "video-tiktok",
+        "category": "resolve",
+        "serveKeys": [
+          "tiktok-video"
+        ],
+        "strategy": "sequential",
+        "label": "tiktok 视频解析",
+        "description": "作品 id → play_addr 直连 CDN",
+        "members": [
+          {
+            "source": "tiktok-resolve"
+          }
+        ],
+        "callsites": [
+          "video.resolve"
+        ]
+      },
+      {
+        "id": "douyin-url",
+        "category": "transform",
+        "serveKeys": [
+          "douyin-link"
+        ],
+        "strategy": "sequential",
+        "label": "抖音链接抓媒体",
+        "description": "douyin.com / iesdouyin.com / v.douyin.com 的链接 → 标题、作者与可播放地址",
+        "members": [
+          {
+            "source": "douyin-fetch-url"
+          }
+        ],
+        "callsites": [
+          "content.enrich"
+        ]
+      },
+      {
+        "id": "tiktok-url",
+        "category": "transform",
+        "serveKeys": [
+          "tiktok-link"
+        ],
+        "strategy": "sequential",
+        "label": "TikTok 链接抓媒体",
+        "description": "tiktok.com 的链接 → 标题、作者与可播放地址",
+        "members": [
+          {
+            "source": "tiktok-fetch-url"
+          }
+        ],
+        "callsites": [
+          "content.enrich"
+        ]
+      }
+    ]
+  },
+  "license": "Apache-2.0"
+}

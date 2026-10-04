@@ -1,0 +1,14 @@
+{
+  "change": "recipe-record-replay-contract",
+  "phase": "design",
+  "mode": "compact",
+  "canonical_spec": "openspec",
+  "generated_by": "comet-handoff.sh",
+  "context_hash": "85c3956f04fe8f063a2d18f9ec57ce3e2accd01f07718082260a1f2d9f597cfb",
+  "files": [
+    { "path": "openspec/changes/recipe-record-replay-contract/proposal.md", "sha256": "ebb81fae39345689aa571787412831a091315a5ab9fd9d34abf354245fc953ba" },
+    { "path": "openspec/changes/recipe-record-replay-contract/design.md", "sha256": "7ca57fe55ea1dbb4049f53958bd28aaf5300ca7151487fb918ef6a1846086e3e" },
+    { "path": "openspec/changes/recipe-record-replay-contract/tasks.md", "sha256": "bfcbbd9dc8520fbf683ddca9acbcab5c01accf0d22777befd7f7931230e8faa4" },
+    { "path": "openspec/changes/recipe-record-replay-contract/specs/browser-recipe-replay/spec.md", "sha256": "573923efec489047ff483e0b4d9cc76447266f0b2b3a8c2f147faebb515f5586" }
+  ]
+}

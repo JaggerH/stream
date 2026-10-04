@@ -1,0 +1,301 @@
+{
+  "version": 2,
+  "kind": "desktop",
+  "sourceId": "wechat-send-file",
+  "app": {
+    "process": [
+      "Weixin.exe",
+      "微信",
+      "WeChat"
+    ],
+    "title": "微信",
+    "a11y": false
+  },
+  "_why": "**给指定微信联系人发一个文件。** 前半段（找到他、把会话切成他）逐字照抄 `wechat-send`——那边每一步的 `_why` 是这几步的理由，这里只留一句指针，别在两份里各维护一份解释。后半段是这条 recipe 自己的：点输入框工具栏的「发送文件」图标 → `pickFile` 喂 Windows 标准「选择文件」对话框（等它出现、写路径、文件名框拿焦点回车、等它消失、范围自动换回主窗）→ 按文件类型分流的挂载判据 → `send:true` 才回车。",
+  "_why_pending_state": "**微信 4.x 选中文件后不发送**：文件作为待发附件画进输入框（文件名 + 大小的小卡片），和正文草稿并排，回车/「发送」之前一直挂着——活体 2026-09-18（微信 4.1.13）看到的就是这个样子。所以「上传文件但先不发」不需要拖放或剪贴板那两条路（它们弹的是「发送给 X」模态框，引擎也没有拖放/组合键动作），对话框这条路本身就有待发态：`send:false` 停在挂载判据之后即可。**图片是例外**（见 `_why_image`）。",
+  "_why_image": "**图片（png/jpg/jpeg/gif/webp）和文件是两种东西，微信按图片消息处理**（活体 2026-09-18 03:27，微信 4.1.13）：① 挂进输入框时只画缩略图、**没有文件名**，文字判据对它恒不成立；② **输入框为空时从对话框选中图片，微信立即当图片消息发出**，没有待发态——`send:false` 对它挡不住；只有输入框里已经挂着别的东西（文字草稿或文件卡）时，图片才跟着进待发态。所以图片这一路：跳过文字判据，以「对话框已消失 + 主窗回到前台」（`pickFile` 回执的 `foregroundBack`）当弱判据，回执标 `unverified:['image-no-caption']`——那一趟的 done 是“做了”，不是“看见做成了”。分流靠 `{path_kind}`（`format:'path'` 参数的派生键，`src/replay/path-params.ts`）。",
+  "_why_truncation": "**微信把长文件名截断显示**（「中基协登记备...2期.pdf」），所以“输入区出现完整文件名”这个判据对超过十来个字的文件名必失败（活体 2026-09-18）。判据改用 `{path_stem6}`（文件名主干前 6 个字，正好是截断前保住的那一截）做包含匹配；主干不足 6 个字就是整个主干。`send:true` 的送达判据同样用它。主干只有一两个字时包含匹配会多命中（同档多命中拒绝）——那种文件先改个名。",
+  "_why_a11y_false": "同 wechat-send：微信主窗没有控件树。**但「选择文件」对话框有**——`app.a11y:false` 只作用于 `app` 那棵树，`pickFile` 切到对话框之后 `find` 照常查控件树（待活体验证 2026-09-18 起：确认切窗之后 a11y 段真的在读，看 agent 日志那行 `a11y=` 不是 `off`；若仍 off，就是 `a11y:false` 的作用域比想的宽，得改 runner）。",
+  "_why_process": "同 wechat-send。**mac 上 `pickFile` 走的是 NSOpenPanel 那条路（敲 `/` 前往文件夹 → 写路径 → 回车 → OKButton），没有真机、全部待活体验证**；前半段找联系人的 mac groundings 抄自 wechat-send。",
+  "areas": {
+    "标题栏": {
+      "intent": "同 wechat-send：当前会话的标题所在的顶部那一条，排掉左栏",
+      "region": { "x": 0.2, "y": 0, "w": 0.8, "h": 0.1 },
+      "groundings": [
+        { "on": { "platform": "win32" }, "region": { "unit": "dip", "x": 340, "y": 0, "h": 80 }, "verified": { "runs": 1, "first": "2026-09-18", "last": "2026-09-18", "by": "author" }, "note": "左栏 335 逻辑像素宽、标题条 80 逻辑像素高，都是固定像素、不随窗口走：4K 最大化（3838×2062，scale 2）时左栏只占 0.09，比例矩形 x≥0.2 从 768 物理像素起、把 x≈695 的标题整个排掉，进门那步和打正文的 require 全都读不到他（活体 2026-09-18）。dip 矩形从左栏右边 340 起、罩到窗口右边，上下 0–80 只剩标题条（会话列表第一行在左栏里，x 不到 340）。" }
+      ]
+    },
+    "搜索框": {
+      "intent": "同 wechat-send：左栏顶上的搜索框那一条，排掉会话列表第一行",
+      "region": { "x": 0.06, "y": 0, "w": 0.3, "h": 0.1 },
+      "groundings": [
+        { "on": { "platform": "win32" }, "region": { "unit": "dip", "x": 60, "y": 0, "w": 280, "h": 80 }, "verified": { "runs": 1, "first": "2026-09-18", "last": "2026-09-18", "by": "author" }, "note": "搜索框在左栏顶部 y 42–70 逻辑像素、x 122–285；会话列表第一行的标题在 y≈100。比例矩形 h:0.1 在 4K 最大化（2062 高，scale 2）时罩到 y 103 逻辑像素，把第一行罩进来——联系人在第一行时打字前判据就成立。固定像素的栏用 dip：0–80 只剩搜索框。" },
+        { "on": { "platform": "darwin" }, "region": { "x": 0.06, "y": 0, "w": 0.3, "h": 0.065 }, "verified": { "runs": 1, "first": "2026-09-14", "last": "2026-09-14", "by": "author" }, "note": "抄自 wechat-send 的同名区域。" }
+      ]
+    },
+    "输入框工具栏": {
+      "intent": "消息输入框**下沿**那一排小图标（从左到右：表情、3D 盒子、**文件夹=发送文件**、截图、截图下拉箭头；右侧朗读、「发送」按钮），排掉上面的正文区",
+      "groundings": [
+        { "on": { "platform": "win32" }, "region": { "unit": "dip", "x": 340, "y": -80 }, "verified": { "runs": 1, "first": "2026-09-18", "last": "2026-09-18", "by": "author" }, "note": "工具栏贴着窗口下沿、图标中心在下沿往上 ≈40 逻辑像素，固定像素、不随窗高走，所以 dip 从下沿往上 80 起。`see-probe Weixin.exe` 实测（2026-09-18，窗 2286×1619，微信 4.1.13）：工具栏在输入框**下沿**，五个图标框中心 y≈0.95，x≈0.32/0.35/0.38（文件夹）/0.42/0.46，「发送」在 x≈0.95。原稿按「输入区顶上一条」推成 0.70–0.79，会框空——工具栏在下不在上。检测器给这五个图标各一个 `kind:\"detector\"` 的框（无名），由 `see.icon` 的描述去挑第三个。" }
+      ],
+      "_why_no_universal": "两平台的输入框上沿差 0.1，没有一块两边都对。mac 没量、不写。"
+    },
+    "会话区": {
+      "intent": "同 wechat-send：右侧会话区的下半截——底部消息输入框（选中文件之后，微信把它作为**待发附件**画在这里：文件名 + 大小的小卡片）+ 它上面最近的几条气泡（`send:true` 回车之后文件气泡出现在这儿）；排掉左栏",
+      "groundings": [
+        { "on": { "platform": "win32" }, "region": { "unit": "dip", "x": 340, "y": -420 }, "verified": { "runs": 0, "first": "2026-09-29", "last": "2026-09-29", "by": "author" }, "note": "同 wechat-send 的会话区（输入框能被拖高拖矮，没有固定的线把它和气泡分开）。" },
+        { "on": { "platform": "darwin" }, "region": { "x": 0.34, "y": 0.4, "w": 0.66, "h": 0.6 }, "verified": { "runs": 0, "first": "2026-09-29", "last": "2026-09-29", "by": "author" }, "note": "同 wechat-send 的会话区。mac 上这份 recipe 没跑过。" }
+      ],
+      "_why_no_universal": "同 wechat-send 的会话区。"
+    }
+  },
+  "steps": [
+    {
+      "label": "抢到前台",
+      "kind": "focus",
+      "_why": "同 wechat-send。"
+    },
+    {
+      "label": "会话已经是他？（进门先看一眼）",
+      "kind": "branch",
+      "when": {
+        "see": { "text": "{contact}", "area": "标题栏" }
+      },
+      "skip": 9,
+      "_why": "同 wechat-send（三层入口的第一层，进门第一眼、排在复位之前：同一会话连发只读一次屏就直接去动作段；点已选中的行会收起面板，所以它必须排在直点之前）。命中就跳到「点发送文件图标」，那一步的 require 照样核对标题。"
+    },
+    {
+      "label": "搜索框已经是空的？",
+      "kind": "branch",
+      "when": {
+        "see": {
+          "text": "搜索",
+          "region": { "x": 0.04, "y": 0.02, "w": 0.22, "h": 0.09 }
+        }
+      },
+      "skip": 1,
+      "_why": "同 wechat-send。"
+    },
+    {
+      "label": "复位：Escape 清掉搜索框",
+      "kind": "press",
+      "key": "Escape",
+      "expect": {
+        "see": { "text": "搜索", "region": "top-left" },
+        "timeoutMs": 3000
+      },
+      "else": "drift",
+      "_why": "同 wechat-send。"
+    },
+    {
+      "label": "左栏列表里看得见他就直接点",
+      "kind": "invoke",
+      "optional": true,
+      "see": {
+        "text": "{contact}",
+        "region": { "x": 0.07, "y": 0.13, "w": 0.27, "h": 0.87 }
+      },
+      "groundings": [
+        { "on": { "platform": "win32" }, "kind": "invoke", "see": { "text": "{contact}", "region": { "unit": "dip", "x": 40, "y": 80, "w": 300 } }, "verified": { "runs": 0, "first": "2026-09-18", "last": "2026-09-18", "by": "author" }, "note": "会话列表从 y=80 逻辑像素起（搜索条以下）、宽到左栏右边 340；第一行标题在 y≈100。比例矩形 y≥0.13 在 4K 最大化时从 134 逻辑像素起，把第一行整个排掉——他在顶上时这一层永远找不到、白走一趟搜索路（和 mac 那条落地方式撞的是同一件事）。" },
+        { "on": { "platform": "darwin" }, "kind": "invoke", "see": { "text": "{contact}", "region": { "x": 0.07, "y": 0.07, "w": 0.27, "h": 0.93 } }, "verified": { "runs": 1, "first": "2026-09-14", "last": "2026-09-14", "by": "author" }, "note": "抄自 wechat-send。" }
+      ],
+      "_why": "同 wechat-send（第二层）。",
+      "blind": "同 wechat-send：点中的后果由下一步 branch 读标题确认。"
+    },
+    {
+      "label": "直点之后：会话切成他了？",
+      "kind": "branch",
+      "when": {
+        "see": { "text": "{contact}", "area": "标题栏" }
+      },
+      "skip": 5,
+      "_why": "同 wechat-send：切没切成功由右侧会话标题说了算。"
+    },
+    {
+      "label": "点搜索框",
+      "kind": "invoke",
+      "see": {
+        "text": "搜索",
+        "region": { "x": 0.04, "y": 0.02, "w": 0.22, "h": 0.09 }
+      },
+      "_why": "同 wechat-send。",
+      "blind": "同 wechat-send：点没点中由下一步的 expect 兜住。"
+    },
+    {
+      "label": "输入联系人",
+      "kind": "type",
+      "text": "{contact}",
+      "expect": {
+        "see": { "text": "{contact}", "area": "搜索框" },
+        "timeoutMs": 2500
+      },
+      "else": "abort",
+      "_why": "同 wechat-send。"
+    },
+    {
+      "label": "等候选弹层",
+      "kind": "window",
+      "match": { "process": "Weixin.exe", "title": "Weixin" },
+      "ownedPopup": true,
+      "timeoutMs": 4000,
+      "groundings": [
+        { "on": { "platform": "darwin" }, "kind": "window", "match": { "process": "微信", "title": "<无标题 AXDialog>" }, "ownedPopup": true, "timeoutMs": 4000, "verified": { "runs": 0, "first": "2026-09-13", "last": "2026-09-13", "by": "author" }, "note": "抄自 wechat-send。" }
+      ],
+      "_why": "同 wechat-send。"
+    },
+    {
+      "label": "点候选里的他",
+      "kind": "invoke",
+      "see": {
+        "text": "{contact}",
+        "below": ["联系人", "群聊", "公众号", "功能"],
+        "notBelow": ["搜索网络结果", "聊天记录", "收藏"]
+      },
+      "_why": "同 wechat-send。",
+      "blind": "同 wechat-send：判据挂在「点发送文件图标」的 require 上——标题不是他，图标一下都不点。"
+    },
+    {
+      "label": "回到主窗口",
+      "kind": "window",
+      "match": {
+        "process": ["Weixin.exe", "微信", "WeChat"],
+        "title": "微信"
+      },
+      "timeoutMs": 3000,
+      "_why": "同 wechat-send。"
+    },
+    {
+      "label": "点发送文件图标（先核对会话是他）",
+      "intent": "确认会话标题是目标联系人后，点输入框工具栏里的文件夹图标，让微信弹出文件选择对话框",
+      "kind": "invoke",
+      "see": {
+        "icon": "文件夹图标（输入框工具栏里从左数第三个：表情、3D 盒子之后的那个，悬停提示「发送文件」）",
+        "area": "输入框工具栏"
+      },
+      "require": {
+        "see": { "text": "{contact}", "area": "标题栏" },
+        "timeoutMs": 3000
+      },
+      "else": "abort",
+      "_why_require": "同 wechat-send 的「打正文」：会话标题不是他，一下都不点——发错人这条路在这里封死。这一步之后再没有第二道闸（图片一选中就可能发出去，见 `_why_image`），所以闸只能在这儿。",
+      "_why_icon": "图标身上没有字，走 `icon` 那档：检测器给框、模型挑编号，第一次之后固化成模板、不再花钱（pixel-vocabulary 设计）。**没配视觉模型的机器上这一步必死**（`STREAM_DESKTOP_SEE_MODEL=off` 时 icon 目标无解）——这是像素路指一个无字图标的代价，qq-send 的「消息输入框」是同一档。区域只罩工具栏那一条，排掉气泡区（文件气泡里也有个文件夹样的图标）。首次走模型 5–15s，是整条 recipe 最慢的一段（活体 2026-09-18）；固化之后从模板走。**待活体验证 2026-09-18 起**：`see-probe Weixin.exe` 看检测器给不给这个图标框；不给的话退路是 `click.at` 按比例点（和「点进消息输入框拿焦点」同一档），比例要量。",
+      "blind": "点中的后果是弹出「选择文件」对话框——它是另一个顶层窗口，这一步的 expect 只能在主窗范围里验、看不见它。判据落在下一步 `pickFile`：等不到对话框就以 `pickFile/dialog-missing` drift，此时什么都没发出去。"
+    },
+    {
+      "label": "图片没有文字判据：跳过带判据的那一路",
+      "kind": "branch",
+      "when": { "param": "path_kind", "equals": "image" },
+      "skip": 1,
+      "unverified": "image-no-caption",
+      "_why": "见顶层 `_why_image`：图片挂进输入框只画缩略图，`{path_stem6}` 永远读不到，硬等 10s 只会把一趟真挂成的判成 blocked（活体 2026-09-18 撞过）。图片走下面那条 blind 的 `pickFile`，回执标 `unverified:image-no-caption`。`path_kind` 是 `format:'path'` 参数派生出来的（png/jpg/jpeg/gif/webp → image，其余 → file）。"
+    },
+    {
+      "label": "喂「选择文件」对话框（文件：验文件名片段）",
+      "intent": "等微信弹出的「选择文件」对话框，把路径写进文件名框、回车，等它关掉，回主窗看文件卡片挂进了输入区",
+      "kind": "pickFile",
+      "path": "{path}",
+      "timeoutMs": 8000,
+      "expect": {
+        "see": { "text": "{path_stem6}", "area": "会话区" },
+        "timeoutMs": 10000
+      },
+      "else": "drift",
+      "_why": "`pickFile` 一步收编了此前的四步（等对话框 → 填路径 → 点「打开」→ 回主窗）：对话框认法默认 `{process: Weixin.exe, titleAnyOf:['打开','选择文件','Open']}`——活体（2026-09-18，微信 4.1.13，中文 Windows）微信给这个标准 IFileOpenDialog 起的标题是「选择文件」，进程是 Weixin.exe 自己。文件名框是 `Edit`「文件名(N):」，`setValue` 写进去、invoke 让它拿焦点、回车确认（**不依赖「打开(O)」按钮在不在树里**——同一台机器两次抓树一有一无；树里有它只当回车没关掉时的备选）。第一次弹出实测要几秒（Windows 在枚举 shell 目录），所以等 8s。",
+      "_why_expect": "**挂载判据（对截断鲁棒）**：对话框关掉、范围换回主窗之后，会话区出现文件名主干的前 6 个字（见顶层 `_why_truncation`）。**这一步刻意不用 `fresh`，保留「动作前必为假」**：这份 recipe 不清输入框（它要和 `wechat-send { send:false }` 先挂上的正文一起发），上一轮留下的同名文件卡若还挂在输入框里，`fresh` 会把新挂的第二张当成新位置放行、回车一按发两份；恒真预检则当场指出（“expect 恒真”）——那时先手动清掉输入框。代价：会话区罩着最近几条气泡，刚发过同一个文件、气泡还在屏上时同样判恒真（**别连发同一个文件**）。等最多 10s：大文件微信先算 hash 再画卡片。等不到判 drift——此时**什么都没发出去**（文件类没有待发态之外的路）。"
+    },
+    {
+      "label": "文件那一路已经验过：跳过图片那一路",
+      "kind": "branch",
+      "when": { "param": "path_kind", "equals": "file" },
+      "skip": 1,
+      "_why": "两条 `pickFile` 互斥：上一条是文件（带判据），下一条是图片（blind）。文件走完上一条就跳过这一条，别喂第二次对话框。"
+    },
+    {
+      "label": "喂「选择文件」对话框（图片：无文字判据）",
+      "intent": "同上一条，只是选的是图片：微信只画缩略图，没有文件名可读",
+      "kind": "pickFile",
+      "path": "{path}",
+      "timeoutMs": 8000,
+      "_why": "同上一条的 `_why`。只有图片才走到这里（上面两条 branch 分流）。",
+      "blind": "图片挂进输入框只显示缩略图、没有文件名（活体 2026-09-18），文字判据写不出来；判据段不调模型，`see.icon`/`point` 在这里也不成立。弱判据由 `pickFile` 自己给：对话框已消失（等不到消失就 `pickFile/dialog-still-open` drift）+ 回执 `foregroundBack`（主窗回到前台）。回执 `unverified:['image-no-caption']` 由上面那条 branch 打上。**输入框为空时图片在选中那一刻就已经发出去了**（`send:false` 挡不住），有草稿时才进待发态。"
+    },
+    {
+      "label": "不发就停在这（send:false）",
+      "kind": "branch",
+      "when": { "param": "send", "equals": false },
+      "skip": 4,
+      "_why": "同 wechat-send 的 `send` 参数：`send:false` 时文件留在输入框里待发，由人决定什么时候按发送；可以先跑 `wechat-send { send:false }` 把正文也挂上，两样一起发。**对图片挡不住**（见 `_why_image`）：输入框为空时图片已经发出去了。"
+    },
+    {
+      "label": "图片没有送达判据：跳过带判据的回车",
+      "kind": "branch",
+      "when": { "param": "path_kind", "equals": "image" },
+      "skip": 1,
+      "_why": "图片气泡里没有文件名，`{path_stem6}` 在气泡区永远读不到。图片走下面那条 blind 的回车。"
+    },
+    {
+      "label": "回车发出去（文件：验气泡）",
+      "intent": "按回车把待发的文件（和输入框里已有的正文）发送出去",
+      "kind": "type",
+      "text": "\n",
+      "expect": { "see": { "text": "{path_stem6}", "area": "会话区" }, "fresh": true, "timeoutMs": 15000 },
+      "_why": "焦点在对话框关掉之后回到输入框（活体：卡片右侧就是光标），回车即发。判据是文件名主干前 6 个字在会话区里冒出一个回车前没有的位置——文件气泡（气泡里同样截断，见 `_why_truncation`）；回车没生效时卡片还在输入框原位，不算。大文件要先上传，给 15s。"
+    },
+    {
+      "label": "文件那一路已经回车：跳过图片那一路",
+      "kind": "branch",
+      "when": { "param": "path_kind", "equals": "file" },
+      "skip": 1,
+      "_why": "同上面那对分流：文件走完带判据的回车就到此为止，别再按一次。"
+    },
+    {
+      "label": "回车发出去（图片：无判据）",
+      "intent": "图片若还在待发态（输入框里本来有草稿），按回车发出去",
+      "kind": "type",
+      "text": "\n",
+      "blind": "图片气泡没有文件名，送达判据写不出来。两种情况回车都无害：输入框为空时图片在选中那一刻已经发出，此刻回车是空操作；输入框里本来有草稿时图片在待发态，回车把它连同草稿一起发出。回执由前面那条 branch 标 `unverified:['image-no-caption']`。"
+    }
+  ],
+  "interrupts": [
+    {
+      "_why": "同 wechat-send：版本更新提示随时会盖上来。",
+      "see": { "text": "稍后再说" },
+      "dismiss": { "kind": "invoke", "see": { "text": "稍后再说" } }
+    }
+  ],
+  "allowEmpty": true,
+  "_why_allow_empty": "同 wechat-send：无物可读，送达确认靠最后那个 expect。",
+  "meta": {
+    "title": "微信发文件",
+    "purpose": "发文件给 {contact}",
+    "description": "给指定微信联系人发一个文件：进门先看会话标题（已经是他就直接去动作段，同一会话连发只读一次屏）→ 否则同 wechat-send 的三层入口找到他 → 核对会话标题 → 点输入框工具栏的「发送文件」图标 → `pickFile` 喂「选择文件」对话框（写路径、回车、等它关掉）→ 按文件类型分流判据：**文件**（pdf/docx/…）验输入区出现文件名主干前 6 个字（微信会截断长文件名，所以只看前几个字），`send:true`（默认）再回车、验气泡区出现同一片段；**图片**（png/jpg/jpeg/gif/webp）微信只画缩略图、没有文件名，跳过文字判据，以「对话框已关 + 主窗回到前台」当弱判据，回执带 `unverified:['image-no-caption']`。**图片的坑**：输入框为空时从对话框选中图片微信立即当图片消息发出（没有待发态），`send:false` 对图片挡不住；只有输入框里已有草稿/文件卡时图片才进待发态。`send:false`（文件）停在待发态不回车，之后可再跑 `wechat-send { send:false }` 把正文也挂上，一起手动发。抢前台、真实键鼠；对话框段不到 2s，慢在找联系人和图标首次走视觉模型。mac 的对话框那条路按 NSOpenPanel 惯例写、没有真机验过。",
+    "action": true,
+    "effects": ["send"],
+    "_why_action": "会真的把文件发出去，而且**没有回头路**：对话框确认之前的每一步都不发任何东西（找到他、填路径都是可逆的）；文件类确认后进待发态、`send:true` 回车才发，图片类在输入框为空时确认即发。发错人那道闸在「点发送文件图标」的 require 上。",
+    "_why_screen_takeover": "同 wechat-send：投屏幕、抢前台。对话框那一步走控件树不抢（setValue + invoke），只有回车那一下要前台（对话框是模态的、本来就在前台）。",
+    "discoverable": false,
+    "pick_in": [],
+    "capabilities": [],
+    "member_timeout_ms": 45000,
+    "_why_member_timeout": "比 wechat-send 多 15s：对话框第一次弹出要几秒，大文件上传要等气泡稳定。",
+    "params_schema": {
+      "contact": {
+        "type": "string",
+        "required": true,
+        "description": "发给谁：**写全称**（同 wechat-send）。"
+      },
+      "path": {
+        "type": "string",
+        "required": true,
+        "format": "path",
+        "description": "要发的文件的**绝对路径**。后端所在机器上的路径：后端跑在 WSL 里就给 Linux 路径（`/home/...` 或 `/mnt/c/...`），执行前会翻成 Windows 侧认得的 `\\\\wsl.localhost\\<distro>\\...`；已经是 `C:\\...` 形状的原样交给对话框。文件不存在 / 翻不出来在执行前就拒（invalid-params）。判据用文件名主干的前 6 个字（微信会截断长文件名）；主干只有一两个字的文件判据可能多命中，先改个名。png/jpg/jpeg/gif/webp 按图片处理：没有文字判据、`send:false` 挡不住（见 description）。"
+      },
+      "send": {
+        "type": "boolean",
+        "required": false,
+        "default": true,
+        "description": "true（默认）：文件挂进输入框后按回车发出去，判据是气泡区出现文件名片段。false：文件留在输入框里**待发**、不按回车，run 以 done 结束——之后由人按发送，或先再跑 `wechat-send { send:false }` 把正文也挂上一起发。**对图片无效**：输入框为空时图片在选中那一刻就发出去了。"
+      }
+    }
+  }
+}

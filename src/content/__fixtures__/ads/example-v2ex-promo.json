@@ -1,0 +1,17 @@
+{
+  "task": "ad",
+  "label": "positive",
+  "reason": "ad",
+  "source": "v2ex-hot",
+  "fields": {
+    "title": "「万一免五」低佣低两融老倔驴开户巨靠谱，抽一台 JBL GO4 小音箱",
+    "text": "",
+    "urls": ["https://v2ex.com/t/1000001"],
+    "categories": ["推广"]
+  },
+  "meta": {
+    "itemId": "example-v2ex-promo",
+    "capturedAt": "2026-06-14T00:00:00.000Z",
+    "note": "v2ex 推广 node — title has no ad keyword; only the category signals it"
+  }
+}

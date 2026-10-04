@@ -1,0 +1,59 @@
+{
+  "name": "@streamapp/netdisk",
+  "version": "0.1.0",
+  "description": "Stream capability package: verify / save / play netdisk shares (quark, baidu) against the user's own drive, borrowing the browser login from Stream Desktop (@streamapp/desktop)",
+  "type": "module",
+  "main": "dist/index.js",
+  "exports": {
+    ".": "./dist/index.js",
+    "./package.json": "./package.json"
+  },
+  "//stream": [
+    "这个包填 Stream 包的**能力槽位**：`stream add @streamapp/netdisk` 把它装进",
+    "`<dataDir>/recipes/@streamapp__netdisk/`，Stream 后端按 `capability` 这一格动态 import",
+    "`dist/index.js`、取它导出的 `capability` 挂上（`src/capabilities/load.ts`）。",
+    "路径只认 `dist/index.js` 这一个字面量（`PACKAGE_CODE_ENTRY`）——安装门的 tarball 白名单",
+    "只放行它，所以**产物必须自包含**：tsdown 把 `shared/netdisk/` 那些相对 import 全打进这一个",
+    "文件，装到的目录里不会有 node_modules。",
+    "`credentials` 是这个包的授权边界：宿主据此决定往扩展要哪几个域的登录态，包自己不索取。",
+    "三个域对应它真正会 `cookieFor` / `cookiesFor` 的站点——夸克（验活/转存/直链，",
+    "`shared/netdisk/quark/*.ts`）与 managed 档挂载 OpenList storage 时的 115、UC",
+    "（`shared/netdisk/mount-presets.ts` 的 cookieDomain）。加一个网盘就要同时加一行，",
+    "漏了的表现是那个盘一直游客态、没有一处会喊。"
+  ],
+  "stream": {
+    "id": "netdisk",
+    "capability": "dist/index.js",
+    "credentials": [
+      "quark.cn",
+      "115.com",
+      "drive.uc.cn"
+    ]
+  },
+  "scripts": {
+    "bundle": "tsdown",
+    "prepack": "node ../../scripts/assert-npm-artifact.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "tsdown": "^0.9.9",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.8"
+  },
+  "files": [
+    "dist"
+  ],
+  "//links": [
+    "**故意不写 `repository` / `homepage`**（同 `cli/package.json`）：仓库是私有的，两个字段在",
+    "npm 页面上都会渲染成可点的链接，而对任何外人都是 404。一个点了 404 的链接比没有链接更坏",
+    "——它让人以为自己找错了地方，而不是知道这里没有更多可看的。所以这个包对外的全部信息就是",
+    "README.md，它必须**自包含**：不要往里加任何指回仓库或 docs/ 的链接。",
+    "闸在 `scripts/assert-npm-artifact.mjs`。"
+  ],
+  "license": "Apache-2.0",
+  "publishConfig": {
+    "access": "public"
+  }
+}

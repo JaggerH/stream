@@ -1,0 +1,139 @@
+{
+  "_why_version_2": "提版本不是形式：`RepairLedger` 的检疫**只有更高的 recipe 版本才解除**。v1 在活体连着失败（残值格并行查 5 台，页面 4 秒内没渲染出结果被判成漂移，三次即被隔离，之后每次 3ms 静默 DECLINE、连浏览器都不开）——修的是等待上限，不提版本修了也是死的。",
+  "version": 2,
+  "kind": "browser",
+  "sourceId": "aihuishou-recycle",
+  "_why_browser": "爱回收把估价收在 App / 小程序 / 手机站 H5 里，桌面站只是落地页。手机站的搜索接口 `dubai.aihuishou.com/dubai-gateway/recycle-products/search-v11` 回 `products[{id, name, maxPrice}]`——正是「型号 → 一个数」，但每个请求带一组 `Ahs-*` 签名头，站外直打回 `1001 鉴权参数缺失`。**签名一行都不在我们这儿**：在用户自己的 Chrome 里打开手机站搜索页、往搜索框里敲型号名，页面自己签、自己发，network observer 拦它的响应。不需要登录（实测 2026-09-03，游客态就回价）。",
+  "_why_allow_empty": "**「爱回收没收录这台」是一个成功的 0 条，不是失败。** 残值格问的型号常常是上一代 / 上两代机型（`resale-pick.ts` 按持有年限选代），平台没收录很正常——回 0 条让 job 退到按买入价。漂移（选择器坏了 / 接口换了）由下面那个等待步自己判并抛错，不会混进这条成功的空里。",
+  "allowEmpty": true,
+  "cookieDomain": "aihuishou.com",
+  "_why_entry": "直接落在**空关键词的搜索页**（hash 路由 `#/search?type=Recycle`），不从首页点搜索入口：搜索页本身就是一个带 `input[type=search]` 的 SPA 视图，type 步一敲，页面就发 search-v11（它是边敲边搜的联想式搜索，`type` 一次性插入整串，只发一发）。type=Recycle 是「回收」档，别丢——不带它落到的是「优选」二手商城的搜索（那边回的是卖价，不是回收价）。",
+  "entryUrl": "https://m.aihuishou.com/n/#/search?type=Recycle",
+  "entryWait": "load",
+  "_why_login_check": "不需要登录，两个信号各自换个用法：loggedIn 用搜索框 `input[type=search]`（命中 = 我们拿到的是手机站真页面、React 已水合）。wall 是**没有实测到的**候选：这台机器上没撞见过爱回收的登录墙/人机验证，按 `/login` 路由的形状先摆着；没命中不会静默错——真被拦时搜索框不在，loggedIn 不成立，等待步也会抛错。",
+  "loginCheck": {
+    "loggedIn": "input[type=\"search\"]",
+    "wall": "a[href*=\"#/login\"], .captcha-wrapper, #challenge-form"
+  },
+  "_why_one_shot": "残值查询是对话里临时补一发，不是持续采集：没有账本、没有 feed 要骑，查完即关，不占用户浏览器一格。",
+  "session": {
+    "facility": "aihuishou",
+    "lifecycle": "one-shot",
+    "visibility": "unattended"
+  },
+  "steps": [
+    {
+      "_why": "**入场闸门**：等 React 把搜索框水合出来。`type` 不等元素，所以不能让它打头；不用 click 打头是因为可信点击在后台标签要等命中测试（活体 7–35 秒），而这里页面根本不查手势——一个只读的等待步 Tier A、几十毫秒。页内循环封顶 12×250ms（后台标签 setTimeout 会被钳到约 1 秒一跳，所以真实上限约 12 秒，仍在 relay 30s 之内）。",
+      "kind": "evaluate",
+      "call": "async () => { for (let i = 0; i < 12; i++) { if (document.querySelector('input[type=\"search\"]')) return { items: [] }; await new Promise(r => setTimeout(r, 250)); } throw new Error('[aihuishou] 搜索页没有水合出 input[type=search] —— 路由变了或页面被拦'); }",
+      "itemsAt": "items",
+      "maxPages": 1
+    },
+    {
+      "_why": "{keyword} 是型号名原文（不编码——这是往输入框里敲，不是拼 URL）。`type` 一次性插入整串并触发 input 事件，页面据此发一发 search-v11；network observer 在下面拦它。",
+      "kind": "type",
+      "selector": "input[type=\"search\"]",
+      "text": "{keyword}"
+    },
+    {
+      "_why_it_judges": "**这一步负责把「爱回收确实没有」和「我们读不到了」分开。** 实测两态（2026-09-03）：有结果时页面出现文字「最高回收价」+ 一个 `￥<数>`；没结果时出现「抱歉，没有找到“<词>”相关的信息」。两态都是 search-v11 回来之后才渲染的，所以任一出现 = 接口已回、observer 已拦到。两个都不出现 = 接口没回 / 页面换了 → 抛错（响，且会被检疫）。判据用**文字**而不是类名：这个站的类名全是 CSS-module 哈希（`hzELV5` / `jSwjtQ`），一次重构就换。items 恒空——数据全在 observer 里。",
+      "kind": "evaluate",
+      "_why_wait_budget": "**上限 40×250ms**，不是 16。活体失败现场（data/failures/aihuishou-recycle-1788421137830.jpg 等 7 张，2026-09-03）：搜索框里型号名已经在、默认的「搜索发现」已经被清掉、结果区空白——就是 search-v11 还没回。残值格并行查 5 台，这条腿在 facility 会话上串行排队、接口又被连着打，4 秒不够。后台标签的 setTimeout 会被钳到约 1 秒一跳，所以真实上限可能到 40 秒，仍在 member_timeout 45s 之内；正常情况 2–3 秒就出来，循环提前返回，不白等。",
+      "call": "async () => { for (let i = 0; i < 40; i++) { const t = document.body.innerText || ''; if (t.includes('最高回收价') || t.includes('没有找到')) return { items: [] }; await new Promise(r => setTimeout(r, 250)); } throw new Error('[aihuishou] 敲了型号名，页面既没出「最高回收价」也没出「没有找到」—— search-v11 没回来，或页面文案/路由变了'); }",
+      "itemsAt": "items",
+      "maxPages": 1
+    }
+  ],
+  "observers": [
+    {
+      "_why": "拦页面自己发的 `recycle-products/search-v11`（POST，body 带 keyword）。响应形状（实测）：`data.products[{id, name, maxPrice, imageUrl, categoryName, brandName, seriesName}]`，`maxPrice` = 站上「最高回收价」（最好机况）。type 只触发一发；windowMs 盖住 type 之后的整段等待。**别改拦 `inquiry-items`**：那个只有点进某台之后才发，且要选机况才出最终价。",
+      "kind": "network",
+      "urlPattern": "*/recycle-products/search-v11*",
+      "windowMs": 30000,
+      "maxBodyBytes": 2000000,
+      "input": {
+        "itemsAt": "data.products",
+        "dedupeBy": "id",
+        "targetCount": 40,
+        "mapping": {
+          "guid": "aihuishou-{id}",
+          "title": "name",
+          "author": "=爱回收",
+          "link": "https://m.aihuishou.com/n/#/inquiry?productId={id}",
+          "description": "最高回收价 ¥{maxPrice}｜{brandName} · {categoryName}",
+          "image": "imageUrl"
+        },
+        "assert": [
+          {
+            "path": "data",
+            "desc": "aihuishou search-v11 data{products[]}"
+          }
+        ]
+      }
+    }
+  ],
+  "output": {
+    "itemsAt": "items",
+    "dedupeBy": "guid",
+    "targetCount": 40,
+    "mapping": {
+      "guid": "guid",
+      "title": "title",
+      "author": "author",
+      "link": "link",
+      "description": "description",
+      "image": "image"
+    }
+  },
+  "policy": {
+    "minActionIntervalMs": 500,
+    "maxTaskMs": 60000
+  },
+  "meta": {
+    "_why_member_timeout": "one-shot 会话：开标签 + load + 水合 + 敲字 + 等接口，实测形状与 brave 那条腿同量级（10–20s），默认 25s 的并发成员闸太紧，申报 45s 只慢自己这一格。",
+    "member_timeout_ms": 45000,
+    "type": "post",
+    "title": "回收报价",
+    "description": "爱回收 · 型号最高回收价 —— 在用户自己的 Chrome 里打开手机站搜索页敲型号名，拦页面自己签名发出的 search-v11 响应；一行一个型号，带「最高回收价」（最好机况）",
+    "topics": [
+      "aihuishou",
+      "爱回收",
+      "回收",
+      "二手",
+      "残值",
+      "保值",
+      "resale",
+      "recycle"
+    ],
+    "categories": [
+      "shopping"
+    ],
+    "facility": {
+      "key": "aihuishou",
+      "label": "爱回收"
+    },
+    "capabilities": [
+      "search"
+    ],
+    "provides": [
+      "search-resale"
+    ],
+    "key_param": "keyword",
+    "priority": 70,
+    "_why_not_discoverable": "不进发现列表：它不是可订阅的信息源，是购买决策残值格借的一条腿。",
+    "discoverable": false,
+    "pick_in": ["provider"],
+    "cadence_hint_seconds": 3600,
+    "homepage": "m.aihuishou.com",
+    "auth": {
+      "type": "none"
+    },
+    "params_schema": {
+      "keyword": {
+        "type": "string",
+        "required": true,
+        "description": "型号名原文（品牌 + 型号，如「iQOO Z11 Turbo」），不编码"
+      }
+    }
+  }
+}

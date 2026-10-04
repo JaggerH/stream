@@ -1,0 +1,11 @@
+id: handler-source
+adapter: Douyin_TikTok_Download_API
+description: A handler api-binding source for douyin search (test fixture).
+topics: [douyin, test]
+example_queries: [douyin search]
+capabilities: [search]
+auth: { type: none }
+cadence_hint_seconds: 3600
+params_schema: {}
+api:
+  handler: douyin-search

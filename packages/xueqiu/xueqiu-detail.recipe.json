@@ -1,0 +1,92 @@
+{
+  "version": 2,
+  "kind": "browser",
+  "sourceId": "xueqiu-detail",
+  "_why_browser": "statuses/show.json 和状态详情页的裸 HTML 都被雪球的 Aliyun WAF 拦成挑战页——即便带着 broker 发的有效登录 cookie 也过不去（实测：user_timeline.json 同一份 cookie 裸 fetch 能过，这两个不能）。WAF 要求真的跑一遍它的混淆 JS，只有真实浏览器能过，所以这条只能走 kind:browser，在用户自己的 Chrome 里读渲染完的 DOM。",
+  "entryUrl": "{permalink}",
+  "entryWait": "domcontentloaded",
+  "loginCheck": {
+    "loggedIn": ".avatar",
+    "_why_wall": "雪球把登录弹窗的 DOM 壳子(.modal__login)常驻页面、inline style=\"display: none\" 隐藏,不是打开时才插入——exists() 只查 querySelector 存在性不看可见性,裸类名一律假阳性(实测已登录页面上照样命中 4 个)。:not([style*='display: none']) 排除隐藏态那份壳子,只在它真被打开(inline style 改掉 none)时才算 WALLED。",
+    "wall": ".modal__login:not([style*='display: none'])"
+  },
+  "session": {
+    "facility": "xueqiu",
+    "lifecycle": "one-shot",
+    "visibility": "unattended"
+  },
+  "steps": [],
+  "observers": [
+    {
+      "kind": "dom",
+      "itemSelector": "#app",
+      "trigger": "entry",
+      "fields": {
+        "id": {
+          "selector": "a.time",
+          "attr": "href",
+          "extract": "(\\d+)$"
+        },
+        "text": {
+          "selector": ".article__bd__detail"
+        }
+      }
+    }
+  ],
+  "output": {
+    "itemsAt": "items",
+    "dedupeBy": "id",
+    "targetCount": 1,
+    "mapping": {
+      "id": "id",
+      "text": "text"
+    },
+    "assert": [
+      {
+        "path": "items.0.text",
+        "desc": "xueqiu status detail page rendered its body text"
+      }
+    ]
+  },
+  "policy": {
+    "maxTaskMs": 20000
+  },
+  "meta": {
+    "type": "post",
+    "title": "状态详情（enrich）",
+    "description": "雪球单条状态详情 · 补全被截断的原帖正文",
+    "topics": [
+      "xueqiu",
+      "finance"
+    ],
+    "categories": [
+      "finance"
+    ],
+    "facility": {
+      "key": "xueqiu",
+      "label": "雪球"
+    },
+    "capabilities": [
+      "anchor"
+    ],
+    "priority": 80,
+    "discoverable": false,
+    "_why_pick_in": "两个选择面都不出现——打开一条状态时由 enrich 直调",
+    "pick_in": [],
+    "cadence_hint_seconds": 1800,
+    "auth": {
+      "type": "session",
+      "facility": "xueqiu",
+      "login": "cookie",
+      "cookieDomain": "xueqiu.com"
+    },
+    "homepage": "xueqiu.com",
+    "params_schema": {
+      "permalink": {
+        "type": "string",
+        "required": true,
+        "description": "状态详情页完整 URL（quoted.permalink，https://xueqiu.com/<uid>/<statusId>）"
+      }
+    }
+  }
+}

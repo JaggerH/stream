@@ -1,0 +1,97 @@
+{
+  "version": 2,
+  "kind": "browser",
+  "sourceId": "doubao-chat-images",
+  "_why": "把一条豆包对话里已经生成好的图读回来（无水印原图 URL）。用户常在豆包网页版里手动对话出图（比 recipe 生图更好调），出完了要把图拿到本地——每次都手写一段 fiber 挖 imageList 的脚本，所以落成 recipe。它只读：不发消息、不消耗额度，和 doubao-image 用同一套读法（byteimg.com 域的 <img> 往上找 React props 里的 imageList，每项 image_ori_raw.url 是无水印原图）。**别按 rc_gen_image 过滤 <img>**：生图不止一条渠道——图片编辑/工具类出的图 URL 是 rc/pc/super_tool/…，同样带 imageList + image_ori_raw，只认 rc_gen_image 会整条对话报「没读到生成图」（实测 2026-09-18）。判据是 imageList 在不在，不是 URL 长什么样。",
+  "_why_action": "带参数（对话 URL）才能跑，所以走动作 recipe 那条口（run_action_recipe / POST /api/recipes/action）；它没有副作用，effects 不声明。",
+  "cookieDomain": "doubao.com",
+  "entryUrl": "{url}",
+  "_why_entryUrl": "对话地址（https://www.doubao.com/chat/<id>）。通常不用给：用户出图的那个标签就在会话标签组里，adoptTab 直接骑它、url 从它的地址栏读回来。给了 url 而组里没有这个 tab，才退回 Stream 自己的泳道去开它。",
+  "entryWait": "load",
+  "adoptTab": { "urlPrefix": "https://www.doubao.com/chat/", "param": "url" },
+  "_why_adoptTab": "用户在自己的标签里手动对话出图，图就在那个页面上活着。骑它：不新开标签、不重载（重载会丢用户的滚动位置），读到的就是此刻的渲染。组里恰好一个豆包对话 tab 时连 url 都不必给；多个则报错列出来让用户挑，不猜。骑用户的 tab 有一个可见副作用：不给 last 时 recipe 会往上滚页面拉历史——所以 last 默认 1，不滚。",
+  "loginCheck": {
+    "loggedIn": "[contenteditable=\"true\"]",
+    "wall": "[class*=\"login-modal\"], [class*=\"loginModal\"], [data-testid=\"login_modal\"]"
+  },
+  "session": {
+    "facility": "doubao",
+    "lifecycle": "persistent",
+    "visibility": "unattended"
+  },
+  "_why_session": "只在退回泳道时才用得上（给了 url、组里又没这个 tab）：和 doubao-image 共一条 lane，跑完标签停在 /chat/<id>，doubao-image 下一轮见 pathname 不是 /chat/ 会自己 goto 回去新建对话，互不干扰。泳道停在同一条对话上时 runner 会重载它（persistent 泳道停在入口页 = 上一轮的旧渲染），不用 recipe 自己写 goto。骑用户 tab 的那条路不经过泳道。",
+  "steps": [
+    {
+      "kind": "evaluate",
+      "_why": "只读一页，整段在页内做。**两种情况一个 setTimeout 都不等**：第一遍 collect 已够 last 条；或页面已加载超过 30s（settled——那两段等待只为刚导航进来时的懒渲染而设，用户开着的 tab 早就渲染完了，没读到就是真没有，当场抛）。为什么必须零等待：骑的是用户开着的后台 tab 时，Chrome 对隐藏超过 5 分钟的页面把链式定时器对齐到每分钟一次（intensive wake-up throttling）；实测单个 setTimeout(500) 要 1264ms、链起来更狠，一段 10s 的轮询就撞中继 30s 超时——login 那步同步求值 3ms 就回，这步却 timed out，差的就是 await sleep。**翻历史（last>1 / all）要滚动、要等，后台 tab 上仍可能超时——要翻历史就把那个 tab 切到前台再跑。**其余：豆包开对话先渲染最底下那条消息，其余随历史拉回来陆续挂上：等到至少一条 imageList 出现（图懒加载，最多 10s），再等列表数 2s 不变（最多 8s）。消息是虚拟化渲染的（往上滚渲染更早的、卸掉更晚的），所以列表跨滚动按 key 累积，位置取「容器 scrollTop + 元素 top」排序（旧→新）；滚动容器每次重认，取祖先里能滚的 scrollHeight 最大那层——图刚挂上时外层列表还没撑开，先认到的会是图片格子。不够 last 条就一屏一屏往上滚（每屏等 700ms）；滚到顶豆包才去拉更早的历史（scrollHeight 会长），到顶后等它长最多 2.5s，不长了就是真到头。整段 deadline 24s，压在 relay 一次求值 30s 上限之内。返回时倒过来编号：index 0 = 最新的一张，message = 倒数第几条生图消息。",
+      "call": "async (cursor, num, params) => { const sleep = ms => new Promise(r => setTimeout(r, ms)); const started = Date.now(); const seen = new Map(); let scroller = null; const collect = () => { for (const img of document.querySelectorAll('img')) { if (!/byteimg\\.com\\//.test(img.src)) continue; for (let e = img.parentElement; e; e = e.parentElement) { const cs = getComputedStyle(e); if (/auto|scroll/.test(cs.overflowY) && e.scrollHeight > e.clientHeight + 10 && (!scroller || e.scrollHeight > scroller.scrollHeight)) scroller = e; } const fk = Object.keys(img).find(k => k.startsWith('__reactFiber')); let f = fk && img[fk]; for (let i = 0; i < 25 && f; i++) { const p = f.memoizedProps; if (p && Array.isArray(p.imageList) && p.imageList.length) { const key = p.imageList.map(x => String(x.key || '')).join('|'); if (!seen.has(key)) seen.set(key, { top: img.getBoundingClientRect().top + (scroller ? scroller.scrollTop : window.scrollY), list: p.imageList }); break; } f = f.return; } } return [...seen.values()].sort((a, b) => a.top - b.top); }; const n = Number(params.last); const want = params.last === 'all' || n === 0 ? Infinity : n > 0 ? Math.floor(n) : 1; let lists = collect(); const settled = performance.now() > 30000; const enough = () => lists.length >= want || settled; if (!enough()) for (const deadline = started + 10000; Date.now() < deadline; await sleep(500)) { lists = collect(); if (lists.length) break; } if (!lists.length) throw new Error('[doubao-chat-images] 这条对话里没读到任何生成图（对话里没有生图，或页面结构变了）'); if (!enough()) for (let stableSince = Date.now(), k = lists.length, until = Date.now() + 8000; Date.now() < until && Date.now() - stableSince < 2000; ) { await sleep(400); lists = collect(); if (lists.length !== k) { k = lists.length; stableSince = Date.now(); } } for (const deadline = started + 24000; Date.now() < deadline && lists.length < want && scroller; ) { const before = scroller.scrollTop; scroller.scrollTop = Math.max(0, before - scroller.clientHeight); await sleep(700); lists = collect(); if (scroller.scrollTop > 0) continue; const sh = scroller.scrollHeight; let grew = false; for (let k = 0; k < 8 && !grew; k++) { await sleep(300); grew = scroller.scrollHeight > sh; } if (!grew) break; lists = collect(); } const picked = want === Infinity ? lists : lists.slice(-want); const items = []; picked.slice().reverse().forEach(({ list }, msg) => { list.slice().reverse().forEach((x) => { const raw = x.image_ori_raw && x.image_ori_raw.url; const prev = x.image_preview && x.image_preview.url; items.push({ guid: String(x.key || '').replace(/\\.\\w+$/, ''), url: raw || prev, watermarked: raw ? 'false' : 'true', index: items.length, message: msg, }); }); }); return { items }; }",
+      "itemsAt": "items",
+      "pageSize": 200,
+      "maxPages": 1
+    }
+  ],
+  "observers": [],
+  "output": {
+    "itemsAt": "items",
+    "dedupeBy": "guid",
+    "targetCount": 200,
+    "mapping": {
+      "guid": "guid",
+      "url": "url",
+      "index": "index",
+      "message": "message",
+      "watermarked": "watermarked"
+    },
+    "assert": [
+      {
+        "path": "items.0.url",
+        "desc": "这条对话里没读到任何生成图的 URL"
+      }
+    ],
+    "_why_targetCount": "targetCount 是「采到几条就收」的上限，不是下限：填 1 会在第一张就停（实测只回最新一张）。一条对话里最多也就几十张，200 = 不设限；页面上读到多少回多少，不翻页。"
+  },
+  "policy": {
+    "minActionIntervalMs": 500,
+    "maxTaskMs": 60000
+  },
+  "meta": {
+    "action": true,
+    "type": "post",
+    "title": "豆包对话里的生成图",
+    "description": "把一条豆包对话里已经生成好的图读回来：每张的无水印原图 URL（image_ori_raw），index 0 = 最新的一张。只读，不发消息、不耗额度。",
+    "facility": {
+      "key": "doubao",
+      "label": "豆包"
+    },
+    "key_param": "url",
+    "discoverable": false,
+    "pick_in": [],
+    "rateLimit": {
+      "burst": 5,
+      "perMinute": 10,
+      "perHour": 120,
+      "bucket": "doubao-read"
+    },
+    "_why_rateLimit": "纯读一个已开的页面，不生图；按「人翻对话」的量级给，和生图的 doubao-image 桶分开，读图不该吃掉生图额度。",
+    "member_timeout_ms": 70000,
+    "auth": {
+      "type": "session",
+      "facility": "doubao",
+      "login": "cookie",
+      "cookieDomain": "doubao.com"
+    },
+    "params_schema": {
+      "url": {
+        "type": "string",
+        "required": false,
+        "description": "豆包对话地址：https://www.doubao.com/chat/<id>。不给 = 骑会话标签组里唯一那个开着的豆包对话 tab（组里有多个时必须给）"
+      },
+      "last": {
+        "required": false,
+        "default": "1",
+        "_why_no_type": "既收数字（2）也收字面 'all'，校验器按 typeof 严格比对，声明任一类型都会拒掉另一半。",
+        "description": "只要最新的几条生图消息（每条消息 1–4 张）；默认 1 = 只要最新那条；'all' = 往上翻最多 12 屏，能读到的全部"
+      }
+    }
+  }
+}

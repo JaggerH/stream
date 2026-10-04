@@ -1,0 +1,131 @@
+{
+  "version": 5,
+  "kind": "browser",
+  "sourceId": "xhs-detail",
+  "cookieDomain": "xiaohongshu.com",
+  "_why_entryUrl": "这个 recipe 的工作上下文是 feed（在 feed 上找卡片、点开 overlay），不是目标笔记页——目标笔记页是 step.fallbackUrl 的活。rideCurrentPage 让入场导航整段跳过，所以 entryUrl 只是**落点的兜底**：真正的落点是骑进来时标签停在哪（今天是搜索结果页，账本就是那一批）；只有那一页认不出来（冷启的 about:blank、或上一次 fallback 把标签停在笔记页上）才回到这里。曾经这里填的是和 fallbackUrl 一模一样的笔记页——那样落点确认会把「停在笔记页」当成已经回到 entry，等于没确认。",
+  "entryUrl": "https://www.xiaohongshu.com/explore",
+  "entryWait": "domcontentloaded",
+  "rideCurrentPage": true,
+  "loginCheck": {
+    "loggedIn": ".main-container .user",
+    "wall": ".login-modal.reds-modal-open"
+  },
+  "session": {
+    "facility": "xhs",
+    "lifecycle": "persistent",
+    "visibility": "unattended"
+  },
+  "_why_unattended": "后台档（unattended）：**不抢屏**。用户在 Stream 里点一下，屏幕就该留在 Stream —— 浏览器蹦到面前再缩回去，比它省下的那点时间烦得多。\n\n「前台」和「能不能跑」本来就不是一回事。可信输入不是靠占前台换来的，是靠 `Emulation.setFocusEmulationEnabled`（在 `browser-ext.ts` 的 launch 一处开启，那里有对照数字）——**它给的是「页面被当成有焦点」，不是帧**，别把两件事说成一件。开了之后，隐藏标签一次可信点击 **162–185ms**，比它当活动标签时的 204–257ms 还快；不开则是 **39.8–41.6s**。\n\n本条另有一层：locate 的「滚动」实测是 0 次滚轮——卡片还在 DOM 里就直接读 docY 一步跳过去（账本第 1 条和第 40 条分别是 0 次和 1 次 jump），所以连滚动那半个理由也是虚的。",
+  "steps": [
+    {
+      "_why_selector": "两种落地形状都收：/explore/<id> 与 /search_result/<id>。账本来源换成 search feed 之后，卡片可能挂在后一种路径下——只认 /explore/ 会让视口里一张「认识的卡」都没有，locate 当场 MISS、每次 detail 都退化成整页导航（有数据、不报错，最坏的一种坏）。findCard/openTarget 用的是 href.includes(id)，本来就两种都认。",
+      "kind": "locate",
+      "selector": "a[href*=\"/explore/\"], a[href*=\"/search_result/\"]",
+      "identityParam": "noteId",
+      "orderedParam": "ordered",
+      "maxSteps": 8,
+      "restore": "back",
+      "fallbackUrl": "https://www.xiaohongshu.com/explore/{noteId}?xsec_token={xsec_token}&xsec_source=pc_feed"
+    }
+  ],
+  "observers": [
+    {
+      "kind": "state",
+      "statePath": "__INITIAL_STATE__.note.noteDetailMap",
+      "trigger": "after-step",
+      "collection": "values",
+      "keyField": "noteId",
+      "identityParam": "noteId",
+      "readyWhen": "comments.firstRequestFinish",
+      "maxWaitMs": 15000,
+      "pollMs": 50,
+      "input": {
+        "itemsAt": "items",
+        "dedupeBy": "noteId",
+        "targetCount": 1,
+        "mapping": {
+          "noteId": "noteId",
+          "guid": "noteId",
+          "title": "note.title",
+          "desc": "note.desc",
+          "author": "note.user.nickname",
+          "author_avatar": "note.user.avatar",
+          "note_type": "note.type",
+          "imageList": "note.imageList",
+          "video_stream": "note.video.media.stream",
+          "comments": "comments.list"
+        }
+      }
+    }
+  ],
+  "output": {
+    "itemsAt": "items",
+    "dedupeBy": "noteId",
+    "targetCount": 1,
+    "mapping": {
+      "noteId": "noteId",
+      "guid": "guid",
+      "title": "title",
+      "desc": "desc",
+      "author": "author",
+      "author_avatar": "author_avatar",
+      "imageList": "imageList",
+      "video_stream": "video_stream",
+      "comments": "comments"
+    }
+  },
+  "policy": {
+    "maxTaskMs": 30000
+  },
+  "meta": {
+    "auth": {
+      "type": "session",
+      "facility": "xhs",
+      "login": "qr",
+      "loginUrl": "https://www.xiaohongshu.com/explore",
+      "qrSelector": ".login-container img.qrcode-img, .qrcode img",
+      "cookieDomain": "xiaohongshu.com",
+      "sessionCookies": [
+        "web_session"
+      ]
+    },
+    "normalizer": "xhs",
+    "type": "post",
+    "title": "笔记详情（enrich）",
+    "description": "小红书单条笔记详情 · 登录态 tab 导航到笔记页读 __INITIAL_STATE__ 拉图组/视频(masterUrl)/正文/首页评论",
+    "topics": [
+      "xhs",
+      "xiaohongshu",
+      "social"
+    ],
+    "categories": [
+      "social-media"
+    ],
+    "facility": {
+      "key": "xhs",
+      "label": "小红书"
+    },
+    "capabilities": [
+      "anchor"
+    ],
+    "priority": 80,
+    "discoverable": false,
+    "_why_pick_in": "两个选择面都不出现——打开一条笔记时由 enrich 直调",
+    "pick_in": [],
+    "cadence_hint_seconds": 1800,
+    "homepage": "xiaohongshu.com",
+    "params_schema": {
+      "noteId": {
+        "type": "string",
+        "required": true,
+        "description": "笔记 id"
+      },
+      "xsec_token": {
+        "type": "string",
+        "required": true,
+        "description": "笔记 xsec_token"
+      }
+    }
+  }
+}

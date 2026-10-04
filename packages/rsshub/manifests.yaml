@@ -1,0 +1,128 @@
+# bilibili-dynamic / bilibili-following retired 2026-07-04 — the RSSHub catalog twins
+# (rsshub:bilibili/user/dynamic/*, rsshub:bilibili/followings/dynamic/*) now derive
+# cookie auth from features.requireConfig via NS_COOKIE_DOMAIN in src/rsshub-catalog.ts.
+- id: btbtla-detail-lazy
+  adapter: rsshub
+  description: BTBTLA | 指定剧名 — 影视剧种子搜索（lazy 模式：不在搜索时解析磁力，点开单条时由 resolve.ts 直连 /tdown/ 现解，所以搜索很快）。
+  topics: [影视, 电影, 电视剧, 剧集, btbtla, bt, 种子, magnet, 下载, video, tv, movie]
+  categories: [video]
+  example_queries:
+    - btbtla 搜 雍正王朝
+    - 找一下 庆余年 的种子
+    - 上载新生 下载
+  capabilities: [search]
+  auth:
+    type: none
+  route: /btbtla/detail/:name/lazy
+  cadence_hint_seconds: 1800
+  params_schema:
+    name:
+      type: string
+      required: true
+# podcast-feed 那一行的成员按 **category** 现取：`categories` 含 podcast 且声明了 `key_param`
+# 的每个源自动进去（registry.inCategory）。荔枝那半由 @streamapp/lizhi 这个 recipe 包提供，
+# 小宇宙这半在下面这条 curated 声明里——catalog 的长尾路由不带 `key_param`，捞不进这一行。
+- id: xiaoyuzhou-podcast
+  adapter: rsshub
+  description: 小宇宙 — 单个播客节目的最新单集（按节目订阅，音频可直接在时间线里播）。
+  topics: [小宇宙, 播客, podcast, 音频, 单集, xiaoyuzhou]
+  categories: [podcast, audio]
+  example_queries:
+    - 订阅一个小宇宙播客节目
+    - 某播客的最新单集
+  capabilities: [timeline]
+  provides: [podcast-timeline]
+  facility: { key: xiaoyuzhou, label: 小宇宙 }
+  auth:
+    type: none
+  route: /xiaoyuzhou/podcast/{id}
+  key_param: id
+  cadence_hint_seconds: 3600
+  params_schema:
+    id:
+      type: string
+      required: true
+      description: 播客节目 id（小宇宙节目页 URL xiaoyuzhou.fm/podcast/<id> 里那一串）
+- id: rsshub-raw
+  adapter: rsshub
+  description: Raw RSSHub route passthrough for ad-hoc fetches (escape hatch).
+  topics: []
+  example_queries: []
+  capabilities: [timeline]
+  auth:
+    type: none
+  discoverable: false
+  cadence_hint_seconds: 3600
+  params_schema:
+    route:
+      type: string
+      required: true
+
+# —— 影视频道（video variant）榜单源 ——
+# 固定 route（无占位符）+ normalizer: movie —— movie normalizer 按 id 分派解析
+# rating/year/genre（见本包 movie.ts，由 activate.ts 交出）。是 default-video 频道 7 条 stream 的成员。
+- id: movie-douban-playing
+  adapter: rsshub
+  normalizer: movie
+  mode: collection
+  description: 豆瓣电影 — 正在热映
+  topics: [影视, 电影, 豆瓣, 热映, movie]
+  categories: [video]
+  capabilities: [timeline]
+  facility: { key: douban, label: 豆瓣 }
+  auth:
+    type: none
+  route: /douban/movie/playing
+  cadence_hint_seconds: 21600
+- id: movie-douban-weekly
+  adapter: rsshub
+  normalizer: movie
+  mode: collection
+  description: 豆瓣电影 — 一周口碑榜
+  topics: [影视, 电影, 豆瓣, 口碑, 榜单, movie]
+  categories: [video]
+  capabilities: [timeline]
+  facility: { key: douban, label: 豆瓣 }
+  auth:
+    type: none
+  route: /douban/movie/weekly
+  cadence_hint_seconds: 21600
+- id: movie-tmdb-trend-movie
+  adapter: rsshub
+  normalizer: movie
+  mode: collection
+  description: TMDB — 本周热门电影趋势
+  topics: [影视, 电影, tmdb, trending, movie]
+  categories: [video]
+  capabilities: [timeline]
+  facility: { key: themoviedb, label: TMDB }
+  auth:
+    type: none
+  route: /themoviedb/trending/movie/week/zh-CN
+  cadence_hint_seconds: 21600
+- id: movie-tmdb-trend-tv
+  adapter: rsshub
+  normalizer: movie
+  mode: collection
+  description: TMDB — 本周热门剧集趋势
+  topics: [影视, 剧集, tmdb, trending, tv]
+  categories: [video]
+  capabilities: [timeline]
+  facility: { key: themoviedb, label: TMDB }
+  auth:
+    type: none
+  route: /themoviedb/trending/tv/week/zh-CN
+  cadence_hint_seconds: 21600
+- id: movie-imdb-popular
+  adapter: rsshub
+  normalizer: movie
+  mode: collection
+  description: IMDb — 最热门电影
+  topics: [影视, 电影, imdb, popular, movie]
+  categories: [video]
+  capabilities: [timeline]
+  facility: { key: imdb, label: IMDb }
+  auth:
+    type: none
+  route: /imdb/chart/moviemeter
+  cadence_hint_seconds: 21600

@@ -1,0 +1,14 @@
+{
+  "name": "@streamapp/replay",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "stream": {
+    "id": "replay",
+    "name": "Recipe",
+    "tagline": "按 recipe 在你登录态的浏览器里采集",
+    "description": "把签名或登录门禁、直连与 RSSHub 都取不到的站点写成一份 recipe，在你自己登录态的浏览器里照着跑——页面自签请求、DOM 抓取，或调用站点自身的请求客户端。采集阶梯的最后一档兜底，运行期零 token。",
+    "normalizer": "generic"
+  },
+  "license": "Apache-2.0"
+}

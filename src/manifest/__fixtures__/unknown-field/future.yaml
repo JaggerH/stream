@@ -1,0 +1,12 @@
+schema_version: 2
+id: future-source
+adapter: rsshub
+description: A manifest from a newer schema version with an unknown field.
+topics: [test]
+capabilities: [timeline]
+auth:
+  type: none
+cadence_hint_seconds: 1800
+# field introduced by a future schema version — must be tolerated, not fatal
+actions:
+  - send

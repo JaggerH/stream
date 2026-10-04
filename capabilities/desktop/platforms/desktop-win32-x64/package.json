@@ -1,0 +1,24 @@
+{
+  "name": "@streamapp/desktop-win32-x64",
+  "version": "0.7.2",
+  "description": "stream-desktop binary for Windows x64 — loaded by @streamapp/desktop (Stream Desktop)。bin/ 里还带着读屏用的 PP-OCRv5 模型三件（ocr-det.onnx / ocr-rec.onnx / ocr-rec-dict.txt）与 ONNX Runtime 1.20.1 的动态库（onnxruntime.dll，另有它依赖的 VC++ 运行时三件 msvcp140 / vcruntime140 / vcruntime140_1），exe 按同目录找它们",
+  "os": ["win32"],
+  "cpu": ["x64"],
+  "files": [
+    "bin/stream-desktop.exe",
+    "bin/ocr-det.onnx",
+    "bin/ocr-rec.onnx",
+    "bin/ocr-rec-dict.txt",
+    "bin/onnxruntime.dll",
+    "bin/msvcp140.dll",
+    "bin/vcruntime140.dll",
+    "bin/vcruntime140_1.dll"
+  ],
+  "scripts": {
+    "prepack": "node ../../../../scripts/assert-npm-artifact.mjs"
+  },
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  }
+}

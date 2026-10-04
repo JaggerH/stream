@@ -1,0 +1,93 @@
+{
+  "version": 1,
+  "kind": "http",
+  "sourceId": "baidu-share",
+  "acceptNonOk": true,
+  "jar": true,
+  "output": "object",
+  "request": {
+    "url": "https://pan.baidu.com/share/list?uk={uk}&shareid={shareid}&order=other&desc=1&showempty=0&web=1&page=1&num=100&root=1&clienttype=0",
+    "method": "GET",
+    "headers": {
+      "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+      "referer": "https://pan.baidu.com/s/{pwd_id}"
+    },
+    "redirect": "manual"
+  },
+  "compute": {
+    "capabilities": [],
+    "params": "(() => { const id = String(input.params.pwd_id || ''); return { surl: id.charAt(0) === '1' ? id.slice(1) : id, t: String(input.now * 1000) } })()",
+    "prefetch": [
+      {
+        "as": "first",
+        "request": {
+          "url": "https://pan.baidu.com/api/shorturlinfo?shorturl={pwd_id}&root=1&web=1&clienttype=0",
+          "method": "GET",
+          "headers": {
+            "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+            "referer": "https://pan.baidu.com/s/{pwd_id}"
+          },
+          "redirect": "manual"
+        }
+      },
+      {
+        "as": "landing",
+        "parse": "none",
+        "request": {
+          "url": "https://pan.baidu.com/s/{pwd_id}",
+          "method": "GET",
+          "headers": {
+            "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+            "referer": "https://pan.baidu.com/s/{pwd_id}"
+          },
+          "redirect": "manual"
+        }
+      },
+      {
+        "as": "verify",
+        "request": {
+          "url": "https://pan.baidu.com/share/verify?surl={surl}&t={t}&channel=chunlei&web=1&app_id=250528&clienttype=0",
+          "method": "POST",
+          "headers": {
+            "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+            "referer": "https://pan.baidu.com/s/{pwd_id}",
+            "content-type": "application/x-www-form-urlencoded"
+          },
+          "body": "pwd={passcode}&vcode=&vcode_str=",
+          "redirect": "manual"
+        }
+      },
+      {
+        "as": "info",
+        "request": {
+          "url": "https://pan.baidu.com/api/shorturlinfo?shorturl={pwd_id}&root=1&web=1&clienttype=0",
+          "method": "GET",
+          "headers": {
+            "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+            "referer": "https://pan.baidu.com/s/{pwd_id}"
+          },
+          "redirect": "manual"
+        }
+      }
+    ],
+    "sign": "(() => { const ok = (o) => o && o.errno === 0 ? o : null; const src = ok(input.pre.info) || ok(input.pre.first) || {}; return { url: 'https://pan.baidu.com/share/list?uk=' + encodeURIComponent(String(src.uk || '')) + '&shareid=' + encodeURIComponent(String(src.shareid || '')) + '&order=other&desc=1&showempty=0&web=1&page=1&num=100&root=1&clienttype=0' } })()",
+    "decode": "(() => { const first = input.pre.first; if (!first || typeof first.errno !== 'number') return { validity: 'unknown', files: [], reason: '百度没有返回 JSON（可能是风控页）' }; if (first.errno === 140) return { validity: 'not-usable', files: [], reason: String(first.show_msg || '链接不存在') }; if (first.errno !== 0 && first.errno !== -9) return { validity: 'unknown', files: [], reason: 'shorturlinfo errno ' + first.errno }; const pwd = String(input.params.passcode || ''); if (first.errno === -9 && !pwd) return { validity: 'unknown', files: [], reason: '需要提取码，帖子里没给' }; if (pwd) { const v = input.pre.verify; if (!v || typeof v.errno !== 'number') return { validity: 'unknown', files: [], reason: '提取码校验没有返回 JSON' }; if (v.errno !== 0) return { validity: 'unknown', files: [], reason: v.errno === -9 ? '提取码不对' : '提取码校验 errno ' + v.errno }; const info = input.pre.info; if (!info || info.errno !== 0) return { validity: 'unknown', files: [], reason: '解锁后 shorturlinfo errno ' + (info && info.errno) } } const body = input.body; if (!body || typeof body.errno !== 'number') return { validity: 'unknown', files: [], reason: 'share/list 没有返回 JSON' }; if (body.errno !== 0) return { validity: 'unknown', files: [], reason: 'share/list errno ' + body.errno }; const files = (body.list || []).map((f) => ({ name: String(f.server_filename || ''), is_dir: f.isdir === 1 || f.isdir === '1', size: Number(f.size || 0) })); return files.length ? { validity: 'alive', files: files } : { validity: 'not-usable', files: [], reason: '分享里没有文件' } })()"
+  },
+  "assert": [{ "path": "validity", "desc": "baidu 探针判决必须带 validity" }],
+  "meta": {
+    "description": "一条百度网盘分享 → 是否存活 + 文件列表（带提取码匿名解锁；netdisk-verify-baidu Provider 行的成员）。百度几乎每条分享都锁着提取码，没有它只能判「链接是否存在」——看不进去 → unknown，绝不判死。",
+    "topics": ["baidu", "百度网盘", "网盘", "验活", "分享", "netdisk"],
+    "categories": ["resource"],
+    "capabilities": ["anchor"],
+    "facility": { "key": "baidu", "label": "百度网盘" },
+    "discoverable": false,
+    "_why_pick_in": "只在 Provider 成员面挑得到，不在频道订阅面——netdisk-verify-baidu 行的成员",
+    "pick_in": ["provider"],
+    "cadence_hint_seconds": 3600,
+    "key_param": "pwd_id",
+    "params_schema": {
+      "pwd_id": { "type": "string", "required": true, "description": "百度分享 id（pan.baidu.com/s/<pwd_id>）" },
+      "passcode": { "type": "string", "required": false, "default": "", "description": "提取码；没有则只能判断链接是否存在（看不进去 → unknown，绝不判死）" }
+    }
+  }
+}

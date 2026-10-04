@@ -1,0 +1,24 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "useDefineForClassFields": true,
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "skipLibCheck": true,
+    "moduleResolution": "Bundler",
+    "allowImportingTsExtensions": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "moduleDetection": "force",
+    "noEmit": true,
+    "jsx": "react-jsx",
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "baseUrl": ".",
+    "paths": { "@/*": ["./src/*"], "@subscribe/*": ["../shared/subscribe/*"], "@extract/*": ["../shared/extract/*"], "@recipe-market/*": ["../shared/recipe-market/*"], "@music/*": ["../shared/music/*"], "@reconcile/*": ["../shared/reconcile/*"], "@research/*": ["../shared/research/*"], "@item/*": ["../shared/item/*"] },
+    "types": ["vite/client", "vitest/globals", "node"]
+  },
+  "include": ["src", "../shared/subscribe", "../shared/extract", "../shared/recipe-market", "../shared/music", "../shared/reconcile", "../shared/research", "../shared/item"]
+}

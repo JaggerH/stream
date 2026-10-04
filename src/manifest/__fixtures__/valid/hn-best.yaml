@@ -1,0 +1,13 @@
+id: hn-best
+adapter: rsshub
+description: Hacker News best stories — top-ranked tech and startup discussion.
+topics: [tech, startup, programming]
+example_queries:
+  - hacker news top stories
+  - 科技新闻热榜
+capabilities: [timeline]
+auth:
+  type: none
+route: /hackernews/best
+cadence_hint_seconds: 1800
+params_schema: {}

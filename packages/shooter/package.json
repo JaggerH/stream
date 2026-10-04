@@ -1,0 +1,34 @@
+{
+  "name": "@streamapp/shooter",
+  "version": "1.0.0",
+  "type": "module",
+  "author": "stream",
+  "scripts": {
+    "bundle": "node ../../scripts/bundle-code-packages.mjs .",
+    "prepack": "node ../../scripts/assert-npm-artifact.mjs"
+  },
+  "files": [
+    "dist",
+    "manifests.yaml",
+    "README.md"
+  ],
+  "keywords": [
+    "stream-recipe"
+  ],
+  "stream": {
+    "type": "recipe",
+    "hostVersion": ">=0.1.0",
+    "id": "shooter",
+    "name": "射手字幕",
+    "tagline": "网盘视频的在线字幕搜刮（按内容指纹精确查）",
+    "facility": "shooter",
+    "schemaVersion": 1,
+    "code": {
+      "entry": "dist/index.js",
+      "adapters": [
+        "shooter-subtitle"
+      ]
+    }
+  },
+  "license": "Apache-2.0"
+}

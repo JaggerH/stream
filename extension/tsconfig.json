@@ -1,0 +1,22 @@
+{
+  "extends": "./.wxt/tsconfig.json",
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "types": ["chrome"],
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    "baseUrl": ".",
+    "paths": {
+      "@": ["src"],
+      "@/*": ["src/*"],
+      "~": ["src"],
+      "~/*": ["src/*"],
+      "@@": ["."],
+      "@@/*": ["*"],
+      "~~": ["."],
+      "~~/*": ["*"],
+      "@subscribe/*": ["../shared/subscribe/*"],
+      "@browser-relay/*": ["../shared/browser-relay/*"]
+    }
+  }
+}

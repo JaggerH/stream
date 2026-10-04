@@ -1,0 +1,144 @@
+{
+  "version": 7,
+  "kind": "browser",
+  "sourceId": "xhs-home",
+  "cookieDomain": "xiaohongshu.com",
+  "entryUrl": "https://www.xiaohongshu.com/explore",
+  "entryWait": "load",
+  "loginCheck": {
+    "loggedIn": ".main-container .user",
+    "wall": ".login-modal.reds-modal-open"
+  },
+  "_why_browser": "跑在用户自己的 Chrome 上（后台标签，不抢焦点），不再用 cloak。三个理由，第一个是主要的：cloak 是第三方闭源二进制却持有用户全部 facility 的真实登录 profile，指纹 patch 不开源、无法审计；其次它常驻约 1218MB；第三，同 profile 之后 cookie 注入那一整类故障（前导点、凭证过期、缓存不热刷）不存在。过去认为这条路走不通，依据是文档里那句「ext-cdp 后台档的 trusted input IMPOSSIBLE」——已被推翻：hidden 的 tab 不拒绝输入，而 Emulation.setFocusEmulationEnabled（browser-ext.ts 的 launch 一处开启）让它稳定落地，动作位一帧都不用逼。本 recipe 的懒加载**也不吃帧**：2026-08-15 三臂活体，逼帧全开 / 只留 dwell 心跳 / 全摘三种下产出都是 109–113 条，所以 driver 里的逼帧已经整条摘掉（今天一帧都不逼）。注意这是本站结论——同一批对照里当时的 douyin 摘掉 dwell 心跳就少一整批。**「后台标签的懒加载要不要帧」是站点差异，别把这条推广出去**；判据与量法见 write-recipe/references/session-runtime.md「为什么今天一帧都不逼」。",
+  "session": {
+    "facility": "xhs",
+    "lifecycle": "persistent",
+    "visibility": "unattended"
+  },
+  "steps": [
+    {
+      "kind": "scroll",
+      "dwell_s": [
+        2,
+        4
+      ],
+      "maxTimes": 40,
+      "noProgressStop": 3
+    }
+  ],
+  "observers": [
+    {
+      "_why": "首屏那批笔记是 SSR 进 __INITIAL_STATE__ 的，页面根本不为它们发请求——只挂 network observer 会静悄悄把它们丢掉（实测页面 75 条里有 33 条如此，账本从第 34 条才开始）。trigger=entry 让它在任何 XHR 到达之前读到，于是账本从 feed 的第 0 条起、和 DOM 顺序一致。SSR 那批字段是小驼峰、XHR 那批是 snake_case，所以两个 observer 各带 input.mapping 各自归一化。",
+      "kind": "state",
+      "statePath": "__INITIAL_STATE__.feed.feeds._value",
+      "trigger": "entry",
+      "input": {
+        "itemsAt": "items",
+        "dedupeBy": "id",
+        "targetCount": 400,
+        "mapping": {
+          "noteId": "id",
+          "guid": "id",
+          "title": "noteCard.displayTitle",
+          "author": "noteCard.user.nickName",
+          "author_avatar": "noteCard.user.avatar",
+          "likes": "noteCard.interactInfo.likedCount",
+          "cover": "noteCard.cover.urlDefault",
+          "note_type": "noteCard.type",
+          "xsec_token": "xsecToken",
+          "link": "https://www.xiaohongshu.com/explore/{id}?xsec_token={xsecToken}&xsec_source=pc_feed"
+        }
+      }
+    },
+    {
+      "kind": "network",
+      "urlPattern": "*/api/sns/web/v1/homefeed*",
+      "windowMs": 300000,
+      "maxBodyBytes": 8000000,
+      "input": {
+        "itemsAt": "data.items",
+        "dedupeBy": "id",
+        "targetCount": 400,
+        "mapping": {
+          "noteId": "id",
+          "guid": "id",
+          "title": "note_card.display_title",
+          "author": "note_card.user.nick_name",
+          "author_avatar": "note_card.user.avatar",
+          "likes": "note_card.interact_info.liked_count",
+          "cover": "note_card.cover.url_default",
+          "note_type": "note_card.type",
+          "xsec_token": "xsec_token",
+          "link": "https://www.xiaohongshu.com/explore/{id}?xsec_token={xsec_token}&xsec_source=pc_feed"
+        },
+        "assert": [
+          {
+            "path": "data.items",
+            "desc": "xhs homefeed items"
+          }
+        ]
+      }
+    }
+  ],
+  "output": {
+    "itemsAt": "items",
+    "dedupeBy": "guid",
+    "targetCount": 100,
+    "mapping": {
+      "noteId": "noteId",
+      "guid": "guid",
+      "title": "title",
+      "author": "author",
+      "author_avatar": "author_avatar",
+      "likes": "likes",
+      "cover": "cover",
+      "note_type": "note_type",
+      "xsec_token": "xsec_token",
+      "link": "link"
+    }
+  },
+  "policy": {
+    "minActionIntervalMs": 900,
+    "maxTaskMs": 300000
+  },
+  "meta": {
+    "_why_uses": "打开一条笔记要的正文/图集/评论不在这份 feed 里，是另一份共用的 recipe（xhs-detail）现取的（src/content/enrich/index.ts）。申报它，detail 漂了才有人能回答「跟着哑的还有谁」——否则本源的健康状态一路是绿的，而每一条笔记都点不开。",
+    "uses": [
+      "xhs-detail"
+    ],
+    "auth": {
+      "type": "session",
+      "facility": "xhs",
+      "login": "qr",
+      "loginUrl": "https://www.xiaohongshu.com/explore",
+      "qrSelector": ".login-container img.qrcode-img, .qrcode img",
+      "cookieDomain": "xiaohongshu.com",
+      "sessionCookies": [
+        "web_session"
+      ]
+    },
+    "normalizer": "xhs",
+    "type": "post",
+    "title": "HomeFeed",
+    "description": "小红书首页推荐流 · 登录态浏览器滚动触发 homefeed XHR，拦截返回体采集",
+    "topics": [
+      "xhs",
+      "xiaohongshu",
+      "social"
+    ],
+    "categories": [
+      "social-media"
+    ],
+    "facility": {
+      "key": "xhs",
+      "label": "小红书"
+    },
+    "capabilities": [
+      "timeline"
+    ],
+    "priority": 80,
+    "discoverable": true,
+    "cadence_hint_seconds": 1800,
+    "homepage": "xiaohongshu.com"
+  }
+}

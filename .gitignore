@@ -1,0 +1,59 @@
+# 不带斜杠：worktree 里惯用软链接主检出的 node_modules，带斜杠只匹配目录、放过软链
+node_modules
+data/
+logs/
+.env
+config.yaml
+*.db
+*.db-journal
+.codegraph/
+dist/
+# 带代码的内置包的 npm 产物（`pnpm packages:bundle` 出的，内置层不读它）。上面那条 `dist/` 已经罩住，
+# 单列一行是把"这是构建物"写明——`dist/` 哪天收窄了，这些也不该跟着进 git。
+packages/*/dist/
+app/dist-panel
+.DS_Store
+
+# local stack (generated + secrets)
+#
+# compose 文件全部是 `pnpm plugins compose` 的生成物,而且**带凭证**:申报了 credentials 的
+# 服务会拿到自己那份 STREAM_CREDENTIAL_TOKEN(src/plugins/compose.ts)。提交它 = 把 token 写进
+# 历史,顺带把一份会过期的服务清单伪装成真相源(仓库里那份曾经留着早已退役的 whisper-asr)。
+.env
+docker-compose.yml
+docker-compose.override.yml
+docker-compose.local.yml
+docker-compose.selfhost.yml
+Caddyfile
+Caddyfile.local
+
+# dev serve logs
+serve*.log
+# `POST /api/restart` 在 watch 档（scripts/dev.sh）碰的哨兵：tsx watch 盯着它、它一变就重启后端。
+# 不是 dotfile 是故意的——tsx 的 watcher 固定忽略 `**/.*`（src/restart/policy.ts）。
+restart-sentinel
+
+# pnpm content-addressable store (created by in-container pnpm install over the bind mount)
+.pnpm-store/
+
+# MemPalace per-project files (issue #185)
+mempalace.yaml
+entities.json
+.superpowers/
+
+# Python runtime caches (bind-mounted plugin backends write these)
+__pycache__/
+
+# app/ 是 pnpm workspace 成员（见 pnpm-workspace.yaml），权威锁文件是根目录的 pnpm-lock.yaml。
+# 这份 npm 锁文件没有任何构建路径读它（Dockerfile 只拷 pnpm-lock.yaml；CI 走 pnpm -C app），
+# 但文档和构建脚本里还有几处 `npm run ...`（如 build:panel），谁在 app/ 里
+# 敲一次 `npm install` 它就会翻腾出几千行假 diff（发生过）。不跟踪它，本地留着当兼容垫。
+app/package-lock.json
+
+# reasonix 的本地运行痕迹（每台机器自己的配置/缓存，不随仓库走）
+.reasonix/
+reasonix.toml
+.worktrees/
+
+# host-agent 的二进制是构建产物（scripts/build-server.mjs 填进来），不进 git
+capabilities/desktop/platforms/*/bin/

@@ -1,0 +1,41 @@
+{
+  "name": "@streamapp/telegram",
+  "version": "1.1.0",
+  "type": "module",
+  "author": "stream",
+  "scripts": {
+    "bundle": "node ../../scripts/bundle-code-packages.mjs .",
+    "prepack": "node ../../scripts/assert-npm-artifact.mjs"
+  },
+  "files": [
+    "dist",
+    "*.recipe.json",
+    "README.md"
+  ],
+  "keywords": [
+    "stream-recipe"
+  ],
+  "stream": {
+    "type": "recipe",
+    "name": "Telegram",
+    "tagline": "在指定频道内搜关键词",
+    "facility": "telegram",
+    "schemaVersion": 1,
+    "searchSources": [
+      {
+        "source": "telegram-search",
+        "key": "telegram",
+        "label": "Telegram 频道",
+        "param": "q",
+        "kind": "digest"
+      }
+    ],
+    "code": {
+      "entry": "dist/index.js",
+      "normalizers": [
+        "telegram"
+      ]
+    }
+  },
+  "license": "Apache-2.0"
+}

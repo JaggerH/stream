@@ -1,0 +1,85 @@
+{
+  "version": 2,
+  "kind": "browser",
+  "sourceId": "goofish-publish",
+  "_why_verified": "2026-09-08 经 run_action_recipe 在真账号上端到端跑通：发布 → 回执带 itemId（status:done）→ 走 UI 删掉 → 个人页核 0 残留。**禁用词预检没做**（spec §11 第一条），调用方要自己先筛标题/描述。",
+  "_why_titleDescSeparate": "**必须 `titleDescSeparate:true`。** false 时闲鱼无视 title 字段、拿描述前 30 字当标题（`titleIsUserInput:false`）——之前这么发，六件商品的标题全成了描述的前半句，搜索里根本搜不到堆的关键词（2026-09-14 用 mtop.taobao.idle.pc.detail 回读发现）。true 才是「标题是用户自己填的」。",
+  "_why_action": "动作 recipe：不采集，发布一个闲鱼在售商品。meta.action=true 让它经 run_action_recipe 触发（两步确认），effects=['write'] 声明副作用（这一格是白名单，只认 write / send——发布是往闲鱼写一条在售商品，归 write）。",
+  "cookieDomain": "goofish.com",
+  "entryUrl": "https://www.goofish.com/publish",
+  "_why_entryUrl": "必须是 /publish：图片上传要用这页的 input[type=file]（浏览器禁脚本设文件路径，只能 DataTransfer 塞进真实 file input，走页面自己的上传器）。lib.mtop 也在这页可用、自签。",
+  "entryWait": "load",
+  "loginCheck": {
+    "loggedIn": "input[type=\"file\"]",
+    "_why_loggedIn": "登录态下 /publish 渲染出发布表单（含 input[type=file]）；游客态跳登录/禁访，这个选择器就不在。",
+    "wall": "iframe[src*=\"mini_login\"]",
+    "challenge": ".baxia-dialog",
+    "_why_challenge": "阿里风控的滑块遮罩。它是**挑战**不是墙：登录态好好的，用户要做的是拖一下滑块、等 facility 冷却，不是去登录——原来并在 wall 里，2026-09-14 一小时写了 11 次弹滑块时被报成 needs-login，把人支去白登录。",
+    "_why_wall": "`mini_login` 的 iframe 是同 facility 的 goofish-search 在游客态实测出来的登录弹层（见那份 recipe 的 _why_login_check）；`.baxia-dialog` 兜住阿里的风控遮罩。/publish 这一页本身没在游客态单独实测过。"
+  },
+  "_why_session_unattended": "全程页内 JS（DataTransfer 上传 + lib.mtop 直调），不依赖可见帧/坐标点击，unattended 的 focus 仿真足够。注意：`session` 块的 zod 是白名单 + 拒绝未知键，`_why_*` 注释键放不进去（会让整个 goofish 包装载抛异常），所以这条注释挂在顶层。",
+  "session": {
+    "facility": "goofish",
+    "lifecycle": "one-shot",
+    "visibility": "unattended"
+  },
+  "steps": [
+    {
+      "kind": "evaluate",
+      "_why": "一步走完：DataTransfer 传图 → 等 property.recommend 回图的 alicdn url → 直调 mtop.idle.pc.idleitem.publish → 从 data.redirectUrl 抠 itemId。不点表单按钮——直调 mtop 不吃 Ant 的 hash 选择器，稳。",
+      "_why_no_fetch": "**别把 data URL 交给 `fetch()` 转 Blob**（`await (await fetch(u)).blob()`）。`fetch` 取 `data:` 也归页面 CSP 的 connect-src 管，闲鱼这页不放行，当场 `TypeError: Failed to fetch`。而且栈会骗人：阿里的 tracker 给 `window.fetch` 打了补丁，报错栈里全是 `baxia` / `AWSC/et` 的帧，看着像被风控拦了——实际 publish 那一发 mtop 根本没跑到（2026-09-08 executor 端到端连撞两次，按栈里我们自己那一帧的列号 <anonymous>:1:864 定位到这一句）。所以这里自己 atob 解字节，全程零网络请求，也就与站点 CSP 无关。",
+      "call": "async (cursor, num, params) => { const sleep = ms => new Promise(r => setTimeout(r, ms)); for (let i=0;i<20 && !(window.lib&&window.lib.mtop&&document.querySelector('input[type=file]'));i++) await sleep(300); if(!(window.lib&&window.lib.mtop)) throw new Error('[goofish-publish] lib.mtop 未就绪'); const inp=document.querySelector('input[type=file]'); if(!inp) throw new Error('[goofish-publish] 无 input[type=file]（未登录或非发布页）'); if(!window.__gpHook){ window.__gpLog=[]; const o=window.lib.mtop.request.bind(window.lib.mtop); window.lib.mtop.request=function(opt){ try{window.__gpLog.push({api:opt&&opt.api,data:opt&&opt.data});}catch(e){} return o.apply(this,arguments); }; window.__gpHook=true; } window.__gpLog.length=0; const urls=JSON.parse(params.images); if(!Array.isArray(urls)||urls.length===0) throw new Error('[goofish-publish] images 要是一个非空的 JSON 数组字符串'); const toFile=(u,name)=>{ const m=/^data:([^;,]*)(;base64)?,([\\s\\S]*)$/.exec(String(u)); if(!m) throw new Error('[goofish-publish] images 每一项都必须是 data URL（页面 CSP 的 connect-src 不放行 fetch，所以只能自带字节，不能给 http(s) 链接）'); let bin; try{ bin=m[2]?atob(m[3]):decodeURIComponent(m[3]); }catch(e){ throw new Error('[goofish-publish] '+name+' 的 base64 解不开（长度 '+m[3].length+'，mod4='+(m[3].length%4)+'）——这串在递进来的路上被截断或抄漏了，不是站点的问题。原始报错：'+((e&&e.message)||e)); } const bytes=new Uint8Array(bin.length); for(let i=0;i<bin.length;i++) bytes[i]=bin.charCodeAt(i); return new File([bytes],name,{type:m[1]||'image/png'}); }; const dt=new DataTransfer(); for(const u of urls) dt.items.add(toFile(u,'img'+dt.items.length+'.png')); inp.files=dt.files; inp.dispatchEvent(new Event('change',{bubbles:true})); let imgs=null; for(let i=0;i<30;i++){ await sleep(400); const rec=(window.__gpLog||[]).filter(x=>/property\\.recommend/.test(x.api||'')).pop(); if(rec&&rec.data&&rec.data.imageInfos&&rec.data.imageInfos.length){ imgs=rec.data.imageInfos; break; } } if(!imgs) throw new Error('[goofish-publish] 传图后未取到 imageInfos'); const uniqueCode=String(Date.now())+String(Math.floor(Math.random()*1000)).padStart(3,'0'); const payload={ freebies:false, itemTypeStr:'b', quantity:String(Math.max(1,Math.min(999,parseInt(params.quantity||'1',10)||1))), simpleItem:'true', imageInfoDOList:imgs, itemTextDTO:{ title:params.title, desc:params.desc, titleDescSeparate:true }, itemPriceDTO:{ priceInCent:String(Math.round(Number(params.priceYuan)*100)) }, itemCatDTO:{ catId:'50023914', channelCatId:'202036301', catName:'电子资料' }, itemLabelExtList:[{ channelCateId:'202036301', channelCateName:'电子资料', propertyId:'-10000', propertyName:'分类', text:'电子资料', properties:'-10000##分类:202036301##电子资料', from:'newPublishChoice', labelFrom:'newPublish', labelType:'common', isUserClick:'0' }], itemPostFeeDTO:{ canFreeShipping:false, supportFreight:false, onlyTakeSelf:false, templateId:'0' }, userRightsProtocols:[], defaultPrice:false, uniqueCode, sourceId:'pcMainPublish', bizcode:'pcMainPublish', publishScene:'pcMainPublish' }; let r; try{ r=await window.lib.mtop.request({ api:'mtop.idle.pc.idleitem.publish', v:'1.0', type:'POST', data:payload }); }catch(e){ r=e; } const ok=Array.isArray(r&&r.ret)&&r.ret.some(x=>/SUCCESS/.test(x)); if(!ok) throw new Error('[goofish-publish] 发布被拒（可能含违禁词/参数不符）: '+JSON.stringify(r&&r.ret)); const redir=(r.data&&r.data.redirectUrl)||''; const m=/itemId=(\\d+)/.exec(redir); if(!m) throw new Error('[goofish-publish] 发布成功但未解析出 itemId: '+redir); const itemId=m[1]; return { items:[{ guid:itemId, itemId, title:params.title, link:'https://www.goofish.com/item?id='+itemId }], cursor:'' }; }",
+      "_why_post": "**必须 type:'POST'**。不写的话 lib.mtop 走 JSONP GET，整个 payload 进 URL；描述七八百字 + 两张以上图的 imageInfoDOList 就超长，lib 直接 reject `ABORT::接口异常退出`，请求根本没发出去。2026-09-13 实测：同一 payload 1 张图 SUCCESS、2 张就 ABORT；3 张图 + 空描述也能发出去（回业务错）——尺寸问题，不是内容问题。09-12 之前三张图能过是描述更短。",
+    "_why_catch_reject": "lib.mtop.request 在 ret 不是 SUCCESS 时 **reject 一个普通对象**（就是那份响应 {ret,data}），不是 Error。让它裸抛出去，CDP 只给回 description=\"Object\"，闲鱼拒绝发布的原话（FAIL_BIZ_… / 违禁词）整个丢掉——2026-09-13 上架 CN-K 撞到，回执只有一个 reason=\"Object\"。接住它当响应用，下面那句 ok 判定照常把 ret 报出来。",
+    "itemsAt": "items",
+      "maxPages": 1
+    }
+  ],
+  "observers": [],
+  "output": {
+    "itemsAt": "items",
+    "dedupeBy": "guid",
+    "targetCount": 1,
+    "mapping": {
+      "guid": "guid",
+      "itemId": "itemId",
+      "title": "title",
+      "link": "link"
+    },
+    "_why_assert_path": "`assert.path` 走的是**整个响应体**（这里就是 evaluate 的返回值 `{items,cursor}`），不是单条 item——`HarvestAccumulator.offer()` 对 body 取路径，取不到就把这一发计成 malformed，1/1 malformed 直接判 drift。写成裸的 `itemId` 会让一次**已经发布成功**的运行报「Drift detected: 1 out of 1 responses were malformed」，商品真在账号里、回执却说失败（2026-09-08 实测踩到）。所以要连 `items.0.` 一起写。",
+    "assert": [
+      { "path": "items.0.itemId", "desc": "发布未回传 itemId（发布失败或响应结构变了）" }
+    ]
+  },
+  "policy": { "minActionIntervalMs": 500, "maxTaskMs": 60000 },
+  "meta": {
+    "action": true,
+    "effects": ["write"],
+    "type": "post",
+    "title": "闲鱼上架",
+    "description": "把一组商品字段（标题/描述/价/图）发布成一个闲鱼在售电子资料商品，回传 itemId。走 mtop 直调，不驱动表单。虚拟商品（无需邮寄），不带地址。",
+    "facility": { "key": "goofish", "label": "闲鱼" },
+    "key_param": "title",
+    "discoverable": false,
+    "_why_pick_in_empty": "两个选择面都不出现：这不是一条可订阅的信息源，也不是 Provider 行的成员——它只经 MCP 的 run_action_recipe 跑，且必须二次确认。与 qq-send / wechat-send / xhs-like 同一档（名单钉在 src/manifest/pick.real.test.ts 的 NEVER_PICKABLE）。",
+    "pick_in": [],
+    "_why_rateLimit": "**写腿自己的闸，叠在 goofish 那道 facility 闸（12/20/150）之上，两道都过才放行。** 为什么不去调 facility 那道：那是按站点一个桶，同一个 facility 上还挂着 goofish-search（购买决策查残值，一次决策 4–10 台、要 burst 12、maxWaitMs 3000 排不上就抛），压它等于把残值查询一起压死。数字是**保守拍的、不是量出来的**：手里只有一个数据点——2026-09-08 端到端时 15 分钟内 6 次动作（4 次失败尝试 + 1 发 + 1 删）之后，闲鱼对整个浏览器会话回了约 20 分钟的整站 404（首页也 404，匿名 curl 却 200）。离 facility 闸差一个数量级，它一次都没拦。所以按「上架是低频动作」的业务形状定：连发 2 件（burst 2）、持续每 2 分钟 1 件（perMinute 0.5）、一小时封顶 6 件。不给 maxWaitMs——上架跑在后台批量里，不在对话热路径上，宁可等也别丢一件。真要提这几个数，先拿一轮受控的批量把闲鱼的实际天花板量出来，别凭手感调。",
+    "rateLimit": { "burst": 2, "perMinute": 0.5, "perHour": 6, "bucket": "goofish-write" },
+    "_why_member_timeout": "发布这一发比查价重：传图要等闲鱼自己的上传器 + property.recommend 回图（recipe 内最多等 12s），再加一发 publish。申报 75s，比 recipe 自己的 policy.maxTaskMs(60s) 略高——让超时先由 recipe 抛出带解释的错，而不是被成员闸无声掐掉。",
+    "member_timeout_ms": 75000,
+    "_why_auth_session": "骑用户自己 Chrome 里的闲鱼登录态，不注入任何 cookie，所以是 session 档（`type:'cookie'` 那一档要求 `inject`，是给我们自己塞 cookie 的场景用的）。与同 facility 的 goofish-search 同一份声明。",
+    "auth": {
+      "type": "session",
+      "facility": "goofish",
+      "login": "cookie",
+      "cookieDomain": "goofish.com"
+    },
+    "params_schema": {
+      "title": { "type": "string", "required": true, "description": "商品标题，≤30 字；公开面别出现网盘/链接/极限词（禁用词规则见 data-packs listings/README）。" },
+      "desc": { "type": "string", "required": true, "description": "商品描述，≤1500 字。含「电子资料」等类目词会被闲鱼自动识别到电子资料类目。" },
+      "priceYuan": { "type": "number", "required": true, "description": "价格（元），recipe 内 ×100 转成分。" },
+      "quantity": { "type": "string", "required": false, "description": "库存件数，默认 1（1–999）。**普通个人账号只能填 1**：填 >1 闲鱼直接拒 `FAIL_BIZ_ITEM_ERROR_MULTI_INVENTORY_ITEM_CAN_NOT_PUBLISH::亲，您不能发布多库存宝贝哦`（实测 2026-09-14）。多库存是开了闲鱼店铺 / 商家资质的账号才有的能力——同行虚拟商品能一条挂着持续卖、销量累计，靠的是这个。个人号数量 1 的商品卖出即转「已售出」自动下架，再上就是零销量新品。" },
+      "images": { "type": "string", "required": true, "description": "图片，JSON 数组字符串，每项一个 data URL（如 [\"data:image/png;base64,...\"]）；recipe 自己解成字节、经 DataTransfer 交给闲鱼自己的上传器，再取回 alicdn url。首图必填。**只收 data URL，不收 http(s) 链接**——页面 CSP 的 connect-src 不放行 fetch，字节必须随参数一起递进来。" }
+    }
+  }
+}

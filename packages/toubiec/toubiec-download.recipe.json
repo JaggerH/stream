@@ -1,0 +1,58 @@
+{
+  "version": 1,
+  "kind": "http",
+  "sourceId": "toubiec-download",
+  "request": {
+    "url": "https://nextmusic.toubiec.cn/api/getSongUrl",
+    "method": "POST",
+    "headers": { "content-type": "application/json" }
+  },
+  "compute": {
+    "capabilities": [],
+    "prefetch": [
+      { "as": "ipResp", "request": { "url": "https://nextmusic.toubiec.cn/api/ip", "method": "GET" } },
+      { "as": "detail", "request": { "url": "https://music.163.com/api/song/detail?ids=%5B{id}%5D", "method": "GET" } }
+    ],
+    "sign": "(() => { const ip = (input.pre.ipResp && input.pre.ipResp.data && input.pre.ipResp.data.ip) || '0.0.0.0'; return { body: JSON.stringify({ id: String(input.params.id), level: input.params.level || 'lossless', ip, timestamp: input.now }) }; })()",
+    "decode": "(() => { const d = input.body && input.body.data; if (!d || !d.url) return { song: [] }; const s = ((input.pre.detail && input.pre.detail.songs) || [])[0] || {}; const ext = (String(d.url).split('?')[0].match(/\\.([a-z0-9]+)$/i) || [])[1] || 'mp3'; return { song: [{ url: d.url, format: ext, bitrate: d.br, size: d.size, level: d.level, name: s.name || String(input.params.id), artist: (s.artists || []).map((a) => a.name).filter(Boolean).join('/'), album: (s.album && s.album.name) || '', cover: (s.album && s.album.picUrl) || '' }] }; })()"
+  },
+  "pagination": { "mode": "increment", "param": "page", "start": 1, "step": 1, "itemsAt": "song", "maxPages": 1 },
+  "assert": [{ "path": "song", "desc": "toubiec getSongUrl wrapped as a one-element array (empty = 这首解不出来，让梯子下一档去试)" }],
+  "mapping": {
+    "guid": "url",
+    "title": "name",
+    "author": "artist",
+    "album": "album",
+    "link": "https://music.163.com/song?id={id}",
+    "enclosure_url": "url",
+    "enclosure_type": "format",
+    "format": "format",
+    "image": "cover"
+  },
+  "meta": {
+    "normalizer": "rsshub",
+    "type": "post",
+    "title": "单曲下载",
+    "description": "toubiec 网易云解析 — 单曲下载（song id → 可播放/可下载地址）",
+    "topics": ["toubiec", "网易云", "音乐", "下载", "无损", "music", "netease"],
+    "categories": ["music"],
+    "facility": { "key": "toubiec", "label": "toubiec" },
+    "capabilities": ["timeline"],
+    "key_param": "id",
+    "priority": 80,
+    "discoverable": true,
+    "cadence_hint_seconds": 3600,
+    "auth": { "type": "none" },
+    "homepage": "wyapi.toubiec.cn",
+    "params_schema": {
+      "id": { "type": "string", "required": true, "description": "网易云歌曲 ID" },
+      "level": {
+        "type": "string",
+        "required": false,
+        "default": "lossless",
+        "description": "音质：standard/exhigh/lossless/hires/jyeffect/sky/jymaster（上游给不出时自动降档）"
+      }
+    },
+    "radar": ["music.163.com/song"]
+  }
+}

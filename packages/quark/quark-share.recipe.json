@@ -1,0 +1,40 @@
+{
+  "version": 3,
+  "kind": "http",
+  "sourceId": "quark-share",
+  "acceptNonOk": true,
+  "output": "object",
+  "request": {
+    "url": "https://drive-h.quark.cn/1/clouddrive/share/sharepage/detail?pr=ucpro&fr=pc&uc_param_str=&ver=2&pwd_id={pwd_id}&pdir_fid=0&_page=1&_size=50",
+    "method": "GET",
+    "headers": { "referer": "https://pan.quark.cn/" }
+  },
+  "compute": {
+    "capabilities": [],
+    "prefetch": [
+      {
+        "as": "tok",
+        "request": {
+          "url": "https://drive-h.quark.cn/1/clouddrive/share/sharepage/token?pr=ucpro&fr=pc&uc_param_str=",
+          "method": "POST",
+          "headers": { "content-type": "application/json", "referer": "https://pan.quark.cn/" },
+          "body": "{\"pwd_id\":\"{pwd_id}\",\"passcode\":\"{passcode}\",\"support_visit_limit_private_share\":true}"
+        }
+      }
+    ],
+    "sign": "(() => { const t = input.pre.tok; const st = (t && t.data && t.data.stoken) || ''; return { url: 'https://drive-h.quark.cn/1/clouddrive/share/sharepage/detail?pr=ucpro&fr=pc&uc_param_str=&ver=2&pwd_id=' + encodeURIComponent(input.params.pwd_id) + '&stoken=' + encodeURIComponent(st) + '&pdir_fid=0&force=0&_page=1&_size=50&_fetch_total=1&_sort=file_type:asc,file_name:asc' }; })()",
+    "decode": "(() => { const t = input.pre.tok; if (!t || typeof t.code !== 'number') throw new Error('quark token: unreadable body'); if (t.code !== 0) { const s = t.status; if (typeof s === 'number' && s >= 400 && s < 500 && s !== 429) return { validity: 'not-usable', files: [], reason: String(t.message || ('code ' + t.code)) }; throw new Error('quark token status ' + s + ' code ' + t.code + ': ' + (t.message || '?')); } if (!t.data || !t.data.stoken) throw new Error('quark token: code 0 without stoken'); const b = input.body; const list = (b && b.data && b.data.list) || []; const files = list.map((f) => ({ name: String(f.file_name || ''), is_dir: !!f.dir, size: Number(f.size || 0) })); return files.length ? { validity: 'alive', files: files } : { validity: 'not-usable', files: [], reason: '分享里没有文件' }; })()"
+  },
+  "assert": [{ "path": "validity", "desc": "quark 探针判决必须带 validity" }],
+  "meta": {
+    "description": "夸克分享验活 + 列文件（probe recipe，只读，判决对象输出；转存见 quark-save）",
+    "discoverable": false,
+    "_why_pick_in": "只在 Provider 成员面挑得到，不在频道订阅面——netdisk-verify-quark 行的成员",
+    "pick_in": ["provider"],
+    "key_param": "pwd_id",
+    "params_schema": {
+      "pwd_id": { "type": "string", "required": true, "description": "夸克分享 id（pan.quark.cn/s/<pwd_id>）" },
+      "passcode": { "type": "string", "required": false, "default": "", "description": "分享提取码（如有）" }
+    }
+  }
+}

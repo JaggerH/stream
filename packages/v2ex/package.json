@@ -1,0 +1,38 @@
+{
+  "name": "@streamapp/v2ex",
+  "version": "1.0.0",
+  "type": "module",
+  "author": "stream",
+  "scripts": {
+    "bundle": "node ../../scripts/bundle-code-packages.mjs .",
+    "prepack": "node ../../scripts/assert-npm-artifact.mjs"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "keywords": [
+    "stream-recipe"
+  ],
+  "stream": {
+    "type": "recipe",
+    "id": "v2ex",
+    "name": "V2EX",
+    "tagline": "主题的回复",
+    "facility": "v2ex",
+    "schemaVersion": 1,
+    "code": {
+      "entry": "dist/index.js",
+      "normalizers": [
+        "v2ex"
+      ],
+      "enrichers": [
+        "v2ex-comments"
+      ]
+    },
+    "rsshubNamespaces": [
+      "v2ex"
+    ]
+  },
+  "license": "Apache-2.0"
+}

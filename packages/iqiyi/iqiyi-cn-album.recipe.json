@@ -1,0 +1,80 @@
+{
+  "version": 1,
+  "kind": "http",
+  "sourceId": "iqiyi-cn-album",
+  "request": {
+    "url": "https://mesh.if.iqiyi.com/tvg/v2/selector",
+    "method": "GET"
+  },
+  "compute": {
+    "capabilities": [
+      "md5"
+    ],
+    "sign": "(() => { const p = { album_id: input.params.albumId, timestamp: input.now * 1000, src: 'lw', user_id: '', vip_status: '0', vip_type: '-1', device_id: 'aaaaaaaabbbbbbbb', app_version: '17.071.25717', scale: '100' }; const base = Object.keys(p).sort().map((k) => k + '=' + p[k]).join('&'); const sign = md5(base + '&secret_key=howcuteitis').toUpperCase(); const all = Object.assign({}, p, { sign }); const qs = Object.keys(all).map((k) => encodeURIComponent(k) + '=' + encodeURIComponent(all[k])).join('&'); return { url: 'https://mesh.if.iqiyi.com/tvg/v2/selector?' + qs }; })()",
+    "decode": "(() => { const up = (u) => u ? String(u).replace(/(_\\d{2,4}_\\d{2,4})?\\.(jpg|jpeg|png|webp)(\\?.*)?$/i, '_720_405.$2$3') : u; const groups = (input.body && input.body.data && input.body.data.videos) || []; const items = []; for (const g of groups) { for (const v of (g.data || [])) { if (v.page_url) { items.push(Object.assign({}, v, { image_hd: up(v.image_url) })); } } } return { items }; })()"
+  },
+  "pagination": {
+    "mode": "increment",
+    "param": "page",
+    "start": 1,
+    "step": 1,
+    "itemsAt": "items",
+    "maxPages": 1
+  },
+  "assert": [
+    {
+      "path": "items",
+      "desc": "iqiyi selector season videos flattened"
+    }
+  ],
+  "mapping": {
+    "guid": "page_url",
+    "title": "title",
+    "link": "page_url",
+    "image": "image_hd",
+    "description": "description",
+    "pubDate": "publish_date"
+  },
+  "meta": {
+    "normalizer": "rsshub",
+    "type": "post",
+    "description": "爱奇艺（国内站）— 剧集/综艺分集",
+    "topics": [
+      "爱奇艺",
+      "iqiyi",
+      "影视",
+      "综艺",
+      "剧集",
+      "分集",
+      "tv"
+    ],
+    "categories": [
+      "multimedia"
+    ],
+    "facility": {
+      "key": "iqiyi",
+      "label": "爱奇艺"
+    },
+    "capabilities": [
+      "timeline"
+    ],
+    "key_param": "albumId",
+    "priority": 80,
+    "discoverable": true,
+    "cadence_hint_seconds": 86400,
+    "auth": {
+      "type": "none"
+    },
+    "homepage": "iqiyi.com",
+    "params_schema": {
+      "albumId": {
+        "type": "string",
+        "required": true,
+        "description": "数字专辑 id（qipuId，来自 cn/search 结果）"
+      }
+    },
+    "radar": [
+      "iqiyi.com/a_:id.html"
+    ]
+  }
+}

@@ -1,0 +1,48 @@
+{
+  "name": "@streamapp/desktop",
+  "version": "0.6.0",
+  "private": true,
+  "description": "Stream Desktop —— Stream 的内置能力：驱动用户自己的电脑（他登录着的 Chrome + 原生桌面的 stream-desktop 进程）。不发 npm——随 @streamapp/stream 的后端 bundle 出货。",
+  "type": "module",
+  "//private": [
+    "**不发 npm，所以没有 files / exports / main / bin，也没有 prepack 闸。**",
+    "这个目录今天是 Stream 后端源码树的一部分：后端静态 import `src/host-agent/`（经",
+    "`src/host-agent/mount.ts` 交给能力宿主挂载）、`src/cookies.ts` 的服务名与类型，",
+    "esbuild 跟着 import 把它们打进 `server.mjs`。装 `@streamapp/stream` 就有电脑操作，",
+    "不需要用户再装第二个包。",
+    "留在 `capabilities/` 而不是并进 `src/` 的理由：`platforms/`（本机进程的 npm 平台包）、",
+    "`scripts/provision*`（真机备机手册与探针）与它自己那份 suite 是一整套，拆开只会让",
+    "「这个 exe 从哪来」散成三处。哪些东西归后端主路，见 README.md 的对账表。"
+  ],
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "//platforms": [
+    "`stream-desktop` 的二进制按平台走 npm 可选子包（源码在 platforms/），npm 只装匹配本机的",
+    "那一个、装不上的静默跳过——这正是 optionalDependencies 而不是 dependencies 的原因。",
+    "**这几个包名是线上常量**（写进用户机器上的 native messaging 清单与注册表，以及 npm",
+    "registry）：改了要让每台配对过的机器重新 `--register` 一次，否则静默失联、一个字都不报。",
+    "**本包 private 之后这一格仍然要在**：`scripts/desktop-platforms.test.ts` 拿它和",
+    "`platforms/<pkg>/package.json` 自己声明的版本对表，`src/host-agent/mount.test.ts` 再拿",
+    "发行包 `cli/package.json` 的同名格和它对表——三处必须是同一个数。",
+    "**这些子包的版本和本包的 version 不是一回事**：本包会因为纯 TS 侧的改动改版本，而平台包只在",
+    "Rust 那侧真的重编时才发。两者绑成一个数会逼着每次都重发一次二进制。"
+  ],
+  "optionalDependencies": {
+    "@streamapp/desktop-win32-x64": "0.7.2",
+    "@streamapp/desktop-darwin-x64": "0.7.2",
+    "@streamapp/desktop-darwin-arm64": "0.7.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.8"
+  },
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/JaggerH/stream.git",
+    "directory": "capabilities/desktop"
+  }
+}

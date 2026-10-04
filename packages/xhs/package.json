@@ -1,0 +1,127 @@
+{
+  "name": "@streamapp/xhs",
+  "version": "1.2.0",
+  "type": "module",
+  "author": "stream",
+  "scripts": {
+    "bundle": "node ../../scripts/bundle-code-packages.mjs .",
+    "prepack": "node ../../scripts/assert-npm-artifact.mjs"
+  },
+  "files": [
+    "dist",
+    "*.recipe.json",
+    "manifests.yaml",
+    "README.md"
+  ],
+  "keywords": [
+    "stream-recipe"
+  ],
+  "stream": {
+    "type": "recipe",
+    "hostVersion": ">=0.1.0",
+    "name": "小红书",
+    "tagline": "关键词搜索，登录态浏览器采集",
+    "facility": "xhs",
+    "homepage": "https://www.xiaohongshu.com",
+    "schemaVersion": 1,
+    "cookieDomain": "xiaohongshu.com",
+    "rsshubNoBrowserNamespaces": [
+      "xiaohongshu"
+    ],
+    "links": {
+      "hosts": [
+        "xiaohongshu.com",
+        "xhslink.com"
+      ],
+      "shortHosts": [
+        "xhslink.com"
+      ]
+    },
+    "rateLimit": {
+      "burst": 5,
+      "perMinute": 6,
+      "maxWaitMs": 15000
+    },
+    "code": {
+      "entry": "dist/index.js",
+      "adapters": [
+        "xhs"
+      ],
+      "normalizers": [
+        "xhs"
+      ],
+      "enrichers": [
+        "xhs-detail"
+      ]
+    },
+    "item": {
+      "actions": [
+        {
+          "id": "like",
+          "icon": "heart",
+          "label": "点赞",
+          "recipe": "@streamapp/xhs/xhs-like",
+          "params": {
+            "noteId": "{content.enrich.params.noteId}"
+          },
+          "toggle": [
+            "like",
+            "unlike"
+          ]
+        },
+        {
+          "id": "collect",
+          "icon": "bookmark",
+          "label": "收藏",
+          "recipe": "@streamapp/xhs/xhs-like",
+          "params": {
+            "noteId": "{content.enrich.params.noteId}"
+          },
+          "toggle": [
+            "collect",
+            "uncollect"
+          ]
+        }
+      ]
+    },
+    "providers": [
+      {
+        "id": "video-xhs",
+        "category": "resolve",
+        "serveKeys": [
+          "xhs-video"
+        ],
+        "strategy": "sequential",
+        "label": "xhs 视频解析",
+        "description": "笔记 id → 笔记页里的签名 mp4（登录态 tab 现取，range 串流）",
+        "members": [
+          {
+            "source": "xhs-resolve"
+          }
+        ],
+        "callsites": [
+          "video.resolve"
+        ]
+      },
+      {
+        "id": "xhs-url",
+        "category": "transform",
+        "serveKeys": [
+          "xhs-link"
+        ],
+        "strategy": "sequential",
+        "label": "小红书链接抓媒体",
+        "description": "xiaohongshu.com / xhslink.com 的笔记链接 → 标题、作者、正文与图集 / 可播放地址",
+        "members": [
+          {
+            "source": "xhs-fetch-url"
+          }
+        ],
+        "callsites": [
+          "content.enrich"
+        ]
+      }
+    ]
+  },
+  "license": "Apache-2.0"
+}

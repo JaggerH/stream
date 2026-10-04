@@ -1,0 +1,116 @@
+{
+  "version": 3,
+  "kind": "browser",
+  "cookieDomain": "photopea.com",
+  "_why_cookieDomain": "Photopea 免费版不用登录，这一格只是浏览器 recipe 的必填项：它决定 lane 落在哪个站、cdp 的 domain 核对用哪个域。填裸域覆盖 www。",
+  "entryUrl": "https://www.photopea.com/api/",
+  "_why_entryUrl": "故意不落 photopea.com 首页：顶层的 Photopea **不听 postMessage**（脚本 API 只在被嵌成 iframe 时才接线，实测 2026-09-19：顶层 postMessage 只收到自己的回声，`app` 也不是全局）。所以 recipe 在一张**同源的轻页**（/api/ 是 9KB 的静态文档页）里自己嵌一个 photopea.com 的 iframe，从顶层 postMessage 驱动它、收它 postMessage 回来的 ArrayBuffer。同源是关键：跨源的宿主页收不到 iframe 的 `source` 比对、也没法 `contentWindow` 直投；用 Stream 自己的页面就得再过 CORS/信任源那道门，白多一层。",
+  "entryWait": "load",
+  "rideCurrentPage": true,
+  "_why_rideCurrentPage": "persistent lane 默认「已在入口页也重载」（上一轮的渲染视为过期），可这里页面上什么都不读——真正的状态是 evaluate 自己注入的那个热 iframe（Photopea 冷载要 2–20s，热的 4s 内应一声就复用）。骑着当前页不重载，iframe 就能跨轮活着；冷启时 lane 直接落在 entryUrl（runner 见 session-recipe-executor.ts 的 landing）。",
+  "loginCheck": {
+    "loggedIn": "body",
+    "wall": "#stream-photopea-never-wall",
+    "_why": "Photopea 没有登录墙：loggedIn 填 body（页面在就算登着），wall 填一个永远不存在的 id。这两格是 BrowserRecipe 的必填结构，不是这里真的在判登录。"
+  },
+  "session": {
+    "facility": "photopea",
+    "lifecycle": "persistent",
+    "visibility": "unattended",
+    "keepAlive": true
+  },
+  "_why_session": "所有 photopea-* 共用一条 lane、一张标签，**常驻**（keepAlive：不闲置回收、撞墙也不关）：每重开一次就是一次 ~10MB 的整页加载，开得勤了 photopea.com 会掐连接（ERR_CONNECTION_CLOSED）/ 出真人验证；而且跑完的 PSD 就留在这张标签里给人看、给人改。iframe 常热、铺满标签。unattended：整段是 postMessage + 页内 canvas，没有一次可信输入，后台标签照跑。后台标签的定时器被节流到 ≥1s 一跳，所以脚本里凡是等，都等事件（message）不轮询。",
+  "observers": [],
+  "policy": {
+    "minActionIntervalMs": 0,
+    "maxTaskMs": 120000
+  },
+  "sourceId": "photopea-place",
+  "_why": "把若干图层按**数值**落进一张指定画幅（如 3200×1440）：每层给目标四角 quad（透视）或矩形 rect，可指定源图上的四角 src（只取源图的那一块）。几何是 4 点→4 点的单应变换，在宿主页 canvas 上逆向映射 + 双线性采样（预乘 alpha，边缘不发黑）算出一张画幅坐标的整幅 PNG；Photopea 负责**文档与图层**：新建透明画布 → 每层各开成文档、`duplicate` 进画布（位置照搬）→ 导出 PNG / PSD（保留图层，人还能手改）。**为什么透视不在 Photopea 里做**：它的脚本 API 不认 Photoshop 的 `Trnf` 变换描述符（实测脚本静默死掉），`asSmart` 贴入又会把图缩放（2048 宽贴进 3200 画布被缩到 1407）；只有 `duplicate` 保位置、保像素。这条不经过任何 AI 模型。",
+  "_why_action": "同 photopea-cutout：无账号无副作用，动作形状，只经 run_action_recipe / POST /api/recipes/action 跑。",
+  "steps": [
+    {
+      "kind": "evaluate",
+      "_why": "一页跑完：warp 每层几十到几百 ms（只扫目标四角的包围盒，3200×1440 画幅两层实测整段 3s 内），Photopea 每层开文档 + duplicate + 关掉。放了每层之后核一次 24s 预算，超了就报层太多，不做分页——这类拼合没有「一页一页地出」的自然切法。脚本驱动、就绪判据、二进制回传与 photopea-cutout 的 evaluate 完全一致（见那边的 _why）。",
+      "call": "async (cursor, num, params) => {\n  if (location.hostname !== 'www.photopea.com') throw new Error('[photopea-place] 这张标签没连上 photopea.com（现在是 ' + location.href.slice(0, 60) + '，多半是连接被掐断）：去那张标签按一次刷新，别关它');\n  if (window._cf_chl_opt || /请稍候|Just a moment|安全验证/.test(document.title + ' ' + (document.body ? document.body.innerText.slice(0, 200) : ''))) throw new Error('[photopea-place] Photopea 标签停在 Cloudflare 真人验证页：去那张「Photopea API」标签点一下验证（只需一次，标签常驻不关），再跑');\n  const sleep = ms => new Promise(r => setTimeout(r, ms));\n  const pageStart = Date.now();\n  const W = Number(params.width), H = Number(params.height);\n  if (!(W > 0 && H > 0)) throw new Error('[photopea-place] width/height 必须是正整数');\n  const images = String(params.images || '').split('\\n').filter(Boolean);\n  let layers; try { layers = JSON.parse(params.layers); } catch (e) { throw new Error('[photopea-place] layers 不是合法 JSON: ' + e.message); }\n  if (!Array.isArray(layers) || !layers.length) throw new Error('[photopea-place] layers 要是非空数组');\n  const format = String(params.format || 'png');\n  // —— Photopea 宿主：同源 iframe（photopea.com 顶层不听 postMessage，嵌成 iframe 才听）——\n  const ensureFrame = async () => {\n    let f = document.getElementById('pp');\n    if (f) { // 上一轮留下的热 iframe：应一声就复用，不应就换新的\n      const alive = await new Promise(res => { const h = e => { if (e.source === f.contentWindow && e.data === 'pong') { window.removeEventListener('message', h); res(true); } }; window.addEventListener('message', h); setTimeout(() => { window.removeEventListener('message', h); res(false); }, 4000); f.contentWindow.postMessage('app.echoToOE(\"pong\");', '*'); });\n      if (alive) return f;\n      f.remove();\n    }\n    f = document.createElement('iframe'); f.id = 'pp'; f.style.cssText = 'position:fixed;left:0;top:0;width:100vw;height:100vh;border:0;background:#fff;z-index:2147483647';\n    const ready = new Promise((res, rej) => { const h = e => { if (e.source === f.contentWindow && e.data === 'done') { window.removeEventListener('message', h); res(); } }; window.addEventListener('message', h); setTimeout(() => { window.removeEventListener('message', h); rej(new Error('[photopea-place] Photopea iframe 25s 没就绪')); }, 25000); });\n    f.src = 'https://www.photopea.com/#' + encodeURIComponent(JSON.stringify({ environment: {} }));\n    document.body.appendChild(f);\n    await ready;\n    return f;\n  };\n  const f = await ensureFrame();\n  // 跑一段 Photopea 脚本，等它最后一句 echo 的标记；二进制（saveToOE）顺手收下\n  const pp = (script, ms) => new Promise((res, rej) => {\n    const mark = 'ok#' + Math.random().toString(36).slice(2, 8); let bin = null; const got = [];\n    const h = e => { if (e.source !== f.contentWindow) return; if (e.data instanceof ArrayBuffer) { bin = e.data; return; } if (typeof e.data !== 'string') return; got.push(e.data); if (e.data === mark) { window.removeEventListener('message', h); clearTimeout(t); res({ bin, got }); } };\n    const t = setTimeout(() => { window.removeEventListener('message', h); rej(new Error('[photopea-place] Photopea 脚本 ' + ms + 'ms 内没跑完（脚本出错时 Photopea 不报错、只是没有回音）: ' + script.slice(0, 120) + ' | 收到: ' + got.join('/'))); }, ms);\n    window.addEventListener('message', h);\n    f.contentWindow.postMessage(script + '\\napp.echoToOE(' + JSON.stringify(mark) + ');', '*');\n  });\n  let B = 0; // 清完临时文档后已有的文档数（用户自己开着的）；本轮的文档从 app.documents[B] 起\n  const probe = async () => (await pp('app.echoToOE(\"docs=\" + app.documents.length + \" w=\" + (app.documents.length ? app.activeDocument.width : 0));', 5000)).got.find(s => s.startsWith('docs='));\n  const waitDocs = async (n, w, ms) => { const t0 = Date.now(); for (;;) { const s = await probe(); if (s === 'docs=' + (B + n) + ' w=' + w) return; if (Date.now() - t0 > ms) throw new Error('[photopea-place] 等文档就绪超时，现在 ' + s + '，要 docs=' + n + ' w=' + w); await sleep(300); } };\n  // —— 几何：单应（4 点→4 点），逆向映射 + 双线性采样（预乘 alpha，边缘不发黑）——\n  const solveH = (s, d) => { // 求 3x3 H 使 H·s_i ~ d_i；8 未知数高斯消元\n    const A = [], b = [];\n    for (let i = 0; i < 4; i++) { const [x, y] = s[i], [u, v] = d[i]; A.push([x, y, 1, 0, 0, 0, -u * x, -u * y]); b.push(u); A.push([0, 0, 0, x, y, 1, -v * x, -v * y]); b.push(v); }\n    const n = 8; for (let c = 0; c < n; c++) { let p = c; for (let r = c + 1; r < n; r++) if (Math.abs(A[r][c]) > Math.abs(A[p][c])) p = r; [A[c], A[p]] = [A[p], A[c]]; [b[c], b[p]] = [b[p], b[c]]; for (let r = 0; r < n; r++) { if (r === c) continue; const k = A[r][c] / A[c][c]; for (let j = c; j < n; j++) A[r][j] -= k * A[c][j]; b[r] -= k * b[c]; } }\n    const h = b.map((v, i) => v / A[i][i]); return [h[0], h[1], h[2], h[3], h[4], h[5], h[6], h[7], 1];\n  };\n  const loadImg = src => new Promise((res, rej) => { const im = new Image(); im.onload = () => res(im); im.onerror = () => rej(new Error('[photopea-place] 图片加载失败')); im.src = src; });\n  const warpLayer = async (lay) => {\n    const src = images[Number(lay.image) || 0]; if (!src) throw new Error('[photopea-place] layers[].image 指到不存在的 images 序号');\n    const im = await loadImg(src); const sw = im.naturalWidth, sh = im.naturalHeight;\n    const sc = document.createElement('canvas'); sc.width = sw; sc.height = sh; const sctx = sc.getContext('2d'); sctx.drawImage(im, 0, 0);\n    const S = sctx.getImageData(0, 0, sw, sh).data;\n    const dst = lay.quad ? lay.quad : (lay.rect ? [[lay.rect[0], lay.rect[1]], [lay.rect[0] + lay.rect[2], lay.rect[1]], [lay.rect[0] + lay.rect[2], lay.rect[1] + lay.rect[3]], [lay.rect[0], lay.rect[1] + lay.rect[3]]] : null);\n    if (!dst) throw new Error('[photopea-place] 每层要有 quad（四角）或 rect（[x,y,w,h]）');\n    const srcQ = lay.src || [[0, 0], [sw, 0], [sw, sh], [0, sh]];\n    const Hinv = solveH(dst, srcQ); // 目标像素 → 源像素\n    const oc = document.createElement('canvas'); oc.width = W; oc.height = H; const octx = oc.getContext('2d');\n    const x0 = Math.max(0, Math.floor(Math.min(...dst.map(p => p[0])))), x1 = Math.min(W, Math.ceil(Math.max(...dst.map(p => p[0]))));\n    const y0 = Math.max(0, Math.floor(Math.min(...dst.map(p => p[1])))), y1 = Math.min(H, Math.ceil(Math.max(...dst.map(p => p[1]))));\n    const bw = x1 - x0, bh = y1 - y0; if (bw <= 0 || bh <= 0) throw new Error('[photopea-place] 目标四角完全在画幅外');\n    const out = octx.createImageData(bw, bh), O = out.data;\n    // 目标四角内才画（凸四边形：点在每条边同侧）\n    const inside = (x, y) => { let sgn = 0; for (let i = 0; i < 4; i++) { const [ax, ay] = dst[i], [bx, by] = dst[(i + 1) % 4]; const cr = (bx - ax) * (y - ay) - (by - ay) * (x - ax); if (cr !== 0) { if (sgn === 0) sgn = Math.sign(cr); else if (Math.sign(cr) !== sgn) return false; } } return true; };\n    for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) {\n      const px = x + 0.5, py = y + 0.5; if (!inside(px, py)) continue;\n      const den = Hinv[6] * px + Hinv[7] * py + 1; const u = (Hinv[0] * px + Hinv[1] * py + Hinv[2]) / den - 0.5, v = (Hinv[3] * px + Hinv[4] * py + Hinv[5]) / den - 0.5;\n      const ux = Math.floor(u), vy = Math.floor(v); const fx = u - ux, fy = v - vy;\n      let r = 0, g = 0, b = 0, a = 0;\n      for (let dy = 0; dy < 2; dy++) for (let dx = 0; dx < 2; dx++) { const sx = ux + dx, sy = vy + dy; if (sx < 0 || sy < 0 || sx >= sw || sy >= sh) continue; const wgt = (dx ? fx : 1 - fx) * (dy ? fy : 1 - fy); const i = (sy * sw + sx) * 4; const al = S[i + 3] * wgt; r += S[i] * al; g += S[i + 1] * al; b += S[i + 2] * al; a += al; }\n      if (a <= 0) continue; const o = ((y - y0) * bw + (x - x0)) * 4; O[o] = r / a; O[o + 1] = g / a; O[o + 2] = b / a; O[o + 3] = a;\n    }\n    octx.putImageData(out, x0, y0);\n    return oc.toDataURL('image/png');\n  };\n  // —— 组装：新建透明画布 → 每层各开成文档、复制进画布（位置照搬，warp 已把它画在画幅坐标里）→ 导出 ——\n  await pp('for (var i = app.documents.length - 1; i >= 0; i--) if (String(app.documents[i].name).indexOf(\"~stream~\") === 0) app.documents[i].close();', 8000, '清掉上轮残留的临时文档');\n  B = Number(((await probe()) || 'docs=0').slice(5).split(' ')[0]) || 0;\n  await pp('app.documents.add(' + W + ', ' + H + ', 72, \"~stream~scene\", NewDocumentMode.RGB, DocumentFill.TRANSPARENT);', 8000);\n  await waitDocs(1, W, 8000);\n  for (let i = 0; i < layers.length; i++) {\n    const url = await warpLayer(layers[i]);\n    await pp('app.open(' + JSON.stringify(url) + ');', 20000);\n    await waitDocs(2, W, 20000);\n    await pp('var src = app.activeDocument; src.layers[0].duplicate(app.documents[' + B + '], ElementPlacement.PLACEATBEGINNING); src.close(); app.activeDocument = app.documents[' + B + ']; app.activeDocument.layers[0].name = ' + JSON.stringify(String(layers[i].name || ('layer' + i))) + ';', 8000);\n    await waitDocs(1, W, 8000);\n    if (Date.now() - pageStart > 24000) throw new Error('[photopea-place] 层太多，一次求值 30s 装不下（已放 ' + (i + 1) + ' 层）');\n  }\n  const { bin, got } = await pp('app.activeDocument = app.documents[' + B + ']; app.activeDocument.saveToOE(' + JSON.stringify(format) + ');', 20000);\n  if (!bin) throw new Error('[photopea-place] saveToOE 没回二进制: ' + got.join('/'));\n\n  const keepName = String(params.keep || '');\n  if (keepName) await pp('app.activeDocument.name = ' + JSON.stringify(keepName) + '; var kd = app.activeDocument; ' + 'for (var i = app.documents.length - 1; i >= 0; i--) if (String(app.documents[i].name).indexOf(\"~stream~\") === 0) app.documents[i].close();' + ' app.activeDocument = kd;', 8000, '留下结果');\n  else await pp('for (var i = app.documents.length - 1; i >= 0; i--) if (String(app.documents[i].name).indexOf(\"~stream~\") === 0) app.documents[i].close();', 8000, '收尾');\n  const u8 = new Uint8Array(bin); let s = ''; for (let i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000));\n  return { items: [{ guid: 'scene-' + Date.now(), format, width: String(W), height: String(H), layers: String(layers.length), bytes: String(u8.length), data: btoa(s) }], cursor: '' };\n}",
+      "itemsAt": "items",
+      "cursorField": "cursor",
+      "maxPages": 1
+    }
+  ],
+  "output": {
+    "itemsAt": "items",
+    "dedupeBy": "guid",
+    "targetCount": 1,
+    "mapping": {
+      "guid": "guid",
+      "format": "format",
+      "width": "width",
+      "height": "height",
+      "layers": "layers",
+      "bytes": "bytes",
+      "file": "data"
+    },
+    "files": {
+      "file": {
+        "extFrom": "format"
+      }
+    },
+    "_why_files": "页内只能把导出的二进制编成 base64 交出来；这一格让宿主把它写成文件、`items[0].file` 换成绝对路径。不留 base64 在结果里：结果会原样落进 agent-runs.db，而账本拒收超过 1MB 的 result——一张导出图几十 MB，曾把账本撑到 2GB、开机 OOM。扩展名取 format（`jpg:0.8` 取冒号前）。",
+    "assert": [
+      {
+        "path": "items.0.data",
+        "desc": "没有拿到导出的图（Photopea 脚本没回二进制）"
+      }
+    ]
+  },
+  "meta": {
+    "action": true,
+    "effects": [],
+    "_why_effects": "同 photopea-cutout。",
+    "type": "post",
+    "title": "Photopea 按数值摆放",
+    "description": "在 Photopea 里新建指定画幅，把图层按目标四角（透视）或矩形落进去，导出 PNG（或带图层的 PSD）的文件（`items[0].file` 是落盘后的绝对路径）。",
+    "facility": {
+      "key": "photopea",
+      "label": "Photopea"
+    },
+    "key_param": "layers",
+    "discoverable": false,
+    "pick_in": [],
+    "member_timeout_ms": 120000,
+    "params_schema": {
+      "width": {
+        "type": "string",
+        "required": true,
+        "description": "画幅宽（像素）。"
+      },
+      "height": {
+        "type": "string",
+        "required": true,
+        "description": "画幅高（像素）。"
+      },
+      "images": {
+        "type": "string",
+        "required": true,
+        "description": "源图 data URL，多张按换行拼；layers[].image 用序号指它（同一张图可被多层引用，不用重复传）。"
+      },
+      "layers": {
+        "type": "string",
+        "required": true,
+        "description": "JSON 数组，底层在前、顶层在后。每层：{image: 序号, name?: 图层名, src?: 源图四角 [[x,y]×4]（TL,TR,BR,BL；缺省整图）, quad: 目标四角 [[x,y]×4]（画幅坐标，同序）} 或 {…, rect: [x,y,w,h]}。quad 非凸或四点共线会算出畸变，自己保证。"
+      },
+      "format": {
+        "type": "string",
+        "required": false,
+        "description": "导出格式，默认 png；\"psd\" 保留每一层。"
+      },
+      "keep": {
+        "type": "string",
+        "required": false,
+        "default": "",
+        "description": "跑完把导出的那份文档改成这个名字**留在标签里**给人看、给人改（不给 = 本轮的临时文档全关掉）。这张 Photopea 标签常驻、人和脚本共用：脚本只碰自己建的 ~stream~ 临时文档，你开着的文档不动；但别在脚本跑的那几秒里切文档。"
+      }
+    }
+  }
+}

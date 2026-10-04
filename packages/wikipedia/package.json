@@ -1,0 +1,16 @@
+{
+  "name": "@streamapp/wikipedia",
+  "version": "1.0.0",
+  "author": "stream",
+  "keywords": [
+    "stream-recipe"
+  ],
+  "stream": {
+    "type": "recipe",
+    "name": "Wikipedia",
+    "tagline": "某个奖项的历年获奖名单",
+    "facility": "wikipedia",
+    "schemaVersion": 1
+  },
+  "license": "Apache-2.0"
+}

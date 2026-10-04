@@ -1,0 +1,15 @@
+{
+  "name": "@streamapp/builtin",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "stream": {
+    "id": "builtin",
+    "required": true,
+    "name": "Stream 内置",
+    "tagline": "进程内能力（磁力解析 / 视频播放解析 / 转写 / LLM / 兜底抓取）",
+    "description": "Stream 自带的、无独立 facility 插件的进程内能力源：磁力解析、视频播放解析梯子成员、语音转写、LLM 调用与通用网页兜底抓取。（聚合搜索已改为 Provider 行，成员是各插件的搜索源，不再内置。）",
+    "normalizer": "generic"
+  },
+  "license": "Apache-2.0"
+}

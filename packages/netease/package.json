@@ -1,0 +1,82 @@
+{
+  "name": "@streamapp/netease",
+  "version": "1.1.0",
+  "type": "module",
+  "scripts": {
+    "bundle": "node ../../scripts/bundle-code-packages.mjs .",
+    "prepack": "node ../../scripts/assert-npm-artifact.mjs"
+  },
+  "files": [
+    "dist",
+    "*.recipe.json",
+    "manifests.yaml",
+    "README.md"
+  ],
+  "keywords": [
+    "stream-recipe"
+  ],
+  "stream": {
+    "type": "recipe",
+    "hostVersion": ">=0.1.0",
+    "id": "netease",
+    "name": "网易云音乐",
+    "tagline": "歌单 / 歌词 / 取歌",
+    "facility": "netease",
+    "schemaVersion": 1,
+    "code": {
+      "entry": "dist/index.js",
+      "adapters": [
+        "netease-lyrics"
+      ],
+      "normalizers": [
+        "netease"
+      ]
+    },
+    "rsshubNamespaces": [
+      "163"
+    ],
+    "links": {
+      "hosts": [
+        "music.163.com"
+      ],
+      "patterns": [
+        {
+          "kind": "track",
+          "pattern": "^https?://music\\.163\\.com/(?:#/)?song\\?id=(?<id>\\d+)"
+        },
+        {
+          "kind": "track",
+          "pattern": "^https?://music\\.163\\.com/song/(?<id>\\d+)"
+        }
+      ]
+    },
+    "providers": [
+      {
+        "id": "netease-track",
+        "category": "resolve",
+        "serveKeys": [
+          "netease",
+          "netease-track"
+        ],
+        "strategy": "sequential",
+        "label": "网易云取歌",
+        "description": "song id → 可播放/可下载地址；音质默认取最高可得，调用方可传 level 覆盖",
+        "members": [
+          {
+            "mode": "auto",
+            "matches": "music.163.com/song",
+            "params": {
+              "id": "$input",
+              "level": "lossless"
+            }
+          }
+        ],
+        "callsites": [
+          "music.track.resolve",
+          "music.track.download"
+        ]
+      }
+    ]
+  },
+  "license": "Apache-2.0"
+}

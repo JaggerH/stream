@@ -1,0 +1,99 @@
+{
+  "version": 1,
+  "kind": "browser",
+  "sourceId": "goofish-search",
+  "_why_browser": "闲鱼网页版的搜索走阿里 mtop 签名接口（`h5api.m.goofish.com/h5/mtop.taobao.idlemtopsearch.pc.search`），且**必须登录**。tier 4：在用户自己登录着的 Chrome 里调页面自带的请求客户端 `window.lib.mtop.request`，签名（sign / token / cookie）全由它自己算——**我们一行签名都不写**（法律红线）。实测 2026-09-03：登录态下同一段调用回 `SUCCESS::调用成功`、30 条、numFound 3708。",
+  "_why_aggregate_in_page": "**这条腿回的不是 30 条挂牌，是一行「这个型号的挂牌中位价」。** 残值格要的是「型号 → 一个数」，而闲鱼给的是几千条个人卖家要价、标题五花八门（『iQOO Z11 Turbo手机16+16G运存512G…电池健康99%…』）。逐条回去下游按型号名精确对名一条都对不上；在页内就筛（标题含型号名、剔除全新/未拆封）、取中位数、拼成一行，title 就是传进来的型号名，下游 `resale-pick.ts` 照常对名。中位数而不是最低价：最低价那几条常是配件 / 拆机件 / 钓鱼帖。",
+  "_why_allow_empty": "型号在闲鱼没人挂（尤其上一代 / 上两代的冷门机）是一个成功的 0 条，让残值格退回按买入价；接口没回来 / 形状变了由 evaluate 自己抛错（响，且会被检疫）。",
+  "allowEmpty": true,
+  "cookieDomain": "goofish.com",
+  "_why_entry": "首页就够：mtop 客户端在任何一页都挂在 window.lib 上，不用真开搜索页（少一次导航、少一次风控曝光）。",
+  "entryUrl": "https://www.goofish.com/",
+  "entryWait": "load",
+  "_why_login_check": "loggedIn 用头部「订单」区里的头像（`[class*=\"user-order-container\"] img`，实测登录态 2 个、类名前缀语义、后缀是哈希所以用 `*=`）。wall 用登录弹层的 iframe（`passport.goofish.com/mini_login.htm`）——游客态搜索页实测就弹它。**别用页面上的「登录」两个字判**：登录态下头部照样有一个「登录」文字节点（实测），拿它判恒 wall。",
+  "loginCheck": {
+    "loggedIn": "[class*=\"user-order-container\"] img",
+    "wall": "iframe[src*=\"mini_login\"]"
+  },
+  "_why_one_shot": "残值查询是对话里临时补一发，不是持续采集，查完即关。阿里系对常驻标签的风控也更敏感。",
+  "session": {
+    "facility": "goofish",
+    "lifecycle": "one-shot",
+    "visibility": "unattended"
+  },
+  "steps": [
+    {
+      "_why": "等 `window.lib.mtop` 挂上（首页 load 之后它就在，循环只是兜住慢机器），然后调站点自己的客户端搜 {keyword}。入参形状抄自页面自己发的那一发（pageNumber / rowsPerPage / searchReqFromPage=pcSearch …），签名头由 mtop.js 自己装。**页内零长等待**：调用本身 await 它的 Promise，再套 8s race——被风控挡下时 mtop 会一直悬着，不 race 就烧满 relay 30s。\n筛选：标题 norm（去空格、小写）后必须包含型号名 norm；剔除标题带「全新 / 未拆封 / 未激活」的（那是新品不是二手）。价格取 clickParam.args.price（整数元的字符串），中位数。回一行：guid=goofish-<型号>，title=型号名原文，description=『挂牌中位价 ¥X｜N 条在售（剔除全新后）』，author=闲鱼。",
+      "kind": "evaluate",
+      "call": "async (cursor, num, params) => { const kw = String(params.keyword || '').trim(); if (!kw) throw new Error('[goofish] keyword 为空'); for (let i = 0; i < 12 && !(window.lib && window.lib.mtop); i++) await new Promise(r => setTimeout(r, 250)); if (!(window.lib && window.lib.mtop)) throw new Error('[goofish] window.lib.mtop 没挂上 —— 页面壳变了或被拦'); const resp = await Promise.race([window.lib.mtop.request({ api: 'mtop.taobao.idlemtopsearch.pc.search', v: '1.0', data: { pageNumber: 1, keyword: kw, fromFilter: false, rowsPerPage: 30, sortValue: '', sortField: '', customDistance: '', gps: '', propValueStr: {}, customGps: '', searchReqFromPage: 'pcSearch', extraFilterValue: '{}', userPositionJson: '{}' }, dataType: 'json', type: 'POST', timeout: 15000 }), new Promise((_, rej) => setTimeout(() => rej(new Error('[goofish] mtop 搜索 8s 没回 —— 风控弹层把 Promise 吊住了')), 8000))]); const ret = String((resp && resp.ret && resp.ret[0]) || ''); if (!ret.startsWith('SUCCESS')) throw new Error('[goofish] mtop ret=' + ret); const list = (resp.data && resp.data.resultList) || []; const norm = s => String(s || '').toLowerCase().replace(/[\\s\\u3000·_-]+/g, ''); const nk = norm(kw); const rows = []; for (const it of list) { const main = it && it.data && it.data.item && it.data.item.main; if (!main) continue; const ex = main.exContent || {}; const args = (main.clickParam && main.clickParam.args) || {}; const title = String(ex.title || ''); const price = Number(args.price); if (!Number.isFinite(price) || price <= 0) continue; if (!norm(title).includes(nk)) continue; if (/全新|未拆封|未激活/.test(title)) continue; rows.push(price); } if (rows.length === 0) return { items: [] }; rows.sort((a, b) => a - b); const mid = rows.length % 2 ? rows[(rows.length - 1) / 2] : Math.round((rows[rows.length / 2 - 1] + rows[rows.length / 2]) / 2); return { items: [{ guid: 'goofish-' + nk, title: kw, description: '挂牌中位价 ¥' + mid + '｜' + rows.length + ' 条在售（已剔除全新）', author: '闲鱼', link: 'https://www.goofish.com/search?q=' + encodeURIComponent(kw) }] }; }",
+      "itemsAt": "items",
+      "maxPages": 1
+    }
+  ],
+  "observers": [],
+  "output": {
+    "itemsAt": "items",
+    "dedupeBy": "guid",
+    "targetCount": 1,
+    "mapping": {
+      "guid": "guid",
+      "title": "title",
+      "description": "description",
+      "author": "author",
+      "link": "link"
+    }
+  },
+  "policy": {
+    "minActionIntervalMs": 500,
+    "maxTaskMs": 60000
+  },
+  "meta": {
+    "_why_member_timeout": "one-shot 会话：开标签 + 首页 load + 一发 mtop，实测量级 5–15s；默认 25s 的成员闸太紧，申报 45s 只慢自己这一格。",
+    "member_timeout_ms": 45000,
+    "auth": {
+      "type": "session",
+      "facility": "goofish",
+      "login": "cookie",
+      "cookieDomain": "goofish.com"
+    },
+    "type": "post",
+    "title": "挂牌价",
+    "description": "闲鱼 · 型号挂牌中位价 —— 在用户自己登录着的 Chrome 里调页面自带的 mtop 客户端搜型号，页内筛掉全新与不相干标题、取在售挂牌价的中位数，回一行「型号 → 挂牌中位价」（个人卖家要价，成交通常略低）",
+    "topics": [
+      "goofish",
+      "xianyu",
+      "闲鱼",
+      "二手",
+      "残值",
+      "挂牌价",
+      "resale"
+    ],
+    "categories": [
+      "shopping"
+    ],
+    "facility": {
+      "key": "goofish",
+      "label": "闲鱼"
+    },
+    "capabilities": [
+      "search"
+    ],
+    "provides": [
+      "search-resale"
+    ],
+    "key_param": "keyword",
+    "priority": 60,
+    "_why_not_discoverable": "不进发现列表：它不是可订阅的信息源，是购买决策残值格借的一条腿。",
+    "discoverable": false,
+    "pick_in": ["provider"],
+    "cadence_hint_seconds": 3600,
+    "homepage": "www.goofish.com",
+    "params_schema": {
+      "keyword": {
+        "type": "string",
+        "required": true,
+        "description": "型号名原文（品牌 + 型号，如「iQOO Z11 Turbo」），不编码"
+      }
+    }
+  }
+}

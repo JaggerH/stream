@@ -1,0 +1,102 @@
+{
+  "version": 1,
+  "kind": "html",
+  "sourceId": "wikipedia-award-list",
+  "request": {
+    "url": "https://en.wikipedia.org/wiki/{page}",
+    "method": "GET",
+    "headers": {
+      "accept": "text/html",
+      "accept-language": "en"
+    }
+  },
+  "list": {
+    "selector": "table.wikitable tr:has(td i a)",
+    "limit": 400,
+    "fields": {
+      "title": { "selector": "td i a", "text": true },
+      "link": { "selector": "td i a", "attr": "href", "resolve": true },
+      "guid": { "selector": "td i a", "attr": "href" },
+      "description": { "text": true }
+    }
+  },
+  "detail": {
+    "urlFrom": "link",
+    "fields": {
+      "imdb_id": {
+        "selector": [
+          "a[href*=\"imdb.com/title/tt\"]:not(cite *)",
+          "a[href*=\"imdb.com/title/tt\"]"
+        ],
+        "attr": "href"
+      },
+      "wikidata_id": { "selector": "a[href*=\"wikidata.org/wiki/\"]", "attr": "href" },
+      "wikidata_qid": {
+        "selector": "a[href*=\"wikidata.org/wiki/\"]",
+        "attr": "href",
+        "extract": "wikidata\\.org/wiki/(?:Special:EntityPage/)?(Q\\d+)"
+      }
+    }
+  },
+  "hops": [
+    {
+      "url": "https://www.wikidata.org/w/api.php?action=wbgetclaims&entity={wikidata_qid}&property=P4947&format=json",
+      "parse": "json",
+      "headers": { "accept": "application/json" },
+      "fields": {
+        "tmdb_movie_id": { "path": "claims.P4947.0.mainsnak.datavalue.value", "extract": "^\\d+$" }
+      }
+    },
+    {
+      "url": "https://www.wikidata.org/w/api.php?action=wbgetclaims&entity={wikidata_qid}&property=P4983&format=json",
+      "parse": "json",
+      "headers": { "accept": "application/json" },
+      "fields": {
+        "tmdb_tv_id": { "path": "claims.P4983.0.mainsnak.datavalue.value", "extract": "^\\d+$" }
+      }
+    },
+    {
+      "url": "https://www.wikidata.org/w/api.php?action=wbgetclaims&entity={wikidata_qid}&property=P345&format=json",
+      "parse": "json",
+      "headers": { "accept": "application/json" },
+      "fields": {
+        "imdb_id": { "path": "claims.P345.0.mainsnak.datavalue.value", "extract": "^tt\\d+$" }
+      }
+    }
+  ],
+  "pagination": {
+    "mode": "increment",
+    "param": "_unused",
+    "start": 1,
+    "step": 1,
+    "maxPages": 1
+  },
+  "assert": [
+    {
+      "selector": "table.wikitable tr:has(td i a)",
+      "desc": "Wikipedia award table with linked italic work titles"
+    }
+  ],
+  "meta": {
+    "title": "Wikipedia 奖项名单",
+    "description": "Wikipedia 上某个奖项分类的历年获奖/提名名单：一行一部作品，取斜体链接的作品名 + 条目链接，再进作品自己的条目取它的 IMDb 标识。本源只交身份证据、不解析任何元数据——标题/年份/类型/海报一律由影视详情那条既有链路从 TMDb 取（凭 IMDb id 直取，不走片名年份的模糊匹配）。",
+    "topics": ["wikipedia", "奖项", "获奖", "榜单", "影视", "剧集", "动画", "award", "winners"],
+    "categories": ["video"],
+    "capabilities": ["timeline"],
+    "mode": "collection",
+    "type": "post",
+    "key_param": "page",
+    "discoverable": true,
+    "cadence_hint_seconds": 604800,
+    "auth": { "type": "none" },
+    "homepage": "en.wikipedia.org",
+    "facility": { "key": "wikipedia", "label": "Wikipedia" },
+    "params_schema": {
+      "page": {
+        "type": "string",
+        "required": true,
+        "description": "英文维基条目标题（URL 里 /wiki/ 后面那一段），如 Children%27s_and_Family_Emmy_Award_for_Outstanding_Preschool_Animated_Series"
+      }
+    }
+  }
+}

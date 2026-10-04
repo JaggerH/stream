@@ -1,0 +1,117 @@
+{
+  "version": 2,
+  "kind": "html",
+  "sourceId": "manmanbuy-search",
+  "_why_discount_tab": "慢慢买有两个搜索 tab：`c=discount`（优惠流，SSR 直出，免签名免登录）和 `c=search`（商品比价，客户端渲染、走 prom2Extra 签名 XHR）。比价 tab 要慢慢买登录态、否则 7700『需登录验证』，是浏览器 recipe（贵一级）。优惠流 tab 每一行本身就是『某平台对某商品的报价』，搜一个商品名即得多平台价格——正是比价意图，且是 Tier-2 裸 HTTP，所以走这条。要精确到同一 SKU 分组再考虑升级比价 tab。",
+  "request": {
+    "url": "https://s.manmanbuy.com/pc/search/result?keyword={keyword}&c=discount&pageId={pageId}",
+    "method": "GET"
+  },
+  "list": {
+    "_why_class_prefix": "class 名带 CSS-module 哈希后缀（DiscountItemPC_box__m9G3M），站点一次重构就换，所以一律用 `[class*=\"前缀__\"]` 属性包含选择器钉住语义前缀，不写死哈希。",
+    "selector": "[class*=\"DiscountItemPC_box__\"]",
+    "limit": 40,
+    "fields": {
+      "title": {
+        "selector": "[class*=\"DiscountItemPC_itemTitle__\"] a",
+        "text": true
+      },
+      "link": {
+        "selector": "[class*=\"DiscountItemPC_itemTitle__\"] a",
+        "attr": "href",
+        "resolve": true
+      },
+      "guid": {
+        "selector": "[class*=\"DiscountItemPC_itemTitle__\"] a",
+        "attr": "href",
+        "resolve": true
+      },
+      "description": {
+        "_why": "itemSubTitle 是价格行（含促销与国补口径），如 `7619.02元+179.98元淘金币(含国补)`。这是这条比价条目的核心值，落成正文。",
+        "selector": "[class*=\"DiscountItemPC_itemSubTitle__\"] a",
+        "text": true
+      },
+      "author": {
+        "_why": "平台/店铺名（京东自营 / 天猫旗舰店 / 淘宝 …）当作这条报价的来源署名——多行同一商品不同平台，author 一栏就把『谁家的价』摆出来了。",
+        "selector": "[class*=\"DiscountItemPC_itemMall__\"]",
+        "text": true
+      },
+      "image": {
+        "_why": "顶层 image 字段：defaultNormalizer 读的是 raw.image（不是 cover），配价格文本渲染成 gallery 卡（商品图 + 价格）。",
+        "selector": "[class*=\"DiscountItemPC_itemCover__\"] img",
+        "attr": "src",
+        "resolve": true
+      }
+    }
+  },
+  "pagination": {
+    "_why": "优惠流按 pageId 翻页（URL 里 {pageId} 占位由 runner 每页替换，不是自动追加）。maxPages:2 = 约 70 条，够一次比价搜索；两页间新增的优惠会让少量条目重叠，按 guid=优惠链接 dedup 兜掉。",
+    "mode": "increment",
+    "param": "pageId",
+    "start": 1,
+    "step": 1,
+    "maxPages": 2
+  },
+  "assert": [
+    {
+      "selector": "[class*=\"DiscountItemPC_box__\"]",
+      "desc": "慢慢买优惠搜索列表行存在"
+    }
+  ],
+  "_why_shell": "限流时慢慢买回的是一张**带完整页眉页脚、只是没有列表行的空壳页**（200 OK），和\"站点改版、选择器全失效\"在响应码和 assert 上完全一样。页眉与页脚是改版才会变的东西、与列表行无关，所以拿它们当外壳判据：外壳还在 = 被限流（瞬时，不记漂移）；外壳也没了 = 真改版（记漂移、进隔离、走修复）。活体 2026-09-04：发现循环连着验 31 个候选，本源被自己打进隔离，之后 price_search 对所有查询静默返回 0 行。",
+  "shell": "[class*=\"HeaderPC_mainHeader__\"], [class*=\"FooterPC_footerBox__\"]",
+  "meta": {
+    "normalizer": "rsshub",
+    "type": "post",
+    "description": "慢慢买 · 全网比价关键词搜索 —— 搜一个商品名，返回各电商平台（京东/天猫/淘宝/拼多多…）对它的报价与促销，一行一个平台报价",
+    "topics": [
+      "manmanbuy",
+      "慢慢买",
+      "比价",
+      "价格",
+      "优惠",
+      "促销",
+      "电商",
+      "购物",
+      "shopping",
+      "price",
+      "搜索",
+      "search"
+    ],
+    "categories": [
+      "shopping"
+    ],
+    "facility": {
+      "key": "manmanbuy",
+      "label": "慢慢买"
+    },
+    "capabilities": [
+      "search"
+    ],
+    "provides": [
+      "search-price"
+    ],
+    "key_param": "keyword",
+    "priority": 80,
+    "discoverable": true,
+    "cadence_hint_seconds": 3600,
+    "example_queries": [
+      "慢慢买搜 iPhone 17 Pro 256G",
+      "比价 索尼 WH-1000XM5"
+    ],
+    "auth": {
+      "type": "none"
+    },
+    "homepage": "manmanbuy.com",
+    "params_schema": {
+      "keyword": {
+        "type": "string",
+        "required": true,
+        "description": "商品搜索关键词（越具体越能对上同一商品，如带型号/容量/颜色）"
+      }
+    },
+    "radar": [
+      "s.manmanbuy.com/pc/search/result"
+    ]
+  }
+}

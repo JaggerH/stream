@@ -1,0 +1,17 @@
+{
+  "name": "@streamapp/douyin",
+  "version": "1.0.0",
+  "author": "stream",
+  "keywords": [
+    "stream-recipe"
+  ],
+  "stream": {
+    "type": "recipe",
+    "name": "抖音",
+    "tagline": "关键词搜索与我的收藏，登录态浏览器采集",
+    "facility": "douyin",
+    "schemaVersion": 1,
+    "cookieDomain": "douyin.com"
+  },
+  "license": "Apache-2.0"
+}

@@ -1,0 +1,22 @@
+# deps are installed in-image (Linux-native); never COPY host node_modules over them
+node_modules
+app/node_modules
+extension/node_modules
+# heavy build artifacts / caches — never bake into the image (these blew it up to 16 GB)
+app/src-tauri/target
+app/dist
+.pnpm-store
+.codegraph
+.claude
+**/.venv
+**/__pycache__
+browser-profiles
+# runtime state / secrets / generated — never bake into the image
+data
+.env
+config.yaml
+streams.d
+docker-compose*.yml
+Caddyfile.local
+.git
+**/*.log

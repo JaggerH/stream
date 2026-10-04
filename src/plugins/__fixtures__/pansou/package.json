@@ -1,0 +1,13 @@
+{
+  "name": "@streamapp/pansou",
+  "version": "1.0.0",
+  "stream": {
+    "id": "pansou",
+    "name": "PanSou",
+    "tagline": "网盘资源聚合搜索",
+    "description": "Telegram 频道、网盘分享与资源索引的关键词搜索。",
+    "repository": "https://github.com/fish2018/pansou",
+    "backend": { "image": "ghcr.io/fish2018/pansou:latest", "port": 8888 },
+    "normalizer": "pansou"
+  }
+}

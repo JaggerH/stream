@@ -1,0 +1,19 @@
+{
+  "name": "@streamapp/douyin-tiktok-download-api",
+  "version": "1.0.0",
+  "stream": {
+    "id": "Douyin_TikTok_Download_API",
+    "name": "Douyin_TikTok_Download_API",
+    "tagline": "视频平台搜索与解析服务",
+    "description": "抖音搜索、用户作品、关注流、合集与视频媒体解析。",
+    "backend": {
+      "image": "ghcr.io/jaggerh/video-service:latest",
+      "service": "douyin-tiktok-download-api",
+      "port": 80,
+      "health": "/docs"
+    },
+    "sourceGrouping": { "enabled": true, "resolver": "manifest.facility" },
+    "credentials": ["douyin.com"],
+    "normalizer": "douyin"
+  }
+}

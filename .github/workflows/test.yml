@@ -1,0 +1,72 @@
+name: test
+
+on:
+  push:
+    branches: ['main', 'ci/**']
+
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: true
+
+# watchdog 的排期语义是宿主本地时间（生产宿主 = Asia/Shanghai），测试断言的就是这套语义。
+# CI 默认 UTC 会让 prevMatch 的 7 个用例差出 8 小时——钉住时区，别让跑在哪台机上改变判定。
+env:
+  TZ: Asia/Shanghai
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4 # 版本读 package.json 的 packageManager: pnpm@11.5.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: sudo apt-get update -q && sudo apt-get install -y -q --no-install-recommends ffmpeg # src/media/extract.test.ts 要 spawn 真 ffmpeg
+      - run: pnpm install --frozen-lockfile # workspace 根一次 install，app 成员包一并装好
+      - run: pnpm typecheck
+      - run: pnpm test
+
+  frontend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm -C app typecheck
+      - run: pnpm -C app test
+
+  # `hosts/<宿主>/` 各自带一套 npm 依赖（不在 pnpm workspace 里，见 hosts/README.md），所以单开
+  # 一个 job。加一个宿主目录就往 matrix 加一行——`src/hosts-boundary.guard.test.ts` 断言每个
+  # `hosts/*` 都有 `test` 与 `typecheck` 两个脚本，这个 job 就按这两个固定名字调用。
+  hosts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        host: [dsh]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: hosts/${{ matrix.host }}/package-lock.json
+      # `--legacy-peer-deps` 不是图省事：`@deepseek-ai/dsh-*` 那批在锁文件生成之后往自己的
+      # peerDependencies 里加了新成员（dsh-agent-presets / cordis-plugin-loader），npm 会拿
+      # **注册表此刻的** peer 图去校验一份钉死的锁，于是 ERESOLVE。装的内容仍然逐字来自
+      # package-lock.json（`npm ci` 的语义没变），只是不再回头解 peer。
+      - run: npm ci --legacy-peer-deps
+        working-directory: hosts/${{ matrix.host }}
+      - run: npm run typecheck
+        working-directory: hosts/${{ matrix.host }}
+      - run: npm test
+        working-directory: hosts/${{ matrix.host }}

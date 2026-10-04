@@ -1,0 +1,16 @@
+{
+  "name": "@streamapp/iqiyi",
+  "version": "1.0.0",
+  "author": "stream",
+  "keywords": [
+    "stream-recipe"
+  ],
+  "stream": {
+    "type": "recipe",
+    "name": "爱奇艺",
+    "tagline": "国内站关键词搜索",
+    "facility": "iqiyi",
+    "schemaVersion": 1
+  },
+  "license": "Apache-2.0"
+}

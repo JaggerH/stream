@@ -1,0 +1,11 @@
+node_modules
+dist
+src-tauri/target
+src-tauri/gen
+*.log
+*.tsbuildinfo
+host-agent/target
+# desktop-packaging: build-server.mjs 产物 + 打包二进制（生成物，不 commit）
+src-tauri/resources/
+src-tauri/binaries/
+src-tauri/prebuilds/

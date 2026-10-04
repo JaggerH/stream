@@ -1,0 +1,24 @@
+{
+  "name": "@streamapp/chatgpt",
+  "version": "1.0.0",
+  "author": "stream",
+  "keywords": [
+    "stream-recipe"
+  ],
+  "stream": {
+    "type": "recipe",
+    "name": "ChatGPT",
+    "tagline": "网页版对话 · 临时聊天",
+    "facility": "chatgpt",
+    "schemaVersion": 1,
+    "cookieDomain": "chatgpt.com",
+    "_why_rateLimit": "网页版按账号计额度，数字没公开；限速取「一个人手动在问」的量级，排不上如实回，不硬顶。",
+    "rateLimit": {
+      "burst": 2,
+      "perMinute": 3,
+      "perHour": 60,
+      "maxWaitMs": 5000
+    }
+  },
+  "license": "Apache-2.0"
+}

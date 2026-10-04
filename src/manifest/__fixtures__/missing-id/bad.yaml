@@ -1,0 +1,6 @@
+adapter: rsshub
+description: A manifest missing its id, which must be rejected.
+capabilities: [timeline]
+auth:
+  type: none
+cadence_hint_seconds: 1800
