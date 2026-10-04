@@ -17,7 +17,10 @@ function makeRepo(files: Record<string, string>): string {
   const repo = mkdtempSync(join(tmpdir(), 'opensource-export-source-'))
   for (const [path, content] of Object.entries(files)) write(repo, path, content)
   execFileSync('git', ['init', '--quiet'], { cwd: repo })
-  execFileSync('git', ['add', '--all'], { cwd: repo })
+  // CI images may have a global ignore for machine-local config names. These
+  // fixtures model tracked files, so force-add them instead of inheriting that
+  // unrelated host policy.
+  execFileSync('git', ['add', '--force', '--all'], { cwd: repo })
   execFileSync('git', ['-c', 'user.name=release-test', '-c', 'user.email=release@example.invalid', 'commit', '--quiet', '-m', 'fixture'], { cwd: repo })
   return repo
 }
