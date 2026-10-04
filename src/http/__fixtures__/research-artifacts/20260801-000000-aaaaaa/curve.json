@@ -1,0 +1,3 @@
+{ "schema": "artifact/v1", "view": "timeseries", "name": "curve",
+  "data": { "index": ["2026-08-01T00:00:00Z"], "series": { "pnl": [1] } },
+  "config": { "ylabel": "PnL" } }

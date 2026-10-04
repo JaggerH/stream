@@ -1,0 +1,156 @@
+{
+  "version": 1,
+  "kind": "browser",
+  "sourceId": "eastmoney-login",
+  "cookieDomain": "eastmoneysec.com",
+  "entryUrl": "https://jywg.eastmoneysec.com/Login",
+  "entryWait": "domcontentloaded",
+
+  "_why": "东方财富网上交易的登录流程。它是本仓第一条**执行登录**的 recipe——其余全都跑在登录之后。存在的理由是消掉一个第二浏览器：现有那套 python(ashare_automation)只在登录这一步开自己的 Chrome，取数那半是纯 HTTP。选择器全部对着活体量过（2026-09-01，见下逐条注释），成功判据抄自那套 python 已经在用的那个(auth.py: 导航离开 /Login 即成功)，不是我编的。",
+
+  "loginCheck": {
+    "loggedIn": "input[name='em_validatekey'], #em_validatekey",
+    "wall": "#txtZjzh",
+    "runAtWall": true,
+    "_why_runAtWall": "这条 recipe 降落的那一页**按定义就是墙**（登录表单）。不松开入场闸，它连动手的机会都没有——闸会在第一步之前把它判成 needsLogin。只松入场那一次：跑完的复判照旧，登录失败就还留在登录页、墙照样命中、如实翻成 needsLogin，那正是想要的结论。",
+    "_why_loggedIn": "em_validatekey 是登录成功后交易页上那个 hidden input（auth.py 就是从它抠 validatekey 的）。拿它当『登录了』的阳性信号，比拿首页上某个装饰元素强：它是**取数真正需要的那个东西**，它在 = 这次登录真的可用。"
+  },
+
+  "session": {
+    "facility": "eastmoney",
+    "lifecycle": "one-shot",
+    "visibility": "unattended"
+  },
+  "_why_session": "unattended：全程不需要人伸手（账号密码由宿主注入、验证码由 ddddocr 认），所以不该抢屏幕——visibility 的判据是『谁动手』不是『谁想看』，而它会被定时链路在 09:40 这种时刻触发，抢屏是纯粹的骚扰。one-shot：登录跑完就该关掉这个标签，会话活在 cookie 里、不在这个 tab 里。（注释写在 session **外面**：session 的键有白名单，多一个键会被装载期拒——那道守卫是对的，打错的键静默忽略才是更坏的。）",
+
+  "steps": [
+    {
+      "kind": "click",
+      "selector": "#imgValidCode",
+      "synthetic": true,
+      "_why_synthetic": "**这条 recipe 的三个 click 全部走页内点击，不发真鼠标。** 判据不是『东财看起来正规』，是『它不查我们的手势』——网上交易是券商给自己客户用的功能页，没有反爬，登录本身还有验证码把着。代价对比（活体 2026-09-03，同一轮运行）：可信点击 = 11 次往返（1 次问位置 + 8 次拟人挪鼠标 + 按下 + 松开），每个鼠标事件都要浏览器先做命中测试、而命中测试要等一帧，后台标签又没帧可等 —— 实测 7.0–35.1 秒；同一轮里 `type`（键盘，不需要命中测试）只要 9–164ms。页内 `el.click()` 走的是和键盘同一条 `Runtime.evaluate` 通道，一跳、不等帧。**万一站点哪天开始查 isTrusted**，表现是 handler 不跑、页面毫无反应 —— 而这三步全都有下游判据盯着（提交那步的 expect），会以『判据没满足』暴露，不会静默。",
+      "_why": "点验证码图 = 换一张（东财的图自带 onclick 刷新）。**它是整段重来的入口**（下面 submit 的 expect.retryFrom 指着这一步）：提交被拒之后那张图已经作废，只重做提交是纯空转。第一遍也会点一次——多加载一张图，换来的是不必给『第一次』开特例。"
+    },
+    {
+      "kind": "call",
+      "service": "ddddocr",
+      "path": "/ocr",
+      "input": { "shotOf": "#imgValidCode" },
+      "options": { "charset": "0123456789" },
+      "_why_options": "东财的验证码是 **4 位纯数字**，而识别器默认那个模型是给字母数字混排调的——喂纯数字图给它，它会把 0 认成 o、9 认成 g、2 认成 Z。活体取样 12 张错 3 张，错的全是这一类（`74Z1` / `4g94` / `3o79`），命中率 75%。锁住字符集之后那些字母根本不在候选里。既有实现（Cockpit 的 auth.py）用的是同一招：`ocr.set_ranges(\"0123456789\")`，注释写着『显著提升准确率』。**限字符集是通用机制（归服务），限成哪一套是站点知识（归这里）**。",
+      "from": "text",
+      "bind": "code",
+      "match": "^\\d{4}$",
+      "_why_match": "**这是安全闸，不是挑剔。** 锁了字符集也仍然可能吐出 3 位或 5 位（CTC 的空白位多一个少一个）。照样填进去提交，就是拿用户的账号去试一次注定失败的登录——而『连续几次失败登录』在券商那边是有后果的。既有实现（Cockpit 的 auth.py）立场相同：`len(code)!=4 or not isdigit()` 直接刷新重来，绝不提交。不合格 → 抛 StepResultError → 被下面这一步自己的 retryFrom 接住。",
+      "retryFrom": 0,
+      "retryTimes": 5,
+      "_why_retry": "**重试必须挂在这一步自己身上。** 先前写在下面提交那一步的 expect 里，而识别失败发生在这一步——提交那一步永远跑不到，于是那段『会被 retryFrom 接住』的注释描述了一个不存在的机制，整条流程当场终止（2026-09-03 活体：连续两次因识别不合格直接失败）。回到第 0 步 = 点一下那张图换一张，再认一次。上限 5 次与 auth.py 同一个数；配上锁字符集之后，实际上很少会用到第二次。提交那一步另有一份自己的重试账本，两者互不扣减：它们是两种不同的失败，混在一起数会让『账密真错』提前耗光本该留给识别的次数。",
+      "settle": { "selector": "#imgValidCode", "stableFrames": 2, "alreadyStable": true },
+      "_why_first": "**必须排在所有用到 {secret} 的步骤之前**（装载期闸 4 会拒绝反过来的次序）。这不是将就：外泄链是『凭据先上页面、再 call 把它截走』，而登录的天然次序恰好相反——验证码得先认出来才填得了表。",
+      "_why_settle": "验证码图是异步加载的，画完之前截图会截到一张空白/半张。stableFrames 等它两帧不变再动手。**alreadyStable 必须开**：这张图是上一步（点它换一张）触发重绘的，而那次可信点击活体实测 1.2–10.3 秒，远长于一张 101×36 的图加载——等这一步开始看，画面早就是终态了。不开的话『变过了』那一半永远不成立，于是每次登录都白等满 15 秒再放行，而且**全程静默**（timeout 不致命）：活体连续三次 step#1 都是 15.0s+，打开探针才看见 `settle timeout 15056ms/52帧`，而这一步真正干活只要 2.7 秒。"
+    },
+    {
+      "kind": "type",
+      "selector": "#txtZjzh",
+      "text": "{zjzh}",
+      "feature": { "selector": "#txtZjzh" },
+      "_why": "资金账号。placeholder 实测『请输入资金账号』。"
+    },
+    {
+      "kind": "type",
+      "selector": "#txtPwd",
+      "text": "{jymm}",
+      "feature": { "selector": "#txtPwd" },
+      "_why_security_control": "交易密码。**页面上装着东财的安全控件**，我们只做真输入，加密由控件自己在页面里完成——绝不逆向、绝不代算。判据是这个框的 placeholder 显示『请输入交易密码』（活体 2026-09-01 已确认，你日常那个 Chrome 上控件是 hook 上的）；控件没 hook 时 placeholder 不是这句，登录会以『无错误信息且未导航』的形式失败。"
+    },
+    {
+      "kind": "type",
+      "selector": "#txtValidCode",
+      "text": "{code}",
+      "_why": "{code} 来自上面那步 call 绑出来的识别结果，不是 secret。"
+    },
+    {
+      "kind": "click",
+      "selector": "#rdsc45",
+      "synthetic": true,
+      "_why": "会话时长，取最长的那一档。**id 叫 rdsc45 但它现在是『3小时』**（活体 2026-09-03 实测：三个单选是 15分钟 / 30分钟 / 3小时，value 分别 15 / 30 / 1800，默认选中 30 分钟）——站点改过档位却没改 id，所以别照 id 读语义。**登录时选的就是上限**：3 小时盖得住 09:40 的日历到 12:40，但盖不到 14:55 的逆回购，所以『登一次管一天』依然不存在，按需重登仍是唯一的路——只是次数比 45 分钟那会儿少得多。"
+    },
+    {
+      "kind": "click",
+      "selector": "#btnConfirm",
+      "synthetic": true,
+      "_why_click": "**真点击，不是 submit（Enter）。** 这个按钮是 `type=submit` 却不在任何 form 里（活体实测 `btn.form === null`），而 Enter 的隐式提交要有 form 才有东西可提交；站点自己绑的是 click。用 Enter 的表现是最坏的一种：`submit ok: #btnConfirm` 照报，页面上没请求、没报错、没跳转——和『账密错』长得一模一样，查了整整一轮。既有实现（Cockpit 的 auth.py）用的就是 `page.click(SEL_LOGIN_BTN)`。",
+      "retryFrom": 0,
+      "retryTimes": 5,
+      "_why_retry": "整段重来（回到第 0 步换一张验证码图），上限 5 次——与 Cockpit 的 auth.py 同一个数，而那不是保险是必需品：同一条流程在那边就是靠 5 次重试跑通的。**重来必须回到第 0 步而不是只重做提交**：提交被拒之后那张图已经作废。顺带会把账号和密码也重填一遍（`call` 必须排在用到凭据的步骤之前，闸 4 定的次序，所以这一段没法只圈住验证码那几步）——重填是幂等的（type 先全选再替换），代价只是几十毫秒。**这两个键写在步骤这一层、不在 expect 里**：重试管的是『这一步失败了怎么办』，而失败有两种（expect 没满足 / 结果不合格），后一种没有 expect 可挂。",
+      "expect": {
+        "selector": "#txtZjzh",
+        "state": "gone",
+        "timeout": 20000,
+        "errorSurface": "#ertips, #divErrorBg, .errmsg, #showmsg, #errmsg, #showerrmsg, .error, .money",
+        "_why_gone": "成功 = 导航离开 /Login（auth.py 的判据：url 里有 /Trade/ 或者既不是 /Login 也不是 /ErrorPage）。用『登录表单的账号框消失了』表达它：动作前必为真、动作后必为假，方向正好，满足 expect 的区分力要求。",
+        "_why_errorSurface": "失败时站点把原因写在这几个位子上（**整张候选表都抄自 auth.py**，早先漏了末尾的 `.error, .money` 两个——漏掉的后果不是少一句话，是把『站点报错了但我们没查到』读成『站点一个字都没说』，而后者在 auth.py 的判据里意味着完全不同的病因：控件没 hook）。东财的标准文案『您输入的信息有误』**不说哪个字段错**——经验上 80%+ 是验证码认错，所以有文案就重来，没文案才是真该停。"
+      }
+    }
+  ],
+
+  "observers": [
+    {
+      "kind": "dom",
+      "trigger": "final",
+      "itemSelector": "form, body",
+      "fields": { "at": { "attr": "data-nonexistent" } },
+      "input": { "itemsAt": "items", "dedupeBy": "at", "targetCount": 1, "mapping": { "guid": "at" } },
+      "_why": "**这条 recipe 不产内容**，但 canonical browser recipe 必须有一个 item 来源（observers / evaluate / extract 三者之一），而 evaluate 被闸 5 禁掉了（它会把整个参数袋序列化进页面，凭据会跟着漏进站点的 JS 上下文）。所以挂一个不取任何东西的 dom observer，配 allowEmpty:true——真正的成功判据是上面那个 expect，不是这里的行数。"
+    }
+  ],
+  "allowEmpty": true,
+
+  "output": {
+    "itemsAt": "items",
+    "dedupeBy": "guid",
+    "targetCount": 1,
+    "mapping": { "guid": "at" }
+  },
+
+  "meta": {
+    "title": "东方财富 登录",
+    "description": "在你自己的 Chrome 里登录东方财富网上交易：认验证码 → 填账号密码 → 选最长的会话时长 → 提交。跑完登录态就在你浏览器的 cookie 里，取数那半（纯 HTTP）直接用。",
+    "action": true,
+    "_why_action": "它会真的登录一个交易账户，是不可撤回的副作用（会踢掉同账号的其它会话）。meta.action:true 让它落进 run_action_recipe 的二次确认闸。",
+    "login": true,
+    "_why_login": "这条 recipe 是 **eastmoney 这个 facility 的登录入口**（facility 取自 session.facility）。宿主据此回答『交易会话掉了该跑哪条』——包的动作在 `openSession` 探到 302 时调 `ctx.login('eastmoney')`，宿主查到这一条、跑掉、刷新 cookie 快照，然后重新建会话。**必须显式声明，不能靠『它恰好是这个包唯一一条 action recipe』推**：那种推法在这个包多一条动作 recipe 的那天会静默改指向，而且没有一处会报错。",
+    "auth": {
+      "type": "session",
+      "facility": "eastmoney",
+      "login": "cookie",
+      "cookieDomain": "eastmoneysec.com"
+    },
+    "_why_auth": "**这一格就是「扩展该同步哪个域的 cookie」的申报口。** 后端下发给扩展的那份名单（`requiredCookieDomains`）只从两处推：各 manifest 的 auth 域，和 `config.yaml` 的 `session_exports`。包描述里的 `stream.credentials` 顶不上——那是**许可**名单（宿主可以把这个域给这个包），不是**需求**名单（去用户浏览器把它取回来）。不申报的表现是最坏的那种：取数拿到空 cookie → SessionExpired → 自动重登真跑完一遍 → 还是空 → 再次 SessionExpired，看起来像「登录坏了」。`login: 'cookie'` 而不是 `'qr'`：会话就住在用户自己 Chrome 的 cookie 快照里，掉了由这条 recipe 自己登回来，不需要 Stream 弹扫码面板（`facilityAuthView` 正是按 `login !== 'qr'` 把它挡在授权面板外的）。同形对照见 `packages/builtin/manifests.yaml` 的 quark-save。",
+    "effects": ["write", "send"],
+    "_why_effects": "write = 会动你的账户（建立一个交易会话、踢掉别处的登录）；send = 会把验证码那一小块截图发给 ddddocr 服务。两件事分开申报，装它的人有权分别知道。",
+
+    "runtime_config": {
+      "ref": "eastmoney",
+      "fields": {
+        "zjzh": { "type": "secret", "label": "资金账号" },
+        "jymm": { "type": "secret", "label": "交易密码" },
+        "trading": {
+          "type": "boolean",
+          "label": "真下单",
+          "description": "关着 = 空跑：申购 / 逆回购两个动作照常读日历和资金、照常把该下的单算到底并写进任务回执，只是不发提交请求。开之前先确认没有别的东西在替你下同一批单。"
+        }
+      }
+    },
+    "secret_params": ["zjzh", "jymm"],
+    "_why_secret_params": "账号和密码由**宿主**从上面那一格取出来注入，不走调用参数——run_action_recipe 的二次确认会把调用参数原样回执，交易密码走那条就是明文进对话记录。五道闸见 recipe.ts 的 RecipeMeta.secret_params 头注；其中闸 3 要求这份 recipe 来自内置包，所以它住 packages/ 而不是发 npm。",
+
+    "facility": { "key": "eastmoney", "label": "东方财富" },
+    "capabilities": [],
+    "discoverable": false,
+    "pick_in": [],
+    "_why_pick_in": "两个选择面都不出现——它是登录动作，不是内容来源。",
+    "homepage": "jywg.eastmoneysec.com",
+    "params_schema": {}
+  }
+}

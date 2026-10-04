@@ -1,0 +1,17 @@
+{
+  "task": "ad",
+  "label": "negative",
+  "reason": "ad",
+  "source": "36kr-newsflash",
+  "fields": {
+    "title": "HDC 2026：鲸鸿动能2025年广告主数增长200%，助力开发者与合作伙伴可持续增长",
+    "text": "鲸鸿动能系统拆解主动式营销框架，助广告主实现确定性增长",
+    "urls": ["https://36kr.com/newsflash/1000002"],
+    "categories": []
+  },
+  "meta": {
+    "itemId": "example-36kr-news-negative",
+    "capturedAt": "2026-06-14T00:00:00.000Z",
+    "note": "news ABOUT advertising — must NOT be muted; guards against broad 广告 keyword"
+  }
+}

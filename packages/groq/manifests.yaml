@@ -1,0 +1,30 @@
+# Groq 云端转写：纯声明，没有代码。宿主提供一个通用的「OpenAI 兼容 STT」实现
+# （builtin mode `transcribe-openai-compat`，切块 / 调试总线 / decline 规则都在宿主那份里），
+# 这里只说清三件事：打哪个端点、用哪个模型、拿哪把钥匙。三样漏任何一样，宿主那侧是抛错
+# 而不是 decline——守卫在同目录 manifests.test.ts。
+- id: groq-whisper
+  adapter: builtin
+  title: Groq Whisper
+  description: Groq 云端转写 whisper-large-v3（OpenAI 兼容，BYOK：GROQ_API_KEY；免费额度）。>24MB 自动切块。无说话人分离。
+  topics: [transcribe, speech, whisper, groq, 转写, 语音]
+  categories: [transcribe]
+  capabilities: [anchor]
+  auth: { type: none }
+  discoverable: false
+  cadence_hint_seconds: 3600
+  # 整集音频一次成员调用,110min 音频实测 67.7s(见 src/transcribe/openai-stt.ts 头注);10 分钟给足余量,别被全局默认 25s 掐死。
+  member_timeout_ms: 600000
+  runtime_config:
+    ref: groq
+    fields:
+      apiKey:
+        type: secret
+        label: Groq API Key
+        description: BYOK；不填则回退环境变量 GROQ_API_KEY。
+        helpUrl: https://console.groq.com/keys
+  # tokenName 必须等于上面的 ref：用户填的 key 落在 runtime_config `groq.apiKey`，宿主按 tokenName 取。
+  fixed_params:
+    mode: transcribe-openai-compat
+    baseUrl: https://api.groq.com/openai/v1
+    model: whisper-large-v3
+    tokenName: groq

@@ -1,0 +1,34 @@
+{
+  "name": "@streamapp/cloudflare",
+  "version": "1.0.0",
+  "type": "module",
+  "author": "stream",
+  "scripts": {
+    "bundle": "node ../../scripts/bundle-code-packages.mjs .",
+    "prepack": "node ../../scripts/assert-npm-artifact.mjs"
+  },
+  "files": [
+    "dist",
+    "manifests.yaml",
+    "README.md"
+  ],
+  "keywords": [
+    "stream-recipe"
+  ],
+  "stream": {
+    "type": "recipe",
+    "hostVersion": ">=0.1.0",
+    "id": "cloudflare",
+    "name": "Cloudflare Workers AI",
+    "tagline": "云端转写 whisper-large-v3-turbo（BYOK）",
+    "facility": "cloudflare",
+    "schemaVersion": 1,
+    "code": {
+      "entry": "dist/index.js",
+      "adapters": [
+        "cloudflare"
+      ]
+    }
+  },
+  "license": "Apache-2.0"
+}

@@ -1,0 +1,26 @@
+{
+  "name": "@streamapp/baidu-search",
+  "version": "1.0.0",
+  "author": "stream",
+  "keywords": [
+    "stream-recipe"
+  ],
+  "stream": {
+    "type": "recipe",
+    "_why_own_package_not_packages_baidu": "**百度网页搜索单独一个包、单独一个 facility，不并进 `packages/baidu/`**——那个包是**百度网盘**（`baidu-share`，facility 标签就叫「百度网盘」，kind:http 打 pan.baidu.com 验分享链）。两件事只是域名同姓：搜索不需要登录、网盘全靠登录态。合并的代价是实打实的：`stream.rateLimit` 是**按 facility 归并**的一个桶（`mergeRecipePackagesByFacility`），把「像人一样每分钟最多 10 次」压到 facility `baidu` 上，就等于顺手给网盘的批量验链装了个闸——那条路上没有人要这个闸，而且它坏起来是「批量验链忽然变慢」这种查不到源头的样子。",
+    "name": "百度",
+    "tagline": "网页搜索（中文长尾）",
+    "facility": "baidu-search",
+    "schemaVersion": 1,
+    "_why_cookieDomain": "百度搜索**不需要登录**，这一格填的不是「去哪儿取登录态」，而是「这个包能走到哪些域」——装载器拿它卡 goto 的落点（`src/replay/recipe-import.ts`：goto 的 host 必须落在 cookieDomain 之内，否则拒绝装载）。填 baidu.com 覆盖 www 子域。",
+    "cookieDomain": "baidu.com",
+    "_why_rateLimit": "和 google / brave 那两份同一个节奏、同一个理由：连着敲三次是正常的（burst 3），持续每分钟十次以上就不像人了（perMinute 10）。maxWaitMs 3000 是关键那条——这条腿长在对话热路径上（中文查询时和 Google **并行**跑），桶空了默认行为是「等」，等在对话里就是用户干瞪着 spinner；3 秒排不上就抛 RateLimitedError，梯子当场把这条腿当作不存在、Google 的结果照常给出去。",
+    "_why_no_perHour": "**故意不声明每小时累计预算**（google / brave 那两份有）。同一次实测里，Google 一小时约百发之后稳定被拦、同出口的 Brave 跟着弹人机验证，而**百度不受影响**——它没有表现出「按累计量拦人」这一维。往这里凭手感填一个数，等于用一个没有证据的闸门去卡一条正在正常工作的腿，而它坏起来的样子是「中文那条腿忽然常年缺席」，还不报错（梯子当它不存在）。哪天百度真撞出累计拦截，就在这里加 perHour 并把实测写进这段。",
+    "rateLimit": {
+      "burst": 3,
+      "perMinute": 10,
+      "maxWaitMs": 3000
+    }
+  },
+  "license": "Apache-2.0"
+}

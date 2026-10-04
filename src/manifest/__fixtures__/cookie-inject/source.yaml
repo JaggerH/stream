@@ -1,0 +1,15 @@
+id: cookie-with-inject
+adapter: native
+description: A login-gated source declaring how its cookie injects.
+topics: [test]
+example_queries:
+  - cookie inject fixture
+capabilities: [timeline]
+auth:
+  type: cookie
+  domain: xueqiu.com
+  inject:
+    kind: env
+    name: XUEQIU_COOKIES
+cadence_hint_seconds: 1800
+params_schema: {}

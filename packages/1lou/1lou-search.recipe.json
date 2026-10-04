@@ -1,0 +1,79 @@
+{
+  "version": 1,
+  "kind": "http",
+  "sourceId": "1lou-search",
+  "request": {
+    "url": "https://www.1lou.me/search/api/search.php?q={keyword}&page={page}&sort=newest",
+    "method": "GET",
+    "headers": {
+      "Accept": "application/json"
+    }
+  },
+  "pagination": {
+    "mode": "increment",
+    "param": "page",
+    "start": 1,
+    "step": 1,
+    "itemsAt": "data.hits",
+    "maxPages": 1
+  },
+  "assert": [
+    {
+      "path": "data.hits",
+      "desc": "1lou search api returned data.hits array"
+    }
+  ],
+  "mapping": {
+    "title": "subject",
+    "link": "https://www.1lou.me/thread-{tid}.htm",
+    "guid": "https://www.1lou.me/thread-{tid}.htm",
+    "pubDate": "create_date",
+    "author": "username"
+  },
+  "meta": {
+    "normalizer": "rsshub",
+    "type": "post",
+    "description": "BT 之家 1LOU 站 — 关键词搜索",
+    "topics": [
+      "1lou",
+      "BT之家",
+      "影视",
+      "磁力",
+      "网盘",
+      "搜索",
+      "movie",
+      "bt"
+    ],
+    "categories": [
+      "multimedia"
+    ],
+    "facility": {
+      "key": "1lou",
+      "label": "BT 之家 1LOU"
+    },
+    "capabilities": [
+      "search"
+    ],
+    "provides": [
+      "search-download"
+    ],
+    "key_param": "keyword",
+    "priority": 80,
+    "discoverable": true,
+    "cadence_hint_seconds": 3600,
+    "auth": {
+      "type": "none"
+    },
+    "homepage": "1lou.me",
+    "params_schema": {
+      "keyword": {
+        "type": "string",
+        "required": true,
+        "description": "搜索关键词（片名）"
+      }
+    },
+    "radar": [
+      "1lou.me/search/"
+    ]
+  }
+}

@@ -1,0 +1,129 @@
+{
+  "version": 1,
+  "kind": "browser",
+  "sourceId": "douyin-collection",
+  "cookieDomain": "douyin.com",
+  "_why_recipe_at_all": "HTTP 那条路已经死了，别再往回走。`Douyin_TikTok_Download_API` 容器打 `/aweme/v1/web/aweme/listcollection/` 恒 403，容器把它包成一句无信息量的 `HTTP 400: An error occurred.`。403 的真身要在容器里直接打上游才看得见：`Blocked by ArgusSecurityPlugin Uifid Not Found`；补上 `Uifid` 请求头后变成 `Signature Not Found` —— 这个端点挪到 Argus 那套签名头（X-Argus/X-Gorgon/X-Ladon）后面了。**跟 bogus 无关**：X-Bogus 与 a_bogus 两种签名 × GET/POST 四种组合，实测同样的 403 同样的文案。上游那个库也指望不上（2026-08-29 查：最后一次代码改动 2025-09，全仓搜不到任何 Argus 实现）。唯一不碰逆向红线的出路就是这里：让页面自己算签名。",
+  "_why_entry": "入口直接落收藏页（`user/self?showTab=favorite_collection`）。它自己就会发一发 `listcollection`（活体 2026-08-29 从 performance entries 确认），所以第一批交给 network observer，evaluate step 只管往后翻——和 douyin-search 同一个分工。这里不需要拟人搜索那一套（点搜索框/打字/点筛选）：收藏是自己账号的页面，没有关键词要输。",
+  "entryUrl": "https://www.douyin.com/user/self?showTab=favorite_collection",
+  "entryWait": "load",
+  "_why_login_signals": "活体 2026-08-29 在这一页取样：`[data-e2e=\"live-avatar\"]` 命中 3 个（登录态），`#login-panel-new` 与 `#captcha_container` 各 0 个。三个信号沿用 douyin-search 那份（`wall` 与 `challenge` 必须分开——墙是「你得去登录」，挑战是「你什么都别做、等冷却」，并成一句会把真的需要登录藏掉，理由与实测见 douyin-search.recipe.json 的 _why_wall_vs_challenge）。",
+  "loginCheck": {
+    "loggedIn": "[data-e2e=\"live-avatar\"]",
+    "wall": "#login-panel-new",
+    "challenge": "#captcha_container"
+  },
+  "_why_lane": "`laneKey` 必须给。facility `douyin` 上已经有 douyin-search 在骑，而一个 facility 一个 tab 且独占——不分 lane 的话，定时跑的收藏采集会把用户刚发起的那次搜索的 feed 冲掉（反过来也一样），表现是「操作随机地不生效」。one-shot：收藏没有常驻的必要，也没有 detail 骑它的账本，跑完 release 即关。",
+  "session": {
+    "facility": "douyin",
+    "laneKey": "collection",
+    "lifecycle": "one-shot",
+    "visibility": "unattended"
+  },
+  "steps": [
+    {
+      "_why": "在已登录的页面里调站点自己的签名客户端往后翻页。零滚动、零帧、零 dwell —— 这是 Tier-A，用户的窗口显不显示与本 recipe 无关。**别改成 scroll + dwell 那种形状**：抖音在 search 那条线上钉死过「下一批必须有真帧才来」（摘掉逼帧 13 轮里 11 轮少一整批，而且 outcome=ok 不报错），改走站内直调正是为了让这个缺口不存在。",
+      "_why_no_reverse_engineering": "签名一行都不在我们这儿：a_bogus / msToken / verifyFp / X-Argus 那一套由站点自己的 axios 拦截器在页面里现算，我们只是调用页面已经加载好的那个函数。判据是「我们有没有实现签名算法」——没有。**永远不要**把任何签名逻辑抄进这个文件或仓库任何地方。",
+      "_why_calibrated_params": "两条都是活体 2026-08-29 逐个试出来的，改任一条就回到 403/-404，且**失败长得像「没抓到」而不是「被拒了」**：\n\n① **必须 POST。** 站点那个 send 函数源码里写死 `method:\"GET\"`，但它把第 3 个参数整个并进 axios config，所以 `{ method: 'POST' }` 能盖掉它。实测：POST → `status_code:0` + 10 条 + `has_more:1` + `cursor:1787688605516703`；GET → `status_code:-404` 且带 `isRiskManagementVerifyError`。（douyin-search 那条走 GET，所以它的 call 里没有这个参数——两条 recipe 在这一格是不一样的，别互相照抄。）\n\n② **`timestamp` 和 `x-secsdk-web-signature` 必须从抄来的模板里删掉**，它们是**每请求一次性**的值。留着它们：POST 也变成 `-404` risk-verify；GET 更糟——回来的东西连 `status_code` 都没有，只有 `bdturing_parameters`/`whaleDecisionCustom` 这一套挑战信封，也就是说**读 status_code 的代码会读到 undefined 然后一路静默产 0 条**。所以下面显式判了 `status_code !== 0` 就抛错：宁可响，不可静。",
+      "_why_wait_for_first_request": "入口那一发不是同步的，得等它——但等待必须在页外，页内一个 setTimeout 都不许有（后台标签的 setTimeout 被浏览器钳到约 1 秒一跳，写 250ms 实际睡 5.3s，然后 `Detached while handling command.`）。落法：模板不在就立刻返回空 + `cursor:'wait'` 把这一轮让掉，真正的等待由 runner 在页外做（吃 `policy.minActionIntervalMs`）。**只让一次**——连着两页 fresh=0 runner 就收手，所以第二轮还等不到就显式抛错（drift，响的），不会静默变成半批。",
+      "kind": "evaluate",
+      "itemsAt": "items",
+      "cursorField": "cursor",
+      "pageSize": 20,
+      "maxPages": 6,
+      "call": "async (cursor, num, params) => { const P = '/aweme/v1/web/aweme/listcollection/'; const url = performance.getEntriesByType('resource').map(x => x.name).filter(n => n.indexOf(P) > -1)[0]; if (!url) { if (!cursor) return { items: [], cursor: 'wait' }; throw new Error('douyin: page never fired its own listcollection request by the second evaluate round — no params to copy'); } let mod = null; for (const ck of Object.keys(window)) { if (ck.indexOf('webpackChunk') !== 0) continue; const chunk = window[ck]; if (!chunk || typeof chunk.push !== 'function') continue; let req; try { chunk.push([[Math.random()], {}, r => req = r]); } catch (e) { continue; } if (!req || !req.m) continue; for (const id of Object.keys(req.m)) { let s; try { s = req.m[id].toString(); } catch (e) { continue; } if (s.includes('window.axiosInstance=') && s.includes('skipCheckCode')) { mod = req(id); break; } } if (mod) break; } if (!mod) throw new Error('douyin: signed-request module not found in any webpackChunk global (webpack layout moved)'); const send = Object.keys(mod).map(k => mod[k]).find(f => { try { return typeof f === 'function' && f.toString().includes('window.axiosInstance='); } catch (e) { return false; } }); if (!send) throw new Error('douyin: signed-request fn not found in module'); const q = new URLSearchParams(url.split('?')[1]); const drop = ['a_bogus', 'msToken', 'verifyFp', 'fp', 'X-Bogus', '_signature', 'timestamp', 'x-secsdk-web-signature']; const base = {}; q.forEach((v, k) => { if (drop.indexOf(k) < 0) base[k] = v; }); const at = (cursor && cursor !== 'wait') ? cursor : '0'; const body = await Promise.race([send(P, Object.assign({}, base, { cursor: at, count: String(num) }), { method: 'POST' }), new Promise((_, rej) => setTimeout(() => rej(new Error('douyin: listcollection did not settle in 5s — risk-control challenge (captcha overlay) swallows the promise')), 5000))]); if (!body || body.status_code !== 0) throw new Error('douyin: listcollection refused (status_code=' + (body && body.status_code) + ') — see the recipe _why_calibrated_params'); const rows = body.aweme_list || []; const items = rows.filter(a => a && a.aweme_id).map(a => { const av = a.author || {}; const th = (av.avatar_thumb && av.avatar_thumb.url_list) || []; return { guid: a.aweme_id, title: a.desc, link: 'https://www.douyin.com/video/' + a.aweme_id, author: av.nickname, author_avatar: th[0], pubDate: a.create_time, douyin: a }; }); return { items: items, cursor: (body.has_more && rows.length && body.cursor != null) ? String(body.cursor) : '' }; }"
+    }
+  ],
+  "observers": [
+    {
+      "_why": "**它管的是第一批**：进页面时页面自己发的那一发 `listcollection`，拦它即可，不用我们重放一次 cursor=0（douyin-search 实测过重放首批会撞验证码，绕开比查清便宜）。**它也会顺带拦到 evaluate step 自己发的那几发**（同一个 urlPattern）——同一批条目由两条路各映射一次，按 guid 合并，重复不会进 feed。",
+      "kind": "network",
+      "urlPattern": "*/aweme/v1/web/aweme/listcollection*",
+      "windowMs": 120000,
+      "maxBodyBytes": 8000000,
+      "input": {
+        "_why_shape": "network observer 读的是站点的**原始 wire body**（snake_case），条目直接躺在 `aweme_list[]` 下、没有 douyin-search 那层 `aweme_info` 包裹——所以这里的 dot-path 和 search 那份逐条不同，别照抄。`douyin` 映的是空路径 = 整条 aweme 自己（`getPath(obj,'')` 返回 obj），normalizer `douyin` 吃的就是它。",
+        "itemsAt": "aweme_list",
+        "dedupeBy": "aweme_id",
+        "targetCount": 100,
+        "mapping": {
+          "guid": "aweme_id",
+          "title": "desc",
+          "link": "https://www.douyin.com/video/{aweme_id}",
+          "author": "author.nickname",
+          "author_avatar": "author.avatar_thumb.url_list.0",
+          "pubDate": "create_time",
+          "douyin": ""
+        },
+        "assert": [
+          {
+            "path": "aweme_list",
+            "desc": "douyin listcollection aweme_list[]"
+          }
+        ]
+      }
+    }
+  ],
+  "_why_output_identity": "evaluate step 产出的 items 直接过这份 `output` 映射（不经 observer 那份 `input`），而 step 里已经把 aweme 摊成了 DataItem 的形状，所以这里是恒等映射。两边必须落在同一组字段名上，两批才能按 guid 合并成一批——改任一边就要改另一边。",
+  "_why_timestamp_from": "收藏页的顺序是**收藏顺序**，而 listcollection 每条只带 `create_time`（视频发布时间），没有「我什么时候收藏的」。照 create_time 排，昨天收藏的一条 6 月发的视频会沉到 150 条的第 142 位——收藏页前 30 条里看得见、Stream 里翻不到，用户报的就是「有几个收藏在采集里看不到」（2026-09-03 逐条对比：前 38 条 37 条都在库里，只是前 30 条里 10 条被压到 50 位之后）。所以时间戳改成按采到的先后排；发布时间还在 `douyin.create_time` 上。",
+  "output": {
+    "timestampFrom": "harvest-order",
+    "itemsAt": "items",
+    "dedupeBy": "guid",
+    "targetCount": 100,
+    "mapping": {
+      "guid": "guid",
+      "title": "title",
+      "link": "link",
+      "author": "author",
+      "author_avatar": "author_avatar",
+      "pubDate": "pubDate",
+      "douyin": "douyin"
+    }
+  },
+  "_why_min_action_interval": "同 douyin-search：它在这条 recipe 里兼着一个等待器。`runEvaluateStep` 每翻一页之间睡 `max(minActionIntervalMs, 900+抖动)`，而这个睡在**页外**（Node 侧），不受后台标签把 setTimeout 钳到 1 秒一跳的影响。给 2500ms 是为了让第二轮 evaluate 落在页面自己那发 listcollection 之后——调回 900 会让它赶在前面，直接抛「没有可抄的参数模板」。",
+  "policy": {
+    "minActionIntervalMs": 2500,
+    "maxTaskMs": 180000
+  },
+  "meta": {
+    "auth": {
+      "type": "session",
+      "facility": "douyin",
+      "login": "cookie",
+      "cookieDomain": "douyin.com"
+    },
+    "normalizer": "douyin",
+    "type": "post",
+    "title": "我的收藏",
+    "description": "抖音「我的收藏」· 登录态浏览器打开收藏页，拦第一批 listcollection 返回体，其余批次在页内调站点自己的签名客户端直取",
+    "topics": [
+      "douyin",
+      "抖音",
+      "收藏",
+      "作品",
+      "social-media",
+      "video"
+    ],
+    "categories": [
+      "social-media",
+      "video"
+    ],
+    "facility": {
+      "key": "douyin",
+      "label": "抖音"
+    },
+    "capabilities": [
+      "timeline"
+    ],
+    "priority": 80,
+    "discoverable": true,
+    "cadence_hint_seconds": 3600,
+    "example_queries": [
+      "我在抖音收藏了哪些视频",
+      "douyin 收藏夹"
+    ],
+    "homepage": "douyin.com",
+    "params_schema": {}
+  }
+}

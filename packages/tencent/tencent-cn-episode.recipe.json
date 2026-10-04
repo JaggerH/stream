@@ -1,0 +1,98 @@
+{
+  "version": 1,
+  "kind": "http",
+  "sourceId": "tencent-cn-episode",
+  "request": {
+    "url": "https://pbaccess.video.qq.com/trpc.universal_backend_service.page_server_rpc.PageServer/GetPageData?video_appid=3000010&vplatform=2&vversion_name=8.2.95",
+    "method": "POST",
+    "headers": {
+      "content-type": "application/json",
+      "referer": "https://v.qq.com/x/cover/{cid}.html"
+    },
+    "body": "{\"page_params\":{\"req_from\":\"web_vsite\",\"page_id\":\"vsite_episode_list\",\"page_type\":\"detail_operation\",\"id_type\":\"1\",\"page_size\":\"100\",\"cid\":\"{cid}\",\"vid\":\"\",\"lid\":\"\",\"page_num\":\"{page_num}\",\"page_context\":\"\",\"detail_page_type\":\"1\",\"req_type\":\"6\",\"req_from_second_type\":\"\",\"year\":\"\",\"tab_type\":\"\",\"chapter_name\":\"\",\"is_nocopyright\":\"false\"},\"has_cache\":1}"
+  },
+  "compute": {
+    "capabilities": [],
+    "prefetch": [
+      {
+        "as": "coverPage",
+        "parse": "text",
+        "request": {
+          "url": "https://m.v.qq.com/x/m/play?cid={cid}",
+          "method": "GET",
+          "headers": {
+            "user-agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 MicroMessenger/8.0.0"
+          }
+        }
+      }
+    ],
+    "decode": "(() => { const mld = (input.body && input.body.data && input.body.data.module_list_datas) || []; const mod = mld[0] && mld[0].module_datas && mld[0].module_datas[0]; const items = (mod && mod.item_data_lists && mod.item_data_lists.item_datas) || []; const hasNext = !!(mod && mod.module_params && mod.module_params.has_next === 'true'); const m = /itemprop=\"image\" content=\"([^\"]*)\"/.exec((input.pre && input.pre.coverPage) || ''); const cover = m ? 'https:' + m[1] : undefined; const withCover = cover ? items.map((it) => Object.assign({}, it, { seriesCover: cover })) : items; return { items: withCover, hasNext }; })()"
+  },
+  "pagination": {
+    "mode": "increment",
+    "param": "page_num",
+    "start": 0,
+    "step": 1,
+    "itemsAt": "items",
+    "hasMore": "hasNext",
+    "maxPages": 5
+  },
+  "assert": [
+    {
+      "path": "items",
+      "desc": "tencent vsite_episode_list flattened"
+    }
+  ],
+  "mapping": {
+    "guid": "item_id",
+    "title": "item_params.title",
+    "link": "https://v.qq.com/x/cover/{item_params.cid}/{item_params.vid}.html",
+    "image": "item_params.image_url",
+    "author_avatar": "seriesCover",
+    "description": "item_params.video_subtitle",
+    "pubDate": "item_params.publish_date"
+  },
+  "meta": {
+    "normalizer": "rsshub",
+    "type": "post",
+    "description": "腾讯视频 — 剧集/综艺分集",
+    "topics": [
+      "腾讯视频",
+      "tencent",
+      "v.qq.com",
+      "影视",
+      "综艺",
+      "剧集",
+      "分集",
+      "tv"
+    ],
+    "categories": [
+      "multimedia"
+    ],
+    "facility": {
+      "key": "tencent",
+      "label": "腾讯视频"
+    },
+    "capabilities": [
+      "timeline"
+    ],
+    "key_param": "cid",
+    "priority": 80,
+    "discoverable": true,
+    "cadence_hint_seconds": 86400,
+    "auth": {
+      "type": "none"
+    },
+    "homepage": "v.qq.com",
+    "params_schema": {
+      "cid": {
+        "type": "string",
+        "required": true,
+        "description": "剧集/专辑 cid（取自 v.qq.com/x/cover/{cid}/... 页面 URL）"
+      }
+    },
+    "radar": [
+      "v.qq.com/x/cover/:cid"
+    ]
+  }
+}

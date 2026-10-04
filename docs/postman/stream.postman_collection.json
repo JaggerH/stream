@@ -1,0 +1,2860 @@
+{
+  "info": {
+    "name": "Stream API",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "description": "Current Stream HTTP API collection."
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://127.0.0.1:8900",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "System",
+      "item": [
+        {
+          "name": "System: Status",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/status",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "status"
+              ],
+              "query": []
+            },
+            "description": "Return service health, login-cookie snapshot status, manifest status, and stream scheduler status."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Settings",
+      "item": [
+        {
+          "name": "Settings: Summary Prompt Get",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/settings/summary-prompt",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "settings",
+                "summary-prompt"
+              ],
+              "query": []
+            },
+            "description": "Return the summary prompt + whether the llm ladder has a usable member ({ prompt, configured }). LLM connections themselves are no longer configured here — they are members of the `llm` Provider row, added/edited from the Providers page (POST/PATCH /api/providers, PUT /api/source-runtime-config with ref `llm:<instance>` for the per-instance key). See docs/superpowers/specs/2026-07-27-llm-provider-unification-design.md."
+          }
+        },
+        {
+          "name": "Settings: Summary Prompt Set",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/settings/summary-prompt",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "settings",
+                "summary-prompt"
+              ],
+              "query": []
+            },
+            "description": "Persist + hot-apply the summarize prompt — the only LLM field still owned by settings. Connections/model live on the `llm` Provider row's members instead.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"prompt\": \"Summarize the transcript in concise bullet points.\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Channels",
+      "item": [
+        {
+          "name": "Channel: List",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/channels?kind=timeline",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "channels"
+              ],
+              "query": [
+                {
+                  "key": "kind",
+                  "value": "timeline",
+                  "disabled": false
+                }
+              ]
+            },
+            "description": "List explicit channels and implicit solo channels."
+          }
+        },
+        {
+          "name": "Channel: Refresh",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/channels/:id/refresh",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "channels",
+                ":id",
+                "refresh"
+              ]
+            },
+            "description": "手动重新抓取:扇出到该频道**全部成员流**,各跑一次真实持久化 tick。回逐流账 + 合计 `{streams:[{streamId,fetched,written}|{streamId,error}], fetched, written, failed}`。**部分失败仍是 200**——某个 facility 掉登录态是常态,判整次失败会让其余成功的抓取在 UI 上一起消失。并发有上限（默认 3;采集是重活,有的流还骑着那个唯一的真浏览器）,streams 按成员顺序返回。"
+          }
+        },
+        {
+          "name": "Channel: Create",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/channels",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "channels"
+              ],
+              "query": []
+            },
+            "description": "Create a channel grouping one or more streams.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"id\": \"daily-media\",\n  \"label\": \"Daily Media\",\n  \"variant\": \"timeline\",\n  \"stream_ids\": [\n    \"bilibili-following-demo\"\n  ],\n  \"options\": {\n    \"description\": \"Daily media inbox\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Channel: Update",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/channels/:id",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "channels",
+                ":id"
+              ],
+              "query": []
+            },
+            "description": "Update channel label, variant, streams, or options.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"label\": \"Daily Media\",\n  \"variant\": \"mixed\",\n  \"stream_ids\": [\n    \"bilibili-following-demo\"\n  ],\n  \"options\": {\n    \"description\": \"Updated target\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Channel: Delete",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/channels/:id",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "channels",
+                ":id"
+              ],
+              "query": []
+            },
+            "description": "Delete a channel definition."
+          }
+        },
+        {
+          "name": "Channel: Stream Ad-Filter Set",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/channels/:targetId/streams/:streamId/ad-filter",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "channels",
+                ":channelId",
+                "streams",
+                ":streamId",
+                "ad-filter"
+              ],
+              "query": []
+            },
+            "description": "Set or clear per-stream ad-filter override rules.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"keywords\": [\n    \"sponsor\",\n    \"discount\"\n  ],\n  \"domains\": [\n    \"ads.example.com\"\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Channel: Stream Ad-Filter Reclassify",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/channels/:targetId/streams/:streamId/ad-filter/reclassify",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "channels",
+                ":channelId",
+                "streams",
+                ":streamId",
+                "ad-filter",
+                "reclassify"
+              ],
+              "query": []
+            },
+            "description": "Re-run ad classification for stored stream items using current effective rules."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Streams",
+      "item": [
+        {
+          "name": "Stream: List",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/streams",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "streams"
+              ],
+              "query": []
+            },
+            "description": "List configured streams with audio cover enrichment."
+          }
+        },
+        {
+          "name": "Stream: Refresh",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/streams/:id/refresh",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "streams",
+                ":id",
+                "refresh"
+              ]
+            },
+            "description": "手动重新抓取单个流(真实持久化 tick,与 preview 不同——preview 从不落库)。回 `{fetched, written}`;未知流 404。"
+          }
+        },
+        {
+          "name": "Stream: Create",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/streams",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "streams"
+              ],
+              "query": []
+            },
+            "description": "Create a stream; creating a stream is subscribing, and options.autoDownload toggles playlist sync via Update.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"id\": \"bilibili-following-demo\",\n  \"label\": \"Bilibili Following\",\n  \"strategy\": \"merge\",\n  \"cadence_seconds\": 1800,\n  \"members\": [\n    {\n      \"plugin_id\": \"bilibili\",\n      \"source_template_id\": \"following\",\n      \"params\": {\n        \"uid\": \"123456\"\n      }\n    }\n  ],\n  \"options\": {\n    \"autoDownload\": false,\n    \"kind\": \"timeline\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Stream: Update",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/streams/:id",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "streams",
+                ":id"
+              ],
+              "query": []
+            },
+            "description": "Patch stream metadata, cadence, members, contract, or options.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"label\": \"Bilibili Following\",\n  \"cadence_seconds\": 3600,\n  \"options\": {\n    \"autoDownload\": true\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Stream: Delete",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/streams/:id",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "streams",
+                ":id"
+              ],
+              "query": []
+            },
+            "description": "Delete a stream and unschedule harvesting."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Providers",
+      "item": [
+        {
+          "name": "Provider: List",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/providers",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "providers"
+              ],
+              "query": []
+            },
+            "description": "List configured providers."
+          }
+        },
+        {
+          "name": "Provider: Match Preview",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/providers?variant=transform&key=bilibili.com",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "providers"
+              ],
+              "query": [
+                {
+                  "key": "variant",
+                  "value": "transform",
+                  "disabled": false
+                },
+                {
+                  "key": "key",
+                  "value": "bilibili.com",
+                  "disabled": false
+                }
+              ]
+            },
+            "description": "Preview provider matching for a variant and key."
+          }
+        },
+        {
+          "name": "Provider: Detail",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/providers/track-play",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "providers",
+                "track-play"
+              ],
+              "query": []
+            },
+            "description": "Get detailed provider configuration and status."
+          }
+        },
+        {
+          "name": "Provider: Create",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/providers",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "providers"
+              ],
+              "query": []
+            },
+            "description": "Create a provider configuration row.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"id\": \"enrich-bili\",\n  \"label\": \"B站富化\",\n  \"variant\": \"transform\",\n  \"serves\": [\n    \"bilibili.com\"\n  ],\n  \"members\": [\n    {\n      \"fn\": \"fetch-url\"\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Provider: Update",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/providers/enrich-bili",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "providers",
+                "enrich-bili"
+              ],
+              "query": []
+            },
+            "description": "Update a provider configuration row.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"serves\": [\n    \"bilibili.com\",\n    \"b23.tv\"\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Provider: Delete",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/providers/enrich-bili",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "providers",
+                "enrich-bili"
+              ],
+              "query": []
+            },
+            "description": "Delete a provider configuration row."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Items",
+      "item": [
+        {
+          "name": "Item: Inbox List",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/items?stream=bilibili-following-demo&limit=50&order=desc",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "items"
+              ],
+              "query": [
+                {
+                  "key": "stream",
+                  "value": "bilibili-following-demo",
+                  "disabled": false
+                },
+                {
+                  "key": "limit",
+                  "value": "50",
+                  "disabled": false
+                },
+                {
+                  "key": "order",
+                  "value": "desc",
+                  "disabled": false
+                }
+              ]
+            },
+            "description": "List inbox items, optionally filtered by stream."
+          }
+        },
+        {
+          "name": "Item: Label Patch",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/items/:id",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "items",
+                ":id"
+              ],
+              "query": []
+            },
+            "description": "Apply a manual ad label; label must be ad, lottery, or not-ad.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"label\": \"not-ad\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Item: Renormalize",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/items/renormalize",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "items",
+                "renormalize"
+              ],
+              "query": []
+            },
+            "description": "拿存量 item 的 raw 用当前 manifest 重跑 normalize，只覆盖 content。body 三选一：{streamId}|{sourceId}|{}（互斥，全不带=全库）。400 两键同现或非法 body；404 scope 查无；200 {scanned,updated,skipped}。幂等。",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"streamId\": \"\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Catalog",
+      "item": [
+        {
+          "name": "Plugin: List",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/plugins",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "plugins"
+              ],
+              "query": []
+            },
+            "description": "List plugin catalog entries with operational status."
+          }
+        },
+        {
+          "name": "Plugin: Sources",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/plugins/:pluginId/sources?query=music&category=video&facility=bilibili&cursor=0&limit=20",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "plugins",
+                ":pluginId",
+                "sources"
+              ],
+              "query": [
+                {
+                  "key": "query",
+                  "value": "music",
+                  "disabled": false
+                },
+                {
+                  "key": "category",
+                  "value": "video",
+                  "disabled": false
+                },
+                {
+                  "key": "facility",
+                  "value": "bilibili",
+                  "disabled": false
+                },
+                {
+                  "key": "cursor",
+                  "value": "0",
+                  "disabled": false
+                },
+                {
+                  "key": "limit",
+                  "value": "20",
+                  "disabled": false
+                }
+              ]
+            },
+            "description": "List sources for a plugin with catalog filters."
+          }
+        },
+        {
+          "name": "Plugin: Source Detail",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/plugins/:pluginId/sources/:sourceId",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "plugins",
+                ":pluginId",
+                "sources",
+                ":sourceId"
+              ],
+              "query": []
+            },
+            "description": "Return plugin source detail for a canonical source id."
+          }
+        },
+        {
+          "name": "Source: List",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/sources",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "sources"
+              ],
+              "query": []
+            },
+            "description": "List curated source catalog entries."
+          }
+        },
+        {
+          "name": "Source: Catalog Search",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/sources?q=bilibili%20music&k=10&searchable=true&category=video%2Cmusic",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "sources"
+              ],
+              "query": [
+                {
+                  "key": "q",
+                  "value": "bilibili music",
+                  "disabled": false
+                },
+                {
+                  "key": "k",
+                  "value": "10",
+                  "disabled": false
+                },
+                {
+                  "key": "searchable",
+                  "value": "true",
+                  "disabled": false
+                },
+                {
+                  "key": "category",
+                  "value": "video,music",
+                  "disabled": false
+                }
+              ]
+            },
+            "description": "Search source catalog manifests by query."
+          }
+        },
+        {
+          "name": "Source: Categories",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/categories",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "categories"
+              ],
+              "query": []
+            },
+            "description": "List source catalog categories."
+          }
+        },
+        {
+          "name": "Source: Topics",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/topics",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "topics"
+              ],
+              "query": []
+            },
+            "description": "List source catalog topics."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Search",
+      "item": [
+        {
+          "name": "Search: Content",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/search?scope=content&q=open%20source",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "search"
+              ],
+              "query": [
+                {
+                  "key": "scope",
+                  "value": "content",
+                  "disabled": false
+                },
+                {
+                  "key": "q",
+                  "value": "open source",
+                  "disabled": false
+                }
+              ]
+            },
+            "description": "Search cross-platform content posts."
+          }
+        },
+        {
+          "name": "Search: Music",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/search?scope=music&q=artist%20track",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "search"
+              ],
+              "query": [
+                {
+                  "key": "scope",
+                  "value": "music",
+                  "disabled": false
+                },
+                {
+                  "key": "q",
+                  "value": "artist track",
+                  "disabled": false
+                }
+              ]
+            },
+            "description": "Search playable music tracks."
+          }
+        },
+        {
+          "name": "Search: Resources",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/search?scope=resources&q=show%20title&nsfw=false",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "search"
+              ],
+              "query": [
+                {
+                  "key": "scope",
+                  "value": "resources",
+                  "disabled": false
+                },
+                {
+                  "key": "q",
+                  "value": "show title",
+                  "disabled": false
+                },
+                {
+                  "key": "nsfw",
+                  "value": "false",
+                  "disabled": false
+                }
+              ]
+            },
+            "description": "Search video and torrent resource facets."
+          }
+        },
+        {
+          "name": "Search: Resources Stream",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/search?scope=resources&q=show%20title&stream=1&nsfw=false",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "search"
+              ],
+              "query": [
+                {
+                  "key": "scope",
+                  "value": "resources",
+                  "disabled": false
+                },
+                {
+                  "key": "q",
+                  "value": "show title",
+                  "disabled": false
+                },
+                {
+                  "key": "stream",
+                  "value": "1",
+                  "disabled": false
+                },
+                {
+                  "key": "nsfw",
+                  "value": "false",
+                  "disabled": false
+                }
+              ]
+            },
+            "description": "Stream resource search events as NDJSON."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Intents & Resolutions",
+      "item": [
+        {
+          "name": "Intent: Classify",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/intents?input=https%3A%2F%2Fspace.bilibili.com%2F123456",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "intents"
+              ],
+              "query": [
+                {
+                  "key": "input",
+                  "value": "https://space.bilibili.com/123456",
+                  "disabled": false
+                }
+              ]
+            },
+            "description": "Classify pasted input into a target type and key."
+          }
+        },
+        {
+          "name": "Resolution: Fetch Once",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/resolutions?type=bilibili-user&key=123456&input=https%3A%2F%2Fspace.bilibili.com%2F123456",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "resolutions"
+              ],
+              "query": [
+                {
+                  "key": "type",
+                  "value": "bilibili-user",
+                  "disabled": false
+                },
+                {
+                  "key": "key",
+                  "value": "123456",
+                  "disabled": false
+                },
+                {
+                  "key": "input",
+                  "value": "https://space.bilibili.com/123456",
+                  "disabled": false
+                }
+              ]
+            },
+            "description": "Resolve a target once by type/key or inferred input."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Resolve Model (legacy surface)",
+      "item": [
+        {
+          "name": "Resolve Subscription: List",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/resolve/subscriptions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "resolve",
+                "subscriptions"
+              ],
+              "query": []
+            },
+            "description": "List standing resolve subscriptions."
+          }
+        },
+        {
+          "name": "Resolve Subscription: Create",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/resolve/subscriptions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "resolve",
+                "subscriptions"
+              ],
+              "query": []
+            },
+            "description": "Create a standing resolve subscription.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"targetType\": \"bilibili-user\",\n  \"key\": \"123456\",\n  \"cadence_seconds\": 1800\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Resolve Subscription: Delete",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/resolve/subscriptions/:id",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "resolve",
+                "subscriptions",
+                ":id"
+              ],
+              "query": []
+            },
+            "description": "Delete a standing resolve subscription."
+          }
+        },
+        {
+          "name": "Resolve Source: Pool",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/resolve/sources?targetType=bilibili-user",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "resolve",
+                "sources"
+              ],
+              "query": [
+                {
+                  "key": "targetType",
+                  "value": "bilibili-user",
+                  "disabled": false
+                }
+              ]
+            },
+            "description": "List source pool and health by target type."
+          }
+        },
+        {
+          "name": "Resolve Target: Health Tree",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/resolve/targets",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "resolve",
+                "channels"
+              ],
+              "query": []
+            },
+            "description": "List resolve targets expanded into provider and source health tree."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Conversions",
+      "description": "转换：OCR / 转写 / 补说话人 / 摘要,一族端点 kind 判别（2026-07-25 取代 Transcripts + Parses 两族）。契约见 docs/API.md「Conversions」。",
+      "item": [
+        {
+          "name": "Conversion Kind: List",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/conversion-kinds",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "conversion-kinds"
+              ]
+            },
+            "description": "能力发现：哪些 kind 注册了、后端配没配、各有哪些阶段。前端据此决定按钮显不显示,别用 POST 试探 503。"
+          }
+        },
+        {
+          "name": "Conversion: Create",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/conversions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "conversions"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"kind\": \"stt\",\n  \"item\": \"{{itemId}}\",\n  \"options\": {\n    \"diarize\": true\n  }\n}"
+            },
+            "description": "起一次转换。kind ∈ parse|stt|identify|summary。命中缓存回 200 + 既有记录,新建回 201 + Location。派生类 kind（summary/identify）用 `input` 指向上游那条 conversion。`force:true` 无视缓存重跑。"
+          }
+        },
+        {
+          "name": "Conversion: List",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/conversions?item={{itemId}}&kind=extract&limit=50&expand=result",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "conversions"
+              ],
+              "query": [
+                {
+                  "key": "item",
+                  "value": "{{itemId}}"
+                },
+                {
+                  "key": "kind",
+                  "value": "extract"
+                },
+                {
+                  "key": "limit",
+                  "value": "50"
+                },
+                {
+                  "key": "expand",
+                  "value": "result"
+                }
+              ]
+            },
+            "description": "默认**不驮 result**（一集播客的 segments 是数千条对象）；expand=result 才带正文。游标锚在 id 上（按创建序单调）,不是 updated_at——老行被 touch 会跳进已读过的页里漏条目。"
+          }
+        },
+        {
+          "name": "Conversion: Get",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/conversions/:id",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "conversions",
+                ":id"
+              ]
+            },
+            "description": "单条详情（带 result 与分阶段 timing）。未知 404。"
+          }
+        },
+        {
+          "name": "Conversion: Delete",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/conversions/:id",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "conversions",
+                ":id"
+              ]
+            },
+            "description": "取消并删除：在跑的中止、排队的出队、历史的直接删。语义是「消灭这个意图和它的产物」,所以不另设 cancel 端点。"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Downloads",
+      "item": [
+        {
+          "name": "Download: Create",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/downloads",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "downloads"
+              ],
+              "query": []
+            },
+            "description": "Enqueue a manual audio download by item, stream, or track.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"track\": {\n    \"platform\": \"netease\",\n    \"trackId\": \"12345\",\n    \"title\": \"Song title\",\n    \"artist\": \"Artist\",\n    \"pageUrl\": \"https://music.example.com/song/12345\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Download: List",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/download-options?platform=netease",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "downloads"
+              ],
+              "query": [
+                {
+                  "key": "platform",
+                  "value": "netease",
+                  "disabled": false
+                }
+              ]
+            },
+            "description": "List download queue jobs, optionally by platform."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Likes",
+      "item": [
+        {
+          "name": "Like: List",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/likes",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "likes"
+              ],
+              "query": []
+            },
+            "description": "List liked songs."
+          }
+        },
+        {
+          "name": "Like: Keys",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/likes/keys",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "likes",
+                "keys"
+              ],
+              "query": []
+            },
+            "description": "List liked song keys."
+          }
+        },
+        {
+          "name": "Like: Put",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/likes/:platform/:trackId",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "likes",
+                ":platform",
+                ":trackId"
+              ],
+              "query": []
+            },
+            "description": "Create or update a liked song.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Song title\",\n  \"artist\": \"Artist\",\n  \"album\": \"Album\",\n  \"poster\": \"https://example.com/cover.jpg\",\n  \"durationS\": 210,\n  \"sourceUrl\": \"https://music.example.com/song/12345\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Like: Delete",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/likes/:platform/:trackId",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "likes",
+                ":platform",
+                ":trackId"
+              ],
+              "query": []
+            },
+            "description": "Delete a liked song."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Collections",
+      "item": [
+        {
+          "name": "Collection: List",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/collections?domain=audio&anchor=bilibili-following-demo",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "collections"
+              ],
+              "query": [
+                {
+                  "key": "domain",
+                  "value": "audio",
+                  "disabled": false
+                },
+                {
+                  "key": "anchor",
+                  "value": "bilibili-following-demo",
+                  "disabled": false
+                }
+              ]
+            },
+            "description": "List collections. `domain` (video|audio) and `anchor` (streamId) are both optional and combinable; `anchor` filters to playlists anchored to that stream."
+          }
+        },
+        {
+          "name": "Collection: Create",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/collections",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "collections"
+              ],
+              "query": []
+            },
+            "description": "Create a user collection. `anchorStreamId` is audio-only (video + anchorStreamId → 400).",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"domain\": \"audio\",\n  \"label\": \"我的播单\",\n  \"anchorStreamId\": \"bilibili-following-demo\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Collection: Rename",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/collections/:id",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "collections",
+                ":id"
+              ],
+              "query": []
+            },
+            "description": "Rename a collection.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"label\": \"新名字\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Collection: Delete",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/collections/:id",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "collections",
+                ":id"
+              ],
+              "query": []
+            },
+            "description": "Delete a user collection. System collections (正在追的/我的喜欢) refuse deletion → 400."
+          }
+        },
+        {
+          "name": "Collection Items: List",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/collections/:id/items",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "collections",
+                ":id",
+                "items"
+              ],
+              "query": []
+            },
+            "description": "List a collection's item snapshots."
+          }
+        },
+        {
+          "name": "Collection Items: Add Batch",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/collections/:id/items",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "collections",
+                ":id",
+                "items"
+              ],
+              "query": []
+            },
+            "description": "Batch add item snapshots to a collection. All-or-nothing: any invalid item key or missing title fails the whole request with 400 and nothing is persisted.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"items\": [\n    {\n      \"key\": \"episode:rsshub-lizhi-user-id-ln6vj:ep-42\",\n      \"title\": \"第1期\",\n      \"poster\": \"\",\n      \"artist\": \"\",\n      \"album\": \"\",\n      \"durationS\": 3600,\n      \"sourceUrl\": \"\"\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Collection Item: Put",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/collections/:id/items/track%3Anetease%3A12345",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "collections",
+                ":id",
+                "items",
+                "track:netease:12345"
+              ],
+              "query": []
+            },
+            "description": "Add or update a single item in a collection. `:key` is URL-encoded in the raw URL; forms are `stream:<id>`, `tmdb:<movie|tv>:<id>`, `track:<platform>:<trackId>`, `episode:<streamId>:<itemId>`.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Song title\",\n  \"artist\": \"Artist\",\n  \"album\": \"Album\",\n  \"poster\": \"https://example.com/cover.jpg\",\n  \"durationS\": 210,\n  \"sourceUrl\": \"https://music.example.com/song/12345\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Collection Item: Delete",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/collections/:id/items/episode%3Arsshub-lizhi-user-id-ln6vj%3Aep-42",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "collections",
+                ":id",
+                "items",
+                "episode:rsshub-lizhi-user-id-ln6vj:ep-42"
+              ],
+              "query": []
+            },
+            "description": "Remove one item from a collection. `:key` is URL-encoded in the raw URL."
+          }
+        },
+        {
+          "name": "Collected: Get",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/collected/track%3Anetease%3A12345",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "collected",
+                "track:netease:12345"
+              ],
+              "query": []
+            },
+            "description": "Where-collected lookup: returns `{ item, collectionIds }` for an item key."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Watch Progress",
+      "description": "影视观看进度(服务端,替代旧的浏览器 localStorage)。播放器每 15s 上报,续播读位置,「继续观看」墙读列表。仅影视频道用;Timeline 不接。",
+      "item": [
+        {
+          "name": "Watch Progress: Report",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/watch-progress/tmdb%3A261391%3AS03E02",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "watch-progress",
+                "tmdb:261391:S03E02"
+              ],
+              "query": []
+            },
+            "description": "上报(upsert)一集/一部的播放进度。`:key` 是 URL-encoded 的播放键(影视=leftKey)。校验:position/duration 为有限数且 ≥0,workKey/workTitle 非空,否则 400。「看完」由服务端判定(position>0 且 剩余<30s 或 >98%),看完的记录保留但不上继续观看墙。",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"position\": 754,\n  \"duration\": 3000,\n  \"workKey\": \"tmdb:261391\",\n  \"workTitle\": \"喜剧之王单口季\",\n  \"workPoster\": \"/o.jpg\",\n  \"epLabel\": \"S03E02\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Watch Progress: Resume",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/watch-progress/tmdb%3A261391%3AS03E02",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "watch-progress",
+                "tmdb:261391:S03E02"
+              ],
+              "query": []
+            },
+            "description": "读单个键的续播位置。返回 `{ position, duration, updatedAt }`;从没看过则返回 `null`(200,不是 404)。"
+          }
+        },
+        {
+          "name": "Watch Progress: Continue Watching",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/watch-progress",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "watch-progress"
+              ],
+              "query": []
+            },
+            "description": "「继续观看」墙的数据源。服务端已按作品(workKey)去重只取最近一条、排除已看完、按 updatedAt 新→旧;前端直接渲染,不再过滤。"
+          }
+        },
+        {
+          "name": "Watch Progress: Remove",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/watch-progress/tmdb%3A261391%3AS03E02",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "watch-progress",
+                "tmdb:261391:S03E02"
+              ],
+              "query": []
+            },
+            "description": "手动把一条从「继续观看」移除。"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Images (OpenAI-shaped)",
+      "description": "OpenAI images 协议的标准形状（根级 /v1/…，Base URL 就是源）。宿主的适配器：model = 申报了 meta.produces:\"images\" 的动作 recipe 的 sourceId（裸名不歧义时也认）。/v1/* 与 /api/* 过同一道门。",
+      "item": [
+        {
+          "name": "Images: List Models",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/models",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "models"
+              ],
+              "query": []
+            },
+            "description": "List the action recipes that declare meta.produces:\"images\" — the ids a client may put in `model`."
+          }
+        },
+        {
+          "name": "Images: Generate",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/images/generations",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "images",
+                "generations"
+              ],
+              "query": []
+            },
+            "description": "Run the recipe named by `model` in the user's own Chrome and return `n` images as b64_json (OpenAI shape). `n` ≤ the recipe's per-run count; `size` W×H / W:H is reduced to an aspect ratio appended to the prompt. Concurrent requests for the same model+prompt share one run.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"model\": \"doubao-image\",\n  \"prompt\": \"a wok on a plain cream background\",\n  \"n\": 1,\n  \"size\": \"1024x1024\",\n  \"response_format\": \"b64_json\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Images: Edit (img2img)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/images/edits",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "images",
+                "edits"
+              ],
+              "query": []
+            },
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "model",
+                  "value": "doubao-image",
+                  "type": "text"
+                },
+                {
+                  "key": "prompt",
+                  "value": "repaint this photo in Studio Ghibli style",
+                  "type": "text"
+                },
+                {
+                  "key": "n",
+                  "value": "1",
+                  "type": "text"
+                },
+                {
+                  "key": "image",
+                  "type": "file",
+                  "src": ""
+                }
+              ]
+            },
+            "description": "Image-to-image: multipart with `image` file(s) (≤4, ≤8MB each) as reference. The reference is handed to the recipe as a data URL. `mask` is not supported."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Enrich",
+      "item": [
+        {
+          "name": "Enrich: Link Article",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/enrich?source=link&url=https%3A%2F%2Fexample.com%2Farticle",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "enrich"
+              ],
+              "query": [
+                {
+                  "key": "source",
+                  "value": "link",
+                  "disabled": false
+                },
+                {
+                  "key": "url",
+                  "value": "https://example.com/article",
+                  "disabled": false
+                }
+              ]
+            },
+            "description": "Extract article content for a link."
+          }
+        },
+        {
+          "name": "Enrich: HackerNews",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/enrich?source=hackernews&id=123456&comments=1",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "enrich"
+              ],
+              "query": [
+                {
+                  "key": "source",
+                  "value": "hackernews",
+                  "disabled": false
+                },
+                {
+                  "key": "id",
+                  "value": "123456",
+                  "disabled": false
+                },
+                {
+                  "key": "comments",
+                  "value": "1",
+                  "disabled": false
+                }
+              ]
+            },
+            "description": "Fetch Hacker News story and comments."
+          }
+        },
+        {
+          "name": "Enrich: V2EX",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/enrich?source=v2ex&id=123456",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "enrich"
+              ],
+              "query": [
+                {
+                  "key": "source",
+                  "value": "v2ex",
+                  "disabled": false
+                },
+                {
+                  "key": "id",
+                  "value": "123456",
+                  "disabled": false
+                }
+              ]
+            },
+            "description": "Fetch V2EX topic content and comments."
+          }
+        },
+        {
+          "name": "Enrich: Bilibili Comments",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/enrich?source=bilibili-comments&vid=BV1xx411c7mD&page=1",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "enrich"
+              ],
+              "query": [
+                {
+                  "key": "source",
+                  "value": "bilibili-comments",
+                  "disabled": false
+                },
+                {
+                  "key": "vid",
+                  "value": "BV1xx411c7mD",
+                  "disabled": false
+                },
+                {
+                  "key": "page",
+                  "value": "1",
+                  "disabled": false
+                }
+              ]
+            },
+            "description": "Fetch Bilibili comments for a video id."
+          }
+        },
+        {
+          "name": "Enrich: Bilibili Owner",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/enrich?source=bilibili-owner&bvid=BV1xx411c7mD",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "enrich"
+              ],
+              "query": [
+                {
+                  "key": "source",
+                  "value": "bilibili-owner",
+                  "disabled": false
+                },
+                {
+                  "key": "bvid",
+                  "value": "BV1xx411c7mD",
+                  "disabled": false
+                }
+              ]
+            },
+            "description": "Resolve Bilibili video owner metadata."
+          }
+        },
+        {
+          "name": "Enrich: Bilibili User",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/enrich?source=bilibili-user&uid=123456",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "enrich"
+              ],
+              "query": [
+                {
+                  "key": "source",
+                  "value": "bilibili-user",
+                  "disabled": false
+                },
+                {
+                  "key": "uid",
+                  "value": "123456",
+                  "disabled": false
+                }
+              ]
+            },
+            "description": "Resolve Bilibili user metadata by uid or name."
+          }
+        },
+        {
+          "name": "Enrich: Douyin Comments",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/enrich?source=douyin-comments&vid=7686747731612576101&cursor=0",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "enrich"
+              ],
+              "query": [
+                {
+                  "key": "source",
+                  "value": "douyin-comments",
+                  "disabled": false
+                },
+                {
+                  "key": "vid",
+                  "value": "7686747731612576101",
+                  "disabled": false
+                },
+                {
+                  "key": "cursor",
+                  "value": "0",
+                  "disabled": false
+                }
+              ]
+            },
+            "description": "Douyin comment thread for one aweme id (package enricher). Returns { comments, total, cursor? } — pass the returned cursor back to fetch the next page; no cursor means no more."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Media",
+      "item": [
+        {
+          "name": "Media: Image",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/media/image?url=https%3A%2F%2Fexample.com%2Fimage.jpg&dl=0&name=image",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "media",
+                "image"
+              ],
+              "query": [
+                {
+                  "key": "url",
+                  "value": "https://example.com/image.jpg",
+                  "disabled": false
+                },
+                {
+                  "key": "dl",
+                  "value": "0",
+                  "disabled": false
+                },
+                {
+                  "key": "name",
+                  "value": "image",
+                  "disabled": false
+                }
+              ]
+            },
+            "description": "Proxy a remote image response."
+          }
+        },
+        {
+          "name": "Media: Favicon",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/media/image?site=https%3A%2F%2Fexample.com",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "media",
+                "image"
+              ],
+              "query": [
+                {
+                  "key": "site",
+                  "value": "https://example.com",
+                  "disabled": false
+                }
+              ]
+            },
+            "description": "Resolve and proxy a site favicon."
+          }
+        },
+        {
+          "name": "Media: From Url",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/media/from-url?url=https%3A%2F%2Fwww.douyin.com%2Fvideo%2F123456",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "media",
+                "from-url"
+              ],
+              "query": [
+                {
+                  "key": "url",
+                  "value": "https://www.douyin.com/video/123456",
+                  "disabled": false
+                }
+              ]
+            },
+            "description": "任意链接 → 标准化 media[]（抖音/B站/图片·视频直链），含 download_url。取网页正文是另一条：GET /api/enrich?source=link。"
+          }
+        },
+        {
+          "name": "Media: Asset Status",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/media/assets?refs=netease%3A12345%2Cqq%3A67890",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "media",
+                "assets"
+              ],
+              "query": [
+                {
+                  "key": "refs",
+                  "value": "netease:12345,qq:67890",
+                  "disabled": false
+                }
+              ]
+            },
+            "description": "Return local archive status for platform:trackId refs."
+          }
+        },
+        {
+          "name": "Media: Asset File",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/media/assets/:assetId/file",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "media",
+                "assets",
+                ":assetId",
+                "file"
+              ],
+              "query": []
+            },
+            "description": "Binary/stream response: serve an archived local audio file with range support."
+          }
+        },
+        {
+          "name": "Media: Asset Delete",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/media/assets/:platform/:trackId",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "media",
+                "assets",
+                ":platform",
+                ":trackId"
+              ],
+              "query": []
+            },
+            "description": "Delete an archived local media asset."
+          }
+        },
+        {
+          "name": "Media: Track Resolve",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/media/tracks/resolve?platform=netease&id=12345&title=Song%20title&artist=Artist&pageUrl=https%3A%2F%2Fmusic.example.com%2Fsong%2F12345",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "media",
+                "tracks",
+                "resolve"
+              ],
+              "query": [
+                {
+                  "key": "platform",
+                  "value": "netease",
+                  "disabled": false
+                },
+                {
+                  "key": "id",
+                  "value": "12345",
+                  "disabled": false
+                },
+                {
+                  "key": "title",
+                  "value": "Song title",
+                  "disabled": false
+                },
+                {
+                  "key": "artist",
+                  "value": "Artist",
+                  "disabled": false
+                },
+                {
+                  "key": "pageUrl",
+                  "value": "https://music.example.com/song/12345",
+                  "disabled": false
+                }
+              ]
+            },
+            "description": "Resolve a playable track URL or redirect to a local archive."
+          }
+        },
+        {
+          "name": "Download Options: Read",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/download-options?url=https%3A%2F%2Fwww.btbtla.com%2Ftdown%2F123.html",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "download-options"
+              ],
+              "query": [
+                {
+                  "key": "url",
+                  "value": "https://www.btbtla.com/tdown/123.html",
+                  "disabled": false
+                }
+              ]
+            },
+            "description": "Resolve a source-site release page URL to download options [{url, type, password?, name?}]."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Netdisk",
+      "item": [
+        {
+          "name": "Reconcile",
+          "item": [
+            {
+              "name": "Reconcile Config: Read",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/netdisk/reconcile/config",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "netdisk",
+                    "reconcile",
+                    "config"
+                  ]
+                }
+              }
+            },
+            {
+              "name": "Reconcile Config: Replace",
+              "request": {
+                "method": "PUT",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"shows\": [\n    {\n      \"id\": \"yile\",\n      \"label\": \"怡楽播客\",\n      \"bindingId\": \"map_xxx\",\n      \"sourceDirs\": [\n        \"/quark/来自：分享/播客付费节目合集/怡乐播客\"\n      ],\n      \"subShows\": [\n        {\n          \"name\": \"玄关笔记\",\n          \"dir\": \"/quark/From Stream/怡楽播客/付费/玄关笔记\",\n          \"numPattern\": \"^\\\\d{2}\\\\.\"\n        }\n      ],\n      \"autoExecute\": false\n    }\n  ]\n}"
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/netdisk/reconcile/config",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "netdisk",
+                    "reconcile",
+                    "config"
+                  ]
+                }
+              }
+            },
+            {
+              "name": "Reconcile: Preview",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/netdisk/reconcile/:show/preview",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "netdisk",
+                    "reconcile",
+                    ":show",
+                    "preview"
+                  ]
+                }
+              }
+            },
+            {
+              "name": "Reconcile: Execute",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/netdisk/reconcile/:show/execute",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "netdisk",
+                    "reconcile",
+                    ":show",
+                    "execute"
+                  ]
+                }
+              }
+            },
+            {
+              "name": "Reconcile Binding: Preview",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "description": "任意一条网盘绑定的原地整理预览（影视「一键去重」第一步）：出将删清单——删哪几份、各自留的是哪份。不需要在整理面板里配过 show。",
+                "url": {
+                  "raw": "{{baseUrl}}/api/netdisk/reconcile/bindings/:bindingId/preview",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "netdisk",
+                    "reconcile",
+                    "bindings",
+                    ":bindingId",
+                    "preview"
+                  ],
+                  "variable": [
+                    {
+                      "key": "bindingId",
+                      "value": "map_xxx"
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "name": "Reconcile Binding: Execute",
+              "request": {
+                "method": "POST",
+                "header": [],
+                "description": "执行上一步预览过的处置（真删网盘文件，夸克进回收站约 10 天可捞）。删除类动作必须先过一次人眼预览确认。",
+                "url": {
+                  "raw": "{{baseUrl}}/api/netdisk/reconcile/bindings/:bindingId/execute",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "netdisk",
+                    "reconcile",
+                    "bindings",
+                    ":bindingId",
+                    "execute"
+                  ],
+                  "variable": [
+                    {
+                      "key": "bindingId",
+                      "value": "map_xxx"
+                    }
+                  ]
+                }
+              }
+            },
+            {
+              "name": "Reconcile Move: Undo",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"id\": \"<provenance-id>\"\n}"
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/netdisk/reconcile/undo",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "netdisk",
+                    "reconcile",
+                    "undo"
+                  ]
+                }
+              }
+            },
+            {
+              "name": "Reconcile Provenance: List",
+              "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/netdisk/reconcile/provenance",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "netdisk",
+                    "reconcile",
+                    "provenance"
+                  ]
+                }
+              }
+            },
+            {
+              "name": "Reconcile Decision: Set",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"key\": \"<episode-key>\",\n  \"verdict\": \"exempt\",\n  \"note\": \"UI 豁免\"\n}"
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/netdisk/reconcile/decisions",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "netdisk",
+                    "reconcile",
+                    "decisions"
+                  ]
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Credentials",
+      "item": [
+        {
+          "name": "Credential: Connect",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/credentials/:domain/connect",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "credentials",
+                ":domain",
+                "connect"
+              ],
+              "query": []
+            },
+            "description": "Connect credential-backed default subscriptions for bilibili.com or douyin.com."
+          }
+        }
+      ]
+    },
+    {
+      "name": "Pending",
+      "item": [
+        {
+          "name": "Discover: Feed",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/discover?refresh=0",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "discover"
+              ],
+              "query": [
+                {
+                  "key": "refresh",
+                  "value": "0",
+                  "disabled": false
+                }
+              ]
+            },
+            "description": "已裁决并入 Target 读路径，待实施。"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Sharing",
+      "description": "配置分享（stream-bundle/v1）。一次导入 = 一个可寻址 run，遗留事项 = items，逐条 decision。见 docs/API.md「Sharing」与 spec 2026-07-24-import-decision-ledger-design.md。",
+      "item": [
+        {
+          "name": "Bundle: Export",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/sharing/exports",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "sharing",
+                "exports"
+              ],
+              "query": []
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"root\": {\n    \"kind\": \"channel\",\n    \"id\": \"default-video\"\n  },\n  \"providerIds\": [],\n  \"netdiskBindingIds\": []\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Export an orchestration closure as a single stream-bundle/v1 JSON. Optional providerIds / bindingCallsiteIds / netdiskBindingIds ride along. Secrets never enter the bundle; suspicious params → 400."
+          }
+        },
+        {
+          "name": "Import: Create",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/sharing/imports",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "sharing",
+                "imports"
+              ],
+              "query": []
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"url\": \"https://example.com/some.stream-bundle.json\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Import a bundle ({url} or {bundle}) → 201 ImportRun { id, meta, remaps, recipeDecisions, netdiskBindings, items[] }. Items are the pending decisions (parked-provider / slot-conflict / notice). Import is lazy: nothing local that is live gets overwritten before a decision."
+          }
+        },
+        {
+          "name": "Import: List",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/sharing/imports",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "sharing",
+                "imports"
+              ],
+              "query": []
+            },
+            "description": "List import runs (newest first) with openCount / itemCount summaries."
+          }
+        },
+        {
+          "name": "Import: Detail",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/sharing/imports/:id",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "sharing",
+                "imports",
+                ":id"
+              ],
+              "query": []
+            },
+            "description": "Current state of one import run. parked-provider open items are live-projected against the store (deleted → dismissed, activated elsewhere → decided) and carry a conflicts precheck."
+          }
+        },
+        {
+          "name": "Import: Decision",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/sharing/imports/:id/decisions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "sharing",
+                "imports",
+                ":id",
+                "decisions"
+              ],
+              "query": []
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"itemId\": \"itm-1\",\n  \"choice\": \"use-imported\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "description": "Decide one item; choice must be in item.choices. 200 { item }; repeat/exec-failure → 409 { error, item, conflicts[] } with the item kept open; unknown → 404."
+          }
+        }
+      ]
+    }
+  ]
+}

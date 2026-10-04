@@ -1,0 +1,80 @@
+{
+  "version": 1,
+  "kind": "http",
+  "sourceId": "toubiec-search",
+  "request": {
+    "url": "https://nextmusic.toubiec.cn/api/search",
+    "method": "POST",
+    "headers": {
+      "content-type": "application/json"
+    }
+  },
+  "compute": {
+    "capabilities": [],
+    "prefetch": [
+      { "as": "ipResp", "request": { "url": "https://nextmusic.toubiec.cn/api/ip", "method": "GET" } }
+    ],
+    "sign": "(() => { const ip = (input.pre.ipResp && input.pre.ipResp.data && input.pre.ipResp.data.ip) || '0.0.0.0'; return { body: JSON.stringify({ keyword: input.params.keyword, limit: 100, offset: 0, ip }) }; })()"
+  },
+  "pagination": {
+    "mode": "increment",
+    "param": "page",
+    "start": 1,
+    "step": 1,
+    "itemsAt": "data.songs",
+    "maxPages": 1
+  },
+  "assert": [
+    {
+      "path": "data.songs",
+      "desc": "toubiec search returned data.songs[]"
+    }
+  ],
+  "mapping": {
+    "guid": "id",
+    "title": "name",
+    "author": "singer",
+    "link": "https://music.163.com/song?id={id}",
+    "description": "album",
+    "image": "picimg",
+    "pubDate": "time"
+  },
+  "meta": {
+    "normalizer": "rsshub",
+    "type": "post",
+    "description": "toubiec 网易云解析 — 搜索",
+    "topics": [
+      "toubiec",
+      "网易云",
+      "音乐",
+      "搜索",
+      "music",
+      "netease"
+    ],
+    "categories": [
+      "music"
+    ],
+    "facility": {
+      "key": "toubiec",
+      "label": "toubiec"
+    },
+    "capabilities": [
+      "search"
+    ],
+    "key_param": "keyword",
+    "priority": 80,
+    "discoverable": true,
+    "cadence_hint_seconds": 3600,
+    "auth": {
+      "type": "none"
+    },
+    "homepage": "wyapi.toubiec.cn",
+    "params_schema": {
+      "keyword": {
+        "type": "string",
+        "required": true,
+        "description": "搜索关键词（歌名/歌手/专辑）"
+      }
+    }
+  }
+}

@@ -1,0 +1,96 @@
+{
+  "name": "@streamapp/rsshub",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "bundle": "node ../../scripts/bundle-code-packages.mjs .",
+    "prepack": "node ../../scripts/assert-npm-artifact.mjs"
+  },
+  "files": [
+    "dist",
+    "manifests.yaml",
+    "README.md"
+  ],
+  "stream": {
+    "id": "rsshub",
+    "required": true,
+    "name": "RSSHub",
+    "tagline": "世界上最大的 RSS 网络",
+    "description": "网易云、Twitter、Instagram、Telegram、哔哩哔哩、知乎、微博、GitHub、YouTube 等网站和应用的信息源。",
+    "homepage": "https://rsshub.app",
+    "repository": "https://github.com/DIYgod/RSSHub",
+    "docsUrl": "https://docs.rsshub.app",
+    "normalizer": "rsshub",
+    "sourceGrouping": {
+      "enabled": true,
+      "resolver": "adapter.groupByNamespace"
+    },
+    "code": {
+      "entry": "dist/index.js",
+      "normalizers": [
+        "movie"
+      ]
+    },
+    "serving": [
+      {
+        "match": ".doubanio.com",
+        "referer": "https://movie.douban.com/",
+        "reason": "豆瓣图床反向防盗链：不带 Referer 的请求回 418，带 https://movie.douban.com/ 回 200（影视榜单的海报都在这台 CDN 上）"
+      }
+    ],
+    "searchSources": [
+      {
+        "source": "rsshub:nyaa/search/:query?",
+        "key": "nyaa",
+        "label": "Nyaa",
+        "param": "query",
+        "kind": "flat",
+        "searchUrl": "https://nyaa.si/?q={q}"
+      },
+      {
+        "source": "rsshub:comicat/search/:keyword",
+        "key": "comicat",
+        "label": "漫猫",
+        "param": "keyword",
+        "kind": "flat",
+        "searchUrl": "https://comicat.org/search.php?keyword={q}"
+      },
+      {
+        "source": "rsshub:bangumi.moe/:tags{.+}?",
+        "key": "bangumi-moe",
+        "label": "萌番组",
+        "param": "tags",
+        "kind": "flat"
+      },
+      {
+        "source": "rsshub:nyaa/sukebei/search/:query?",
+        "key": "nyaa-r18",
+        "label": "Nyaa(R18)",
+        "param": "query",
+        "kind": "flat",
+        "nsfw": true,
+        "searchUrl": "https://sukebei.nyaa.si/?q={q}"
+      },
+      {
+        "source": "rsshub:u3c3/search/:keyword/:preview?",
+        "key": "u3c3",
+        "label": "U3C3",
+        "param": "keyword",
+        "kind": "flat",
+        "nsfw": true,
+        "searchUrl": "https://www.u3c3.com/?search={q}"
+      },
+      {
+        "source": "rsshub:javdb/search/:keyword?/:filter?/:sort?",
+        "key": "javdb",
+        "label": "JavDB",
+        "param": "keyword",
+        "kind": "flat",
+        "nsfw": true,
+        "searchUrl": "https://javdb.com/search?q={q}&f=all"
+      }
+    ]
+  },
+  "license": "Apache-2.0"
+}

@@ -1,0 +1,21 @@
+handle /api/* {
+	# Hold requests through backend hot-reload/restart blips instead of 502ing.
+	# Without this, a request that lands during a tsx restart (e.g. MCP tool
+	# enumeration at a client's session start) fails silently — server shows
+	# Connected but its tools never register.
+	reverse_proxy serve-backend:4555 {
+		lb_try_duration 3s
+		lb_try_interval 250ms
+	}
+}
+handle /ws {
+	reverse_proxy serve-backend:4555
+}
+handle /_p/* {
+	reverse_proxy serve-backend:4555
+}
+# 兜底全给后端：界面是后端那扇门自己发的那张独立正门页（src/http/standalone-page.ts），
+# 自托管因此只剩后端一个服务。
+handle {
+	reverse_proxy serve-backend:4555
+}

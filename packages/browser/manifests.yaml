@@ -1,0 +1,20 @@
+- id: browser-page
+  adapter: browser
+  title: 网页抓取
+  description: 使用无头浏览器直接加载并提取页面内容，作为 API 或 RSS 失效时的通用兜底获取方案。
+  topics: [browser, fallback, webpage, 兜底, 浏览器]
+  categories: [fallback]
+  example_queries: []
+  capabilities: [timeline]
+  provides: [generic-url]
+  key_param: url
+  priority: 99
+  auth:
+    type: none
+  discoverable: false
+  cadence_hint_seconds: 3600
+  params_schema:
+    url:
+      type: string
+      required: true
+      description: the page URL to render and extract as a single item

@@ -1,0 +1,20 @@
+{
+  "name": "@streamapp/wechat",
+  "version": "1.2.1",
+  "author": "stream",
+  "repository": "github:JaggerH/stream",
+  "keywords": [
+    "stream-recipe"
+  ],
+  "stream": {
+    "type": "recipe",
+    "name": "微信",
+    "tagline": "给指定微信联系人发一条消息（可只写进输入框不发）或发一个文件",
+    "facility": "wechat",
+    "schemaVersion": 1,
+    "contribute": {
+      "path": "packages/wechat/wechat-send.recipe.json"
+    }
+  },
+  "license": "Apache-2.0"
+}

@@ -1,0 +1,28 @@
+{
+  "name": "@streamapp/eastmoney",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "bundle": "node ../../scripts/bundle-code-packages.mjs .",
+    "prepack": "node ../../scripts/assert-npm-artifact.mjs"
+  },
+  "files": [
+    "dist",
+    "*.recipe.json",
+    "manifests.yaml",
+    "README.md"
+  ],
+  "stream": {
+    "id": "eastmoney",
+    "name": "东方财富",
+    "tagline": "网上交易：登录 + 申购日历",
+    "description": "东方财富网上交易。登录那一步在你自己的 Chrome 里做（认图形验证码、让站点的安全控件自己算密码、选最长的会话时长）；会话建起来之后，取数是纯 HTTP，不再需要浏览器。会话掉了会自动重登一次——不用人管。",
+    "credentials": [
+      "eastmoneysec.com"
+    ],
+    "code": {
+      "entry": "dist/index.js"
+    }
+  },
+  "license": "Apache-2.0"
+}

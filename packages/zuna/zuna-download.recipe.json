@@ -1,0 +1,53 @@
+{
+  "version": 1,
+  "kind": "http",
+  "sourceId": "zuna-download",
+  "request": { "url": "https://music.znnu.com/api/song", "method": "POST" },
+  "compute": {
+    "capabilities": ["hmacSha256", "aesGcmDecrypt"],
+    "prefetch": [
+      { "as": "keyResp", "request": { "url": "https://music.znnu.com/api/key", "method": "GET", "headers": { "X-Referer": "musicParser" } } },
+      { "as": "ipResp", "request": { "url": "https://music.znnu.com/api/ip", "method": "GET" } }
+    ],
+    "sign": "(() => { const p = { act: 'song', id: input.params.id, level: input.params.level || 'lossless', rawInput: input.params.id, ip: input.pre.ipResp.ip || '' }; let s = input.now + 'music.znnu.com'; for (const k of Object.keys(p).sort()) s += k + '=' + p[k]; const signature = hmacSha256('a09d0f3700a279584e1515354fbe08a7ee1c617f919543142fa625b82f1b5ad0', s); const enc = (o) => Object.keys(o).map(k => encodeURIComponent(k) + '=' + encodeURIComponent(o[k])).join('&'); return { body: enc(Object.assign({}, p, { signature, timestamp: String(input.now), domain: 'music.znnu.com' })), headers: { 'content-type': 'application/x-www-form-urlencoded', 'X-Referer': 'musicParser', 'X-Key-Token': input.pre.keyResp.data.keyToken } }; })()",
+    "decode": "(() => { const d = input.body && input.body.data; const song = (d && d.enc === 1) ? JSON.parse(aesGcmDecrypt({ key: input.pre.keyResp.data.key, iv: d.iv, ciphertext: d.ciphertext, tag: d.tag })) : (input.body && input.body.data); return { song: song && song.url ? [song] : [] }; })()"
+  },
+  "pagination": { "mode": "increment", "param": "page", "start": 1, "step": 1, "itemsAt": "song", "maxPages": 1 },
+  "assert": [{ "path": "song", "desc": "decrypted zuna song wrapped as a one-element array" }],
+  "mapping": {
+    "guid": "url",
+    "title": "name",
+    "author": "artist",
+    "album": "album",
+    "enclosure_url": "url",
+    "enclosure_type": "type",
+    "format": "type",
+    "image": "cover"
+  },
+  "meta": {
+    "normalizer": "rsshub",
+    "type": "post",
+    "title": "单曲下载",
+    "description": "Zuna 网易云解析 — 单曲下载（song id → 可播放/可下载地址）",
+    "topics": ["zuna", "网易云", "音乐", "下载", "无损", "music", "netease"],
+    "categories": ["music"],
+    "facility": { "key": "zuna", "label": "Zuna" },
+    "capabilities": ["timeline"],
+    "key_param": "id",
+    "priority": 90,
+    "discoverable": true,
+    "cadence_hint_seconds": 3600,
+    "auth": { "type": "none" },
+    "homepage": "music.znnu.com",
+    "params_schema": {
+      "id": { "type": "string", "required": true, "description": "网易云歌曲 ID" },
+      "level": {
+        "type": "string",
+        "required": false,
+        "default": "lossless",
+        "description": "音质：standard/exhigh/lossless/hires/jyeffect/sky/jymaster（上游给不出时自动降档）"
+      }
+    },
+    "radar": ["music.163.com/song"]
+  }
+}

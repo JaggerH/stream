@@ -1,0 +1,53 @@
+# 发布**内置包**到 npm（`packages/<id>/`，npm 包名 `@streamapp/<id>`）：纯 recipe 包和带代码的包走同一条流水线。
+#
+# 判据（`scripts/recipe-release-plan.ts`）：有 `package.json#name`、不 `private`、填了 recipe 槽位或代码槽位
+# （与装载器同一把尺：有 `*.recipe.json` 或 `stream.code`，不读 `stream.type`）、
+# 且该包名已经在 npm 上存在（任意版本，npm 明确回 E404 才算没有；别的失败让流水线红）、
+# 但没有这个精确版本 → 发。已发布的版本天然跳过，
+# 所以整条流水线随便重跑；改 recipe / 代码内容不 bump version 就不发布——纯文案/选择器微调不必
+# 惊动用户。**首发（npm 上还没有这个包名）永远是人手动 `npm publish` 的动作，CI 绝不代劳**——
+# 哪些内置包公开发布是生意上的决定（例如收费 recipe 包），不能靠"npm 上查不到"自动发出去；
+# CI 只负责跟着已经上线的包走后续的版本 bump，不在 npm 上的包判定时打一行「首发请人工」。
+#
+# 带代码的包（`stream.code`）出的是预编译产物 `dist/index.js`（gitignore，干净检出上没有）：先一步
+# `pnpm packages:bundle` 用根 devDependency `tsdown` 给每个填了 `stream.code` 的包（今天 12 个）全部出一遍产物；`--publish` 对每个要发的
+# 带代码的包再单独 bundle 一次 + 过 `scripts/assert-npm-artifact.mjs`（入口在且非空、独占 `dist/`、
+# tarball 过白名单）。`npm publish` 自己还会跑 `prepack`（= 同一道闸），所以绕过 workflow 手发也拦得住。
+#
+# 发布前对每个候选包核一遍 `npm pack --dry-run` 的文件清单，命中安装侧白名单
+# （`src/replay/recipe-install.ts` 的 `isAllowedPackageFile`）之外的文件就非 0 退出——
+# 判定和核对是同一份代码（`--publish` 内部调用 `--check` 同一套逻辑），不会出现
+# "本地 --check 过了、CI 发布时又用另一套标准" 的分叉。
+name: release-recipes
+
+on:
+  push:
+    branches: [main]
+    paths: ['packages/**']
+  workflow_dispatch:
+
+# 两次紧挨着的合并不许并发发布：同一个包两份 `npm publish` 抢跑，后一份撞 "version already
+# exists" 把整条流水线打红，而前一份可能还没把白名单核完。排队（不取消）——每一次 push 都要
+# 独立跑到底，被取消的那一轮里 bump 的包会漏发，且没有一处会喊。
+concurrency:
+  group: release-recipes
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org # 写 .npmrc，下面 npm publish 才认 NODE_AUTH_TOKEN
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile # 根依赖里含 tsdown，下一步的 bundle 靠它
+      - name: 带代码的包出 dist/index.js
+        run: pnpm packages:bundle
+      - name: 判定 → （带代码的：bundle + 产物闸）→ 核白名单 → 发布
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: pnpm exec tsx scripts/recipe-release-plan.ts --publish packages

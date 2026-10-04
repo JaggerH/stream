@@ -1,0 +1,520 @@
+@import 'tailwindcss';
+@import 'tw-animate-css';
+
+@custom-variant dark (&:is(.dark *));
+
+/* `inline` 不是可有可无的修饰词，它是"主题能在子树里换档"的前提。
+ *
+ * 自定义属性的值在**声明它的那个元素上**求值一次，之后整棵子树继承的是那个**已经算完的
+ * 结果**。不带 `inline` 时 Tailwind 把这张表照原样发到 `:root`，于是
+ * `--color-foreground: var(--foreground)` 在 `<html>` 上就被钉成了亮色；后代再怎么重新
+ * 定义 `--foreground` 都改不动它——因为所有工具类走的是 `var(--color-foreground)`，而那个
+ * 值早在 `<html>` 上算完了。
+ *
+ * 带上 `inline`，工具类直接写成 `color: var(--foreground)`，求值推迟到**用到它的那个元素**
+ * 上，`.dark` 挂在哪一层就从哪一层起生效。
+ *
+ * 主应用把 `.dark` 挂在 `<html>`（= `:root`），两个声明点本来就是同一个元素，带不带 `inline`
+ * 结果一样；真正需要它的是 `src/panel/`——面板是 DSH 页面里的一棵子树，`:root` 是 DSH 的
+ * `<html>`，`.dark` 只能挂在面板自己的根上（见 `src/panel/hostTheme.ts`）。
+ *
+ * 别"顺手简化"掉这个 `inline`：jsdom 不解析自定义属性，删掉它单测全绿，只有真浏览器里
+ * 面板会在暗色宿主里渲染成亮底亮字。守卫在 `src/panel/panel-css.build.test.ts`。 */
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --radius: var(--radius);
+}
+
+:root, .light {
+  --background: #ffffff;
+  --foreground: rgba(0, 0, 0, 0.88);
+  --muted-foreground: rgba(0, 0, 0, 0.52);
+  --accent: #8e8e93;
+  --primary: #0088ff;
+  --primary-foreground: #ffffff;
+  --destructive: #ff383c;
+  --destructive-foreground: #ffffff;
+  --ring: #0088ff;
+  --border: #e3e3e6;
+  --radius: 0.5rem;
+    --acr-red: #ff383c;
+    --acr-orange: #ff8d28;
+    --acr-yellow: #ffcc00;
+    --acr-green: #34c759;
+    --acr-mint: #00c8b3;
+    --acr-teal: #00c3d0;
+    --acr-cyan: #00c0e8;
+    --acr-blue: #0088ff;
+    --acr-indigo: #6155f5;
+    --acr-purple: #cb30e0;
+    --acr-pink: #ff2d55;
+    --acr-brown: #ac7f5e;
+    --acr-chip: rgba(0, 0, 0, 0.06);
+    --acr-chip-hover: rgba(0, 0, 0, 0.10);
+    --acr-field: rgba(0, 0, 0, 0.04);
+    /* INVARIANT (mirrors acrylic-ui): hover sits one step (+0.03) above the
+       resting recess tokens (--acr-field / --acr-card-nested). Sharing one
+       value made a recessed row at rest look identical to an interactive row
+       under the cursor. Never collapse them again. */
+    --acr-hover: rgba(0, 0, 0, 0.07);
+    --acr-border: #e3e3e6;
+    --acr-border-soft: #ececef;
+    --acr-button-group-divider: rgba(0, 0, 0, 0.16);
+    --acr-button-group-control: #ffffff;
+    --acr-control: #ffffff;
+    --acr-control-hover: #f4f4f5;
+    --acr-control-border: rgba(0, 0, 0, 0.12);
+    --acr-input: #ffffff;
+    --acr-input-border: rgba(0, 0, 0, 0.13);
+    --acr-surface: #ffffff;
+    --acr-surface-hover: #f7f7f8;
+    --acr-card-nested: rgba(0, 0, 0, 0.04);
+    --acr-panel: #ffffff;
+    --acr-panel-solid: #ffffff;
+    --acr-overlay: rgba(0, 0, 0, 0.32);
+    --acr-field-strong: #ffffff;
+    --acr-toast: var(--acr-surface);
+    --acr-solid: #1c1c1e;
+    --acr-solid-fg: #fafafa;
+    --acr-scrollbar: rgba(0, 0, 0, 0.28);
+    --acr-scrollbar-hover: rgba(0, 0, 0, 0.45);
+    --sidebar: #eeeef0;
+    --sidebar-input: #ffffff;
+    --sidebar-foreground: rgba(0, 0, 0, 0.88);
+    --sidebar-muted-foreground: rgba(0, 0, 0, 0.52);
+    --sidebar-hover: rgba(0, 0, 0, 0.05);
+    --sidebar-active: rgba(0, 0, 0, 0.09);
+    --sidebar-control: #ffffff;
+    --sidebar-border: #e3e3e6;
+    --text-largetitle: 26px;
+    --text-title1: 22px;
+    --text-title2: 17px;
+    --text-title3: 15px;
+    --text-headline: 13px;
+    --text-body: 13px;
+    --text-callout: 12px;
+    --text-subheadline: 11px;
+    --text-footnote: 10px;
+    --acr-spring-default: linear(0, 0.0343 4%, 0.1139 8%, 0.2142 13%, 0.3197 17%, 0.4216 21%, 0.5151 25%, 0.598 29%, 0.6697 33%, 0.7308 38%, 0.7819 42%, 0.8243 46%, 0.8592 50%, 0.8876 54%, 0.9106 58%, 0.9291 63%, 0.9439 67%, 0.9558 71%, 0.9652 75%, 0.9727 79%, 0.9786 83%, 0.9833 88%, 0.987 92%, 0.9898 96%, 1 100%);
+    --acr-spring-default-duration: 0.4s;
+    --acr-spring-default-damping: 1;
+    --acr-spring-default-response: 0.4;
+    --acr-spring-default-bounce: 0;
+    --acr-spring-drawer: linear(0, 0.0924 4%, 0.283 8%, 0.4872 13%, 0.6641 17%, 0.7998 21%, 0.8944 25%, 0.9548 29%, 0.9897 33%, 1.0074 38%, 1.0142 42%, 1.015 46%, 1.0129 50%, 1.0098 54%, 1.0068 58%, 1.0043 63%, 1.0025 67%, 1.0012 71%, 1.0005 75%, 1 79%, 0.9998 83%, 0.9998 88%, 0.9998 92%, 0.9998 96%, 1 100%);
+    --acr-spring-drawer-duration: 0.3s;
+    --acr-spring-drawer-damping: 0.8;
+    --acr-spring-drawer-response: 0.3;
+    --acr-spring-drawer-bounce: 0.2;
+    --acr-spring-bounce: linear(0, 0.0924 4%, 0.283 8%, 0.4872 13%, 0.6641 17%, 0.7998 21%, 0.8944 25%, 0.9548 29%, 0.9897 33%, 1.0074 38%, 1.0142 42%, 1.015 46%, 1.0129 50%, 1.0098 54%, 1.0068 58%, 1.0043 63%, 1.0025 67%, 1.0012 71%, 1.0005 75%, 1 79%, 0.9998 83%, 0.9998 88%, 0.9998 92%, 0.9998 96%, 1 100%);
+    --acr-spring-bounce-duration: 0.4s;
+    --acr-spring-bounce-damping: 0.8;
+    --acr-spring-bounce-response: 0.4;
+    --acr-spring-bounce-bounce: 0.2;
+    --text-largetitle-tracking: -0.015em;
+    --text-largetitle-leading: 1.15;
+    --text-title1-tracking: -0.01em;
+    --text-title1-leading: 1.2;
+    --text-title2-tracking: -0.005em;
+    --text-title2-leading: 1.25;
+    --text-title3-tracking: 0em;
+    --text-title3-leading: 1.3;
+    --text-headline-tracking: 0em;
+    --text-headline-leading: 1.35;
+    --text-body-tracking: 0em;
+    --text-body-leading: 1.45;
+    --text-callout-tracking: 0em;
+    --text-callout-leading: 1.4;
+    --text-subheadline-tracking: 0.005em;
+    --text-subheadline-leading: 1.4;
+    --text-footnote-tracking: 0.01em;
+    --text-footnote-leading: 1.4;
+}
+
+.dark {
+  --background: #0a0a0a;
+  --foreground: rgba(255, 255, 255, 0.92);
+  --muted-foreground: rgba(255, 255, 255, 0.55);
+  --accent: #98989d;
+  --primary: #0091ff;
+  --primary-foreground: #ffffff;
+  --destructive: #ff4245;
+  --destructive-foreground: #ffffff;
+  --ring: #0091ff;
+  --border: #2a2a2c;
+    --acr-chip: rgba(255, 255, 255, 0.08);
+    --acr-chip-hover: rgba(255, 255, 255, 0.12);
+    --acr-field: rgba(255, 255, 255, 0.05);
+    --acr-hover: rgba(255, 255, 255, 0.08);
+    --acr-border: #2a2a2c;
+    /* Relative white overlay, not a hand-picked hex — the old #232325 sat ~1
+       level from --acr-surface (#222226), collapsing to invisible on borders
+       drawn over surface/panel backgrounds. Ported from acrylic-ui upstream. */
+    --acr-border-soft: rgba(255, 255, 255, 0.08);
+    --acr-button-group-divider: rgba(255, 255, 255, 0.20);
+    --acr-button-group-control: #3a3a3f;
+    --acr-control: #1c1c1e;
+    --acr-control-hover: #252527;
+    --acr-control-border: rgba(255, 255, 255, 0.14);
+    --acr-input: #1c1c1e;
+    --acr-input-border: rgba(255, 255, 255, 0.14);
+    --acr-surface: #222226;
+    --acr-surface-hover: #2a2a2e;
+    --acr-card-nested: rgba(255, 255, 255, 0.05);
+    --acr-panel: #1c1c1e;
+    --acr-panel-solid: #1c1c1e;
+    --acr-overlay: rgba(0, 0, 0, 0.60);
+    --acr-field-strong: #161618;
+    --acr-toast: var(--acr-surface);
+    --acr-solid: #ffffff;
+    --acr-solid-fg: #1c1c1e;
+    --acr-scrollbar: rgba(255, 255, 255, 0.28);
+    --acr-scrollbar-hover: rgba(255, 255, 255, 0.45);
+    --sidebar: #161618;
+    --sidebar-input: #1c1c1e;
+    --sidebar-foreground: #ffffff;
+    --sidebar-muted-foreground: rgba(255, 255, 255, 0.55);
+    --sidebar-hover: rgba(255, 255, 255, 0.08);
+    --sidebar-active: rgba(255, 255, 255, 0.14);
+    --sidebar-control: rgba(255, 255, 255, 0.10);
+    --sidebar-border: rgba(255, 255, 255, 0.12);
+    --acr-red: #ff4245;
+    --acr-orange: #ff9230;
+    --acr-yellow: #ffd600;
+    --acr-green: #30d158;
+    --acr-mint: #00dac3;
+    --acr-teal: #00d2e0;
+    --acr-cyan: #3cd3fe;
+    --acr-blue: #0091ff;
+    --acr-indigo: #6d7cff;
+    --acr-purple: #db34f2;
+    --acr-pink: #ff375f;
+    --acr-brown: #b78a66;
+}
+
+.acrylic {
+  --background: rgba(24, 24, 28, 0.52);
+  --foreground: rgba(255, 255, 255, 0.92);
+  --muted-foreground: rgba(255, 255, 255, 0.55);
+  --accent: #98989d;
+  --primary: #0091ff;
+  --primary-foreground: #ffffff;
+  --destructive: #ff4245;
+  --destructive-foreground: #ffffff;
+  --ring: #0091ff;
+  --border: rgba(255, 255, 255, 0.16);
+    --acr-chip: rgba(255, 255, 255, 0.10);
+    --acr-chip-hover: rgba(255, 255, 255, 0.14);
+    --acr-field: rgba(255, 255, 255, 0.06);
+    --acr-hover: rgba(255, 255, 255, 0.09);
+    --acr-border: rgba(255, 255, 255, 0.16);
+    --acr-border-soft: rgba(255, 255, 255, 0.10);
+    --acr-button-group-divider: rgba(255, 255, 255, 0.22);
+    --acr-button-group-control: #3a3a3f;
+    --acr-control: rgba(255, 255, 255, 0.14);
+    --acr-control-hover: rgba(255, 255, 255, 0.20);
+    --acr-control-border: rgba(255, 255, 255, 0.18);
+    --acr-input: rgba(255, 255, 255, 0.10);
+    --acr-input-border: transparent;
+    --acr-surface: rgba(44, 44, 48, 0.55);
+    --acr-surface-hover: rgba(58, 58, 62, 0.60);
+    --acr-card-nested: rgba(255, 255, 255, 0.06);
+    --acr-panel: rgba(40, 40, 44, 0.60);
+    /* 叠在**另一片毛玻璃**上的浮层（面板里再弹一张卡）用这一档：同一族色，只是看不透。
+       两片同材质叠起来只把底下压暗四成，底层的行文字照样读得出来——弹层是"读证据"的
+       地方，底噪直接伤可读性。数值不是新编的：它就是 `prefers-reduced-transparency`
+       下 --acr-panel 的那一档（本文件末尾），即本设计系统自己认定的"面板材质但透不过去"。 */
+    --acr-panel-solid: rgba(40, 40, 44, 0.98);
+    --acr-overlay: rgba(0, 0, 0, 0.50);
+    --acr-field-strong: rgba(255, 255, 255, 0.14);
+    --acr-toast: var(--acr-surface);
+    --acr-solid: #f5f5f7;
+    --acr-solid-fg: #1c1c1e;
+    --acr-scrollbar: rgba(255, 255, 255, 0.28);
+    --acr-scrollbar-hover: rgba(255, 255, 255, 0.45);
+    --sidebar: rgba(28, 28, 31, 0.55);
+    --sidebar-input: rgba(255, 255, 255, 0.10);
+    --sidebar-foreground: #ffffff;
+    --sidebar-muted-foreground: rgba(255, 255, 255, 0.55);
+    --sidebar-hover: rgba(255, 255, 255, 0.08);
+    --sidebar-active: rgba(255, 255, 255, 0.14);
+    --sidebar-control: rgba(255, 255, 255, 0.10);
+    --sidebar-border: rgba(255, 255, 255, 0.12);
+    --acr-red: #ff4245;
+    --acr-orange: #ff9230;
+    --acr-yellow: #ffd600;
+    --acr-green: #30d158;
+    --acr-mint: #00dac3;
+    --acr-teal: #00d2e0;
+    --acr-cyan: #3cd3fe;
+    --acr-blue: #0091ff;
+    --acr-indigo: #6d7cff;
+    --acr-purple: #db34f2;
+    --acr-pink: #ff375f;
+    --acr-brown: #b78a66;
+}
+
+:root,
+.light,
+.dark,
+.acrylic {
+  --card: var(--acr-surface);
+  --card-foreground: var(--foreground);
+  --popover: var(--acr-panel);
+  --popover-foreground: var(--foreground);
+  --secondary: var(--acr-chip);
+  --secondary-foreground: var(--foreground);
+  --muted: var(--acr-field);
+  --accent-foreground: var(--foreground);
+  --input: var(--acr-input);
+}
+
+/* Scoped to .acrylic, NOT bare .vibrancy: native OS vibrancy is a per-session
+   Rust-side flag independent of Stream's own light/dark/acrylic theme choice —
+   a Windows user with vibrancy on who picks Light or Dark still gets
+   html.vibrancy (Rust doesn't know about the frontend's theme), and an
+   unscoped rule here would leave --background transparent under those themes
+   too, bleeding the real desktop through a UI that assumes a solid backdrop.
+   Only the acrylic theme actually wants the transparent-body/native-material
+   look; light/dark keep their own solid --background regardless of vibrancy. */
+html.vibrancy.acrylic {
+  --background: transparent;
+}
+html.vibrancy.acrylic.modal-acrylic {
+  --background: rgba(24, 24, 27, 0.92);
+}
+
+[data-slot="backdrop"] { display: none; }
+.acrylic [data-slot="backdrop"] { display: block; }
+.acrylic.vibrancy [data-slot="backdrop"] { display: none; }
+.acrylic body { background: transparent; }
+
+.acr-frosted [data-slot="item"] {
+  background-color: var(--acr-card-nested);
+  --tw-backdrop-blur: ;
+}
+
+/* Nested card surfaces（上游 acrylic.css 同款规则）：容器用 `data-nested-surface`
+   显式声明"我是一层面"（Card 组件以 nestedSurface prop 暴露），其内的 Card 放弃
+   自己的 blur（已模糊的背景没有高频细节可再磨），退成 --acr-card-nested 半透明
+   着色让外层材质透出——每嵌一层深一档，层界即可见，无需描边。
+   （--tw-backdrop-blur 置空而非 backdrop-filter:none：lightningcss 会把 none 的
+   标准/-webkit- 对折叠成仅 webkit，盖不掉 backdrop-blur-xl 设置的标准属性。） */
+[data-nested-surface="true"] [data-slot="card"] {
+  background-color: var(--acr-card-nested);
+  --tw-backdrop-blur: ;
+}
+
+/* outline Item 与 Card 同为玻璃材质（acr-frosted + --acr-surface），在声明面内
+   同样退成嵌套着色——否则 light 下白面板上白 Item 等于隐形（rsshub 分组页旧病）。 */
+[data-nested-surface="true"] [data-slot="item"][data-variant="outline"] {
+  background-color: var(--acr-card-nested);
+  --tw-backdrop-blur: ;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+html,
+body {
+  margin: 0;
+}
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
+}
+
+.scrollbar-mac {
+    scrollbar-width: thin;
+    scrollbar-color: var(--acr-scrollbar) transparent;
+}
+.scrollbar-mac::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+}
+.scrollbar-none {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+}
+.scrollbar-none::-webkit-scrollbar {
+    display: none;
+}
+.scrollbar-mac::-webkit-scrollbar-track {
+    background: transparent;
+}
+.scrollbar-mac::-webkit-scrollbar-thumb {
+    background-color: var(--acr-scrollbar);
+    border-radius: 999px;
+    border: 2px solid transparent;
+    background-clip: content-box;
+}
+.scrollbar-mac::-webkit-scrollbar-thumb:hover {
+    background-color: var(--acr-scrollbar-hover);
+    background-clip: content-box;
+}
+/* Typography scale — theme-INDEPENDENT, so a plain :root (not tied to a theme).
+   CRITICAL: do NOT re-declare theme tokens (--sidebar, --acr-*, --acr colours)
+   here. :root IS <html>, which also carries the active theme class
+   (.acrylic / .dark); :root and a theme class have EQUAL specificity, so any
+   :root block placed AFTER the theme blocks OVERRIDES the theme's own tokens.
+   This block used to be a full copy of the first `:root, .light` block above —
+   its light values silently clobbered .acrylic and .dark (white text left over
+   dark themes' --foreground, but surfaces reset to the LIGHT --sidebar/
+   --acr-surface → white-on-light, "sidebar won't change no matter what you set
+   on .acrylic"). The light values already live in the first `:root, .light`
+   block; only these text sizes were unique, so only they remain. */
+:root {
+    --text-largetitle: 26px;
+    --text-largetitle-leading: 1.15;
+    --text-largetitle-tracking: -0.015em;
+    --text-title1: 22px;
+    --text-title1-leading: 1.2;
+    --text-title1-tracking: -0.01em;
+    --text-title2: 17px;
+    --text-title2-leading: 1.25;
+    --text-title2-tracking: -0.005em;
+    --text-title3: 15px;
+    --text-title3-leading: 1.3;
+    --text-title3-tracking: 0em;
+    --text-headline: 13px;
+    --text-headline-leading: 1.35;
+    --text-headline-tracking: 0em;
+    --text-body: 13px;
+    --text-body-leading: 1.45;
+    --text-body-tracking: 0em;
+    --text-callout: 12px;
+    --text-callout-leading: 1.4;
+    --text-callout-tracking: 0em;
+    --text-subheadline: 11px;
+    --text-subheadline-leading: 1.4;
+    --text-subheadline-tracking: 0.005em;
+    --text-footnote: 10px;
+    --text-footnote-leading: 1.4;
+    --text-footnote-tracking: 0.01em;
+
+    /* macOS spring motion curves (Acrylic registry). linear()-approximated springs
+       used by the acrylic components' transitions; theme-INDEPENDENT so they live in
+       this :root block, not the theme tokens. Reduced-motion / no-linear() fallbacks
+       follow below (they override :root, so must come AFTER this block in source). */
+    --acr-spring-default: linear(0, 0.0343 4%, 0.1139 8%, 0.2142 13%, 0.3197 17%, 0.4216 21%, 0.5151 25%, 0.598 29%, 0.6697 33%, 0.7308 38%, 0.7819 42%, 0.8243 46%, 0.8592 50%, 0.8876 54%, 0.9106 58%, 0.9291 63%, 0.9439 67%, 0.9558 71%, 0.9652 75%, 0.9727 79%, 0.9786 83%, 0.9833 88%, 0.987 92%, 0.9898 96%, 1 100%);
+    --acr-spring-default-duration: 0.4s;
+    --acr-spring-default-damping: 1;
+    --acr-spring-default-response: 0.4;
+    --acr-spring-default-bounce: 0;
+    --acr-spring-drawer: linear(0, 0.0924 4%, 0.283 8%, 0.4872 13%, 0.6641 17%, 0.7998 21%, 0.8944 25%, 0.9548 29%, 0.9897 33%, 1.0074 38%, 1.0142 42%, 1.015 46%, 1.0129 50%, 1.0098 54%, 1.0068 58%, 1.0043 63%, 1.0025 67%, 1.0012 71%, 1.0005 75%, 1 79%, 0.9998 83%, 0.9998 88%, 0.9998 92%, 0.9998 96%, 1 100%);
+    --acr-spring-drawer-duration: 0.3s;
+    --acr-spring-drawer-damping: 0.8;
+    --acr-spring-drawer-response: 0.3;
+    --acr-spring-drawer-bounce: 0.2;
+    --acr-spring-bounce: linear(0, 0.0924 4%, 0.283 8%, 0.4872 13%, 0.6641 17%, 0.7998 21%, 0.8944 25%, 0.9548 29%, 0.9897 33%, 1.0074 38%, 1.0142 42%, 1.015 46%, 1.0129 50%, 1.0098 54%, 1.0068 58%, 1.0043 63%, 1.0025 67%, 1.0012 71%, 1.0005 75%, 1 79%, 0.9998 83%, 0.9998 88%, 0.9998 92%, 0.9998 96%, 1 100%);
+    --acr-spring-bounce-duration: 0.4s;
+    --acr-spring-bounce-damping: 0.8;
+    --acr-spring-bounce-response: 0.4;
+    --acr-spring-bounce-bounce: 0.2;
+}
+
+/* Accessibility & fallback overrides for the spring/material tokens above (Acrylic
+   registry). These target :root / .acrylic with equal specificity to the base
+   declarations, so they MUST sit after them in source order to win. */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --acr-spring-default: linear(0, 1);
+    --acr-spring-drawer: linear(0, 1);
+    --acr-spring-bounce: linear(0, 1);
+    --acr-spring-default-duration: 0.12s;
+    --acr-spring-drawer-duration: 0.12s;
+    --acr-spring-bounce-duration: 0.12s;
+  }
+}
+@supports not (transition-timing-function: linear(0, 1)) {
+  :root {
+    --acr-spring-default: cubic-bezier(0.22, 1, 0.36, 1);
+    --acr-spring-drawer: cubic-bezier(0.32, 0.72, 0, 1);
+    --acr-spring-bounce: cubic-bezier(0.34, 1.56, 0.64, 1);
+  }
+}
+@media (prefers-contrast: more) {
+  .acrylic {
+    --acr-surface: #1c1c1e;
+    --acr-panel: #1c1c1e;
+    --acr-panel-solid: #1c1c1e;
+    --acr-border: rgba(255, 255, 255, 0.5);
+    --acr-border-soft: rgba(255, 255, 255, 0.4);
+  }
+}
+@media (prefers-reduced-transparency: reduce) {
+  .acrylic {
+    --acr-surface: rgba(44, 44, 48, 0.96);
+    --acr-surface-hover: rgba(58, 58, 62, 0.97);
+    --acr-panel: rgba(40, 40, 44, 0.98);
+    --acr-panel-solid: rgba(40, 40, 44, 0.98);
+    --acr-overlay: rgba(0, 0, 0, 0.7);
+    --sidebar: rgba(28, 28, 31, 0.97);
+  }
+  .acrylic [data-slot="sheet-content"],
+  .acrylic [data-slot="dialog-content"],
+  .acrylic [data-slot="popover-content"],
+  .acrylic [data-slot="card"],
+  .acrylic [data-slot="sheet-overlay"] {
+    --tw-backdrop-blur: ;
+  }
+  .acrylic [data-slot="sheet-content"], .acrylic [data-slot="dialog-content"], .acrylic [data-slot="popover-content"], .acrylic [data-slot="card"], .acrylic [data-slot="sheet-overlay"] {
+    --tw-backdrop-blur:  ;
+  }
+}
+
+/* Now-playing equalizer — the three bars in MusicChannel's index column
+   (<NowPlayingEq />). The markup shipped with class "eq" but the CSS never did, so
+   the three <i> were zero-sized: nothing marked the playing row. Bars inherit
+   currentColor, so the accent comes from the wrapping span. */
+.eq {
+  display: inline-flex;
+  align-items: flex-end;
+  gap: 1.5px;
+  height: 0.75rem;
+}
+.eq > i {
+  width: 2px;
+  height: 100%;
+  border-radius: 1px;
+  background: currentColor;
+  transform-origin: bottom;
+  animation: eq-bar 900ms ease-in-out infinite;
+}
+.eq > i:nth-child(1) { animation-delay: -200ms; }
+.eq > i:nth-child(2) { animation-delay: -600ms; }
+.eq > i:nth-child(3) { animation-delay: -400ms; }
+
+@keyframes eq-bar {
+  0%, 100% { transform: scaleY(0.28); }
+  50%      { transform: scaleY(1); }
+}
+
+/* Reduced motion keeps the MEANING (a marker that reads as sound) and drops the
+   oscillation — three static bars of uneven height. */
+@media (prefers-reduced-motion: reduce) {
+  .eq > i { animation: none; }
+  .eq > i:nth-child(1) { height: 55%; }
+  .eq > i:nth-child(2) { height: 100%; }
+  .eq > i:nth-child(3) { height: 70%; }
+}

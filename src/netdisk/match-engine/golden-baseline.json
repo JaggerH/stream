@@ -1,0 +1,5365 @@
+{
+  "note": "episode-part 认括号/裸/数字段号与点分日期前缀（2026-09-03）",
+  "cases": {
+    "4 位年份不当集号": {
+      "assignments": {
+        "a": {
+          "file": "2022壬寅流年运势解析.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [],
+          "rule": "R9"
+        }
+      },
+      "leftAsks": {},
+      "fileAsks": {},
+      "residual": [],
+      "missing": {},
+      "trails": {
+        "2022壬寅流年运势解析.mp3": [
+          "claimed by R9",
+          "a won R9"
+        ]
+      }
+    },
+    "episode-part：含「上」但不是「上集」": {
+      "assignments": {
+        "a": {
+          "file": "第10期上流社会.mkv",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [],
+          "rule": "R8"
+        }
+      },
+      "leftAsks": {},
+      "fileAsks": {},
+      "residual": [],
+      "missing": {},
+      "trails": {
+        "第10期上流社会.mkv": [
+          "claimed by R8",
+          "a won R8"
+        ]
+      }
+    },
+    "episode-part：第N期上/下集 + 日期前缀": {
+      "assignments": {
+        "a": {
+          "file": "2026-07-18 第2期纯享下集.mkv",
+          "confidence": 0.6,
+          "status": "auto",
+          "losers": [],
+          "rule": "R7"
+        },
+        "b": {
+          "file": "2026-07-25 第3期纯享上集.mkv",
+          "confidence": 0.6,
+          "status": "auto",
+          "losers": [],
+          "rule": "R7"
+        }
+      },
+      "leftAsks": {},
+      "fileAsks": {},
+      "residual": [],
+      "missing": {},
+      "trails": {
+        "2026-07-18 第2期纯享下集.mkv": [
+          "claimed by R7",
+          "a won R7",
+          "b vetoed/left-claimed"
+        ],
+        "2026-07-25 第3期纯享上集.mkv": [
+          "claimed by R7",
+          "a vetoed/left-claimed",
+          "b won R7"
+        ]
+      }
+    },
+    "episode-part：裸结构键文件（唯一键免检）": {
+      "assignments": {
+        "a": {
+          "file": "第1期一.mkv",
+          "confidence": 0,
+          "status": "auto",
+          "losers": [],
+          "rule": "R7"
+        }
+      },
+      "leftAsks": {},
+      "fileAsks": {},
+      "residual": [],
+      "missing": {},
+      "trails": {
+        "第1期一.mkv": [
+          "claimed by R7",
+          "a won R7"
+        ]
+      }
+    },
+    "epnum：同号不同标题 → 各自报孤儿": {
+      "assignments": {
+        "a": {
+          "file": "01.首集.mp4",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [],
+          "rule": "R8"
+        }
+      },
+      "leftAsks": {},
+      "fileAsks": {},
+      "residual": [
+        "01.别的东西.mp4"
+      ],
+      "missing": {},
+      "trails": {
+        "01.别的东西.mp4": [
+          "residual",
+          "a vetoed/left-claimed"
+        ],
+        "01.首集.mp4": [
+          "claimed by R8",
+          "a won R8"
+        ]
+      }
+    },
+    "epnum：同号两画质": {
+      "assignments": {
+        "a": {
+          "file": "01.首集.1080p.mp4",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [
+            "01.首集.720p.mp4"
+          ],
+          "rule": "R8"
+        }
+      },
+      "leftAsks": {},
+      "fileAsks": {},
+      "residual": [],
+      "missing": {},
+      "trails": {
+        "01.首集.1080p.mp4": [
+          "claimed by R8",
+          "a won R8"
+        ],
+        "01.首集.720p.mp4": [
+          "copy by R8",
+          "a won R8"
+        ]
+      }
+    },
+    "pin：人裁过的先占位": {
+      "assignments": {
+        "a": {
+          "file": "别的文件.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [],
+          "rule": "R1"
+        }
+      },
+      "leftAsks": {},
+      "fileAsks": {},
+      "residual": [
+        "020.再谈身边灵异事.mp3"
+      ],
+      "missing": {},
+      "trails": {
+        "020.再谈身边灵异事.mp3": [
+          "residual",
+          "a vetoed/left-claimed"
+        ],
+        "别的文件.mp3": [
+          "claimed by R1"
+        ]
+      }
+    },
+    "pin：指向的文件这一轮不在右侧": {
+      "assignments": {
+        "a": {
+          "file": "020.再谈身边灵异事.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [],
+          "rule": "R8"
+        }
+      },
+      "leftAsks": {},
+      "fileAsks": {},
+      "residual": [],
+      "missing": {},
+      "trails": {
+        "020.再谈身边灵异事.mp3": [
+          "claimed by R8",
+          "a won R8"
+        ]
+      }
+    },
+    "random#0": {
+      "assignments": {
+        "s:0:3": {
+          "file": "03.现代版枪下留人.720p.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [],
+          "rule": "R2"
+        },
+        "s:0:5": {
+          "file": "05.清华大学朱令案【耗时整理‖cunlove.cn】.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [],
+          "rule": "R8"
+        }
+      },
+      "leftAsks": {
+        "s:0:1": {
+          "stage": "duration",
+          "rule": "R3",
+          "reason": "name-floor",
+          "threshold": 0.6,
+          "margin": 0.15,
+          "candidates": [
+            {
+              "name": "03.现代版枪下留人.720p.mp3",
+              "sim": 0
+            }
+          ]
+        },
+        "s:0:2": {
+          "stage": "epnum",
+          "rule": "R11",
+          "reason": "duration-contradiction",
+          "threshold": 0.6,
+          "margin": 0.15,
+          "candidates": [
+            {
+              "name": "02.身边那些灵异事.1080p.mp3",
+              "sim": 0
+            }
+          ]
+        },
+        "s:0:4": {
+          "stage": "epnum",
+          "rule": "R8",
+          "reason": "below-threshold",
+          "threshold": 0.6,
+          "margin": 0.15,
+          "candidates": [
+            {
+              "name": "04.财克印印克食伤.720p.mp3",
+              "sim": 0
+            }
+          ]
+        }
+      },
+      "fileAsks": {
+        "02.清华大学朱令案【耗时整理‖cunlove.cn】.720p.mp3": {
+          "stage": "conflict",
+          "rule": "R13",
+          "reason": "dual-episode-conflict",
+          "threshold": 0.3,
+          "margin": 0,
+          "candidates": [
+            {
+              "name": "s:0:2",
+              "sim": 0
+            },
+            {
+              "name": "s:0:5",
+              "sim": 1
+            }
+          ]
+        },
+        "02.身边那些灵异事.1080p.mp3": {
+          "stage": "conflict",
+          "rule": "R13",
+          "reason": "dual-episode-conflict",
+          "threshold": 0.3,
+          "margin": 0,
+          "candidates": [
+            {
+              "name": "s:0:1",
+              "sim": 1
+            },
+            {
+              "name": "s:0:2",
+              "sim": 0
+            }
+          ]
+        },
+        "02.身边那些灵异事【耗时整理‖cunlove.cn】.mp3": {
+          "stage": "conflict",
+          "rule": "R13",
+          "reason": "dual-episode-conflict",
+          "threshold": 0.3,
+          "margin": 0,
+          "candidates": [
+            {
+              "name": "s:0:1",
+              "sim": 1
+            },
+            {
+              "name": "s:0:2",
+              "sim": 0
+            }
+          ]
+        }
+      },
+      "residual": [
+        "04.财克印印克食伤.720p.mp3"
+      ],
+      "missing": {
+        "s:0:1": 1
+      },
+      "trails": {
+        "02.清华大学朱令案【耗时整理‖cunlove.cn】.720p.mp3": [
+          "asked by R13",
+          "s:0:2 vetoed/duration-contradict R11",
+          "s:0:5 vetoed/left-claimed"
+        ],
+        "02.身边那些灵异事.1080p.mp3": [
+          "asked by R13",
+          "s:0:1 vetoed/duration-contradict R11",
+          "s:0:2 vetoed/duration-contradict R11"
+        ],
+        "02.身边那些灵异事【耗时整理‖cunlove.cn】.mp3": [
+          "asked by R13",
+          "s:0:1 vetoed/duration-contradict R11",
+          "s:0:2 vetoed/duration-contradict R11"
+        ],
+        "03.现代版枪下留人.720p.mp3": [
+          "claimed by R2",
+          "s:0:1 vetoed/name-floor R3",
+          "s:0:3 won R2"
+        ],
+        "04.财克印印克食伤.720p.mp3": [
+          "residual",
+          "s:0:4 vetoed/below-threshold R9"
+        ],
+        "05.清华大学朱令案【耗时整理‖cunlove.cn】.mp3": [
+          "claimed by R8",
+          "s:0:5 won R8"
+        ]
+      }
+    },
+    "random#1": {
+      "assignments": {
+        "s:1:1": {
+          "file": "01.太极两仪生四象【耗时整理‖cunlove.cn】.2160p.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [],
+          "rule": "R2"
+        },
+        "s:1:2": {
+          "file": "02.现代版枪下留人.2160p.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [],
+          "rule": "R8"
+        }
+      },
+      "leftAsks": {},
+      "fileAsks": {},
+      "residual": [],
+      "missing": {},
+      "trails": {
+        "01.太极两仪生四象【耗时整理‖cunlove.cn】.2160p.mp3": [
+          "claimed by R2",
+          "s:1:1 won R2"
+        ],
+        "02.现代版枪下留人.2160p.mp3": [
+          "claimed by R8",
+          "s:1:2 won R8"
+        ]
+      }
+    },
+    "random#10": {
+      "assignments": {
+        "s:10:2": {
+          "file": "02.太极两仪生四象【耗时整理‖cunlove.cn】.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [],
+          "rule": "R8"
+        }
+      },
+      "leftAsks": {
+        "s:10:3": {
+          "stage": "duration",
+          "rule": "R3",
+          "reason": "name-floor",
+          "threshold": 0.6,
+          "margin": 0.15,
+          "candidates": [
+            {
+              "name": "03.骗局【耗时整理‖cunlove.cn】.720p.mp3",
+              "sim": 0
+            }
+          ]
+        }
+      },
+      "fileAsks": {},
+      "residual": [
+        "03.骗局【耗时整理‖cunlove.cn】.720p.mp3"
+      ],
+      "missing": {
+        "s:10:1": 1,
+        "s:10:4": 4
+      },
+      "trails": {
+        "02.太极两仪生四象【耗时整理‖cunlove.cn】.mp3": [
+          "claimed by R8",
+          "s:10:2 won R8"
+        ],
+        "03.骗局【耗时整理‖cunlove.cn】.720p.mp3": [
+          "residual",
+          "s:10:3 vetoed/below-threshold R9"
+        ]
+      }
+    },
+    "random#11": {
+      "assignments": {
+        "s:11:2": {
+          "file": "02.现代版枪下留人.1080p.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [],
+          "rule": "R2"
+        },
+        "s:11:3": {
+          "file": "03.十神的生克关系.1080p.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [],
+          "rule": "R8"
+        },
+        "s:11:4": {
+          "file": "05.清华大学朱令案.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [],
+          "rule": "R2"
+        }
+      },
+      "leftAsks": {},
+      "fileAsks": {},
+      "residual": [
+        "zz.骗局.mp3"
+      ],
+      "missing": {
+        "s:11:1": 1
+      },
+      "trails": {
+        "02.现代版枪下留人.1080p.mp3": [
+          "claimed by R2",
+          "s:11:2 won R2"
+        ],
+        "03.十神的生克关系.1080p.mp3": [
+          "claimed by R8",
+          "s:11:3 won R8"
+        ],
+        "05.清华大学朱令案.mp3": [
+          "claimed by R2",
+          "s:11:4 won R2"
+        ],
+        "zz.骗局.mp3": [
+          "residual"
+        ]
+      }
+    },
+    "random#12": {
+      "assignments": {
+        "s:12:5": {
+          "file": "05.财克印印克食伤【公众号：CunWorkNotes】.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [],
+          "rule": "R2"
+        }
+      },
+      "leftAsks": {
+        "s:12:3": {
+          "stage": "epnum",
+          "rule": "R11",
+          "reason": "duration-contradiction",
+          "threshold": 0.6,
+          "margin": 0.15,
+          "candidates": [
+            {
+              "name": "03.清华大学朱令案.1080p.mp3",
+              "sim": 1
+            }
+          ]
+        },
+        "s:12:4": {
+          "stage": "duration",
+          "rule": "R3",
+          "reason": "name-floor",
+          "threshold": 0.6,
+          "margin": 0.15,
+          "candidates": [
+            {
+              "name": "04.骗象.mp3",
+              "sim": 0
+            }
+          ]
+        },
+        "s:12:6": {
+          "stage": "epnum",
+          "rule": "R11",
+          "reason": "duration-contradiction",
+          "threshold": 0.6,
+          "margin": 0.15,
+          "candidates": [
+            {
+              "name": "06.凑活聊道德绑象.1080p.mp3",
+              "sim": 0.833333
+            }
+          ]
+        }
+      },
+      "fileAsks": {},
+      "residual": [
+        "03.清华大学朱令案.1080p.mp3",
+        "03.清华大学朱令案.720p.mp3",
+        "04.骗象.mp3",
+        "06.凑活聊道德绑象.1080p.mp3",
+        "cover.jpg"
+      ],
+      "missing": {
+        "s:12:1": 1,
+        "s:12:2": 2
+      },
+      "trails": {
+        "03.清华大学朱令案.1080p.mp3": [
+          "residual",
+          "s:12:3 vetoed/duration-contradict R11"
+        ],
+        "03.清华大学朱令案.720p.mp3": [
+          "residual",
+          "s:12:3 vetoed/duration-contradict R11"
+        ],
+        "04.骗象.mp3": [
+          "residual",
+          "s:12:4 vetoed/below-threshold R9"
+        ],
+        "05.财克印印克食伤【公众号：CunWorkNotes】.mp3": [
+          "claimed by R2",
+          "s:12:5 won R2"
+        ],
+        "06.凑活聊道德绑象.1080p.mp3": [
+          "residual",
+          "s:12:6 vetoed/duration-contradict R11"
+        ],
+        "cover.jpg": [
+          "residual"
+        ]
+      }
+    },
+    "random#13": {
+      "assignments": {
+        "s:13:2": {
+          "file": "02.清华大学朱令案【耗时整理‖cunlove.cn】.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [],
+          "rule": "R2"
+        },
+        "s:13:3": {
+          "file": "03.骗局【耗时整理‖cunlove.cn】.720p.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [
+            "03.骗局【耗时整理‖cunlove.cn】.2160p.mp3"
+          ],
+          "rule": "R8"
+        },
+        "s:13:4": {
+          "file": "04.财克印印克食伤【公众号：CunWorkNotes】.720p.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [
+            "04.财克印印克食伤.720p.mp3"
+          ],
+          "rule": "R8"
+        }
+      },
+      "leftAsks": {
+        "s:13:1": {
+          "stage": "duration",
+          "rule": "R3",
+          "reason": "name-floor",
+          "threshold": 0.6,
+          "margin": 0.15,
+          "candidates": [
+            {
+              "name": "01.财克印印克食伤.mp3",
+              "sim": 0
+            }
+          ]
+        }
+      },
+      "fileAsks": {
+        "01.财克印印克食伤.mp3": {
+          "stage": "conflict",
+          "rule": "R13",
+          "reason": "dual-episode-conflict",
+          "threshold": 0.3,
+          "margin": 0,
+          "candidates": [
+            {
+              "name": "s:13:1",
+              "sim": 0
+            },
+            {
+              "name": "s:13:4",
+              "sim": 1
+            }
+          ]
+        },
+        "01.财克印印克食伤【耗时整理‖cunlove.cn】.720p.mp3": {
+          "stage": "conflict",
+          "rule": "R13",
+          "reason": "dual-episode-conflict",
+          "threshold": 0.3,
+          "margin": 0,
+          "candidates": [
+            {
+              "name": "s:13:1",
+              "sim": 0
+            },
+            {
+              "name": "s:13:4",
+              "sim": 1
+            }
+          ]
+        }
+      },
+      "residual": [],
+      "missing": {},
+      "trails": {
+        "01.财克印印克食伤.mp3": [
+          "asked by R13",
+          "s:13:1 vetoed/below-threshold R9",
+          "s:13:4 vetoed/duration-contradict"
+        ],
+        "01.财克印印克食伤【耗时整理‖cunlove.cn】.720p.mp3": [
+          "asked by R13",
+          "s:13:1 vetoed/below-threshold R9",
+          "s:13:4 vetoed/duration-contradict"
+        ],
+        "02.清华大学朱令案【耗时整理‖cunlove.cn】.mp3": [
+          "claimed by R2",
+          "s:13:2 won R2"
+        ],
+        "03.骗局【耗时整理‖cunlove.cn】.2160p.mp3": [
+          "copy by R8",
+          "s:13:3 won R8"
+        ],
+        "03.骗局【耗时整理‖cunlove.cn】.720p.mp3": [
+          "claimed by R8",
+          "s:13:3 won R8"
+        ],
+        "04.财克印印克食伤.720p.mp3": [
+          "copy by R8",
+          "s:13:4 won R8"
+        ],
+        "04.财克印印克食伤【公众号：CunWorkNotes】.720p.mp3": [
+          "claimed by R8",
+          "s:13:4 won R8"
+        ]
+      }
+    },
+    "random#14": {
+      "assignments": {
+        "s:14:2": {
+          "file": "02.骗局【耗时整理‖cunlove.cn】.2160p.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [],
+          "rule": "R8"
+        },
+        "s:14:3": {
+          "file": "03.财克印印克食伤【公众号：CunWorkNotes】.2160p.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [],
+          "rule": "R2"
+        },
+        "s:14:4": {
+          "file": "04.凑活聊道德绑架【耗时整理‖cunlove.cn】.720p.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [],
+          "rule": "R8"
+        }
+      },
+      "leftAsks": {
+        "s:14:1": {
+          "stage": "epnum",
+          "rule": "R8",
+          "reason": "below-threshold",
+          "threshold": 0.6,
+          "margin": 0.15,
+          "candidates": [
+            {
+              "name": "01.凑活聊道德绑架.720p.mp3",
+              "sim": 0
+            }
+          ]
+        }
+      },
+      "fileAsks": {
+        "01.凑活聊道德绑架.720p.mp3": {
+          "stage": "conflict",
+          "rule": "R13",
+          "reason": "dual-episode-conflict",
+          "threshold": 0.3,
+          "margin": 0,
+          "candidates": [
+            {
+              "name": "s:14:1",
+              "sim": 0
+            },
+            {
+              "name": "s:14:4",
+              "sim": 1
+            }
+          ]
+        }
+      },
+      "residual": [
+        "cover.jpg"
+      ],
+      "missing": {},
+      "trails": {
+        "01.凑活聊道德绑架.720p.mp3": [
+          "asked by R13",
+          "s:14:1 vetoed/below-threshold R9",
+          "s:14:4 vetoed/left-claimed"
+        ],
+        "02.骗局【耗时整理‖cunlove.cn】.2160p.mp3": [
+          "claimed by R8",
+          "s:14:2 won R8"
+        ],
+        "03.财克印印克食伤【公众号：CunWorkNotes】.2160p.mp3": [
+          "claimed by R2",
+          "s:14:3 won R2"
+        ],
+        "04.凑活聊道德绑架【耗时整理‖cunlove.cn】.720p.mp3": [
+          "claimed by R8",
+          "s:14:4 won R8"
+        ],
+        "cover.jpg": [
+          "residual"
+        ]
+      }
+    },
+    "random#15": {
+      "assignments": {
+        "s:15:1": {
+          "file": "01.骗局.2160p.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [],
+          "rule": "R8"
+        }
+      },
+      "leftAsks": {
+        "s:15:2": {
+          "stage": "duration",
+          "rule": "R3",
+          "reason": "name-floor",
+          "threshold": 0.6,
+          "margin": 0.15,
+          "candidates": [
+            {
+              "name": "02.风水鱼要在棺材里【公众号：CunWorkNotes】.1080p.mp3",
+              "sim": 0
+            }
+          ]
+        }
+      },
+      "fileAsks": {},
+      "residual": [
+        "02.风水鱼要在棺材里【公众号：CunWorkNotes】.1080p.mp3",
+        "zz.风水鱼要在棺材里.mp3"
+      ],
+      "missing": {},
+      "trails": {
+        "01.骗局.2160p.mp3": [
+          "claimed by R8",
+          "s:15:1 won R8"
+        ],
+        "02.风水鱼要在棺材里【公众号：CunWorkNotes】.1080p.mp3": [
+          "residual",
+          "s:15:2 vetoed/below-threshold R9"
+        ],
+        "zz.风水鱼要在棺材里.mp3": [
+          "residual"
+        ]
+      }
+    },
+    "random#16": {
+      "assignments": {
+        "s:16:2": {
+          "file": "02.凑活聊道德绑架【公众号：CunWorkNotes】.1080p.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [],
+          "rule": "R2"
+        },
+        "s:16:4": {
+          "file": "05.风水鱼要在棺材里.1080p.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [],
+          "rule": "R2"
+        },
+        "s:16:6": {
+          "file": "03.太极两仪生四象【耗时整理‖cunlove.cn】.2160p.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [],
+          "rule": "R9"
+        }
+      },
+      "leftAsks": {
+        "s:16:1": {
+          "stage": "duration",
+          "rule": "R3",
+          "reason": "name-floor",
+          "threshold": 0.6,
+          "margin": 0.15,
+          "candidates": [
+            {
+              "name": "01.财克印印克食象.mp3",
+              "sim": 0.833333
+            },
+            {
+              "name": "05.风水鱼要在棺材里.1080p.mp3",
+              "sim": 0
+            }
+          ]
+        },
+        "s:16:3": {
+          "stage": "epnum",
+          "rule": "R8",
+          "reason": "below-threshold",
+          "threshold": 0.6,
+          "margin": 0.15,
+          "candidates": [
+            {
+              "name": "03.太极两仪生四象【耗时整理‖cunlove.cn】.2160p.mp3",
+              "sim": 0
+            }
+          ]
+        },
+        "s:16:5": {
+          "stage": "epnum",
+          "rule": "R11",
+          "reason": "duration-contradiction",
+          "threshold": 0.6,
+          "margin": 0.15,
+          "candidates": [
+            {
+              "name": "05.身边那些灵异事【公众号：CunWorkNotes】.1080p.mp3",
+              "sim": 1
+            }
+          ]
+        }
+      },
+      "fileAsks": {},
+      "residual": [
+        "01.财克印印克食象.mp3",
+        "05.身边那些灵异事【公众号：CunWorkNotes】.1080p.mp3",
+        "zz.清华大学朱令案.mp3"
+      ],
+      "missing": {},
+      "trails": {
+        "01.财克印印克食象.mp3": [
+          "residual",
+          "s:16:1 vetoed/duration-contradict R11"
+        ],
+        "02.凑活聊道德绑架【公众号：CunWorkNotes】.1080p.mp3": [
+          "claimed by R2",
+          "s:16:2 won R2"
+        ],
+        "03.太极两仪生四象【耗时整理‖cunlove.cn】.2160p.mp3": [
+          "claimed by R9",
+          "s:16:3 vetoed/below-threshold R9",
+          "s:16:6 won R9"
+        ],
+        "05.身边那些灵异事【公众号：CunWorkNotes】.1080p.mp3": [
+          "residual",
+          "s:16:5 vetoed/duration-contradict R11"
+        ],
+        "05.风水鱼要在棺材里.1080p.mp3": [
+          "claimed by R2",
+          "s:16:1 vetoed/name-floor R3",
+          "s:16:4 won R2",
+          "s:16:5 vetoed/duration-contradict"
+        ],
+        "zz.清华大学朱令案.mp3": [
+          "residual"
+        ]
+      }
+    },
+    "random#17": {
+      "assignments": {
+        "s:17:1": {
+          "file": "02.凑活聊道德绑架【公众号：CunWorkNotes】.720p.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [],
+          "rule": "R2"
+        },
+        "s:17:2": {
+          "file": "02.三十探悬疑案象【耗时整理‖cunlove.cn】.2160p.mp3",
+          "confidence": 0.833333,
+          "status": "auto",
+          "losers": [],
+          "rule": "R8"
+        }
+      },
+      "leftAsks": {},
+      "fileAsks": {},
+      "residual": [
+        "cover.jpg"
+      ],
+      "missing": {},
+      "trails": {
+        "02.三十探悬疑案象【耗时整理‖cunlove.cn】.2160p.mp3": [
+          "claimed by R8",
+          "s:17:2 won R8"
+        ],
+        "02.凑活聊道德绑架【公众号：CunWorkNotes】.720p.mp3": [
+          "claimed by R2",
+          "s:17:1 won R2",
+          "s:17:2 vetoed/left-claimed"
+        ],
+        "cover.jpg": [
+          "residual"
+        ]
+      }
+    },
+    "random#18": {
+      "assignments": {
+        "s:18:2": {
+          "file": "02.风水鱼要在棺材里【公众号：CunWorkNotes】.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [],
+          "rule": "R2"
+        },
+        "s:18:4": {
+          "file": "04.太极两仪生四象【公众号：CunWorkNotes】.720p.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [],
+          "rule": "R2"
+        }
+      },
+      "leftAsks": {
+        "s:18:1": {
+          "stage": "epnum",
+          "rule": "R11",
+          "reason": "duration-contradiction",
+          "threshold": 0.6,
+          "margin": 0.15,
+          "candidates": [
+            {
+              "name": "01.三十探悬疑案件.1080p.mp3",
+              "sim": 1
+            }
+          ]
+        }
+      },
+      "fileAsks": {},
+      "residual": [
+        "01.三十探悬疑案件.1080p.mp3",
+        "zz.太极两仪生四象.mp3"
+      ],
+      "missing": {
+        "s:18:3": 3
+      },
+      "trails": {
+        "01.三十探悬疑案件.1080p.mp3": [
+          "residual",
+          "s:18:1 vetoed/duration-contradict R11"
+        ],
+        "02.风水鱼要在棺材里【公众号：CunWorkNotes】.mp3": [
+          "claimed by R2",
+          "s:18:2 won R2"
+        ],
+        "04.太极两仪生四象【公众号：CunWorkNotes】.720p.mp3": [
+          "claimed by R2",
+          "s:18:4 won R2"
+        ],
+        "zz.太极两仪生四象.mp3": [
+          "residual",
+          "s:18:4 vetoed/left-claimed"
+        ]
+      }
+    },
+    "random#19": {
+      "assignments": {
+        "s:19:1": {
+          "file": "01.风水鱼要在棺材里.1080p.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [],
+          "rule": "R8"
+        },
+        "s:19:3": {
+          "file": "03.太极两仪生四象【公众号：CunWorkNotes】.2160p.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [],
+          "rule": "R8"
+        },
+        "s:19:6": {
+          "file": "06.清华大学朱令案【公众号：CunWorkNotes】.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [],
+          "rule": "R2"
+        }
+      },
+      "leftAsks": {
+        "s:19:2": {
+          "stage": "duration",
+          "rule": "R3",
+          "reason": "name-floor",
+          "threshold": 0.6,
+          "margin": 0.15,
+          "candidates": [
+            {
+              "name": "02.身边那些灵异事.mp3",
+              "sim": 1
+            },
+            {
+              "name": "06.清华大学朱令案【公众号：CunWorkNotes】.mp3",
+              "sim": 0
+            }
+          ]
+        }
+      },
+      "fileAsks": {},
+      "residual": [
+        "02.身边那些灵异事.mp3"
+      ],
+      "missing": {
+        "s:19:4": 4,
+        "s:19:5": 5
+      },
+      "trails": {
+        "01.风水鱼要在棺材里.1080p.mp3": [
+          "claimed by R8",
+          "s:19:1 won R8"
+        ],
+        "02.身边那些灵异事.mp3": [
+          "residual",
+          "s:19:2 vetoed/duration-contradict R11"
+        ],
+        "03.太极两仪生四象【公众号：CunWorkNotes】.2160p.mp3": [
+          "claimed by R8",
+          "s:19:3 won R8"
+        ],
+        "06.清华大学朱令案【公众号：CunWorkNotes】.mp3": [
+          "claimed by R2",
+          "s:19:2 vetoed/name-floor R3",
+          "s:19:6 won R2"
+        ]
+      }
+    },
+    "random#2": {
+      "assignments": {
+        "s:2:1": {
+          "file": "01.现代版枪下留人【公众号：CunWorkNotes】.1080p.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [],
+          "rule": "R2"
+        },
+        "s:2:2": {
+          "file": "02.十神的生克关系.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [
+            "02.十神的生克关系【公众号：CunWorkNotes】.720p.mp3"
+          ],
+          "rule": "R2"
+        }
+      },
+      "leftAsks": {},
+      "fileAsks": {},
+      "residual": [],
+      "missing": {},
+      "trails": {
+        "01.现代版枪下留人【公众号：CunWorkNotes】.1080p.mp3": [
+          "claimed by R2",
+          "s:2:1 won R2"
+        ],
+        "02.十神的生克关系.mp3": [
+          "claimed by R2",
+          "s:2:2 won R2"
+        ],
+        "02.十神的生克关系【公众号：CunWorkNotes】.720p.mp3": [
+          "copy by R2",
+          "s:2:2 won R2"
+        ]
+      }
+    },
+    "random#20": {
+      "assignments": {
+        "s:20:1": {
+          "file": "01.身边那些灵异事.2160p.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [],
+          "rule": "R2"
+        },
+        "s:20:3": {
+          "file": "03.现代版枪下留人.720p.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [],
+          "rule": "R2"
+        },
+        "s:20:4": {
+          "file": "04.十神的生克关系【公众号：CunWorkNotes】.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [
+            "04.十神的生克关系.mp3"
+          ],
+          "rule": "R4"
+        }
+      },
+      "leftAsks": {},
+      "fileAsks": {},
+      "residual": [],
+      "missing": {
+        "s:20:2": 2
+      },
+      "trails": {
+        "01.身边那些灵异事.2160p.mp3": [
+          "claimed by R2",
+          "s:20:1 won R2"
+        ],
+        "03.现代版枪下留人.720p.mp3": [
+          "claimed by R2",
+          "s:20:3 won R2"
+        ],
+        "04.十神的生克关系.mp3": [
+          "copy by R4",
+          "s:20:4 won R4"
+        ],
+        "04.十神的生克关系【公众号：CunWorkNotes】.mp3": [
+          "claimed by R4",
+          "s:20:4 won R4"
+        ]
+      }
+    },
+    "random#21": {
+      "assignments": {
+        "s:21:1": {
+          "file": "02.太极两仪生四象【公众号：CunWorkNotes】.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [],
+          "rule": "R2"
+        },
+        "s:21:2": {
+          "file": "02.现代版枪下留人【耗时整理‖cunlove.cn】.2160p.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [],
+          "rule": "R2"
+        },
+        "s:21:4": {
+          "file": "04.清华大学朱令案【公众号：CunWorkNotes】.720p.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [],
+          "rule": "R8"
+        },
+        "s:21:5": {
+          "file": "05.骗局【公众号：CunWorkNotes】.1080p.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [],
+          "rule": "R8"
+        },
+        "s:21:6": {
+          "file": "06.财克印印克食伤【公众号：CunWorkNotes】.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [],
+          "rule": "R8"
+        }
+      },
+      "leftAsks": {
+        "s:21:3": {
+          "stage": "duration",
+          "rule": "R3",
+          "reason": "name-floor",
+          "threshold": 0.6,
+          "margin": 0.15,
+          "candidates": [
+            {
+              "name": "03.财克印印克食伤【公众号：CunWorkNotes】.1080p.mp3",
+              "sim": 0
+            }
+          ]
+        }
+      },
+      "fileAsks": {
+        "03.财克印印克食伤.mp3": {
+          "stage": "conflict",
+          "rule": "R13",
+          "reason": "dual-episode-conflict",
+          "threshold": 0.3,
+          "margin": 0,
+          "candidates": [
+            {
+              "name": "s:21:2",
+              "sim": 0
+            },
+            {
+              "name": "s:21:3",
+              "sim": 0
+            },
+            {
+              "name": "s:21:6",
+              "sim": 1
+            }
+          ]
+        },
+        "03.财克印印克食伤【公众号：CunWorkNotes】.1080p.mp3": {
+          "stage": "conflict",
+          "rule": "R13",
+          "reason": "dual-episode-conflict",
+          "threshold": 0.3,
+          "margin": 0,
+          "candidates": [
+            {
+              "name": "s:21:2",
+              "sim": 0
+            },
+            {
+              "name": "s:21:3",
+              "sim": 0
+            },
+            {
+              "name": "s:21:6",
+              "sim": 1
+            }
+          ]
+        }
+      },
+      "residual": [
+        "cover.jpg"
+      ],
+      "missing": {},
+      "trails": {
+        "02.太极两仪生四象【公众号：CunWorkNotes】.mp3": [
+          "claimed by R2",
+          "s:21:1 won R2",
+          "s:21:2 vetoed/duration-contradict"
+        ],
+        "02.现代版枪下留人【耗时整理‖cunlove.cn】.2160p.mp3": [
+          "claimed by R2",
+          "s:21:2 won R2",
+          "s:21:3 vetoed/file-claimed"
+        ],
+        "03.财克印印克食伤.mp3": [
+          "asked by R13",
+          "s:21:2 vetoed/zero-competition-loser R4",
+          "s:21:3 vetoed/below-threshold R9",
+          "s:21:6 vetoed/left-claimed"
+        ],
+        "03.财克印印克食伤【公众号：CunWorkNotes】.1080p.mp3": [
+          "asked by R13",
+          "s:21:2 vetoed/zero-competition-loser R4",
+          "s:21:3 vetoed/below-threshold R9",
+          "s:21:6 vetoed/left-claimed"
+        ],
+        "04.清华大学朱令案【公众号：CunWorkNotes】.720p.mp3": [
+          "claimed by R8",
+          "s:21:4 won R8"
+        ],
+        "05.骗局【公众号：CunWorkNotes】.1080p.mp3": [
+          "claimed by R8",
+          "s:21:5 won R8"
+        ],
+        "06.财克印印克食伤【公众号：CunWorkNotes】.mp3": [
+          "claimed by R8",
+          "s:21:6 won R8"
+        ],
+        "cover.jpg": [
+          "residual"
+        ]
+      }
+    },
+    "random#22": {
+      "assignments": {
+        "s:22:1": {
+          "file": "01.现代版枪下留人【耗时整理‖cunlove.cn】.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [],
+          "rule": "R8"
+        },
+        "s:22:2": {
+          "file": "03.十神的生克关系【公众号：CunWorkNotes】.720p.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [],
+          "rule": "R9"
+        }
+      },
+      "leftAsks": {},
+      "fileAsks": {},
+      "residual": [],
+      "missing": {},
+      "trails": {
+        "01.现代版枪下留人【耗时整理‖cunlove.cn】.mp3": [
+          "claimed by R8",
+          "s:22:1 won R8"
+        ],
+        "03.十神的生克关系【公众号：CunWorkNotes】.720p.mp3": [
+          "claimed by R9",
+          "s:22:2 won R9"
+        ]
+      }
+    },
+    "random#23": {
+      "assignments": {
+        "s:23:2": {
+          "file": "02.清华大学朱令象.mp3",
+          "confidence": 0.833333,
+          "status": "auto",
+          "losers": [
+            "02.清华大学朱令象【耗时整理‖cunlove.cn】.1080p.mp3"
+          ],
+          "rule": "R2"
+        },
+        "s:23:3": {
+          "file": "03.骗局.2160p.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [
+            "03.骗局【耗时整理‖cunlove.cn】.1080p.mp3"
+          ],
+          "rule": "R2"
+        },
+        "s:23:4": {
+          "file": "04.财克印印克食伤.1080p.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [
+            "04.财克印印克食伤.mp3"
+          ],
+          "rule": "R2"
+        }
+      },
+      "leftAsks": {
+        "s:23:5": {
+          "stage": "epnum",
+          "rule": "R8",
+          "reason": "below-threshold",
+          "threshold": 0.6,
+          "margin": 0.15,
+          "candidates": [
+            {
+              "name": "05.身边那些灵异事【公众号：CunWorkNotes】.mp3",
+              "sim": 0
+            }
+          ]
+        }
+      },
+      "fileAsks": {},
+      "residual": [
+        "05.身边那些灵异事【公众号：CunWorkNotes】.mp3",
+        "zz.骗局.mp3"
+      ],
+      "missing": {
+        "s:23:1": 1
+      },
+      "trails": {
+        "02.清华大学朱令象.mp3": [
+          "claimed by R2",
+          "s:23:2 won R2"
+        ],
+        "02.清华大学朱令象【耗时整理‖cunlove.cn】.1080p.mp3": [
+          "copy by R2",
+          "s:23:2 won R2"
+        ],
+        "03.骗局.2160p.mp3": [
+          "claimed by R2",
+          "s:23:3 won R2"
+        ],
+        "03.骗局【耗时整理‖cunlove.cn】.1080p.mp3": [
+          "copy by R2",
+          "s:23:3 won R2"
+        ],
+        "04.财克印印克食伤.1080p.mp3": [
+          "claimed by R2",
+          "s:23:4 won R2"
+        ],
+        "04.财克印印克食伤.mp3": [
+          "copy by R2",
+          "s:23:4 won R2"
+        ],
+        "05.身边那些灵异事【公众号：CunWorkNotes】.mp3": [
+          "residual",
+          "s:23:5 vetoed/below-threshold R9"
+        ],
+        "zz.骗局.mp3": [
+          "residual",
+          "s:23:3 vetoed/left-claimed"
+        ]
+      }
+    },
+    "random#24": {
+      "assignments": {
+        "s:24:1": {
+          "file": "02.清华大学朱令案【耗时整理‖cunlove.cn】.2160p.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [
+            "02.清华大学朱令案【公众号：CunWorkNotes】.2160p.mp3"
+          ],
+          "rule": "R4"
+        },
+        "s:24:3": {
+          "file": "03.财克印印克食伤.2160p.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [],
+          "rule": "R8"
+        }
+      },
+      "leftAsks": {
+        "s:24:2": {
+          "stage": "epnum",
+          "rule": "R11",
+          "reason": "duration-contradiction",
+          "threshold": 0.6,
+          "margin": 0.15,
+          "candidates": [
+            {
+              "name": "02.骗象.2160p.mp3",
+              "sim": 0
+            }
+          ]
+        }
+      },
+      "fileAsks": {},
+      "residual": [
+        "02.骗象.2160p.mp3"
+      ],
+      "missing": {},
+      "trails": {
+        "02.清华大学朱令案【公众号：CunWorkNotes】.2160p.mp3": [
+          "copy by R4",
+          "s:24:1 won R4",
+          "s:24:2 vetoed/duration-contradict"
+        ],
+        "02.清华大学朱令案【耗时整理‖cunlove.cn】.2160p.mp3": [
+          "claimed by R4",
+          "s:24:1 won R4",
+          "s:24:2 vetoed/duration-contradict"
+        ],
+        "02.骗象.2160p.mp3": [
+          "residual",
+          "s:24:2 vetoed/duration-contradict R11"
+        ],
+        "03.财克印印克食伤.2160p.mp3": [
+          "claimed by R8",
+          "s:24:3 won R8"
+        ]
+      }
+    },
+    "random#25": {
+      "assignments": {
+        "s:25:3": {
+          "file": "03.凑活聊道德绑架.2160p.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [],
+          "rule": "R2"
+        }
+      },
+      "leftAsks": {
+        "s:25:2": {
+          "stage": "duration",
+          "rule": "R2",
+          "reason": "below-threshold",
+          "threshold": 0.6,
+          "margin": 0.15,
+          "candidates": [
+            {
+              "name": "03.凑活聊道德绑架.2160p.mp3",
+              "sim": 0
+            },
+            {
+              "name": "04.太极两仪生四象.mp3",
+              "sim": 0
+            },
+            {
+              "name": "04.太极两仪生四象【公众号：CunWorkNotes】.720p.mp3",
+              "sim": 0
+            }
+          ]
+        },
+        "s:25:4": {
+          "stage": "duration",
+          "rule": "R3",
+          "reason": "name-floor",
+          "threshold": 0.6,
+          "margin": 0.15,
+          "candidates": [
+            {
+              "name": "04.太极两仪生四象【公众号：CunWorkNotes】.720p.mp3",
+              "sim": 0
+            }
+          ]
+        }
+      },
+      "fileAsks": {
+        "04.太极两仪生四象.mp3": {
+          "stage": "conflict",
+          "rule": "R13",
+          "reason": "dual-episode-conflict",
+          "threshold": 0.3,
+          "margin": 0,
+          "candidates": [
+            {
+              "name": "s:25:2",
+              "sim": 0
+            },
+            {
+              "name": "s:25:3",
+              "sim": 0
+            },
+            {
+              "name": "s:25:4",
+              "sim": 0
+            }
+          ]
+        },
+        "04.太极两仪生四象【公众号：CunWorkNotes】.720p.mp3": {
+          "stage": "conflict",
+          "rule": "R13",
+          "reason": "dual-episode-conflict",
+          "threshold": 0.3,
+          "margin": 0,
+          "candidates": [
+            {
+              "name": "s:25:2",
+              "sim": 0
+            },
+            {
+              "name": "s:25:3",
+              "sim": 0
+            },
+            {
+              "name": "s:25:4",
+              "sim": 0
+            }
+          ]
+        }
+      },
+      "residual": [
+        "zz.身边那些灵异事.mp3"
+      ],
+      "missing": {
+        "s:25:1": 1,
+        "s:25:2": 2
+      },
+      "trails": {
+        "03.凑活聊道德绑架.2160p.mp3": [
+          "claimed by R2",
+          "s:25:2 vetoed/below-threshold R2",
+          "s:25:3 won R2",
+          "s:25:4 vetoed/file-claimed"
+        ],
+        "04.太极两仪生四象.mp3": [
+          "asked by R13",
+          "s:25:2 vetoed/below-threshold R9",
+          "s:25:3 vetoed/zero-competition-loser R4",
+          "s:25:4 vetoed/below-threshold R9"
+        ],
+        "04.太极两仪生四象【公众号：CunWorkNotes】.720p.mp3": [
+          "asked by R13",
+          "s:25:2 vetoed/below-threshold R9",
+          "s:25:3 vetoed/zero-competition-loser R4",
+          "s:25:4 vetoed/below-threshold R9"
+        ],
+        "zz.身边那些灵异事.mp3": [
+          "residual"
+        ]
+      }
+    },
+    "random#26": {
+      "assignments": {
+        "s:26:1": {
+          "file": "01.财克印印克食伤.2160p.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [
+            "01.财克印印克食伤【耗时整理‖cunlove.cn】.2160p.mp3"
+          ],
+          "rule": "R8"
+        },
+        "s:26:2": {
+          "file": "02.凑活聊道德绑象【公众号：CunWorkNotes】.mp3",
+          "confidence": 0.833333,
+          "status": "auto",
+          "losers": [],
+          "rule": "R8"
+        },
+        "s:26:3": {
+          "file": "04.三十探悬疑案件【耗时整理‖cunlove.cn】.1080p.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [],
+          "rule": "R9"
+        }
+      },
+      "leftAsks": {},
+      "fileAsks": {},
+      "residual": [
+        "cover.jpg"
+      ],
+      "missing": {},
+      "trails": {
+        "01.财克印印克食伤.2160p.mp3": [
+          "claimed by R8",
+          "s:26:1 won R8"
+        ],
+        "01.财克印印克食伤【耗时整理‖cunlove.cn】.2160p.mp3": [
+          "copy by R8",
+          "s:26:1 won R8"
+        ],
+        "02.凑活聊道德绑象【公众号：CunWorkNotes】.mp3": [
+          "claimed by R8",
+          "s:26:2 won R8"
+        ],
+        "04.三十探悬疑案件【耗时整理‖cunlove.cn】.1080p.mp3": [
+          "claimed by R9",
+          "s:26:3 won R9"
+        ],
+        "cover.jpg": [
+          "residual"
+        ]
+      }
+    },
+    "random#27": {
+      "assignments": {
+        "s:27:2": {
+          "file": "03.三十探悬疑案件【公众号：CunWorkNotes】.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [],
+          "rule": "R2"
+        },
+        "s:27:4": {
+          "file": "04.身边那些灵异象【公众号：CunWorkNotes】.1080p.mp3",
+          "confidence": 0.833333,
+          "status": "auto",
+          "losers": [],
+          "rule": "R2"
+        }
+      },
+      "leftAsks": {
+        "s:27:3": {
+          "stage": "duration",
+          "rule": "R3",
+          "reason": "name-floor",
+          "threshold": 0.6,
+          "margin": 0.15,
+          "candidates": [
+            {
+              "name": "03.现代版枪下留人【公众号：CunWorkNotes】.1080p.mp3",
+              "sim": 0
+            }
+          ]
+        }
+      },
+      "fileAsks": {},
+      "residual": [
+        "03.现代版枪下留人【公众号：CunWorkNotes】.1080p.mp3"
+      ],
+      "missing": {
+        "s:27:1": 1
+      },
+      "trails": {
+        "03.三十探悬疑案件【公众号：CunWorkNotes】.mp3": [
+          "claimed by R2",
+          "s:27:2 won R2",
+          "s:27:3 vetoed/duration-contradict"
+        ],
+        "03.现代版枪下留人【公众号：CunWorkNotes】.1080p.mp3": [
+          "residual",
+          "s:27:3 vetoed/below-threshold R9"
+        ],
+        "04.身边那些灵异象【公众号：CunWorkNotes】.1080p.mp3": [
+          "claimed by R2",
+          "s:27:4 won R2"
+        ]
+      }
+    },
+    "random#28": {
+      "assignments": {
+        "s:28:1": {
+          "file": "01.三十探悬疑案件【耗时整理‖cunlove.cn】.720p.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [],
+          "rule": "R2"
+        },
+        "s:28:2": {
+          "file": "02.风水鱼要在棺材里【耗时整理‖cunlove.cn】.2160p.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [],
+          "rule": "R2"
+        }
+      },
+      "leftAsks": {},
+      "fileAsks": {},
+      "residual": [
+        "cover.jpg"
+      ],
+      "missing": {},
+      "trails": {
+        "01.三十探悬疑案件【耗时整理‖cunlove.cn】.720p.mp3": [
+          "claimed by R2",
+          "s:28:1 won R2"
+        ],
+        "02.风水鱼要在棺材里【耗时整理‖cunlove.cn】.2160p.mp3": [
+          "claimed by R2",
+          "s:28:2 won R2"
+        ],
+        "cover.jpg": [
+          "residual"
+        ]
+      }
+    },
+    "random#29": {
+      "assignments": {
+        "s:29:1": {
+          "file": "01.风水鱼要在棺材里.1080p.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [],
+          "rule": "R8"
+        },
+        "s:29:2": {
+          "file": "02.身边那些灵异事【公众号：CunWorkNotes】.720p.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [],
+          "rule": "R2"
+        }
+      },
+      "leftAsks": {
+        "s:29:3": {
+          "stage": "epnum",
+          "rule": "R11",
+          "reason": "duration-contradiction",
+          "threshold": 0.6,
+          "margin": 0.15,
+          "candidates": [
+            {
+              "name": "03.太极两仪生四象【公众号：CunWorkNotes】.720p.mp3",
+              "sim": 1
+            }
+          ]
+        }
+      },
+      "fileAsks": {},
+      "residual": [
+        "03.太极两仪生四象【公众号：CunWorkNotes】.1080p.mp3",
+        "03.太极两仪生四象【公众号：CunWorkNotes】.720p.mp3",
+        "zz.十神的生克关系.mp3"
+      ],
+      "missing": {},
+      "trails": {
+        "01.风水鱼要在棺材里.1080p.mp3": [
+          "claimed by R8",
+          "s:29:1 won R8"
+        ],
+        "02.身边那些灵异事【公众号：CunWorkNotes】.720p.mp3": [
+          "claimed by R2",
+          "s:29:2 won R2"
+        ],
+        "03.太极两仪生四象【公众号：CunWorkNotes】.1080p.mp3": [
+          "residual",
+          "s:29:3 vetoed/duration-contradict R11"
+        ],
+        "03.太极两仪生四象【公众号：CunWorkNotes】.720p.mp3": [
+          "residual",
+          "s:29:3 vetoed/duration-contradict R11"
+        ],
+        "zz.十神的生克关系.mp3": [
+          "residual"
+        ]
+      }
+    },
+    "random#3": {
+      "assignments": {
+        "s:3:1": {
+          "file": "01.十神的生克关系【公众号：CunWorkNotes】.2160p.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [
+            "01.十神的生克关系【耗时整理‖cunlove.cn】.1080p.mp3"
+          ],
+          "rule": "R2"
+        },
+        "s:3:2": {
+          "file": "02.清华大学朱令象【公众号：CunWorkNotes】.2160p.mp3",
+          "confidence": 0.833333,
+          "status": "auto",
+          "losers": [],
+          "rule": "R8"
+        }
+      },
+      "leftAsks": {},
+      "fileAsks": {},
+      "residual": [
+        "zz.财克印印克食伤.mp3"
+      ],
+      "missing": {},
+      "trails": {
+        "01.十神的生克关系【公众号：CunWorkNotes】.2160p.mp3": [
+          "claimed by R2",
+          "s:3:1 won R2"
+        ],
+        "01.十神的生克关系【耗时整理‖cunlove.cn】.1080p.mp3": [
+          "copy by R2",
+          "s:3:1 won R2"
+        ],
+        "02.清华大学朱令象【公众号：CunWorkNotes】.2160p.mp3": [
+          "claimed by R8",
+          "s:3:2 won R8"
+        ],
+        "zz.财克印印克食伤.mp3": [
+          "residual"
+        ]
+      }
+    },
+    "random#30": {
+      "assignments": {
+        "s:30:1": {
+          "file": "01.身边那些灵异事【耗时整理‖cunlove.cn】.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [
+            "01.身边那些灵异事【公众号：CunWorkNotes】.720p.mp3"
+          ],
+          "rule": "R8"
+        },
+        "s:30:2": {
+          "file": "03.太极两仪生四象【公众号：CunWorkNotes】.2160p.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [
+            "03.太极两仪生四象【耗时整理‖cunlove.cn】.2160p.mp3"
+          ],
+          "rule": "R4"
+        },
+        "s:30:3": {
+          "file": "03.现代版枪下留象【公众号：CunWorkNotes】.720p.mp3",
+          "confidence": 0.833333,
+          "status": "auto",
+          "losers": [],
+          "rule": "R2"
+        },
+        "s:30:4": {
+          "file": "04.十神的生克关系【公众号：CunWorkNotes】.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [
+            "04.十神的生克关系【耗时整理‖cunlove.cn】.1080p.mp3"
+          ],
+          "rule": "R8"
+        },
+        "s:30:5": {
+          "file": "06.清华大学朱令案【耗时整理‖cunlove.cn】.2160p.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [
+            "06.清华大学朱令案【耗时整理‖cunlove.cn】.1080p.mp3"
+          ],
+          "rule": "R2"
+        }
+      },
+      "leftAsks": {},
+      "fileAsks": {},
+      "residual": [
+        "cover.jpg"
+      ],
+      "missing": {},
+      "trails": {
+        "01.身边那些灵异事【公众号：CunWorkNotes】.720p.mp3": [
+          "copy by R8",
+          "s:30:1 won R8"
+        ],
+        "01.身边那些灵异事【耗时整理‖cunlove.cn】.mp3": [
+          "claimed by R8",
+          "s:30:1 won R8"
+        ],
+        "03.太极两仪生四象【公众号：CunWorkNotes】.2160p.mp3": [
+          "claimed by R4",
+          "s:30:2 won R4",
+          "s:30:3 vetoed/duration-contradict"
+        ],
+        "03.太极两仪生四象【耗时整理‖cunlove.cn】.2160p.mp3": [
+          "copy by R4",
+          "s:30:2 won R4",
+          "s:30:3 vetoed/duration-contradict"
+        ],
+        "03.现代版枪下留象【公众号：CunWorkNotes】.720p.mp3": [
+          "claimed by R2",
+          "s:30:3 won R2"
+        ],
+        "04.十神的生克关系【公众号：CunWorkNotes】.mp3": [
+          "claimed by R8",
+          "s:30:4 won R8"
+        ],
+        "04.十神的生克关系【耗时整理‖cunlove.cn】.1080p.mp3": [
+          "copy by R8",
+          "s:30:4 won R8"
+        ],
+        "06.清华大学朱令案【耗时整理‖cunlove.cn】.1080p.mp3": [
+          "copy by R2",
+          "s:30:5 won R2"
+        ],
+        "06.清华大学朱令案【耗时整理‖cunlove.cn】.2160p.mp3": [
+          "claimed by R2",
+          "s:30:5 won R2"
+        ],
+        "cover.jpg": [
+          "residual"
+        ]
+      }
+    },
+    "random#31": {
+      "assignments": {
+        "s:31:1": {
+          "file": "01.太极两仪生四象【耗时整理‖cunlove.cn】.2160p.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [],
+          "rule": "R2"
+        }
+      },
+      "leftAsks": {
+        "s:31:2": {
+          "stage": "epnum",
+          "rule": "R8",
+          "reason": "below-threshold",
+          "threshold": 0.6,
+          "margin": 0.15,
+          "candidates": [
+            {
+              "name": "02.骗局【耗时整理‖cunlove.cn】.2160p.mp3",
+              "sim": 0
+            }
+          ]
+        },
+        "s:31:3": {
+          "stage": "epnum",
+          "rule": "R11",
+          "reason": "duration-contradiction",
+          "threshold": 0.6,
+          "margin": 0.15,
+          "candidates": [
+            {
+              "name": "03.十神的生克关象【耗时整理‖cunlove.cn】.2160p.mp3",
+              "sim": 0.833333
+            }
+          ]
+        }
+      },
+      "fileAsks": {},
+      "residual": [
+        "02.骗局.2160p.mp3",
+        "02.骗局【耗时整理‖cunlove.cn】.2160p.mp3",
+        "03.十神的生克关象【耗时整理‖cunlove.cn】.2160p.mp3",
+        "zz.风水鱼要在棺材里.mp3"
+      ],
+      "missing": {},
+      "trails": {
+        "01.太极两仪生四象【耗时整理‖cunlove.cn】.2160p.mp3": [
+          "claimed by R2",
+          "s:31:1 won R2"
+        ],
+        "02.骗局.2160p.mp3": [
+          "residual",
+          "s:31:2 vetoed/below-threshold R9"
+        ],
+        "02.骗局【耗时整理‖cunlove.cn】.2160p.mp3": [
+          "residual",
+          "s:31:2 vetoed/below-threshold R9"
+        ],
+        "03.十神的生克关象【耗时整理‖cunlove.cn】.2160p.mp3": [
+          "residual",
+          "s:31:3 vetoed/duration-contradict R11"
+        ],
+        "zz.风水鱼要在棺材里.mp3": [
+          "residual"
+        ]
+      }
+    },
+    "random#32": {
+      "assignments": {
+        "s:32:3": {
+          "file": "03.清华大学朱令案【耗时整理‖cunlove.cn】.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [
+            "03.清华大学朱令案【公众号：CunWorkNotes】.2160p.mp3"
+          ],
+          "rule": "R8"
+        },
+        "s:32:5": {
+          "file": "05.财克印印克食伤【耗时整理‖cunlove.cn】.720p.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [
+            "05.财克印印克食伤.2160p.mp3"
+          ],
+          "rule": "R2"
+        },
+        "s:32:6": {
+          "file": "06.凑活聊道德绑架【耗时整理‖cunlove.cn】.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [],
+          "rule": "R2"
+        }
+      },
+      "leftAsks": {
+        "s:32:2": {
+          "stage": "duration",
+          "rule": "R3",
+          "reason": "name-floor",
+          "threshold": 0.6,
+          "margin": 0.15,
+          "candidates": [
+            {
+              "name": "02.十神的生克关系【耗时整理‖cunlove.cn】.2160p.mp3",
+              "sim": 1
+            },
+            {
+              "name": "05.财克印印克食伤【耗时整理‖cunlove.cn】.720p.mp3",
+              "sim": 0
+            }
+          ]
+        },
+        "s:32:4": {
+          "stage": "duration",
+          "rule": "R3",
+          "reason": "name-floor",
+          "threshold": 0.6,
+          "margin": 0.15,
+          "candidates": [
+            {
+              "name": "04.三十探悬疑案件【耗时整理‖cunlove.cn】.2160p.mp3",
+              "sim": 0
+            }
+          ]
+        }
+      },
+      "fileAsks": {},
+      "residual": [
+        "02.十神的生克关系.1080p.mp3",
+        "02.十神的生克关系【耗时整理‖cunlove.cn】.2160p.mp3",
+        "04.三十探悬疑案件【耗时整理‖cunlove.cn】.2160p.mp3"
+      ],
+      "missing": {
+        "s:32:1": 1
+      },
+      "trails": {
+        "02.十神的生克关系.1080p.mp3": [
+          "residual",
+          "s:32:2 vetoed/duration-contradict R11"
+        ],
+        "02.十神的生克关系【耗时整理‖cunlove.cn】.2160p.mp3": [
+          "residual",
+          "s:32:2 vetoed/duration-contradict R11"
+        ],
+        "03.清华大学朱令案【公众号：CunWorkNotes】.2160p.mp3": [
+          "copy by R8",
+          "s:32:3 won R8"
+        ],
+        "03.清华大学朱令案【耗时整理‖cunlove.cn】.mp3": [
+          "claimed by R8",
+          "s:32:3 won R8"
+        ],
+        "04.三十探悬疑案件【耗时整理‖cunlove.cn】.2160p.mp3": [
+          "residual",
+          "s:32:4 vetoed/below-threshold R9"
+        ],
+        "05.财克印印克食伤.2160p.mp3": [
+          "copy by R2",
+          "s:32:2 vetoed/file-claimed",
+          "s:32:5 won R2"
+        ],
+        "05.财克印印克食伤【耗时整理‖cunlove.cn】.720p.mp3": [
+          "claimed by R2",
+          "s:32:2 vetoed/name-floor R3",
+          "s:32:5 won R2"
+        ],
+        "06.凑活聊道德绑架【耗时整理‖cunlove.cn】.mp3": [
+          "claimed by R2",
+          "s:32:6 won R2"
+        ]
+      }
+    },
+    "random#33": {
+      "assignments": {
+        "s:33:1": {
+          "file": "01.十神的生克关系【耗时整理‖cunlove.cn】.1080p.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [
+            "01.十神的生克关系【公众号：CunWorkNotes】.2160p.mp3"
+          ],
+          "rule": "R8"
+        },
+        "s:33:2": {
+          "file": "02.清华大学朱令案【耗时整理‖cunlove.cn】.1080p.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [],
+          "rule": "R8"
+        },
+        "s:33:3": {
+          "file": "03.骗局.720p.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [
+            "03.骗局.mp3"
+          ],
+          "rule": "R8"
+        },
+        "s:33:4": {
+          "file": "04.财克印印克食象【公众号：CunWorkNotes】.1080p.mp3",
+          "confidence": 0.833333,
+          "status": "auto",
+          "losers": [],
+          "rule": "R2"
+        }
+      },
+      "leftAsks": {
+        "s:33:5": {
+          "stage": "duration",
+          "rule": "R2",
+          "reason": "no-margin",
+          "threshold": 0.6,
+          "margin": 0.15,
+          "candidates": [
+            {
+              "name": "01.十神的生克关系【公众号：CunWorkNotes】.2160p.mp3",
+              "sim": 0
+            },
+            {
+              "name": "01.十神的生克关系【耗时整理‖cunlove.cn】.1080p.mp3",
+              "sim": 0
+            },
+            {
+              "name": "06.凑活聊道德绑架【耗时整理‖cunlove.cn】.720p.mp3",
+              "sim": 1
+            },
+            {
+              "name": "06.凑活聊道德绑架【耗时整理‖cunlove.cn】.mp3",
+              "sim": 1
+            }
+          ]
+        }
+      },
+      "fileAsks": {
+        "06.凑活聊道德绑架【耗时整理‖cunlove.cn】.720p.mp3": {
+          "stage": "conflict",
+          "rule": "R13",
+          "reason": "dual-episode-conflict",
+          "threshold": 0.3,
+          "margin": 0,
+          "candidates": [
+            {
+              "name": "s:33:1",
+              "sim": 0
+            },
+            {
+              "name": "s:33:4",
+              "sim": 0
+            },
+            {
+              "name": "s:33:5",
+              "sim": 1
+            }
+          ]
+        },
+        "06.凑活聊道德绑架【耗时整理‖cunlove.cn】.mp3": {
+          "stage": "conflict",
+          "rule": "R13",
+          "reason": "dual-episode-conflict",
+          "threshold": 0.3,
+          "margin": 0,
+          "candidates": [
+            {
+              "name": "s:33:1",
+              "sim": 0
+            },
+            {
+              "name": "s:33:4",
+              "sim": 0
+            },
+            {
+              "name": "s:33:5",
+              "sim": 1
+            }
+          ]
+        }
+      },
+      "residual": [],
+      "missing": {
+        "s:33:5": 5
+      },
+      "trails": {
+        "01.十神的生克关系【公众号：CunWorkNotes】.2160p.mp3": [
+          "copy by R8",
+          "s:33:1 won R8",
+          "s:33:4 vetoed/zero-competition-loser R4",
+          "s:33:5 vetoed/no-margin R2"
+        ],
+        "01.十神的生克关系【耗时整理‖cunlove.cn】.1080p.mp3": [
+          "claimed by R8",
+          "s:33:1 won R8",
+          "s:33:4 vetoed/zero-competition-loser R4",
+          "s:33:5 vetoed/no-margin R2"
+        ],
+        "02.清华大学朱令案【耗时整理‖cunlove.cn】.1080p.mp3": [
+          "claimed by R8",
+          "s:33:2 won R8"
+        ],
+        "03.骗局.720p.mp3": [
+          "claimed by R8",
+          "s:33:3 won R8"
+        ],
+        "03.骗局.mp3": [
+          "copy by R8",
+          "s:33:3 won R8"
+        ],
+        "04.财克印印克食象【公众号：CunWorkNotes】.1080p.mp3": [
+          "claimed by R2",
+          "s:33:1 vetoed/no-margin R2",
+          "s:33:4 won R2",
+          "s:33:5 vetoed/file-claimed"
+        ],
+        "06.凑活聊道德绑架【耗时整理‖cunlove.cn】.720p.mp3": [
+          "asked by R13",
+          "s:33:1 vetoed/no-margin R2",
+          "s:33:4 vetoed/zero-competition-loser R4",
+          "s:33:5 vetoed/no-margin R9"
+        ],
+        "06.凑活聊道德绑架【耗时整理‖cunlove.cn】.mp3": [
+          "asked by R13",
+          "s:33:1 vetoed/no-margin R2",
+          "s:33:4 vetoed/zero-competition-loser R4",
+          "s:33:5 vetoed/no-margin R9"
+        ]
+      }
+    },
+    "random#34": {
+      "assignments": {
+        "s:34:3": {
+          "file": "03.财克印印克食伤【公众号：CunWorkNotes】.2160p.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [],
+          "rule": "R2"
+        }
+      },
+      "leftAsks": {
+        "s:34:1": {
+          "stage": "epnum",
+          "rule": "R11",
+          "reason": "duration-contradiction",
+          "threshold": 0.6,
+          "margin": 0.15,
+          "candidates": [
+            {
+              "name": "01.凑活聊道德绑架.mp3",
+              "sim": 0
+            }
+          ]
+        },
+        "s:34:2": {
+          "stage": "duration",
+          "rule": "R2",
+          "reason": "below-threshold",
+          "threshold": 0.6,
+          "margin": 0.15,
+          "candidates": [
+            {
+              "name": "02.骗象【耗时整理‖cunlove.cn】.1080p.mp3",
+              "sim": 0
+            },
+            {
+              "name": "03.财克印印克食伤【公众号：CunWorkNotes】.2160p.mp3",
+              "sim": 0
+            }
+          ]
+        },
+        "s:34:4": {
+          "stage": "title",
+          "rule": "R14",
+          "reason": "duration-contradiction",
+          "threshold": 0.85,
+          "margin": 0.15,
+          "candidates": [
+            {
+              "name": "01.凑活聊道德绑架.mp3",
+              "sim": 1
+            }
+          ]
+        },
+        "s:34:6": {
+          "stage": "duration",
+          "rule": "R3",
+          "reason": "name-floor",
+          "threshold": 0.6,
+          "margin": 0.15,
+          "candidates": [
+            {
+              "name": "02.骗象【耗时整理‖cunlove.cn】.1080p.mp3",
+              "sim": 0
+            }
+          ]
+        }
+      },
+      "fileAsks": {
+        "01.凑活聊道德绑架.mp3": {
+          "stage": "conflict",
+          "rule": "R13",
+          "reason": "dual-episode-conflict",
+          "threshold": 0.3,
+          "margin": 0,
+          "candidates": [
+            {
+              "name": "s:34:1",
+              "sim": 0
+            },
+            {
+              "name": "s:34:4",
+              "sim": 1
+            }
+          ]
+        },
+        "02.骗象【耗时整理‖cunlove.cn】.1080p.mp3": {
+          "stage": "conflict",
+          "rule": "R13",
+          "reason": "dual-episode-conflict",
+          "threshold": 0.3,
+          "margin": 0,
+          "candidates": [
+            {
+              "name": "s:34:2",
+              "sim": 0
+            },
+            {
+              "name": "s:34:3",
+              "sim": 0
+            },
+            {
+              "name": "s:34:6",
+              "sim": 0
+            }
+          ]
+        }
+      },
+      "residual": [
+        "cover.jpg"
+      ],
+      "missing": {
+        "s:34:4": 4,
+        "s:34:5": 5,
+        "s:34:6": 6
+      },
+      "trails": {
+        "01.凑活聊道德绑架.mp3": [
+          "asked by R13",
+          "s:34:1 vetoed/duration-contradict R11",
+          "s:34:4 vetoed/duration-contradict R11"
+        ],
+        "02.骗象【耗时整理‖cunlove.cn】.1080p.mp3": [
+          "asked by R13",
+          "s:34:2 vetoed/below-threshold R9",
+          "s:34:3 vetoed/zero-competition-loser R4",
+          "s:34:6 vetoed/below-threshold R9"
+        ],
+        "03.财克印印克食伤【公众号：CunWorkNotes】.2160p.mp3": [
+          "claimed by R2",
+          "s:34:2 vetoed/below-threshold R2",
+          "s:34:3 won R2",
+          "s:34:6 vetoed/file-claimed"
+        ],
+        "cover.jpg": [
+          "residual"
+        ]
+      }
+    },
+    "random#35": {
+      "assignments": {},
+      "leftAsks": {
+        "s:35:2": {
+          "stage": "duration",
+          "rule": "R3",
+          "reason": "name-floor",
+          "threshold": 0.6,
+          "margin": 0.15,
+          "candidates": [
+            {
+              "name": "02.风水鱼要在棺材里【耗时整理‖cunlove.cn】.720p.mp3",
+              "sim": 0
+            }
+          ]
+        }
+      },
+      "fileAsks": {},
+      "residual": [
+        "02.风水鱼要在棺材里【耗时整理‖cunlove.cn】.720p.mp3",
+        "cover.jpg"
+      ],
+      "missing": {
+        "s:35:1": 1
+      },
+      "trails": {
+        "02.风水鱼要在棺材里【耗时整理‖cunlove.cn】.720p.mp3": [
+          "residual",
+          "s:35:2 vetoed/below-threshold R9"
+        ],
+        "cover.jpg": [
+          "residual"
+        ]
+      }
+    },
+    "random#36": {
+      "assignments": {
+        "s:36:2": {
+          "file": "02.凑活聊道德绑架.720p.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [],
+          "rule": "R2"
+        },
+        "s:36:3": {
+          "file": "04.三十探悬疑案件.2160p.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [],
+          "rule": "R9"
+        },
+        "s:36:4": {
+          "file": "04.风水鱼要在棺材里【耗时整理‖cunlove.cn】.720p.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [],
+          "rule": "R2"
+        }
+      },
+      "leftAsks": {},
+      "fileAsks": {},
+      "residual": [
+        "zz.骗局.mp3"
+      ],
+      "missing": {
+        "s:36:1": 1
+      },
+      "trails": {
+        "02.凑活聊道德绑架.720p.mp3": [
+          "claimed by R2",
+          "s:36:2 won R2",
+          "s:36:4 vetoed/left-claimed"
+        ],
+        "04.三十探悬疑案件.2160p.mp3": [
+          "claimed by R9",
+          "s:36:3 won R9",
+          "s:36:4 vetoed/left-claimed"
+        ],
+        "04.风水鱼要在棺材里【耗时整理‖cunlove.cn】.720p.mp3": [
+          "claimed by R2",
+          "s:36:2 vetoed/zero-competition-loser R4",
+          "s:36:4 won R2"
+        ],
+        "zz.骗局.mp3": [
+          "residual"
+        ]
+      }
+    },
+    "random#37": {
+      "assignments": {
+        "s:37:2": {
+          "file": "02.三十探悬疑案件.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [
+            "02.三十探悬疑案件【耗时整理‖cunlove.cn】.1080p.mp3"
+          ],
+          "rule": "R2"
+        }
+      },
+      "leftAsks": {
+        "s:37:3": {
+          "stage": "epnum",
+          "rule": "R8",
+          "reason": "below-threshold",
+          "threshold": 0.6,
+          "margin": 0.15,
+          "candidates": [
+            {
+              "name": "03.现代版枪下留人【耗时整理‖cunlove.cn】.2160p.mp3",
+              "sim": 0
+            }
+          ]
+        }
+      },
+      "fileAsks": {
+        "02.凑活聊道德绑架.1080p.mp3": {
+          "stage": "conflict",
+          "rule": "R13",
+          "reason": "dual-episode-conflict",
+          "threshold": 0.3,
+          "margin": 0,
+          "candidates": [
+            {
+              "name": "s:37:1",
+              "sim": 1
+            },
+            {
+              "name": "s:37:2",
+              "sim": 0
+            }
+          ]
+        },
+        "02.凑活聊道德绑架【耗时整理‖cunlove.cn】.1080p.mp3": {
+          "stage": "conflict",
+          "rule": "R13",
+          "reason": "dual-episode-conflict",
+          "threshold": 0.3,
+          "margin": 0,
+          "candidates": [
+            {
+              "name": "s:37:1",
+              "sim": 1
+            },
+            {
+              "name": "s:37:2",
+              "sim": 0
+            }
+          ]
+        }
+      },
+      "residual": [
+        "03.现代版枪下留人【耗时整理‖cunlove.cn】.2160p.mp3"
+      ],
+      "missing": {
+        "s:37:1": 1,
+        "s:37:4": 4
+      },
+      "trails": {
+        "02.三十探悬疑案件.mp3": [
+          "claimed by R2",
+          "s:37:2 won R2"
+        ],
+        "02.三十探悬疑案件【耗时整理‖cunlove.cn】.1080p.mp3": [
+          "copy by R2",
+          "s:37:2 won R2"
+        ],
+        "02.凑活聊道德绑架.1080p.mp3": [
+          "asked by R13",
+          "s:37:1 vetoed/duration-contradict R11",
+          "s:37:2 vetoed/duration-contradict"
+        ],
+        "02.凑活聊道德绑架【耗时整理‖cunlove.cn】.1080p.mp3": [
+          "asked by R13",
+          "s:37:1 vetoed/duration-contradict R11",
+          "s:37:2 vetoed/duration-contradict"
+        ],
+        "03.现代版枪下留人【耗时整理‖cunlove.cn】.2160p.mp3": [
+          "residual",
+          "s:37:3 vetoed/below-threshold R9"
+        ]
+      }
+    },
+    "random#38": {
+      "assignments": {
+        "s:38:2": {
+          "file": "03.风水鱼要在棺材里【公众号：CunWorkNotes】.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [],
+          "rule": "R2"
+        },
+        "s:38:3": {
+          "file": "03.身边那些灵异事【耗时整理‖cunlove.cn】.1080p.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [],
+          "rule": "R2"
+        },
+        "s:38:4": {
+          "file": "04.太极两仪生四象.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [],
+          "rule": "R2"
+        }
+      },
+      "leftAsks": {},
+      "fileAsks": {},
+      "residual": [],
+      "missing": {
+        "s:38:1": 1
+      },
+      "trails": {
+        "03.身边那些灵异事【耗时整理‖cunlove.cn】.1080p.mp3": [
+          "claimed by R2",
+          "s:38:3 won R2"
+        ],
+        "03.风水鱼要在棺材里【公众号：CunWorkNotes】.mp3": [
+          "claimed by R2",
+          "s:38:2 won R2",
+          "s:38:3 vetoed/duration-contradict"
+        ],
+        "04.太极两仪生四象.mp3": [
+          "claimed by R2",
+          "s:38:4 won R2"
+        ]
+      }
+    },
+    "random#39": {
+      "assignments": {
+        "s:39:3": {
+          "file": "03.太极两仪生四象.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [
+            "03.太极两仪生四象.2160p.mp3"
+          ],
+          "rule": "R2"
+        }
+      },
+      "leftAsks": {
+        "s:39:1": {
+          "stage": "epnum",
+          "rule": "R11",
+          "reason": "duration-contradiction",
+          "threshold": 0.6,
+          "margin": 0.15,
+          "candidates": [
+            {
+              "name": "01.现代版枪下留人【耗时整理‖cunlove.cn】.1080p.mp3",
+              "sim": 0
+            }
+          ]
+        },
+        "s:39:4": {
+          "stage": "epnum",
+          "rule": "R8",
+          "reason": "below-threshold",
+          "threshold": 0.6,
+          "margin": 0.15,
+          "candidates": [
+            {
+              "name": "04.骗局【耗时整理‖cunlove.cn】.mp3",
+              "sim": 0
+            }
+          ]
+        }
+      },
+      "fileAsks": {
+        "01.现代版枪下留人.1080p.mp3": {
+          "stage": "conflict",
+          "rule": "R13",
+          "reason": "dual-episode-conflict",
+          "threshold": 0.3,
+          "margin": 0,
+          "candidates": [
+            {
+              "name": "s:39:1",
+              "sim": 0
+            },
+            {
+              "name": "s:39:4",
+              "sim": 1
+            }
+          ]
+        },
+        "01.现代版枪下留人【耗时整理‖cunlove.cn】.1080p.mp3": {
+          "stage": "conflict",
+          "rule": "R13",
+          "reason": "dual-episode-conflict",
+          "threshold": 0.3,
+          "margin": 0,
+          "candidates": [
+            {
+              "name": "s:39:1",
+              "sim": 0
+            },
+            {
+              "name": "s:39:4",
+              "sim": 1
+            }
+          ]
+        }
+      },
+      "residual": [
+        "04.骗局【耗时整理‖cunlove.cn】.mp3"
+      ],
+      "missing": {
+        "s:39:2": 2,
+        "s:39:5": 5
+      },
+      "trails": {
+        "01.现代版枪下留人.1080p.mp3": [
+          "asked by R13",
+          "s:39:1 vetoed/duration-contradict R11",
+          "s:39:4 vetoed/no-margin R9"
+        ],
+        "01.现代版枪下留人【耗时整理‖cunlove.cn】.1080p.mp3": [
+          "asked by R13",
+          "s:39:1 vetoed/duration-contradict R11",
+          "s:39:4 vetoed/no-margin R9"
+        ],
+        "03.太极两仪生四象.2160p.mp3": [
+          "copy by R2",
+          "s:39:3 won R2"
+        ],
+        "03.太极两仪生四象.mp3": [
+          "claimed by R2",
+          "s:39:3 won R2"
+        ],
+        "04.骗局【耗时整理‖cunlove.cn】.mp3": [
+          "residual",
+          "s:39:4 vetoed/no-margin R9"
+        ]
+      }
+    },
+    "random#4": {
+      "assignments": {
+        "s:4:1": {
+          "file": "01.清华大学朱令案.1080p.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [],
+          "rule": "R2"
+        },
+        "s:4:2": {
+          "file": "02.骗局【耗时整理‖cunlove.cn】.1080p.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [],
+          "rule": "R2"
+        },
+        "s:4:4": {
+          "file": "05.凑活聊道德绑架.1080p.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [],
+          "rule": "R2"
+        },
+        "s:4:5": {
+          "file": "05.三十探悬疑案象.2160p.mp3",
+          "confidence": 0.833333,
+          "status": "auto",
+          "losers": [],
+          "rule": "R8"
+        }
+      },
+      "leftAsks": {
+        "s:4:3": {
+          "stage": "epnum",
+          "rule": "R11",
+          "reason": "duration-contradiction",
+          "threshold": 0.6,
+          "margin": 0.15,
+          "candidates": [
+            {
+              "name": "03.风水鱼要在棺材里【耗时整理‖cunlove.cn】.2160p.mp3",
+              "sim": 0
+            }
+          ]
+        }
+      },
+      "fileAsks": {},
+      "residual": [
+        "03.风水鱼要在棺材里【耗时整理‖cunlove.cn】.2160p.mp3"
+      ],
+      "missing": {},
+      "trails": {
+        "01.清华大学朱令案.1080p.mp3": [
+          "claimed by R2",
+          "s:4:1 won R2"
+        ],
+        "02.骗局【耗时整理‖cunlove.cn】.1080p.mp3": [
+          "claimed by R2",
+          "s:4:2 won R2"
+        ],
+        "03.风水鱼要在棺材里【耗时整理‖cunlove.cn】.2160p.mp3": [
+          "residual",
+          "s:4:3 vetoed/duration-contradict R11"
+        ],
+        "05.三十探悬疑案象.2160p.mp3": [
+          "claimed by R8",
+          "s:4:5 won R8"
+        ],
+        "05.凑活聊道德绑架.1080p.mp3": [
+          "claimed by R2",
+          "s:4:4 won R2",
+          "s:4:5 vetoed/left-claimed"
+        ]
+      }
+    },
+    "random#40": {
+      "assignments": {
+        "s:40:1": {
+          "file": "01.身边那些灵异事.1080p.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [],
+          "rule": "R2"
+        },
+        "s:40:2": {
+          "file": "03.太极两仪生四象【耗时整理‖cunlove.cn】.720p.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [],
+          "rule": "R9"
+        },
+        "s:40:3": {
+          "file": "03.现代版枪下留人【公众号：CunWorkNotes】.2160p.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [],
+          "rule": "R9"
+        },
+        "s:40:4": {
+          "file": "05.十神的生克关系.2160p.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [],
+          "rule": "R9"
+        }
+      },
+      "leftAsks": {},
+      "fileAsks": {},
+      "residual": [],
+      "missing": {},
+      "trails": {
+        "01.身边那些灵异事.1080p.mp3": [
+          "claimed by R2",
+          "s:40:1 won R2"
+        ],
+        "03.太极两仪生四象【耗时整理‖cunlove.cn】.720p.mp3": [
+          "claimed by R9",
+          "s:40:2 won R9",
+          "s:40:3 vetoed/below-threshold R8"
+        ],
+        "03.现代版枪下留人【公众号：CunWorkNotes】.2160p.mp3": [
+          "claimed by R9",
+          "s:40:3 won R9"
+        ],
+        "05.十神的生克关系.2160p.mp3": [
+          "claimed by R9",
+          "s:40:4 won R9"
+        ]
+      }
+    },
+    "random#41": {
+      "assignments": {
+        "s:41:3": {
+          "file": "04.十神的生克关系【耗时整理‖cunlove.cn】.1080p.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [],
+          "rule": "R9"
+        },
+        "s:41:4": {
+          "file": "01.清华大学朱令案.1080p.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [],
+          "rule": "R9"
+        }
+      },
+      "leftAsks": {
+        "s:41:1": {
+          "stage": "duration",
+          "rule": "R3",
+          "reason": "name-floor",
+          "threshold": 0.6,
+          "margin": 0.15,
+          "candidates": [
+            {
+              "name": "01.清华大学朱令案.1080p.mp3",
+              "sim": 0
+            }
+          ]
+        },
+        "s:41:2": {
+          "stage": "duration",
+          "rule": "R3",
+          "reason": "name-floor",
+          "threshold": 0.6,
+          "margin": 0.15,
+          "candidates": [
+            {
+              "name": "01.清华大学朱令案.1080p.mp3",
+              "sim": 0
+            }
+          ]
+        }
+      },
+      "fileAsks": {},
+      "residual": [
+        "04.凑活聊道德绑架【公众号：CunWorkNotes】.2160p.mp3",
+        "zz.十神的生克关系.mp3"
+      ],
+      "missing": {
+        "s:41:2": 2
+      },
+      "trails": {
+        "01.清华大学朱令案.1080p.mp3": [
+          "claimed by R9",
+          "s:41:1 vetoed/below-threshold R9",
+          "s:41:2 vetoed/below-threshold R9",
+          "s:41:4 won R9"
+        ],
+        "04.凑活聊道德绑架【公众号：CunWorkNotes】.2160p.mp3": [
+          "residual",
+          "s:41:4 vetoed/left-claimed"
+        ],
+        "04.十神的生克关系【耗时整理‖cunlove.cn】.1080p.mp3": [
+          "claimed by R9",
+          "s:41:3 won R9",
+          "s:41:4 vetoed/below-threshold R8"
+        ],
+        "zz.十神的生克关系.mp3": [
+          "residual",
+          "s:41:3 vetoed/left-claimed"
+        ]
+      }
+    },
+    "random#42": {
+      "assignments": {
+        "s:42:1": {
+          "file": "01.现代版枪下留象【公众号：CunWorkNotes】.mp3",
+          "confidence": 0.833333,
+          "status": "auto",
+          "losers": [],
+          "rule": "R8"
+        },
+        "s:42:2": {
+          "file": "02.十神的生克关系【公众号：CunWorkNotes】.720p.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [
+            "02.十神的生克关系.720p.mp3"
+          ],
+          "rule": "R4"
+        },
+        "s:42:4": {
+          "file": "05.骗局【耗时整理‖cunlove.cn】.1080p.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [],
+          "rule": "R2"
+        },
+        "s:42:5": {
+          "file": "05.财克印印克食伤【公众号：CunWorkNotes】.1080p.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [],
+          "rule": "R2"
+        }
+      },
+      "leftAsks": {
+        "s:42:3": {
+          "stage": "epnum",
+          "rule": "R8",
+          "reason": "below-threshold",
+          "threshold": 0.6,
+          "margin": 0.15,
+          "candidates": [
+            {
+              "name": "03.凑活聊道德绑架【耗时整理‖cunlove.cn】.2160p.mp3",
+              "sim": 0
+            }
+          ]
+        }
+      },
+      "fileAsks": {},
+      "residual": [
+        "03.凑活聊道德绑架.720p.mp3",
+        "03.凑活聊道德绑架【耗时整理‖cunlove.cn】.2160p.mp3",
+        "zz.凑活聊道德绑架.mp3"
+      ],
+      "missing": {},
+      "trails": {
+        "01.现代版枪下留象【公众号：CunWorkNotes】.mp3": [
+          "claimed by R8",
+          "s:42:1 won R8"
+        ],
+        "02.十神的生克关系.720p.mp3": [
+          "copy by R4",
+          "s:42:2 won R4",
+          "s:42:4 vetoed/left-claimed",
+          "s:42:5 vetoed/left-claimed"
+        ],
+        "02.十神的生克关系【公众号：CunWorkNotes】.720p.mp3": [
+          "claimed by R4",
+          "s:42:2 won R4",
+          "s:42:4 vetoed/left-claimed",
+          "s:42:5 vetoed/left-claimed"
+        ],
+        "03.凑活聊道德绑架.720p.mp3": [
+          "residual",
+          "s:42:3 vetoed/below-threshold R9"
+        ],
+        "03.凑活聊道德绑架【耗时整理‖cunlove.cn】.2160p.mp3": [
+          "residual",
+          "s:42:3 vetoed/below-threshold R9"
+        ],
+        "05.财克印印克食伤【公众号：CunWorkNotes】.1080p.mp3": [
+          "claimed by R2",
+          "s:42:2 vetoed/zero-competition-loser R4",
+          "s:42:4 vetoed/zero-competition-loser R4",
+          "s:42:5 won R2"
+        ],
+        "05.骗局【耗时整理‖cunlove.cn】.1080p.mp3": [
+          "claimed by R2",
+          "s:42:2 vetoed/zero-competition-loser R4",
+          "s:42:4 won R2",
+          "s:42:5 vetoed/left-claimed"
+        ],
+        "zz.凑活聊道德绑架.mp3": [
+          "residual"
+        ]
+      }
+    },
+    "random#43": {
+      "assignments": {
+        "s:43:1": {
+          "file": "01.十神的生克关系.2160p.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [],
+          "rule": "R2"
+        },
+        "s:43:2": {
+          "file": "02.清华大学朱令案.720p.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [],
+          "rule": "R2"
+        }
+      },
+      "leftAsks": {},
+      "fileAsks": {},
+      "residual": [],
+      "missing": {},
+      "trails": {
+        "01.十神的生克关系.2160p.mp3": [
+          "claimed by R2",
+          "s:43:1 won R2"
+        ],
+        "02.清华大学朱令案.720p.mp3": [
+          "claimed by R2",
+          "s:43:2 won R2"
+        ]
+      }
+    },
+    "random#44": {
+      "assignments": {
+        "s:44:2": {
+          "file": "02.骗局.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [],
+          "rule": "R2"
+        },
+        "s:44:3": {
+          "file": "04.财克印印克食伤【耗时整理‖cunlove.cn】.2160p.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [],
+          "rule": "R9"
+        }
+      },
+      "leftAsks": {
+        "s:44:1": {
+          "stage": "epnum",
+          "rule": "R11",
+          "reason": "duration-contradiction",
+          "threshold": 0.6,
+          "margin": 0.15,
+          "candidates": [
+            {
+              "name": "01.清华大学朱令案.2160p.mp3",
+              "sim": 1
+            }
+          ]
+        }
+      },
+      "fileAsks": {},
+      "residual": [
+        "01.清华大学朱令案.2160p.mp3",
+        "01.清华大学朱令案【公众号：CunWorkNotes】.720p.mp3"
+      ],
+      "missing": {},
+      "trails": {
+        "01.清华大学朱令案.2160p.mp3": [
+          "residual",
+          "s:44:1 vetoed/duration-contradict R11"
+        ],
+        "01.清华大学朱令案【公众号：CunWorkNotes】.720p.mp3": [
+          "residual",
+          "s:44:1 vetoed/duration-contradict R11"
+        ],
+        "02.骗局.mp3": [
+          "claimed by R2",
+          "s:44:2 won R2"
+        ],
+        "04.财克印印克食伤【耗时整理‖cunlove.cn】.2160p.mp3": [
+          "claimed by R9",
+          "s:44:3 won R9"
+        ]
+      }
+    },
+    "random#45": {
+      "assignments": {
+        "s:45:2": {
+          "file": "02.财克印印克食伤【公众号：CunWorkNotes】.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [],
+          "rule": "R8"
+        }
+      },
+      "leftAsks": {},
+      "fileAsks": {},
+      "residual": [
+        "zz.身边那些灵异事.mp3"
+      ],
+      "missing": {
+        "s:45:1": 1
+      },
+      "trails": {
+        "02.财克印印克食伤【公众号：CunWorkNotes】.mp3": [
+          "claimed by R8",
+          "s:45:2 won R8"
+        ],
+        "zz.身边那些灵异事.mp3": [
+          "residual"
+        ]
+      }
+    },
+    "random#46": {
+      "assignments": {
+        "s:46:1": {
+          "file": "01.财克印印克食伤.2160p.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [],
+          "rule": "R2"
+        },
+        "s:46:2": {
+          "file": "02.凑活聊道德绑架.2160p.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [],
+          "rule": "R2"
+        },
+        "s:46:3": {
+          "file": "03.三十探悬疑案件【耗时整理‖cunlove.cn】.1080p.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [],
+          "rule": "R2"
+        },
+        "s:46:4": {
+          "file": "05.风水鱼要在棺材里【耗时整理‖cunlove.cn】.2160p.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [],
+          "rule": "R9"
+        },
+        "s:46:5": {
+          "file": "05.身边那些灵异事.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [],
+          "rule": "R2"
+        }
+      },
+      "leftAsks": {},
+      "fileAsks": {},
+      "residual": [],
+      "missing": {
+        "s:46:6": 6
+      },
+      "trails": {
+        "01.财克印印克食伤.2160p.mp3": [
+          "claimed by R2",
+          "s:46:1 won R2"
+        ],
+        "02.凑活聊道德绑架.2160p.mp3": [
+          "claimed by R2",
+          "s:46:2 won R2"
+        ],
+        "03.三十探悬疑案件【耗时整理‖cunlove.cn】.1080p.mp3": [
+          "claimed by R2",
+          "s:46:3 won R2"
+        ],
+        "05.身边那些灵异事.mp3": [
+          "claimed by R2",
+          "s:46:5 won R2"
+        ],
+        "05.风水鱼要在棺材里【耗时整理‖cunlove.cn】.2160p.mp3": [
+          "claimed by R9",
+          "s:46:4 won R9",
+          "s:46:5 vetoed/left-claimed"
+        ]
+      }
+    },
+    "random#47": {
+      "assignments": {
+        "s:47:1": {
+          "file": "01.凑活聊道德绑架.1080p.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [],
+          "rule": "R8"
+        },
+        "s:47:3": {
+          "file": "04.风水鱼要在棺材里【公众号：CunWorkNotes】.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [],
+          "rule": "R2"
+        },
+        "s:47:4": {
+          "file": "04.身边那些灵异事.720p.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [],
+          "rule": "R8"
+        }
+      },
+      "leftAsks": {
+        "s:47:2": {
+          "stage": "duration",
+          "rule": "R3",
+          "reason": "name-floor",
+          "threshold": 0.6,
+          "margin": 0.15,
+          "candidates": [
+            {
+              "name": "02.太极两仪生四象【公众号：CunWorkNotes】.1080p.mp3",
+              "sim": 0
+            }
+          ]
+        }
+      },
+      "fileAsks": {},
+      "residual": [
+        "02.太极两仪生四象【公众号：CunWorkNotes】.1080p.mp3"
+      ],
+      "missing": {},
+      "trails": {
+        "01.凑活聊道德绑架.1080p.mp3": [
+          "claimed by R8",
+          "s:47:1 won R8"
+        ],
+        "02.太极两仪生四象【公众号：CunWorkNotes】.1080p.mp3": [
+          "residual",
+          "s:47:2 vetoed/below-threshold R9"
+        ],
+        "04.身边那些灵异事.720p.mp3": [
+          "claimed by R8",
+          "s:47:4 won R8"
+        ],
+        "04.风水鱼要在棺材里【公众号：CunWorkNotes】.mp3": [
+          "claimed by R2",
+          "s:47:3 won R2",
+          "s:47:4 vetoed/duration-contradict"
+        ]
+      }
+    },
+    "random#48": {
+      "assignments": {
+        "s:48:2": {
+          "file": "02.风水鱼要在棺材里.720p.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [
+            "02.风水鱼要在棺材里【耗时整理‖cunlove.cn】.mp3"
+          ],
+          "rule": "R2"
+        },
+        "s:48:3": {
+          "file": "03.身边那些灵异事.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [],
+          "rule": "R8"
+        },
+        "s:48:5": {
+          "file": "05.现代版枪下留人【公众号：CunWorkNotes】.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [],
+          "rule": "R2"
+        }
+      },
+      "leftAsks": {
+        "s:48:4": {
+          "stage": "epnum",
+          "rule": "R11",
+          "reason": "duration-contradiction",
+          "threshold": 0.6,
+          "margin": 0.15,
+          "candidates": [
+            {
+              "name": "04.太极两仪生四象【公众号：CunWorkNotes】.1080p.mp3",
+              "sim": 1
+            }
+          ]
+        }
+      },
+      "fileAsks": {},
+      "residual": [
+        "04.太极两仪生四象【公众号：CunWorkNotes】.1080p.mp3",
+        "cover.jpg"
+      ],
+      "missing": {
+        "s:48:1": 1
+      },
+      "trails": {
+        "02.风水鱼要在棺材里.720p.mp3": [
+          "claimed by R2",
+          "s:48:2 won R2"
+        ],
+        "02.风水鱼要在棺材里【耗时整理‖cunlove.cn】.mp3": [
+          "copy by R2",
+          "s:48:2 won R2"
+        ],
+        "03.身边那些灵异事.mp3": [
+          "claimed by R8",
+          "s:48:3 won R8"
+        ],
+        "04.太极两仪生四象【公众号：CunWorkNotes】.1080p.mp3": [
+          "residual",
+          "s:48:4 vetoed/duration-contradict R11"
+        ],
+        "05.现代版枪下留人【公众号：CunWorkNotes】.mp3": [
+          "claimed by R2",
+          "s:48:5 won R2"
+        ],
+        "cover.jpg": [
+          "residual"
+        ]
+      }
+    },
+    "random#49": {
+      "assignments": {
+        "s:49:1": {
+          "file": "02.风水鱼要在棺材里【公众号：CunWorkNotes】.720p.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [],
+          "rule": "R2"
+        },
+        "s:49:2": {
+          "file": "02.身边那些灵异事.1080p.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [],
+          "rule": "R8"
+        },
+        "s:49:5": {
+          "file": "05.十神的生克关象【耗时整理‖cunlove.cn】.mp3",
+          "confidence": 0.833333,
+          "status": "auto",
+          "losers": [],
+          "rule": "R8"
+        }
+      },
+      "leftAsks": {
+        "s:49:3": {
+          "stage": "epnum",
+          "rule": "R8",
+          "reason": "below-threshold",
+          "threshold": 0.6,
+          "margin": 0.15,
+          "candidates": [
+            {
+              "name": "03.清华大学朱令案【公众号：CunWorkNotes】.720p.mp3",
+              "sim": 0
+            }
+          ]
+        }
+      },
+      "fileAsks": {},
+      "residual": [
+        "03.清华大学朱令案【公众号：CunWorkNotes】.720p.mp3",
+        "zz.三十探悬疑案件.mp3"
+      ],
+      "missing": {
+        "s:49:4": 4
+      },
+      "trails": {
+        "02.身边那些灵异事.1080p.mp3": [
+          "claimed by R8",
+          "s:49:2 won R8"
+        ],
+        "02.风水鱼要在棺材里【公众号：CunWorkNotes】.720p.mp3": [
+          "claimed by R2",
+          "s:49:1 won R2",
+          "s:49:2 vetoed/left-claimed"
+        ],
+        "03.清华大学朱令案【公众号：CunWorkNotes】.720p.mp3": [
+          "residual",
+          "s:49:3 vetoed/below-threshold R9"
+        ],
+        "05.十神的生克关象【耗时整理‖cunlove.cn】.mp3": [
+          "claimed by R8",
+          "s:49:5 won R8"
+        ],
+        "zz.三十探悬疑案件.mp3": [
+          "residual"
+        ]
+      }
+    },
+    "random#5": {
+      "assignments": {},
+      "leftAsks": {
+        "s:5:2": {
+          "stage": "title",
+          "rule": "R14",
+          "reason": "duration-contradiction",
+          "threshold": 0.85,
+          "margin": 0.15,
+          "candidates": [
+            {
+              "name": "03.财克印印克食伤.mp3",
+              "sim": 1
+            }
+          ]
+        },
+        "s:5:3": {
+          "stage": "epnum",
+          "rule": "R11",
+          "reason": "duration-contradiction",
+          "threshold": 0.6,
+          "margin": 0.15,
+          "candidates": [
+            {
+              "name": "03.凑活聊道德绑架【公众号：CunWorkNotes】.mp3",
+              "sim": 1
+            },
+            {
+              "name": "03.财克印印克食伤.mp3",
+              "sim": 0
+            }
+          ]
+        }
+      },
+      "fileAsks": {
+        "03.财克印印克食伤.mp3": {
+          "stage": "conflict",
+          "rule": "R13",
+          "reason": "dual-episode-conflict",
+          "threshold": 0.3,
+          "margin": 0,
+          "candidates": [
+            {
+              "name": "s:5:2",
+              "sim": 1
+            },
+            {
+              "name": "s:5:3",
+              "sim": 0
+            }
+          ]
+        }
+      },
+      "residual": [
+        "03.凑活聊道德绑架【公众号：CunWorkNotes】.mp3"
+      ],
+      "missing": {
+        "s:5:1": 1,
+        "s:5:2": 2
+      },
+      "trails": {
+        "03.凑活聊道德绑架【公众号：CunWorkNotes】.mp3": [
+          "residual",
+          "s:5:3 vetoed/duration-contradict R11"
+        ],
+        "03.财克印印克食伤.mp3": [
+          "asked by R13",
+          "s:5:2 vetoed/duration-contradict R11",
+          "s:5:3 vetoed/duration-contradict R11"
+        ]
+      }
+    },
+    "random#6": {
+      "assignments": {
+        "s:6:1": {
+          "file": "01.财克印印克食伤【耗时整理‖cunlove.cn】.1080p.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [],
+          "rule": "R8"
+        },
+        "s:6:2": {
+          "file": "02.凑活聊道德绑架.2160p.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [],
+          "rule": "R8"
+        }
+      },
+      "leftAsks": {},
+      "fileAsks": {},
+      "residual": [
+        "zz.骗局.mp3"
+      ],
+      "missing": {},
+      "trails": {
+        "01.财克印印克食伤【耗时整理‖cunlove.cn】.1080p.mp3": [
+          "claimed by R8",
+          "s:6:1 won R8"
+        ],
+        "02.凑活聊道德绑架.2160p.mp3": [
+          "claimed by R8",
+          "s:6:2 won R8"
+        ],
+        "zz.骗局.mp3": [
+          "residual"
+        ]
+      }
+    },
+    "random#7": {
+      "assignments": {
+        "s:7:2": {
+          "file": "02.三十探悬疑案件【公众号：CunWorkNotes】.1080p.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [],
+          "rule": "R8"
+        },
+        "s:7:5": {
+          "file": "05.太极两仪生四象【耗时整理‖cunlove.cn】.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [
+            "05.太极两仪生四象.720p.mp3"
+          ],
+          "rule": "R2"
+        }
+      },
+      "leftAsks": {
+        "s:7:1": {
+          "stage": "duration",
+          "rule": "R3",
+          "reason": "name-floor",
+          "threshold": 0.6,
+          "margin": 0.15,
+          "candidates": [
+            {
+              "name": "01.身边那些灵异事.1080p.mp3",
+              "sim": 0
+            }
+          ]
+        }
+      },
+      "fileAsks": {
+        "01.身边那些灵异事.1080p.mp3": {
+          "stage": "conflict",
+          "rule": "R13",
+          "reason": "dual-episode-conflict",
+          "threshold": 0.3,
+          "margin": 0,
+          "candidates": [
+            {
+              "name": "s:7:1",
+              "sim": 0
+            },
+            {
+              "name": "s:7:4",
+              "sim": 1
+            }
+          ]
+        },
+        "01.身边那些灵异事.2160p.mp3": {
+          "stage": "conflict",
+          "rule": "R13",
+          "reason": "dual-episode-conflict",
+          "threshold": 0.3,
+          "margin": 0,
+          "candidates": [
+            {
+              "name": "s:7:1",
+              "sim": 0
+            },
+            {
+              "name": "s:7:4",
+              "sim": 1
+            }
+          ]
+        }
+      },
+      "residual": [
+        "cover.jpg"
+      ],
+      "missing": {
+        "s:7:3": 3,
+        "s:7:4": 4
+      },
+      "trails": {
+        "01.身边那些灵异事.1080p.mp3": [
+          "asked by R13",
+          "s:7:1 vetoed/below-threshold R9",
+          "s:7:4 vetoed/duration-contradict R11"
+        ],
+        "01.身边那些灵异事.2160p.mp3": [
+          "asked by R13",
+          "s:7:1 vetoed/below-threshold R9",
+          "s:7:4 vetoed/duration-contradict R11"
+        ],
+        "02.三十探悬疑案件【公众号：CunWorkNotes】.1080p.mp3": [
+          "claimed by R8",
+          "s:7:2 won R8"
+        ],
+        "05.太极两仪生四象.720p.mp3": [
+          "copy by R2",
+          "s:7:5 won R2"
+        ],
+        "05.太极两仪生四象【耗时整理‖cunlove.cn】.mp3": [
+          "claimed by R2",
+          "s:7:5 won R2"
+        ],
+        "cover.jpg": [
+          "residual"
+        ]
+      }
+    },
+    "random#8": {
+      "assignments": {
+        "s:8:6": {
+          "file": "07.十神的生克关系【耗时整理‖cunlove.cn】.1080p.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [
+            "07.十神的生克关系【公众号：CunWorkNotes】.720p.mp3"
+          ],
+          "rule": "R2"
+        }
+      },
+      "leftAsks": {
+        "s:8:1": {
+          "stage": "epnum",
+          "rule": "R11",
+          "reason": "duration-contradiction",
+          "threshold": 0.6,
+          "margin": 0.15,
+          "candidates": [
+            {
+              "name": "01.三十探悬疑案件【公众号：CunWorkNotes】.mp3",
+              "sim": 1
+            }
+          ]
+        },
+        "s:8:3": {
+          "stage": "duration",
+          "rule": "R3",
+          "reason": "name-floor",
+          "threshold": 0.6,
+          "margin": 0.15,
+          "candidates": [
+            {
+              "name": "03.十神的生克关系【耗时整理‖cunlove.cn】.mp3",
+              "sim": 0
+            }
+          ]
+        },
+        "s:8:5": {
+          "stage": "duration",
+          "rule": "R3",
+          "reason": "name-floor",
+          "threshold": 0.6,
+          "margin": 0.15,
+          "candidates": [
+            {
+              "name": "05.骗局【耗时整理‖cunlove.cn】.mp3",
+              "sim": 0
+            }
+          ]
+        }
+      },
+      "fileAsks": {
+        "03.十神的生克关系【耗时整理‖cunlove.cn】.mp3": {
+          "stage": "conflict",
+          "rule": "R13",
+          "reason": "dual-episode-conflict",
+          "threshold": 0.3,
+          "margin": 0,
+          "candidates": [
+            {
+              "name": "s:8:3",
+              "sim": 0
+            },
+            {
+              "name": "s:8:6",
+              "sim": 1
+            }
+          ]
+        }
+      },
+      "residual": [
+        "01.三十探悬疑案件【公众号：CunWorkNotes】.mp3",
+        "05.骗局.720p.mp3",
+        "05.骗局【耗时整理‖cunlove.cn】.mp3"
+      ],
+      "missing": {
+        "s:8:2": 2,
+        "s:8:4": 4
+      },
+      "trails": {
+        "01.三十探悬疑案件【公众号：CunWorkNotes】.mp3": [
+          "residual",
+          "s:8:1 vetoed/duration-contradict R11"
+        ],
+        "03.十神的生克关系【耗时整理‖cunlove.cn】.mp3": [
+          "asked by R13",
+          "s:8:3 vetoed/below-threshold R9",
+          "s:8:6 vetoed/left-claimed"
+        ],
+        "05.骗局.720p.mp3": [
+          "residual",
+          "s:8:5 vetoed/below-threshold R9"
+        ],
+        "05.骗局【耗时整理‖cunlove.cn】.mp3": [
+          "residual",
+          "s:8:5 vetoed/below-threshold R9"
+        ],
+        "07.十神的生克关系【公众号：CunWorkNotes】.720p.mp3": [
+          "copy by R2",
+          "s:8:6 won R2"
+        ],
+        "07.十神的生克关系【耗时整理‖cunlove.cn】.1080p.mp3": [
+          "claimed by R2",
+          "s:8:6 won R2"
+        ]
+      }
+    },
+    "random#9": {
+      "assignments": {
+        "s:9:1": {
+          "file": "01.风水鱼要在棺材里【耗时整理‖cunlove.cn】.1080p.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [],
+          "rule": "R2"
+        },
+        "s:9:3": {
+          "file": "03.太极两仪生四象【公众号：CunWorkNotes】.1080p.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [],
+          "rule": "R8"
+        },
+        "s:9:4": {
+          "file": "04.现代版枪下留人【耗时整理‖cunlove.cn】.720p.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [],
+          "rule": "R8"
+        }
+      },
+      "leftAsks": {},
+      "fileAsks": {},
+      "residual": [
+        "zz.凑活聊道德绑架.mp3"
+      ],
+      "missing": {
+        "s:9:2": 2,
+        "s:9:5": 5
+      },
+      "trails": {
+        "01.风水鱼要在棺材里【耗时整理‖cunlove.cn】.1080p.mp3": [
+          "claimed by R2",
+          "s:9:1 won R2",
+          "s:9:2 vetoed/file-claimed"
+        ],
+        "03.太极两仪生四象【公众号：CunWorkNotes】.1080p.mp3": [
+          "claimed by R8",
+          "s:9:3 won R8"
+        ],
+        "04.现代版枪下留人【耗时整理‖cunlove.cn】.720p.mp3": [
+          "claimed by R8",
+          "s:9:4 won R8"
+        ],
+        "zz.凑活聊道德绑架.mp3": [
+          "residual"
+        ]
+      }
+    },
+    "season-episode 对非 tmdb 左键无信号": {
+      "assignments": {
+        "lizhi:12345": {
+          "file": "020.再谈身边灵异事.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [],
+          "rule": "R8"
+        }
+      },
+      "leftAsks": {},
+      "fileAsks": {},
+      "residual": [],
+      "missing": {},
+      "trails": {
+        "020.再谈身边灵异事.mp3": [
+          "claimed by R8",
+          "lizhi:12345 won R8"
+        ]
+      }
+    },
+    "season-episode：12 集双版压制（真实活体形状）": {
+      "assignments": {
+        "tmdb:296286:S01E01": {
+          "file": "Smoking.Behind.the.Supermarket.with.You.2026.S01E01.Mini-Episode.1.1080p.CR.WEB-DL.AAC2.0.H.264-Pluto@HiveWeb.mkv",
+          "confidence": 0,
+          "status": "auto",
+          "losers": [
+            "躲在超市后门抽烟的两人.2026.S01E01.2160p.CR.WEBRip.HEVC.10bit.AAC.ASSx2.mkv"
+          ],
+          "rule": "R6"
+        },
+        "tmdb:296286:S01E02": {
+          "file": "Smoking.Behind.the.Supermarket.with.You.2026.S01E02.Mini-Episode.2.1080p.CR.WEB-DL.AAC2.0.H.264-Pluto@HiveWeb.mkv",
+          "confidence": 0,
+          "status": "auto",
+          "losers": [
+            "躲在超市后门抽烟的两人.2026.S01E02.2160p.CR.WEBRip.HEVC.10bit.AAC.ASSx2.mkv"
+          ],
+          "rule": "R6"
+        },
+        "tmdb:296286:S01E03": {
+          "file": "Smoking.Behind.the.Supermarket.with.You.2026.S01E03.Mini-Episode.3.1080p.CR.WEB-DL.AAC2.0.H.264-Pluto@HiveWeb.mkv",
+          "confidence": 0,
+          "status": "auto",
+          "losers": [
+            "躲在超市后门抽烟的两人.2026.S01E03.2160p.CR.WEBRip.HEVC.10bit.AAC.ASSx2.mkv"
+          ],
+          "rule": "R6"
+        },
+        "tmdb:296286:S01E04": {
+          "file": "Smoking.Behind.the.Supermarket.with.You.2026.S01E04.Mini-Episode.4.1080p.CR.WEB-DL.AAC2.0.H.264-Pluto@HiveWeb.mkv",
+          "confidence": 0,
+          "status": "auto",
+          "losers": [
+            "躲在超市后门抽烟的两人.2026.S01E04.2160p.CR.WEBRip.HEVC.10bit.AAC.ASSx2.mkv"
+          ],
+          "rule": "R6"
+        },
+        "tmdb:296286:S01E05": {
+          "file": "Smoking.Behind.the.Supermarket.with.You.2026.S01E05.Mini-Episode.5.1080p.CR.WEB-DL.AAC2.0.H.264-Pluto@HiveWeb.mkv",
+          "confidence": 0,
+          "status": "auto",
+          "losers": [
+            "躲在超市后门抽烟的两人.2026.S01E05.2160p.CR.WEBRip.HEVC.10bit.AAC.ASSx2.mkv"
+          ],
+          "rule": "R6"
+        },
+        "tmdb:296286:S01E06": {
+          "file": "Smoking.Behind.the.Supermarket.with.You.2026.S01E06.Mini-Episode.6.1080p.CR.WEB-DL.AAC2.0.H.264-Pluto@HiveWeb.mkv",
+          "confidence": 0,
+          "status": "auto",
+          "losers": [
+            "躲在超市后门抽烟的两人.2026.S01E06.2160p.CR.WEBRip.HEVC.10bit.AAC.ASSx2.mkv"
+          ],
+          "rule": "R6"
+        },
+        "tmdb:296286:S01E07": {
+          "file": "Smoking.Behind.the.Supermarket.with.You.2026.S01E07.Mini-Episode.7.1080p.CR.WEB-DL.AAC2.0.H.264-Pluto@HiveWeb.mkv",
+          "confidence": 0,
+          "status": "auto",
+          "losers": [
+            "躲在超市后门抽烟的两人.2026.S01E07.2160p.CR.WEBRip.HEVC.10bit.AAC.ASSx2.mkv"
+          ],
+          "rule": "R6"
+        },
+        "tmdb:296286:S01E08": {
+          "file": "Smoking.Behind.the.Supermarket.with.You.2026.S01E08.Mini-Episode.8.1080p.CR.WEB-DL.AAC2.0.H.264-Pluto@HiveWeb.mkv",
+          "confidence": 0,
+          "status": "auto",
+          "losers": [
+            "躲在超市后门抽烟的两人.2026.S01E08.2160p.CR.WEBRip.HEVC.10bit.AAC.ASSx2.mkv"
+          ],
+          "rule": "R6"
+        },
+        "tmdb:296286:S01E09": {
+          "file": "Smoking.Behind.the.Supermarket.with.You.2026.S01E09.Mini-Episode.9.1080p.CR.WEB-DL.AAC2.0.H.264-Pluto@HiveWeb.mkv",
+          "confidence": 0,
+          "status": "auto",
+          "losers": [
+            "躲在超市后门抽烟的两人.2026.S01E09.2160p.CR.WEBRip.HEVC.10bit.AAC.ASSx2.mkv"
+          ],
+          "rule": "R6"
+        },
+        "tmdb:296286:S01E10": {
+          "file": "Smoking.Behind.the.Supermarket.with.You.2026.S01E10.Mini-Episode.10.1080p.CR.WEB-DL.AAC2.0.H.264-Pluto@HiveWeb.mkv",
+          "confidence": 0,
+          "status": "auto",
+          "losers": [
+            "躲在超市后门抽烟的两人.2026.S01E10.2160p.CR.WEBRip.HEVC.10bit.AAC.ASSx2.mkv"
+          ],
+          "rule": "R6"
+        },
+        "tmdb:296286:S01E11": {
+          "file": "Smoking.Behind.the.Supermarket.with.You.2026.S01E11.Mini-Episode.11.1080p.CR.WEB-DL.AAC2.0.H.264-Pluto@HiveWeb.mkv",
+          "confidence": 0,
+          "status": "auto",
+          "losers": [
+            "躲在超市后门抽烟的两人.2026.S01E11.2160p.CR.WEBRip.HEVC.10bit.AAC.ASSx2.mkv"
+          ],
+          "rule": "R6"
+        },
+        "tmdb:296286:S01E12": {
+          "file": "Smoking.Behind.the.Supermarket.with.You.2026.S01E12.Mini-Episode.12.1080p.CR.WEB-DL.AAC2.0.H.264-Pluto@HiveWeb.mkv",
+          "confidence": 0,
+          "status": "auto",
+          "losers": [
+            "躲在超市后门抽烟的两人.2026.S01E12.2160p.CR.WEBRip.HEVC.10bit.AAC.ASSx2.mkv"
+          ],
+          "rule": "R6"
+        }
+      },
+      "leftAsks": {},
+      "fileAsks": {},
+      "residual": [],
+      "missing": {},
+      "trails": {
+        "Smoking.Behind.the.Supermarket.with.You.2026.S01E01.Mini-Episode.1.1080p.CR.WEB-DL.AAC2.0.H.264-Pluto@HiveWeb.mkv": [
+          "claimed by R6",
+          "tmdb:296286:S01E01 won R6"
+        ],
+        "Smoking.Behind.the.Supermarket.with.You.2026.S01E02.Mini-Episode.2.1080p.CR.WEB-DL.AAC2.0.H.264-Pluto@HiveWeb.mkv": [
+          "claimed by R6",
+          "tmdb:296286:S01E02 won R6"
+        ],
+        "Smoking.Behind.the.Supermarket.with.You.2026.S01E03.Mini-Episode.3.1080p.CR.WEB-DL.AAC2.0.H.264-Pluto@HiveWeb.mkv": [
+          "claimed by R6",
+          "tmdb:296286:S01E03 won R6"
+        ],
+        "Smoking.Behind.the.Supermarket.with.You.2026.S01E04.Mini-Episode.4.1080p.CR.WEB-DL.AAC2.0.H.264-Pluto@HiveWeb.mkv": [
+          "claimed by R6",
+          "tmdb:296286:S01E04 won R6"
+        ],
+        "Smoking.Behind.the.Supermarket.with.You.2026.S01E05.Mini-Episode.5.1080p.CR.WEB-DL.AAC2.0.H.264-Pluto@HiveWeb.mkv": [
+          "claimed by R6",
+          "tmdb:296286:S01E05 won R6"
+        ],
+        "Smoking.Behind.the.Supermarket.with.You.2026.S01E06.Mini-Episode.6.1080p.CR.WEB-DL.AAC2.0.H.264-Pluto@HiveWeb.mkv": [
+          "claimed by R6",
+          "tmdb:296286:S01E06 won R6"
+        ],
+        "Smoking.Behind.the.Supermarket.with.You.2026.S01E07.Mini-Episode.7.1080p.CR.WEB-DL.AAC2.0.H.264-Pluto@HiveWeb.mkv": [
+          "claimed by R6",
+          "tmdb:296286:S01E07 won R6"
+        ],
+        "Smoking.Behind.the.Supermarket.with.You.2026.S01E08.Mini-Episode.8.1080p.CR.WEB-DL.AAC2.0.H.264-Pluto@HiveWeb.mkv": [
+          "claimed by R6",
+          "tmdb:296286:S01E08 won R6"
+        ],
+        "Smoking.Behind.the.Supermarket.with.You.2026.S01E09.Mini-Episode.9.1080p.CR.WEB-DL.AAC2.0.H.264-Pluto@HiveWeb.mkv": [
+          "claimed by R6",
+          "tmdb:296286:S01E09 won R6"
+        ],
+        "Smoking.Behind.the.Supermarket.with.You.2026.S01E10.Mini-Episode.10.1080p.CR.WEB-DL.AAC2.0.H.264-Pluto@HiveWeb.mkv": [
+          "claimed by R6",
+          "tmdb:296286:S01E10 won R6"
+        ],
+        "Smoking.Behind.the.Supermarket.with.You.2026.S01E11.Mini-Episode.11.1080p.CR.WEB-DL.AAC2.0.H.264-Pluto@HiveWeb.mkv": [
+          "claimed by R6",
+          "tmdb:296286:S01E11 won R6"
+        ],
+        "Smoking.Behind.the.Supermarket.with.You.2026.S01E12.Mini-Episode.12.1080p.CR.WEB-DL.AAC2.0.H.264-Pluto@HiveWeb.mkv": [
+          "claimed by R6",
+          "tmdb:296286:S01E12 won R6"
+        ],
+        "躲在超市后门抽烟的两人.2026.S01E01.2160p.CR.WEBRip.HEVC.10bit.AAC.ASSx2.mkv": [
+          "copy by R6",
+          "tmdb:296286:S01E01 won R6"
+        ],
+        "躲在超市后门抽烟的两人.2026.S01E02.2160p.CR.WEBRip.HEVC.10bit.AAC.ASSx2.mkv": [
+          "copy by R6",
+          "tmdb:296286:S01E01 vetoed/left-claimed",
+          "tmdb:296286:S01E02 won R6"
+        ],
+        "躲在超市后门抽烟的两人.2026.S01E03.2160p.CR.WEBRip.HEVC.10bit.AAC.ASSx2.mkv": [
+          "copy by R6",
+          "tmdb:296286:S01E01 vetoed/left-claimed",
+          "tmdb:296286:S01E03 won R6"
+        ],
+        "躲在超市后门抽烟的两人.2026.S01E04.2160p.CR.WEBRip.HEVC.10bit.AAC.ASSx2.mkv": [
+          "copy by R6",
+          "tmdb:296286:S01E01 vetoed/left-claimed",
+          "tmdb:296286:S01E04 won R6"
+        ],
+        "躲在超市后门抽烟的两人.2026.S01E05.2160p.CR.WEBRip.HEVC.10bit.AAC.ASSx2.mkv": [
+          "copy by R6",
+          "tmdb:296286:S01E01 vetoed/left-claimed",
+          "tmdb:296286:S01E05 won R6"
+        ],
+        "躲在超市后门抽烟的两人.2026.S01E06.2160p.CR.WEBRip.HEVC.10bit.AAC.ASSx2.mkv": [
+          "copy by R6",
+          "tmdb:296286:S01E01 vetoed/left-claimed",
+          "tmdb:296286:S01E06 won R6"
+        ],
+        "躲在超市后门抽烟的两人.2026.S01E07.2160p.CR.WEBRip.HEVC.10bit.AAC.ASSx2.mkv": [
+          "copy by R6",
+          "tmdb:296286:S01E01 vetoed/left-claimed",
+          "tmdb:296286:S01E07 won R6"
+        ],
+        "躲在超市后门抽烟的两人.2026.S01E08.2160p.CR.WEBRip.HEVC.10bit.AAC.ASSx2.mkv": [
+          "copy by R6",
+          "tmdb:296286:S01E01 vetoed/left-claimed",
+          "tmdb:296286:S01E08 won R6"
+        ],
+        "躲在超市后门抽烟的两人.2026.S01E09.2160p.CR.WEBRip.HEVC.10bit.AAC.ASSx2.mkv": [
+          "copy by R6",
+          "tmdb:296286:S01E01 vetoed/left-claimed",
+          "tmdb:296286:S01E09 won R6"
+        ],
+        "躲在超市后门抽烟的两人.2026.S01E10.2160p.CR.WEBRip.HEVC.10bit.AAC.ASSx2.mkv": [
+          "copy by R6",
+          "tmdb:296286:S01E01 vetoed/left-claimed",
+          "tmdb:296286:S01E10 won R6"
+        ],
+        "躲在超市后门抽烟的两人.2026.S01E11.2160p.CR.WEBRip.HEVC.10bit.AAC.ASSx2.mkv": [
+          "copy by R6",
+          "tmdb:296286:S01E01 vetoed/left-claimed",
+          "tmdb:296286:S01E11 won R6"
+        ],
+        "躲在超市后门抽烟的两人.2026.S01E12.2160p.CR.WEBRip.HEVC.10bit.AAC.ASSx2.mkv": [
+          "copy by R6",
+          "tmdb:296286:S01E01 vetoed/left-claimed",
+          "tmdb:296286:S01E12 won R6"
+        ]
+      }
+    },
+    "season-episode：size 判正片 + losers": {
+      "assignments": {
+        "tmdb:9:S01E01": {
+          "file": "Show.S01E01.1080p.mkv",
+          "confidence": 0,
+          "status": "auto",
+          "losers": [
+            "Show.S01E01.2160p.mkv"
+          ],
+          "rule": "R6"
+        }
+      },
+      "leftAsks": {},
+      "fileAsks": {},
+      "residual": [],
+      "missing": {},
+      "trails": {
+        "Show.S01E01.1080p.mkv": [
+          "claimed by R6",
+          "tmdb:9:S01E01 won R6"
+        ],
+        "Show.S01E01.2160p.mkv": [
+          "copy by R6",
+          "tmdb:9:S01E01 won R6"
+        ]
+      }
+    },
+    "season-episode：size 并列 → 不猜": {
+      "assignments": {},
+      "leftAsks": {
+        "tmdb:9:S01E01": {
+          "stage": "season-episode",
+          "rule": "R6",
+          "reason": "no-margin",
+          "threshold": 0,
+          "margin": 0.15,
+          "candidates": [
+            {
+              "name": "Show.S01E01.1080p.mkv",
+              "sim": 0
+            },
+            {
+              "name": "Show.S01E01.2160p.mkv",
+              "sim": 0
+            }
+          ]
+        }
+      },
+      "fileAsks": {},
+      "residual": [
+        "Show.S01E01.1080p.mkv",
+        "Show.S01E01.2160p.mkv"
+      ],
+      "missing": {},
+      "trails": {
+        "Show.S01E01.1080p.mkv": [
+          "residual",
+          "tmdb:9:S01E01 vetoed/below-threshold R9"
+        ],
+        "Show.S01E01.2160p.mkv": [
+          "residual",
+          "tmdb:9:S01E01 vetoed/below-threshold R9"
+        ]
+      }
+    },
+    "season-episode：tmdb 左键 × 场景命名": {
+      "assignments": {
+        "tmdb:278624:S01E01": {
+          "file": " 幸运女神 Lucky（2026）/Lucky.S01E01.No.Shortcuts.2160p.Apple.TV+.WEB-DL.DV.HDR.H.265-Ham.mkv",
+          "confidence": 0,
+          "status": "auto",
+          "losers": [],
+          "rule": "R6"
+        },
+        "tmdb:278624:S01E02": {
+          "file": " 幸运女神 Lucky（2026）/Lucky.S01E02.Make.em.Dance.2160p.Apple.TV+.WEB-DL.DV.HDR.H.265-Ham.mkv",
+          "confidence": 0,
+          "status": "auto",
+          "losers": [],
+          "rule": "R6"
+        }
+      },
+      "leftAsks": {},
+      "fileAsks": {},
+      "residual": [],
+      "missing": {},
+      "trails": {
+        " 幸运女神 Lucky（2026）/Lucky.S01E01.No.Shortcuts.2160p.Apple.TV+.WEB-DL.DV.HDR.H.265-Ham.mkv": [
+          "claimed by R6",
+          "tmdb:278624:S01E01 won R6"
+        ],
+        " 幸运女神 Lucky（2026）/Lucky.S01E02.Make.em.Dance.2160p.Apple.TV+.WEB-DL.DV.HDR.H.265-Ham.mkv": [
+          "claimed by R6",
+          "tmdb:278624:S01E02 won R6"
+        ]
+      }
+    },
+    "season-episode：两档位各两份重复": {
+      "assignments": {
+        "tmdb:9:S01E01": {
+          "file": "Show.S01E01.1080p.GroupA.mkv",
+          "confidence": 0,
+          "status": "auto",
+          "losers": [
+            "Show.S01E01.720p.GroupA.mkv"
+          ],
+          "rule": "R6"
+        }
+      },
+      "leftAsks": {},
+      "fileAsks": {},
+      "residual": [
+        "Show.S01E01.1080p.GroupB.mkv",
+        "Show.S01E01.720p.GroupB.mkv"
+      ],
+      "missing": {},
+      "trails": {
+        "Show.S01E01.1080p.GroupA.mkv": [
+          "claimed by R6",
+          "tmdb:9:S01E01 won R6"
+        ],
+        "Show.S01E01.1080p.GroupB.mkv": [
+          "residual",
+          "tmdb:9:S01E01 vetoed/quality-dedup R6"
+        ],
+        "Show.S01E01.720p.GroupA.mkv": [
+          "copy by R6",
+          "tmdb:9:S01E01 won R6"
+        ],
+        "Show.S01E01.720p.GroupB.mkv": [
+          "residual",
+          "tmdb:9:S01E01 vetoed/quality-dedup R6"
+        ]
+      }
+    },
+    "season-episode：单捕获组 fileRegex 救裸集号命名": {
+      "assignments": {
+        "tmdb:1429:S01E01": {
+          "file": "进击的巨人 S01/进击的巨人01.mp4",
+          "confidence": 0,
+          "status": "auto",
+          "losers": [],
+          "rule": "R6"
+        },
+        "tmdb:1429:S01E02": {
+          "file": "进击的巨人 S01/进击的巨人02.mp4",
+          "confidence": 0,
+          "status": "auto",
+          "losers": [],
+          "rule": "R6"
+        }
+      },
+      "leftAsks": {},
+      "fileAsks": {},
+      "residual": [],
+      "missing": {},
+      "trails": {
+        "进击的巨人 S01/进击的巨人01.mp4": [
+          "claimed by R6",
+          "tmdb:1429:S01E01 won R6"
+        ],
+        "进击的巨人 S01/进击的巨人02.mp4": [
+          "claimed by R6",
+          "tmdb:1429:S01E02 won R6"
+        ]
+      }
+    },
+    "season-episode：同集双画质无 size → 不乱配": {
+      "assignments": {},
+      "leftAsks": {
+        "tmdb:9:S01E01": {
+          "stage": "season-episode",
+          "rule": "R6",
+          "reason": "no-margin",
+          "threshold": 0,
+          "margin": 0.15,
+          "candidates": [
+            {
+              "name": "Show.S01E01.1080p.mkv",
+              "sim": 0
+            },
+            {
+              "name": "Show.S01E01.2160p.mkv",
+              "sim": 0
+            }
+          ]
+        }
+      },
+      "fileAsks": {},
+      "residual": [
+        "Show.S01E01.1080p.mkv",
+        "Show.S01E01.2160p.mkv"
+      ],
+      "missing": {},
+      "trails": {
+        "Show.S01E01.1080p.mkv": [
+          "residual",
+          "tmdb:9:S01E01 vetoed/below-threshold R9"
+        ],
+        "Show.S01E01.2160p.mkv": [
+          "residual",
+          "tmdb:9:S01E01 vetoed/below-threshold R9"
+        ]
+      }
+    },
+    "season-episode：季号也是键（S01 文件不许认 S02 左项）": {
+      "assignments": {},
+      "leftAsks": {},
+      "fileAsks": {},
+      "residual": [
+        "Show.S01E01.1080p.mkv"
+      ],
+      "missing": {},
+      "trails": {
+        "Show.S01E01.1080p.mkv": [
+          "residual"
+        ]
+      }
+    },
+    "solo：体量并列 → 不猜": {
+      "assignments": {},
+      "leftAsks": {},
+      "fileAsks": {},
+      "residual": [
+        "A.mkv",
+        "B.mkv"
+      ],
+      "missing": {},
+      "trails": {
+        "A.mkv": [
+          "residual"
+        ],
+        "B.mkv": [
+          "residual"
+        ]
+      }
+    },
+    "solo：唯一视频文件": {
+      "assignments": {
+        "tmdb:1:movie": {
+          "file": "Some.Movie.2026.2160p.mkv",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [],
+          "rule": "R10"
+        }
+      },
+      "leftAsks": {},
+      "fileAsks": {},
+      "residual": [
+        "cover.jpg"
+      ],
+      "missing": {},
+      "trails": {
+        "cover.jpg": [
+          "residual"
+        ],
+        "Some.Movie.2026.2160p.mkv": [
+          "claimed by R10"
+        ]
+      }
+    },
+    "solo：多画质取体量最大": {
+      "assignments": {
+        "tmdb:1:movie": {
+          "file": "A.2160p.mkv",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [],
+          "rule": "R10"
+        }
+      },
+      "leftAsks": {},
+      "fileAsks": {},
+      "residual": [
+        "B.1080p.mkv"
+      ],
+      "missing": {},
+      "trails": {
+        "A.2160p.mkv": [
+          "claimed by R10"
+        ],
+        "B.1080p.mkv": [
+          "residual"
+        ]
+      }
+    },
+    "solo：过时长矛盾闸（5 分钟花絮不是正片）": {
+      "assignments": {},
+      "leftAsks": {},
+      "fileAsks": {},
+      "residual": [
+        "Extra.mkv"
+      ],
+      "missing": {},
+      "trails": {
+        "Extra.mkv": [
+          "residual"
+        ]
+      }
+    },
+    "title 档：清洗后完全同名的真平局": {
+      "assignments": {},
+      "leftAsks": {},
+      "fileAsks": {},
+      "residual": [
+        "灵异故事-2021年9月特别篇.mp3",
+        "灵异故事-2021年9月特别篇【公众号：CunWorkNotes】.mp3"
+      ],
+      "missing": {},
+      "trails": {
+        "灵异故事-2021年9月特别篇.mp3": [
+          "residual",
+          "a vetoed/no-margin R9"
+        ],
+        "灵异故事-2021年9月特别篇【公众号：CunWorkNotes】.mp3": [
+          "residual",
+          "a vetoed/no-margin R9"
+        ]
+      }
+    },
+    "title 档兜底：无号年度特辑": {
+      "assignments": {
+        "a": {
+          "file": "灵异故事-2021年9月特别篇.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [],
+          "rule": "R9"
+        }
+      },
+      "leftAsks": {},
+      "fileAsks": {},
+      "residual": [
+        "灵异故事-2022年9月特别篇.mp3",
+        "灵异故事-2023年9月特别篇【公众号：CunWorkNotes】.mp3"
+      ],
+      "missing": {},
+      "trails": {
+        "灵异故事-2021年9月特别篇.mp3": [
+          "claimed by R9",
+          "a won R9"
+        ],
+        "灵异故事-2022年9月特别篇.mp3": [
+          "residual",
+          "a vetoed/left-claimed"
+        ],
+        "灵异故事-2023年9月特别篇【公众号：CunWorkNotes】.mp3": [
+          "residual",
+          "a vetoed/left-claimed"
+        ]
+      }
+    },
+    "v1 扁平谱 lift 成 [epnum,title]": {
+      "assignments": {
+        "a": {
+          "file": "020.再谈身边灵异事.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [],
+          "rule": "R8"
+        }
+      },
+      "leftAsks": {},
+      "fileAsks": {},
+      "residual": [],
+      "missing": {},
+      "trails": {
+        "020.再谈身边灵异事.mp3": [
+          "claimed by R8",
+          "a won R8"
+        ]
+      }
+    },
+    "事故 05：错名副本（92986927 字节 / 5808s）": {
+      "assignments": {
+        "yl:005": {
+          "file": "怡乐播客 - 005.身边那些灵异事.mp3",
+          "confidence": 0.631579,
+          "status": "auto",
+          "losers": [],
+          "rule": "R2"
+        },
+        "yl:05": {
+          "file": "来源/05.太极两仪生四象【耗时整理‖cunlove.cn】.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [],
+          "rule": "R2"
+        }
+      },
+      "leftAsks": {},
+      "fileAsks": {
+        "玄关笔记/05.太极两仪生四象.mp3": {
+          "stage": "conflict",
+          "rule": "R13",
+          "reason": "dual-episode-conflict",
+          "threshold": 0.3,
+          "margin": 0,
+          "candidates": [
+            {
+              "name": "yl:005",
+              "sim": 0
+            },
+            {
+              "name": "yl:05",
+              "sim": 1
+            }
+          ]
+        }
+      },
+      "residual": [],
+      "missing": {},
+      "trails": {
+        "怡乐播客 - 005.身边那些灵异事.mp3": [
+          "claimed by R2",
+          "yl:005 won R2"
+        ],
+        "来源/05.太极两仪生四象【耗时整理‖cunlove.cn】.mp3": [
+          "claimed by R2",
+          "yl:005 vetoed/duration-contradict",
+          "yl:05 won R2"
+        ],
+        "玄关笔记/05.太极两仪生四象.mp3": [
+          "asked by R13",
+          "yl:005 vetoed/zero-competition-loser R4",
+          "yl:05 vetoed/duration-contradict"
+        ]
+      }
+    },
+    "事故 20：同形状的另一期": {
+      "assignments": {
+        "yl:020": {
+          "file": "怡乐播客 - 020.再谈身边灵异事.mp3",
+          "confidence": 0.631579,
+          "status": "auto",
+          "losers": [],
+          "rule": "R2"
+        },
+        "yl:20": {
+          "file": "来源/20.坎水之象【耗时整理】.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [],
+          "rule": "R2"
+        }
+      },
+      "leftAsks": {},
+      "fileAsks": {
+        "玄关笔记/20.坎水之象.mp3": {
+          "stage": "conflict",
+          "rule": "R13",
+          "reason": "dual-episode-conflict",
+          "threshold": 0.3,
+          "margin": 0,
+          "candidates": [
+            {
+              "name": "yl:020",
+              "sim": 0
+            },
+            {
+              "name": "yl:20",
+              "sim": 1
+            }
+          ]
+        }
+      },
+      "residual": [],
+      "missing": {},
+      "trails": {
+        "怡乐播客 - 020.再谈身边灵异事.mp3": [
+          "claimed by R2",
+          "yl:020 won R2"
+        ],
+        "来源/20.坎水之象【耗时整理】.mp3": [
+          "claimed by R2",
+          "yl:020 vetoed/duration-contradict",
+          "yl:20 won R2"
+        ],
+        "玄关笔记/20.坎水之象.mp3": [
+          "asked by R13",
+          "yl:020 vetoed/zero-competition-loser R4",
+          "yl:20 vetoed/duration-contradict"
+        ]
+      }
+    },
+    "事故 37：归档器曾自判成 756 副本（6044s vs 6043s，名字一个字不沾）": {
+      "assignments": {
+        "yl:756": {
+          "file": "756.那一期节目.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [],
+          "rule": "R2"
+        }
+      },
+      "leftAsks": {},
+      "fileAsks": {},
+      "residual": [
+        "玄关笔记/37.申与酉.mp3"
+      ],
+      "missing": {},
+      "trails": {
+        "756.那一期节目.mp3": [
+          "claimed by R2",
+          "yl:756 won R2"
+        ],
+        "玄关笔记/37.申与酉.mp3": [
+          "residual",
+          "yl:756 vetoed/zero-competition-loser R4"
+        ]
+      }
+    },
+    "同名的非媒体文件不算落选副本（字幕）": {
+      "assignments": {
+        "a": {
+          "file": "01.首集.mkv",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [],
+          "rule": "R8"
+        }
+      },
+      "leftAsks": {},
+      "fileAsks": {},
+      "residual": [
+        "01.首集.ass"
+      ],
+      "missing": {},
+      "trails": {
+        "01.首集.ass": [
+          "residual",
+          "a vetoed/left-claimed"
+        ],
+        "01.首集.mkv": [
+          "claimed by R8",
+          "a won R8"
+        ]
+      }
+    },
+    "同集其余份收尾：同名不同码率": {
+      "assignments": {
+        "yl:1": {
+          "file": "001.某一集.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [],
+          "rule": "R5"
+        }
+      },
+      "leftAsks": {},
+      "fileAsks": {},
+      "residual": [
+        "001.某一集_0412212803.mp3"
+      ],
+      "missing": {},
+      "trails": {
+        "001.某一集_0412212803.mp3": [
+          "residual",
+          "yl:1 vetoed/left-claimed"
+        ],
+        "001.某一集.mp3": [
+          "claimed by R5",
+          "yl:1 won R5"
+        ]
+      }
+    },
+    "同集其余份收尾：来源版 + 库内同名版（活体 780）": {
+      "assignments": {
+        "yl:780": {
+          "file": "来源/780.那一集.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [],
+          "rule": "R2"
+        }
+      },
+      "leftAsks": {},
+      "fileAsks": {},
+      "residual": [
+        "库内/780.那一集（补档）.mp3"
+      ],
+      "missing": {},
+      "trails": {
+        "库内/780.那一集（补档）.mp3": [
+          "residual",
+          "yl:780 vetoed/left-claimed"
+        ],
+        "来源/780.那一集.mp3": [
+          "claimed by R2",
+          "yl:780 won R2"
+        ]
+      }
+    },
+    "干净的号+标题": {
+      "assignments": {
+        "a": {
+          "file": "020.再谈身边灵异事.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [],
+          "rule": "R8"
+        }
+      },
+      "leftAsks": {},
+      "fileAsks": {},
+      "residual": [],
+      "missing": {},
+      "trails": {
+        "020.再谈身边灵异事.mp3": [
+          "claimed by R8",
+          "a won R8"
+        ]
+      }
+    },
+    "撞号但标题不同": {
+      "assignments": {},
+      "leftAsks": {
+        "a": {
+          "stage": "epnum",
+          "rule": "R8",
+          "reason": "below-threshold",
+          "threshold": 0.6,
+          "margin": 0.15,
+          "candidates": [
+            {
+              "name": "14.辛金.mp3",
+              "sim": 0
+            }
+          ]
+        }
+      },
+      "fileAsks": {},
+      "residual": [
+        "14.辛金.mp3"
+      ],
+      "missing": {},
+      "trails": {
+        "14.辛金.mp3": [
+          "residual",
+          "a vetoed/below-threshold R9"
+        ]
+      }
+    },
+    "整理层：三集混排（配上/歧义/孤儿各一）": {
+      "assignments": {
+        "yl:1": {
+          "file": "001.身边那些灵异事.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [],
+          "rule": "R2"
+        }
+      },
+      "leftAsks": {
+        "yl:2": {
+          "stage": "duration",
+          "rule": "R3",
+          "reason": "name-floor",
+          "threshold": 0.6,
+          "margin": 0.15,
+          "candidates": [
+            {
+              "name": "002.完全对不上的名字.mp3",
+              "sim": 0
+            }
+          ]
+        }
+      },
+      "fileAsks": {
+        "002.完全对不上的名字.mp3": {
+          "stage": "conflict",
+          "rule": "R13",
+          "reason": "dual-episode-conflict",
+          "threshold": 0.3,
+          "margin": 0,
+          "candidates": [
+            {
+              "name": "yl:1",
+              "sim": 0
+            },
+            {
+              "name": "yl:2",
+              "sim": 0
+            }
+          ]
+        }
+      },
+      "residual": [
+        "无关的另一个节目.mp3"
+      ],
+      "missing": {
+        "yl:3": 3
+      },
+      "trails": {
+        "001.身边那些灵异事.mp3": [
+          "claimed by R2",
+          "yl:1 won R2",
+          "yl:2 vetoed/file-claimed"
+        ],
+        "002.完全对不上的名字.mp3": [
+          "asked by R13",
+          "yl:1 vetoed/zero-competition-loser R4",
+          "yl:2 vetoed/below-threshold R9"
+        ],
+        "无关的另一个节目.mp3": [
+          "residual"
+        ]
+      }
+    },
+    "时长：两集同为 7707s，体量不许硬配": {
+      "assignments": {
+        "yile:530": {
+          "file": "530.十七探悬疑案件【公众号：CunWorkNotes】.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [],
+          "rule": "R2"
+        },
+        "yile:820": {
+          "file": "820.骗局【耗时整理‖免费分享：cunlove.cn】.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [],
+          "rule": "R2"
+        }
+      },
+      "leftAsks": {},
+      "fileAsks": {},
+      "residual": [],
+      "missing": {},
+      "trails": {
+        "530.十七探悬疑案件【公众号：CunWorkNotes】.mp3": [
+          "claimed by R2",
+          "yile:530 won R2",
+          "yile:820 vetoed/left-claimed"
+        ],
+        "820.骗局【耗时整理‖免费分享：cunlove.cn】.mp3": [
+          "claimed by R2",
+          "yile:530 vetoed/zero-competition-loser R4",
+          "yile:820 won R2"
+        ]
+      }
+    },
+    "时长：右侧一个时长都没有": {
+      "assignments": {
+        "a": {
+          "file": "020.再谈身边灵异事.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [],
+          "rule": "R8"
+        }
+      },
+      "leftAsks": {},
+      "fileAsks": {},
+      "residual": [],
+      "missing": {},
+      "trails": {
+        "020.再谈身边灵异事.mp3": [
+          "claimed by R8",
+          "a won R8"
+        ]
+      }
+    },
+    "时长：唯一命中但名字一个字不沾（848/209）": {
+      "assignments": {},
+      "leftAsks": {
+        "yile:848": {
+          "stage": "duration",
+          "rule": "R3",
+          "reason": "name-floor",
+          "threshold": 0.6,
+          "margin": 0.15,
+          "candidates": [
+            {
+              "name": "怡乐播客 - 209.十五谈身边灵异事.mp3",
+              "sim": 0
+            }
+          ]
+        }
+      },
+      "fileAsks": {},
+      "residual": [
+        "怡乐播客 - 209.十五谈身边灵异事.mp3"
+      ],
+      "missing": {
+        "yile:848": 848
+      },
+      "trails": {
+        "怡乐播客 - 209.十五谈身边灵异事.mp3": [
+          "residual",
+          "yile:848 vetoed/below-threshold R9"
+        ]
+      }
+    },
+    "时长：容差外差 2s": {
+      "assignments": {},
+      "leftAsks": {},
+      "fileAsks": {},
+      "residual": [
+        "455.现代版木仓下留人.mp3"
+      ],
+      "missing": {
+        "yile:454": 454
+      },
+      "trails": {
+        "455.现代版木仓下留人.mp3": [
+          "residual",
+          "yile:454 vetoed/below-threshold R9"
+        ]
+      }
+    },
+    "时长：撞车且标题也分不出": {
+      "assignments": {},
+      "leftAsks": {
+        "a": {
+          "stage": "duration",
+          "rule": "R2",
+          "reason": "below-threshold",
+          "threshold": 0.6,
+          "margin": 0.15,
+          "candidates": [
+            {
+              "name": "乙.mp3",
+              "sim": 0
+            },
+            {
+              "name": "甲.mp3",
+              "sim": 0
+            }
+          ]
+        }
+      },
+      "fileAsks": {},
+      "residual": [
+        "乙.mp3",
+        "甲.mp3"
+      ],
+      "missing": {},
+      "trails": {
+        "乙.mp3": [
+          "residual",
+          "a vetoed/below-threshold R9"
+        ],
+        "甲.mp3": [
+          "residual",
+          "a vetoed/below-threshold R9"
+        ]
+      }
+    },
+    "时长：撞车时精确同名不许被体量挤掉": {
+      "assignments": {
+        "yile:29": {
+          "file": "玄关笔记/29.十神的生克关系.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [],
+          "rule": "R2"
+        }
+      },
+      "leftAsks": {},
+      "fileAsks": {},
+      "residual": [
+        "104.清华大学朱令案.mp3"
+      ],
+      "missing": {},
+      "trails": {
+        "104.清华大学朱令案.mp3": [
+          "residual",
+          "yile:29 vetoed/zero-competition-loser R4"
+        ],
+        "玄关笔记/29.十神的生克关系.mp3": [
+          "claimed by R2",
+          "yile:29 won R2"
+        ]
+      }
+    },
+    "时长：改字避审（0.615 过地板）": {
+      "assignments": {
+        "yile:454": {
+          "file": "455.现代版木仓下留人.mp3",
+          "confidence": 0.615385,
+          "status": "auto",
+          "losers": [],
+          "rule": "R2"
+        }
+      },
+      "leftAsks": {},
+      "fileAsks": {},
+      "residual": [],
+      "missing": {},
+      "trails": {
+        "455.现代版木仓下留人.mp3": [
+          "claimed by R2",
+          "yile:454 won R2"
+        ]
+      }
+    },
+    "时长：整季等长三集": {
+      "assignments": {
+        "tmdb:9:S01E01": {
+          "file": "Show.S01E01.1080p.mkv",
+          "confidence": 0,
+          "status": "auto",
+          "losers": [],
+          "rule": "R6"
+        },
+        "tmdb:9:S01E02": {
+          "file": "Show.S01E02.1080p.mkv",
+          "confidence": 0,
+          "status": "auto",
+          "losers": [],
+          "rule": "R6"
+        },
+        "tmdb:9:S01E03": {
+          "file": "Show.S01E03.1080p.mkv",
+          "confidence": 0,
+          "status": "auto",
+          "losers": [],
+          "rule": "R6"
+        }
+      },
+      "leftAsks": {},
+      "fileAsks": {},
+      "residual": [],
+      "missing": {},
+      "trails": {
+        "Show.S01E01.1080p.mkv": [
+          "claimed by R6",
+          "tmdb:9:S01E01 won R6",
+          "tmdb:9:S01E02 vetoed/below-threshold R2",
+          "tmdb:9:S01E03 vetoed/below-threshold R2"
+        ],
+        "Show.S01E02.1080p.mkv": [
+          "claimed by R6",
+          "tmdb:9:S01E01 vetoed/below-threshold R2",
+          "tmdb:9:S01E02 won R6",
+          "tmdb:9:S01E03 vetoed/below-threshold R2"
+        ],
+        "Show.S01E03.1080p.mkv": [
+          "claimed by R6",
+          "tmdb:9:S01E01 vetoed/below-threshold R2",
+          "tmdb:9:S01E02 vetoed/below-threshold R2",
+          "tmdb:9:S01E03 won R6"
+        ]
+      }
+    },
+    "时长：显式容差 30s 的自定义谱": {
+      "assignments": {
+        "a": {
+          "file": "某一集【水印】.mp3",
+          "confidence": 0.5,
+          "status": "auto",
+          "losers": [],
+          "rule": "R2"
+        }
+      },
+      "leftAsks": {},
+      "fileAsks": {},
+      "residual": [],
+      "missing": {},
+      "trails": {
+        "某一集【水印】.mp3": [
+          "claimed by R2",
+          "a won R2"
+        ]
+      }
+    },
+    "时长：编号错位 + 转存重复": {
+      "assignments": {
+        "yile:53": {
+          "file": "52.财克印、印克食伤.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [
+            "52.财克印、印克食伤【公众号：CunWorkNotes】.mp3"
+          ],
+          "rule": "R4"
+        }
+      },
+      "leftAsks": {},
+      "fileAsks": {},
+      "residual": [],
+      "missing": {},
+      "trails": {
+        "52.财克印、印克食伤.mp3": [
+          "claimed by R4",
+          "yile:53 won R4"
+        ],
+        "52.财克印、印克食伤【公众号：CunWorkNotes】.mp3": [
+          "copy by R4",
+          "yile:53 won R4"
+        ]
+      }
+    },
+    "时长：编号错位 1、标题相同": {
+      "assignments": {
+        "yile:53": {
+          "file": "52.财克印、印克食伤.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [],
+          "rule": "R2"
+        }
+      },
+      "leftAsks": {},
+      "fileAsks": {},
+      "residual": [],
+      "missing": {},
+      "trails": {
+        "52.财克印、印克食伤.mp3": [
+          "claimed by R2",
+          "yile:53 won R2"
+        ]
+      }
+    },
+    "时长：错位文件不再被真 52 按号抢走": {
+      "assignments": {
+        "yile:53": {
+          "file": "52.财克印、印克食伤.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [],
+          "rule": "R2"
+        }
+      },
+      "leftAsks": {},
+      "fileAsks": {},
+      "residual": [],
+      "missing": {
+        "yile:52": 52
+      },
+      "trails": {
+        "52.财克印、印克食伤.mp3": [
+          "claimed by R2",
+          "yile:52 vetoed/duration-contradict",
+          "yile:53 won R2"
+        ]
+      }
+    },
+    "水印重复折叠": {
+      "assignments": {
+        "a": {
+          "file": "707.风水鱼要在棺材里？【公众号：CunWorkNotes】.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [
+            "707.风水鱼要在棺材里？【耗时整理‖cunlove.cn】.mp3"
+          ],
+          "rule": "R8"
+        }
+      },
+      "leftAsks": {},
+      "fileAsks": {},
+      "residual": [],
+      "missing": {},
+      "trails": {
+        "707.风水鱼要在棺材里？【公众号：CunWorkNotes】.mp3": [
+          "claimed by R8",
+          "a won R8"
+        ],
+        "707.风水鱼要在棺材里？【耗时整理‖cunlove.cn】.mp3": [
+          "copy by R8",
+          "a won R8"
+        ]
+      }
+    },
+    "第 3 格：标题档清洗后全等 + 时长差出量级 → 出卡（R14）": {
+      "assignments": {},
+      "leftAsks": {
+        "a": {
+          "stage": "title",
+          "rule": "R14",
+          "reason": "duration-contradiction",
+          "threshold": 0.85,
+          "margin": 0.15,
+          "candidates": [
+            {
+              "name": "灵异故事-2021年9月特别篇.mp3",
+              "sim": 1
+            }
+          ]
+        }
+      },
+      "fileAsks": {},
+      "residual": [
+        "灵异故事-2021年9月特别篇.mp3"
+      ],
+      "missing": {},
+      "trails": {
+        "灵异故事-2021年9月特别篇.mp3": [
+          "residual",
+          "a vetoed/duration-contradict R11"
+        ]
+      }
+    },
+    "缺档：号在右侧无文件": {
+      "assignments": {
+        "b": {
+          "file": "020.再谈身边灵异事.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [],
+          "rule": "R8"
+        }
+      },
+      "leftAsks": {},
+      "fileAsks": {},
+      "residual": [],
+      "missing": {
+        "a": 66
+      },
+      "trails": {
+        "020.再谈身边灵异事.mp3": [
+          "claimed by R8",
+          "b won R8"
+        ]
+      }
+    },
+    "闸门：任一侧没时长 → 不生效": {
+      "assignments": {
+        "a": {
+          "file": "005.身边那些灵异事.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [],
+          "rule": "R8"
+        }
+      },
+      "leftAsks": {},
+      "fileAsks": {},
+      "residual": [],
+      "missing": {},
+      "trails": {
+        "005.身边那些灵异事.mp3": [
+          "claimed by R8",
+          "a won R8"
+        ]
+      }
+    },
+    "闸门：同桶里时长对得上的照常补位": {
+      "assignments": {
+        "a": {
+          "file": "01.首集.B.mp4",
+          "confidence": 0.666667,
+          "status": "auto",
+          "losers": [],
+          "rule": "R2"
+        }
+      },
+      "leftAsks": {},
+      "fileAsks": {},
+      "residual": [
+        "01.首集.A.mp4"
+      ],
+      "missing": {},
+      "trails": {
+        "01.首集.A.mp4": [
+          "residual",
+          "a vetoed/duration-contradict"
+        ],
+        "01.首集.B.mp4": [
+          "claimed by R2",
+          "a won R2"
+        ]
+      }
+    },
+    "闸门：名字一样、号也对，时长差出量级": {
+      "assignments": {},
+      "leftAsks": {
+        "a": {
+          "stage": "epnum",
+          "rule": "R11",
+          "reason": "duration-contradiction",
+          "threshold": 0.6,
+          "margin": 0.15,
+          "candidates": [
+            {
+              "name": "005.身边那些灵异事.mp3",
+              "sim": 1
+            }
+          ]
+        }
+      },
+      "fileAsks": {},
+      "residual": [
+        "005.身边那些灵异事.mp3"
+      ],
+      "missing": {},
+      "trails": {
+        "005.身边那些灵异事.mp3": [
+          "residual",
+          "a vetoed/duration-contradict R11"
+        ]
+      }
+    },
+    "闸门：量级以内的几秒尾巴不受影响（活体 780）": {
+      "assignments": {
+        "a": {
+          "file": "780.putt.day.mp3",
+          "confidence": 1,
+          "status": "auto",
+          "losers": [],
+          "rule": "R8"
+        }
+      },
+      "leftAsks": {},
+      "fileAsks": {},
+      "residual": [],
+      "missing": {},
+      "trails": {
+        "780.putt.day.mp3": [
+          "claimed by R8",
+          "a won R8"
+        ]
+      }
+    },
+    "零竞争：唯一沾边但过不了地板（0<sim<0.3）": {
+      "assignments": {},
+      "leftAsks": {
+        "a": {
+          "stage": "duration",
+          "rule": "R2",
+          "reason": "below-threshold",
+          "threshold": 0.6,
+          "margin": 0.15,
+          "candidates": [
+            {
+              "name": "完全无关的另一个.mp3",
+              "sim": 0
+            },
+            {
+              "name": "甲乙丙丁戊己庚辛壬癸子丑寅卯身边.mp3",
+              "sim": 0.076923
+            }
+          ]
+        }
+      },
+      "fileAsks": {},
+      "residual": [
+        "完全无关的另一个.mp3",
+        "甲乙丙丁戊己庚辛壬癸子丑寅卯身边.mp3"
+      ],
+      "missing": {},
+      "trails": {
+        "完全无关的另一个.mp3": [
+          "residual",
+          "a vetoed/below-threshold R9"
+        ],
+        "甲乙丙丁戊己庚辛壬癸子丑寅卯身边.mp3": [
+          "residual",
+          "a vetoed/below-threshold R9"
+        ]
+      }
+    },
+    "零竞争：撞进容差的另一份名字一个字不沾": {
+      "assignments": {
+        "yl:005": {
+          "file": "怡乐播客 - 005.身边那些灵异事.mp3",
+          "confidence": 0.631579,
+          "status": "auto",
+          "losers": [],
+          "rule": "R2"
+        }
+      },
+      "leftAsks": {},
+      "fileAsks": {},
+      "residual": [
+        "别的节目/999.完全无关.mp3"
+      ],
+      "missing": {},
+      "trails": {
+        "别的节目/999.完全无关.mp3": [
+          "residual",
+          "yl:005 vetoed/zero-competition-loser R4"
+        ],
+        "怡乐播客 - 005.身边那些灵异事.mp3": [
+          "claimed by R2",
+          "yl:005 won R2"
+        ]
+      }
+    }
+  }
+}

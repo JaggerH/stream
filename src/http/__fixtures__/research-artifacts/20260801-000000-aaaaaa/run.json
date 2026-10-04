@@ -1,0 +1,7 @@
+{ "schema": "run/v1", "id": "20260801-000000-aaaaaa", "name": "回归基线", "variant": null,
+  "tags": ["t"], "params": {}, "status": "success",
+  "metrics": { "sharpe": 1.23 },
+  "artifacts": [{ "name": "curve", "view": "timeseries" }, { "name": "note", "view": "text" },
+                { "name": "top_window_C_物理需求中国房地产", "view": "timeseries" },
+                { "name": "R-multiple distribution", "view": "distribution" }],
+  "created_at": "2026-08-01T00:00:00Z", "finished_at": "2026-08-01T00:01:00Z" }

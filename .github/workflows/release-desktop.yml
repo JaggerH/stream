@@ -1,0 +1,198 @@
+# 发布 **Stream Desktop** 本机进程的**平台包**（带二进制）：`@streamapp/desktop-win32-x64`、
+# `@streamapp/desktop-darwin-x64`、`@streamapp/desktop-darwin-arm64`。
+#
+# 这几个包名、tag 前缀 `desktop-v*` 与 exe 名 `stream-desktop` 是线上常量（已发布的 npm 包名、
+# 用户机器上的 exe 与 native messaging 清单）。改它们要让每台配对过的机器重新 `--register`
+# 一次——不重配的表现是静默失联，一个字都不报。2026-09-07 从 `host-agent-*` 改过来时只有两台
+# 自己的机器，各重配一次即可。**首发之后要把改名前那三个旧平台包 deprecate 掉**——点名在
+# `capabilities/desktop/README.md` 的「平台包与版本」一节（那份文档是唯一还允许写旧包名的地方）。
+#
+# `@streamapp/desktop`（`capabilities/desktop/`）不在这里发，也不发 npm：它是 Stream 的内置
+# 能力，`private: true`，随后端 bundle 出货。用户装 `@streamapp/stream` 就有它。
+#
+# 为什么整件事在 CI 上、而不是在谁的机器上手发：二进制要在**目标平台**上编，本地手发意味着
+# 得有那台机器、且每次都记得先跑构建。runner 就是那台机器，而且它每次都是干净检出——干净
+# 检出恰恰是空壳包的成因，所以平台包挂了 `prepack` 闸（scripts/assert-npm-artifact.mjs），
+# 忘了构建这一步会当场非 0 退出，而不是发出一个装得上、一动就报错的包。
+#
+# 三个包都带读屏模型（PP-OCRv5 三件，约 21MB，exe 同目录）和 **ONNX Runtime 动态库**（识别层的
+# 唯一引擎，spec docs/superpowers/specs/2026-09-14-desktop-ocr-onnxruntime-design.md；Windows 另带
+# VC++ 运行时三件）：mac 后端（app/host-agent/src/macos.rs）的截图走 CGWindowList、读屏 / 找图与
+# Windows 共用同一条 PP-OCR 链路。**两平台都没有回落**——模型缺席报 ocr-missing、库缺席报
+# ort-missing，readText / readElements 直接报错，所以三个包一件都不能少。校验和：模型只有一份
+# platforms/models.sha256（三个 job 核同一份）；ort 是**一平台一份** platforms/ort-<pkg>.sha256
+# （文件集合按平台不同）。哪些平台有桌面控制的判据在
+# capabilities/desktop/src/host-agent/binary.ts 的 DESKTOP_CONTROL_PLATFORMS。linux 没验过、
+# 也没人要，所以没有 job。
+#
+# 两个 mac job 的形状与 windows job 逐条对应，只差 runner、target 和文件名（mac 无扩展名）：
+# macos-13 是 Intel（x64），macos-14 是 Apple Silicon（arm64）。
+#
+# 触发：打 `desktop-v<版本>` tag，或手动。版本号以仓库里的 package.json 为准——tag 只是
+# 触发器，不参与推导（版本一致性由 capabilities/desktop/src/host-agent/versions.test.ts 钉住）。
+name: release-desktop
+
+on:
+  push:
+    tags: ['desktop-v*']
+  workflow_dispatch:
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org # 写 .npmrc，下面那条 publish 才认 NODE_AUTH_TOKEN
+
+      # 直接编 agent，不走 scripts/build-server.mjs——那个脚本第一件事就是拿
+      # node_modules/.bin/esbuild 打包整个后端，为了一个 .exe 让 runner 先装一整套依赖不成比例。
+      # 落点必须和 platforms/<pkg>/bin/ 一致，否则下一步的 prepack 闸会当场拦下（这正是它的用处）。
+      - run: cargo build --release --manifest-path app/host-agent/Cargo.toml
+      - run: |
+          New-Item -ItemType Directory -Force -Path capabilities/desktop/platforms/desktop-win32-x64/bin
+          Copy-Item app/host-agent/target/release/stream-desktop.exe capabilities/desktop/platforms/desktop-win32-x64/bin/
+        shell: pwsh
+
+      # 读屏模型（PP-OCRv5 三件，约 21MB）随平台包出货，落在 exe 同目录——`see.rs` 的
+      # `ocr_models_dir` 就按那儿找。它们不在 git 里（从 rapidocr 导出，脚本
+      # capabilities/desktop/scripts/export-ocr-models.sh），挂在 GitHub release `desktop-models-v1` 上。
+      # 模型缺席时 exe 报 ocr-missing（不回落），但那要等到用户机器上第一次 readText 才看得见，
+      # /api/health 照绿——所以这里必须核 sha256，而且核的是仓库里那份
+      # platforms/models.sha256（三个 job 同一份），不是 release 页上写的。换模型 = 新一个
+      # release tag + 改那份 sha256 文件，两处一起动。
+      - name: 拉读屏模型并核校验和
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd capabilities/desktop/platforms/desktop-win32-x64
+          gh release download desktop-models-v1 --repo "$GITHUB_REPOSITORY" --pattern 'ocr-*' --dir bin --clobber
+          # Windows runner 的 git 把检出文件转成 CRLF，sha256sum 会拿 `ocr-det.onnx\r` 去找文件——
+          # 首发（2026-09-12）就栽在这儿：三个文件全 "No such file"。先剥掉 \r 再核。
+          (cd bin && tr -d '\r' < ../../models.sha256 | sha256sum -c -)
+
+      # ONNX Runtime 动态库 + VC++ 运行时三件：识别层的唯一引擎（spec 2026-09-14）。和模型同一套机制：
+      # 挂在 release `desktop-ort-v1` 上，核仓库里的 platforms/ort-win32-x64.sha256（一平台一份），
+      # 落在 bin/ 与 exe 同目录（`STREAM_ORT_LIB` 没设时 exe 就按那儿找）。VC++ 三件是 onnxruntime.dll
+      # 的依赖，干净装机没有——少了它 dll 加载失败，exe 照样报 ort-missing。最后那句 `test -f`
+      # 把"没下到"变红：`sha256sum -c` 对不存在的文件只警告，退出码不一定非零。
+      - name: 拉 ONNX Runtime 并核校验和
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd capabilities/desktop/platforms/desktop-win32-x64
+          gh release download desktop-ort-v1 --repo "$GITHUB_REPOSITORY" --pattern 'onnxruntime.dll' --pattern 'msvcp140.dll' --pattern 'vcruntime140.dll' --pattern 'vcruntime140_1.dll' --dir bin --clobber
+          (cd bin && tr -d '\r' < ../../ort-win32-x64.sha256 | sha256sum -c -)
+          test -f bin/onnxruntime.dll
+
+      # 已经在 registry 上就跳过，不是「宽容」而是**让整条流水线能重跑**：某一步挂了而 publish
+      # 已经成功时，没有这一格就只能靠升版本号绕过去——一次失败烧掉一个版本号，而烧掉的那个
+      # 还是已经发出去的好产物。
+      - name: publish（已发布则跳过）
+        working-directory: capabilities/desktop/platforms/desktop-win32-x64
+        shell: pwsh
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          $pkg = Get-Content package.json -Raw | ConvertFrom-Json
+          $spec = "$($pkg.name)@$($pkg.version)"
+          npm view $spec version 2>$null | Out-Null
+          if ($LASTEXITCODE -eq 0) { Write-Host "$spec 已在 registry 上，跳过" }
+          else { npm publish; if ($LASTEXITCODE -ne 0) { exit 1 } }
+
+      # 到这里就完了：平台包发出去，用户机器上解 exe 的那一格是**发行包**
+      # `cli/package.json` 的 optionalDependency，它随 `@streamapp/stream` 一起发（另一条流水线），
+      # 版本必须与这里发的这个数相同——`src/host-agent/mount.test.ts` 钉着这条。
+
+  # mac：形状与上面的 windows job 逐条对应。只差三处——runner（Intel/Apple Silicon 各一台）、
+  # rust target triple、以及**产物没有扩展名**（`stream-desktop`，不是 `.exe`；解析侧那条
+  # 分叉在 binary.ts 的 `const file =` 那一行）。落点同样必须和 platforms/<pkg>/bin/ 一致，
+  # 忘了构建就由 prepack 闸（scripts/assert-npm-artifact.mjs）当场拦下。
+  macos:
+    strategy:
+      fail-fast: false # 一台 runner 挂了不该连累另一台——两个平台包互相独立
+      # 两档都跑在 macos-14（arm64）上，靠 `--target` 分叉，**不再依赖 runner 的原生架构**。
+      # 起因：`macos-13`（Intel）这个标签已经排不到机器了——2026-09-08 那次发布它排了 3 小时
+      # 一次都没被调度，而 run 的整体 status 一直停在 queued。表现最坑的地方是**另外两个包
+      # 照常发出去了**，于是 registry 上出现「三缺一」，而主包把三个都钉成同一个版本、又是
+      # optionalDependencies——npm 找不到会静默跳过，Intel Mac 用户装完拿不到二进制、扩展
+      # 配不上、采集全程游客态，一个字都不报。
+      matrix:
+        include:
+          - runner: macos-14
+            target: x86_64-apple-darwin # Intel：在 arm64 上交叉编译
+            pkg: desktop-darwin-x64
+          - runner: macos-14
+            target: aarch64-apple-darwin # Apple Silicon：原生
+            pkg: desktop-darwin-arm64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }} # 交叉编译那一档要它；原生那档是空操作
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org # 写 .npmrc，下面那条 publish 才认 NODE_AUTH_TOKEN
+
+      # 显式 `--target`：两档都在 arm64 runner 上，产物架构只由这一个值决定，不由 runner 决定。
+      # 产物路径也随之多一层 `target/<triple>/release/`——漏改它的表现是 cp 找不到文件（响亮），
+      # 不是发出一个空壳包（安静），所以这两处必须一起改。
+      - run: cargo build --release --target ${{ matrix.target }} --manifest-path app/host-agent/Cargo.toml
+      - run: |
+          mkdir -p capabilities/desktop/platforms/${{ matrix.pkg }}/bin
+          cp app/host-agent/target/${{ matrix.target }}/release/stream-desktop capabilities/desktop/platforms/${{ matrix.pkg }}/bin/
+          chmod +x capabilities/desktop/platforms/${{ matrix.pkg }}/bin/stream-desktop
+      # 判据：产物真是目标架构，而不是"编成功了"。交叉编译一旦回落成原生，包能发、能装、
+      # 一运行就 Bad CPU type，而那要等到用户那台 Intel Mac 上才看得见。
+      - run: file capabilities/desktop/platforms/${{ matrix.pkg }}/bin/stream-desktop | tee /dev/stderr | grep -q "${{ matrix.target == 'x86_64-apple-darwin' && 'x86_64' || 'arm64' }}"
+
+      # 同 windows job 那一步：模型落在 exe 同目录，核的是同一份 platforms/models.sha256。模型缺席 =
+      # readText / readElements 直接报 ocr-missing，靠"眼睛"的 recipe（微信 / QQ 发消息）在这台机器上
+      # 一步都走不了。用系统自带的 `shasum -a 256 -c`（吃同一种清单格式），不依赖 runner 镜像有没有
+      # coreutils；mac 检出没有 CRLF 那个坑。
+      - name: 拉读屏模型并核校验和
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd capabilities/desktop/platforms/${{ matrix.pkg }}
+          gh release download desktop-models-v1 --repo "$GITHUB_REPOSITORY" --pattern 'ocr-*' --dir bin --clobber
+          (cd bin && shasum -a 256 -c ../../models.sha256)
+
+      # 同 windows job 那一步：ONNX Runtime 动态库，release `desktop-ort-v1`，核一平台一份的
+      # platforms/ort-<pkg>.sha256。release 上两份 dylib 同名会撞，所以各带 `darwin-x64-` / `darwin-arm64-`
+      # 前缀，下载后先改回 exe 要找的 `libonnxruntime.dylib` 再核（清单里写的就是改回后的名字）。
+      # `test -f` 把"没下到"变红。
+      - name: 拉 ONNX Runtime 并核校验和
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ORT_ARCH: ${{ matrix.pkg == 'desktop-darwin-x64' && 'darwin-x64' || 'darwin-arm64' }}
+        run: |
+          cd capabilities/desktop/platforms/${{ matrix.pkg }}
+          gh release download desktop-ort-v1 --repo "$GITHUB_REPOSITORY" --pattern "${ORT_ARCH}-libonnxruntime.dylib" --dir bin --clobber
+          mv "bin/${ORT_ARCH}-libonnxruntime.dylib" bin/libonnxruntime.dylib
+          (cd bin && shasum -a 256 -c "../../ort-${ORT_ARCH}.sha256")
+          test -f bin/libonnxruntime.dylib
+
+      # 同 windows job：已经在 registry 上就跳过，好让整条流水线能重跑而不烧版本号。
+      - name: publish（已发布则跳过）
+        working-directory: capabilities/desktop/platforms/${{ matrix.pkg }}
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          spec="$(npm pkg get name | tr -d '"')@$(npm pkg get version | tr -d '"')"
+          if npm view "$spec" version >/dev/null 2>&1; then
+            echo "$spec 已在 registry 上，跳过"
+          else
+            npm publish
+          fi

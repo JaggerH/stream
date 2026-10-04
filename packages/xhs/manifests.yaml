@@ -1,0 +1,33 @@
+# 本包手写的 Source 清单。recipe 源（xhs-home / xhs-search / xhs-detail / xhs-like）由各自的
+# `*.recipe.json` 自描述，不在这里；这里只放没有 recipe 文件的纯 manifest 源。
+- id: xhs-resolve
+  adapter: xhs
+  title: 小红书视频解析
+  description: 笔记 id → 笔记页里现取到的签名 mp4（登录态 tab 打开笔记时记下，播放时取出；宿主 range 代理）；video-xhs Provider 行的成员。
+  topics: [小红书, 视频, 播放, 解析]
+  categories: [video]
+  capabilities: [anchor]
+  facility: { key: xhs, label: 小红书 }
+  auth: { type: none }
+  discoverable: false
+  cadence_hint_seconds: 3600
+  params_schema:
+    vid: { type: string, required: true, description: "笔记 id（noteId）" }
+    format: { type: string, required: false, description: "progressive | dash（本站只有 mp4 直链，dash 恒空）" }
+- id: xhs-fetch-url
+  adapter: xhs
+  title: 小红书链接抓媒体
+  description: 一条小红书笔记分享链接 → 标题 / 作者 / 正文 / 图集或可播放地址（登录态 tab 跑一次 xhs-detail）；content.enrich 按 xhs-link 派发到它（链接归属由 stream.links 声明）。
+  topics: [小红书, 链接, 媒体, 抓取]
+  categories: [transform]
+  capabilities: [anchor]
+  facility: { key: xhs, label: 小红书 }
+  auth: { type: none }
+  discoverable: false
+  cadence_hint_seconds: 3600
+  # 取数是在登录态 tab 里跑一次 xhs-detail（它自己的 maxTaskMs 30s，外加限速排队），全局 25s 缺省不够。
+  member_timeout_ms: 60000
+  # 一条链接只有一份媒体结果——成员合同是单个对象，不是数组（见 docs/PACKAGE.md §2.3 output）。
+  output: object
+  params_schema:
+    url: { type: string, required: true, description: 笔记分享链接（须带 xsec_token；xhslink.com 短链会跟一跳） }

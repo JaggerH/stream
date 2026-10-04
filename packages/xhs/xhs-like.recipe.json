@@ -1,0 +1,96 @@
+{
+  "version": 1,
+  "kind": "browser",
+  "sourceId": "xhs-like",
+  "cookieDomain": "xiaohongshu.com",
+  "entryUrl": "https://www.xiaohongshu.com/explore",
+  "entryWait": "domcontentloaded",
+  "rideCurrentPage": true,
+  "loginCheck": {
+    "loggedIn": ".main-container .user",
+    "wall": ".login-modal.reds-modal-open"
+  },
+  "session": {
+    "facility": "xhs",
+    "lifecycle": "persistent",
+    "visibility": "unattended"
+  },
+  "_why": "互动写入（点赞/收藏），不是采集。这是 knowingly 放宽『recipe 只读』边界（Gap C，见 docs/superpowers/specs/2026-07-18-xhs-like-collect-design.md §2）——若日后收紧信任模型，这份 recipe 是回补清单第一条。复用 evaluate step：targetCount:1 + 无 cursorField => 只发一次 in-page eval。call 在登录页里揪出站点自身的签名请求 fn（按语义名 postApiSnsWebV1Note{Like,Dislike,Collect,Uncollect} 扫模块，不硬编模块 id/导出字母），按 action 发对应端点。body key 各 action 不同（实测：like/unlike=note_oid、collect=note_id、uncollect=note_ids 逗号串），context-free（无需打开笔记）。业务/参数/风控错都会 reject => EvaluateDriftError => 动作路由回非 done 的回执 => 前端回滚。响应形状不统一，故只回 {noteId, action, ok}，计数前端乐观。",
+  "steps": [
+    {
+      "kind": "evaluate",
+      "itemsAt": "items",
+      "pageSize": 1,
+      "maxPages": 1,
+      "call": "async (cursor, num, params) => { const g='webpackChunkxhs_pc_web'; let req; window[g].push([[Math.random()],{},r=>req=r]); let m; for (const id of Object.keys(req.m)) { try { if (req.m[id].toString().includes('postApiSnsWebV1NoteLike(')) { m=req(id); break; } } catch(e){} } if(!m) throw new Error('xhs interaction module not found'); const pick=(needle)=>{ for (const k of Object.keys(m)) { try { if (typeof m[k]==='function' && m[k].toString().includes(needle+'(')) return m[k]; } catch(e){} } return null; }; const id=params.noteId; const action=params.action; const table={ like:{fn:'postApiSnsWebV1NoteLike',body:{note_oid:id}}, unlike:{fn:'postApiSnsWebV1NoteDislike',body:{note_oid:id}}, collect:{fn:'postApiSnsWebV1NoteCollect',body:{note_id:id}}, uncollect:{fn:'postApiSnsWebV1NoteUncollect',body:{note_ids:id}} }; const spec=table[action]; if(!spec) throw new Error('unknown xhs interaction action: '+action); const fn=pick(spec.fn); if(!fn) throw new Error('xhs interaction fn not found: '+spec.fn); await fn(spec.body); return { items: [ { noteId:id, action:action, ok:true } ] }; }"
+    }
+  ],
+  "observers": [],
+  "output": {
+    "itemsAt": "items",
+    "dedupeBy": "noteId",
+    "targetCount": 1,
+    "mapping": {
+      "noteId": "noteId",
+      "action": "action",
+      "ok": "ok"
+    }
+  },
+  "policy": {
+    "maxTaskMs": 20000
+  },
+  "meta": {
+    "auth": {
+      "type": "session",
+      "facility": "xhs",
+      "login": "qr",
+      "loginUrl": "https://www.xiaohongshu.com/explore",
+      "qrSelector": ".login-container img.qrcode-img, .qrcode img",
+      "cookieDomain": "xiaohongshu.com",
+      "sessionCookies": [
+        "web_session"
+      ]
+    },
+    "effects": [
+      "write"
+    ],
+    "action": true,
+    "_why_action": "写用户账户（点赞/收藏），meta.action:true 让它落进 ActionRecipeBlockedError 那道闸——模型经 stream_read/定时调度不能碰它。前端『点赞』按钮走通用动作路由 POST /api/recipes/action { sourceId:'@streamapp/xhs/xhs-like', params:{ noteId, action }, confirmed:true }（与 MCP 的 run_action_recipe 同一份 runActionRecipe）——用户当场点的那一下就是二次确认，所以直接带 confirmed。那条路不经 scheduler.readSource 的动作闸，它自己就是动作 recipe 唯一的执行入口；非 done 的回执前端回滚乐观 UI。",
+    "normalizer": "xhs",
+    "type": "post",
+    "title": "互动（点赞/收藏）",
+    "description": "小红书笔记点赞/收藏/取消 · 登录态 tab 内调站点签名接口写入",
+    "topics": [
+      "xhs",
+      "xiaohongshu",
+      "social"
+    ],
+    "categories": [
+      "social-media"
+    ],
+    "facility": {
+      "key": "xhs",
+      "label": "小红书"
+    },
+    "capabilities": [
+      "anchor"
+    ],
+    "cadence_hint_seconds": 1800,
+    "discoverable": false,
+    "_why_pick_in": "两个选择面都不出现——点赞/收藏的写操作，由前端动作直调",
+    "pick_in": [],
+    "homepage": "xiaohongshu.com",
+    "params_schema": {
+      "noteId": {
+        "type": "string",
+        "required": true,
+        "description": "笔记 id"
+      },
+      "action": {
+        "type": "string",
+        "required": true,
+        "description": "like | unlike | collect | uncollect"
+      }
+    }
+  }
+}

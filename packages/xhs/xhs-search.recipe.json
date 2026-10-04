@@ -1,0 +1,138 @@
+{
+  "version": 4,
+  "kind": "browser",
+  "sourceId": "xhs-search",
+  "cookieDomain": "xiaohongshu.com",
+  "entryUrl": "https://www.xiaohongshu.com/search_result?keyword={keyword}",
+  "entryWait": "load",
+  "loginCheck": {
+    "loggedIn": ".main-container .user",
+    "wall": ".login-modal.reds-modal-open"
+  },
+  "_why_one_shot": "搜索没有常驻的必要（用户拍板 2026-08-24）:搜完 tab 留着只是占用户浏览器。one-shot = 跑完 release 即关。代价看 _why_ledger——账本随标签走,关了就丢,xhs-detail 落到它自己的 fallbackUrl(直达笔记页,xsec_token 随搜索条目带着),慢一点但功能不缺。",
+  "session": {
+    "facility": "xhs",
+    "lifecycle": "one-shot",
+    "visibility": "unattended"
+  },
+  "_why_unattended": "后台档（unattended）：**不抢屏**。用户在 Stream 里点一下，屏幕就该留在 Stream —— 浏览器蹦到面前再缩回去，比它省下的那点时间烦得多。\n\n「前台」和「能不能跑」本来就不是一回事。可信输入不是靠占前台换来的，是靠 `Emulation.setFocusEmulationEnabled`（在 `browser-ext.ts` 的 launch 一处开启，那里有对照数字）——**它给的是「页面被当成有焦点」，不是帧**，别把两件事说成一件。开了之后，隐藏标签一次可信点击 **162–185ms**，比它当活动标签时的 204–257ms 还快；不开则是 **39.8–41.6s**。\n\n本条另有一层：它是用户按下搜索才跑的，跑完结果要回到 Stream 里看——全程没有任何一刻需要用户盯着浏览器。",
+  "_why_ledger": "搜索结果这一批就是 xhs 的账本：搜出来的顺序 = 页面上卡片的铺排顺序,idField 与 xhs-detail locate 的 identityParam(noteId) 同字段。**one-shot 之下账本随标签一起关**——所以 detail 的常态就是它自己的 fallbackUrl(直达笔记页);这份 ledger 声明保留,是给「同一次运行内」的 step 用坐标系,不再承诺跨运行存活。",
+  "ledger": {
+    "idField": "noteId"
+  },
+  "steps": [
+    {
+      "kind": "scroll",
+      "dwell_s": [
+        0.7,
+        1
+      ],
+      "maxTimes": 20,
+      "noProgressStop": 3
+    }
+  ],
+  "observers": [
+    {
+      "_why": "搜索结果走站点自己的 XHR /api/sns/web/v1/search/notes(真实抓包见 src/replay/fixtures/xhs-feed.ts)——像 homefeed 一样拦接口读,不再 type/submit + 滚 40 屏抠 DOM。runner 因为存在 network observer 会在 observer 挂好之后强制重新 goto entryUrl(recipe-runner capturesLoad),所以带 keyword 的首屏那次 search/notes 请求也被这个 observer 看到。响应是 snake_case,与 homefeed network 分支同 note_card 形状,沿用其已验证映射。搜索 token 配 pc_search 源。",
+      "kind": "network",
+      "urlPattern": "*/api/sns/web/v2/search/notes*",
+      "windowMs": 300000,
+      "maxBodyBytes": 8000000,
+      "input": {
+        "itemsAt": "data.items",
+        "dedupeBy": "id",
+        "targetCount": 400,
+        "mapping": {
+          "noteId": "id",
+          "guid": "id",
+          "title": "note_card.display_title",
+          "author": "note_card.user.nick_name",
+          "author_avatar": "note_card.user.avatar",
+          "likes": "note_card.interact_info.liked_count",
+          "cover": "note_card.cover.url_default",
+          "note_type": "note_card.type",
+          "xsec_token": "xsec_token",
+          "link": "https://www.xiaohongshu.com/explore/{id}?xsec_token={xsec_token}&xsec_source=pc_search"
+        },
+        "assert": [
+          {
+            "path": "data.items",
+            "desc": "xhs search/notes items"
+          }
+        ]
+      }
+    }
+  ],
+  "output": {
+    "itemsAt": "items",
+    "dedupeBy": "guid",
+    "_why_targetCount": "**这个数才是停止条件**，不是上面 observer 的 400（那只是累积上限）。实测：60 时滚 2-3 次、9.3s 出 63 条，scroll 阶段 7025ms 里绝大部分是 dwell。降到 30 少滚一轮，是省时间最便宜的一刀——比砍 dwell 零风险（dwell 是拟人化的承重件）。",
+    "targetCount": 30,
+    "mapping": {
+      "noteId": "noteId",
+      "guid": "guid",
+      "title": "title",
+      "author": "author",
+      "author_avatar": "author_avatar",
+      "likes": "likes",
+      "cover": "cover",
+      "note_type": "note_type",
+      "xsec_token": "xsec_token",
+      "link": "link"
+    }
+  },
+  "policy": {
+    "minActionIntervalMs": 900,
+    "maxTaskMs": 300000
+  },
+  "meta": {
+    "_why_uses": "同 xhs-home：搜索结果里的每一条，点开取正文/图集/评论走的是共用的 xhs-detail（src/content/enrich/index.ts）。detail 漂了，本源采集照常成功、每一条却都点不开——不申报就没有任何一处会把它算进受影响的源。",
+    "uses": [
+      "xhs-detail"
+    ],
+    "auth": {
+      "type": "session",
+      "facility": "xhs",
+      "login": "qr",
+      "loginUrl": "https://www.xiaohongshu.com/explore",
+      "qrSelector": ".login-container img.qrcode-img, .qrcode img",
+      "cookieDomain": "xiaohongshu.com",
+      "sessionCookies": [
+        "web_session"
+      ]
+    },
+    "normalizer": "xhs",
+    "type": "post",
+    "description": "小红书 — 关键词搜索（登录态浏览器采集，模拟人工输入+滚动）",
+    "topics": [
+      "xhs",
+      "xiaohongshu",
+      "social"
+    ],
+    "categories": [
+      "social-media"
+    ],
+    "facility": {
+      "key": "xhs",
+      "label": "小红书"
+    },
+    "capabilities": [
+      "search"
+    ],
+    "provides": [
+      "search-content"
+    ],
+    "key_param": "keyword",
+    "priority": 80,
+    "discoverable": true,
+    "cadence_hint_seconds": 1800,
+    "homepage": "xiaohongshu.com",
+    "params_schema": {
+      "keyword": {
+        "type": "string",
+        "required": true,
+        "description": "搜索关键词"
+      }
+    }
+  }
+}

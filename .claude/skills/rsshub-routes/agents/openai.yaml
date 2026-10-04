@@ -1,0 +1,4 @@
+interface:
+  display_name: "Contributing RSSHub Routes"
+  short_description: "Investigate, build, and prepare RSSHub routes"
+  default_prompt: "Use $rsshub-routes to investigate a target site/API, implement an RSSHub route, verify it locally, and prepare PR-ready notes."

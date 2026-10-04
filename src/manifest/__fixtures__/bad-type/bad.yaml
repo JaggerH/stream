@@ -1,0 +1,9 @@
+id: bad-type-source
+adapter: rsshub
+type: newsletter
+description: Has a type outside the allowed set; must be rejected.
+topics: [x]
+capabilities: [timeline]
+auth:
+  type: none
+cadence_hint_seconds: 1800

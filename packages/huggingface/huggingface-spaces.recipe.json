@@ -1,0 +1,73 @@
+{
+  "version": 1,
+  "kind": "http",
+  "sourceId": "huggingface-spaces",
+  "request": {
+    "url": "https://huggingface.co/api/spaces?search={query}&sort=createdAt&direction=-1&limit=100&full=true",
+    "method": "GET"
+  },
+  "pagination": {
+    "mode": "increment",
+    "param": "page",
+    "start": 1,
+    "step": 1,
+    "itemsAt": "",
+    "maxPages": 1
+  },
+  "assert": [
+    {
+      "path": "",
+      "desc": "huggingface /api/spaces returned a root array"
+    }
+  ],
+  "mapping": {
+    "guid": "id",
+    "title": "id",
+    "link": "https://huggingface.co/spaces/{id}",
+    "description": "{shortDescription}<br>SDK: {sdk}<br>Likes: {likes}",
+    "author": "author",
+    "category": "sdk",
+    "pubDate": "createdAt"
+  },
+  "meta": {
+    "normalizer": "rsshub",
+    "type": "post",
+    "description": "Hugging Face Spaces — 搜索",
+    "topics": [
+      "huggingface",
+      "spaces",
+      "AI",
+      "gradio",
+      "搜索",
+      "search"
+    ],
+    "categories": [
+      "programming"
+    ],
+    "facility": {
+      "key": "huggingface",
+      "label": "Hugging Face"
+    },
+    "capabilities": [
+      "search"
+    ],
+    "key_param": "query",
+    "priority": 80,
+    "discoverable": true,
+    "cadence_hint_seconds": 3600,
+    "auth": {
+      "type": "none"
+    },
+    "homepage": "huggingface.co",
+    "params_schema": {
+      "query": {
+        "type": "string",
+        "required": true,
+        "description": "搜索关键词"
+      }
+    },
+    "radar": [
+      "huggingface.co/spaces"
+    ]
+  }
+}

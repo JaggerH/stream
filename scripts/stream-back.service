@@ -1,0 +1,57 @@
+[Unit]
+# 常驻后端 —— 这台机器的个人基础设施，不是"开发时才起的东西"。
+#
+# 为什么必须是 service 而不是 `dev.sh` 留下的那个 scope：scope 不带 restart 策略，
+# WSL 重启不拉起，Ctrl-C 就没了。而后端里跑着**调度中心**，A 股的申购/逆回购按点触发要靠它。
+# 把真金白银的任务挂在一个"人手起的终端"上，等于给自己留一个必然会踩的单点——这台机器上
+# 已经踩过两次：infra_scheduler 死了 37 天没人发现，A 股 crontab 因为一条坏的 editable
+# 安装死了 27 个交易日没人发现（见 spec 2026-08-28 §1、§6）。
+#
+# 安装（软链回仓里这份，改了 daemon-reload 即可，别在 ~/.config 里另存一份）：
+#   ln -sf /path/to/stream/scripts/stream-back.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload && systemctl --user enable --now stream-back
+#
+# 与 `scripts/dev.sh` 的关系：两者抢同一个 8900，serve.ts 的单实例锁会让后起的那个直接退出。
+# dev.sh 进场时先把本服务停掉（dev-stop.sh 里），退场时再把它起回来——开发结束后机器自动
+# 回到常驻状态，不需要记得手动拉。
+#
+# 已知降级：由 boot 拉起（而非从交互式 shell 继承）时，WSL 的 interop 环境变量可能缺失，
+# 桌面控制（Stream Desktop 的 stream-desktop.exe）会够不到 Windows 侧。采集、调度中心、
+# 面板都不受影响。要用桌面控制就从终端跑 dev.sh。
+Description=Stream backend (:8900) — 采集调度 + 任务调度中心 + 面板
+After=network-online.target
+Wants=network-online.target
+# 永不放弃重启：这东西死了是静默的（页面打不开而已），没有人会去看 systemd 状态
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+WorkingDirectory=/path/to/stream
+ExecStart=/path/to/stream/node_modules/.bin/tsx src/serve.ts
+
+Environment="PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+Environment="STREAM_PORT=8900"
+# 后端在宿主上，够不到 compose 内网 DNS —— 插件一律走 loopback 门（同 dev.sh）
+Environment="STREAM_PLUGIN_NETWORK=host"
+# 兜住 RSSHub 的进程内堆：泄漏时 node 撞堆上限干净退出（可重启），而不是 RSS 一路涨到把笼子撑爆
+Environment="NODE_OPTIONS=--max-old-space-size=3072"
+
+# 内存笼子。理由与取值同 scripts/serve-caged.sh：RSSHub 跑在进程内、chromium 是子进程，
+# 一个 cgroup 就把它们一起框住。MemorySwapMax=0 是关键——放开 swap 时内存打满会先把整个 WSL
+# 拖进几分钟的换页假死，然后才轮到 OOM killer；禁掉 swap 让失控者当场撞墙、死在笼子里。
+MemoryMax=6G
+MemorySwapMax=0
+
+Restart=always
+RestartSec=10
+# 75 = RESTART_EXIT_CODE（src/restart/policy.ts）：`POST /api/restart` 走监护路径时以它退出、由这里拉起。
+# 登记为成功码，journal 里那次就不是「Failed with result 'exit-code'」——那是有意的重启，不是崩。
+SuccessExitStatus=75
+KillMode=mixed
+KillSignal=SIGTERM
+TimeoutStopSec=30
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target

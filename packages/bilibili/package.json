@@ -1,0 +1,111 @@
+{
+  "name": "@streamapp/bilibili",
+  "version": "1.1.0",
+  "type": "module",
+  "scripts": {
+    "bundle": "node ../../scripts/bundle-code-packages.mjs .",
+    "prepack": "node ../../scripts/assert-npm-artifact.mjs"
+  },
+  "files": [
+    "dist",
+    "*.recipe.json",
+    "manifests.yaml",
+    "README.md"
+  ],
+  "keywords": [
+    "stream-recipe"
+  ],
+  "stream": {
+    "type": "recipe",
+    "hostVersion": ">=0.1.0",
+    "id": "bilibili",
+    "name": "哔哩哔哩",
+    "tagline": "视频播放 / 评论 / 关注",
+    "facility": "bilibili",
+    "homepage": "https://www.bilibili.com",
+    "schemaVersion": 1,
+    "credentials": [
+      "bilibili.com"
+    ],
+    "code": {
+      "entry": "dist/index.js",
+      "adapters": [
+        "bilibili"
+      ],
+      "normalizers": [
+        "bilibili"
+      ],
+      "enrichers": [
+        "bilibili-comments",
+        "bilibili-owner",
+        "bilibili-user"
+      ],
+      "connect": [
+        "bilibili.com"
+      ]
+    },
+    "item": {
+      "authorEnrich": {
+        "enricher": "bilibili-user",
+        "params": {
+          "name": "{author}"
+        }
+      }
+    },
+    "links": {
+      "hosts": [
+        "bilibili.com",
+        "b23.tv"
+      ],
+      "shortHosts": [
+        "b23.tv"
+      ]
+    },
+    "rsshubNamespaces": [
+      "bilibili"
+    ],
+    "rsshubCookieEnv": "BILIBILI_COOKIE_{DedeUserID}",
+    "retires": {
+      "rsshub:bilibili/vsearch/:kw/:order?/:embed?/:tid?": "已由本包 bilibili-search 承接（同一条路由），目录里再留它只会让内容搜索出两份"
+    },
+    "providers": [
+      {
+        "id": "video-bilibili",
+        "category": "resolve",
+        "serveKeys": [
+          "bilibili-video"
+        ],
+        "strategy": "sequential",
+        "label": "bilibili 视频解析",
+        "description": "bvid/aid → 可播放流（带 cookie 取 DASH / progressive / 纯音轨）",
+        "members": [
+          {
+            "source": "bilibili-resolve"
+          }
+        ],
+        "callsites": [
+          "video.resolve"
+        ]
+      },
+      {
+        "id": "bilibili-url",
+        "category": "transform",
+        "serveKeys": [
+          "bilibili-link"
+        ],
+        "strategy": "sequential",
+        "label": "B 站链接抓媒体",
+        "description": "bilibili.com / b23.tv 的链接 → 标题、UP 主与可播放地址",
+        "members": [
+          {
+            "source": "bilibili-fetch-url"
+          }
+        ],
+        "callsites": [
+          "content.enrich"
+        ]
+      }
+    ]
+  },
+  "license": "Apache-2.0"
+}

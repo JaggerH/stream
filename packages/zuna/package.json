@@ -1,0 +1,16 @@
+{
+  "name": "@streamapp/zuna",
+  "version": "1.0.0",
+  "author": "stream",
+  "keywords": [
+    "stream-recipe"
+  ],
+  "stream": {
+    "type": "recipe",
+    "name": "Zuna",
+    "tagline": "聚合搜索网易云歌曲",
+    "facility": "zuna",
+    "schemaVersion": 1
+  },
+  "license": "Apache-2.0"
+}

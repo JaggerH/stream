@@ -1,0 +1,75 @@
+{
+  "version": 2,
+  "kind": "browser",
+  "sourceId": "doubao-drafts-clear",
+  "_why": "清掉豆包网页版左栏「草稿」里的全部条目。生图 recipe 每次失败(风控弹窗、没出图、超时)都会在草稿区留一条带参考图和 prompt 的草稿,攒多了左栏全是废稿。草稿区 = 文字「草稿」那个标题所在的 <section>(别按子节点数猜容器:只剩 1–2 条时会爬过头),每条草稿(div.group/conversation-item)里自带一个悬停才显示的 button[aria-label=\"从对话列表删除\"],JS 直接 .click() 不用真悬停;点完弹「确定删除草稿?」确认框(div.fixed),再点里面文字为「删除」的按钮,条目立刻从列表消失(2026-09-20 实测)。草稿多于 5 条时列表折叠成「展开更多草稿」按钮,先点开。左栏列表是 load 之后才水合的(实测 load 时刻 section 在、条目还没渲染),开头先等最多 ~5s 看有没有条目,别一上来就判空。",
+  "_why_action": "删的是用户账号里的草稿,不可恢复,归 write。只经 run_action_recipe / /api/recipes/action 跑。",
+  "cookieDomain": "doubao.com",
+  "entryUrl": "https://www.doubao.com/chat/",
+  "_why_entryUrl": "草稿列表在左栏,任何 /chat/ 页都有;用 /chat/ 是为了和 doubao-image 共一条 lane、同一套「pathname 不对就 goto 回来」的规矩。",
+  "entryWait": "load",
+  "loginCheck": {
+    "loggedIn": "[contenteditable=\"true\"]",
+    "wall": "[class*=\"login-modal\"], [class*=\"loginModal\"], [data-testid=\"login_modal\"]"
+  },
+  "session": {
+    "facility": "doubao",
+    "lifecycle": "persistent",
+    "visibility": "unattended"
+  },
+  "steps": [
+    {
+      "kind": "evaluate",
+      "_why": "一页最多删到 pageStart+22s(页内求值有 relay 30s 上限),删掉的条目作 items 回去;还有剩就回 cursor 让 runner 再调一页,列表空了回空 cursor 收尾。一页一条都没删掉但列表还有 = 页面结构变了,抛错不报空。列表本来就空:回 items:[] 且不 assert,结果就是 0 条,不算 drift。",
+      "call": "async (cursor, num, params) => { const sleep = ms => new Promise(r => setTimeout(r, ms)); const pageStart = Date.now(); const draftsBox = () => { const h = [...document.querySelectorAll('span,div')].find(e => e.childElementCount === 0 && e.textContent.trim() === '草稿'); return h ? h.closest('section') : null; }; const drafts = () => { const box = draftsBox(); return box ? [...box.querySelectorAll('[class*=\"conversation-item\"]')] : []; }; const expand = () => { const b = [...document.querySelectorAll('button')].find(e => e.textContent.trim() === '展开更多草稿'); if (b) { b.click(); return true; } return false; }; for (let i = 0; i < 12 && !drafts().length; i++) await sleep(400); if (expand()) await sleep(600); const items = []; let stuck = 0; while (Date.now() < pageStart + 22000) { const list = drafts(); if (!list.length) { if (expand()) { await sleep(600); continue; } break; } const item = list[0]; const title = item.textContent.trim().slice(0, 60); const btn = item.querySelector('button[aria-label=\"从对话列表删除\"]'); if (!btn) throw new Error('[doubao-drafts-clear] 草稿条目里没找到「从对话列表删除」按钮(页面结构变了?) 条目: ' + title); btn.click(); let dlg = null; for (let i = 0; i < 10 && !dlg; i++) { await sleep(150); dlg = [...document.querySelectorAll('div.fixed')].find(e => /确定删除草稿/.test(e.textContent) && e.getBoundingClientRect().width > 0); } if (!dlg) throw new Error('[doubao-drafts-clear] 点了删除没弹「确定删除草稿?」确认框: ' + title); const ok = [...dlg.querySelectorAll('button')].find(b => b.textContent.trim() === '删除'); if (!ok) throw new Error('[doubao-drafts-clear] 确认框里没有「删除」按钮'); ok.click(); let gone = false; for (let i = 0; i < 20 && !gone; i++) { await sleep(150); gone = !drafts().includes(item); } if (!gone) { if (++stuck >= 2) throw new Error('[doubao-drafts-clear] 点了确认删除条目没消失: ' + title); continue; } stuck = 0; items.push({ guid: 'draft-' + Date.now() + '-' + items.length, title }); await sleep(300); } const remaining = drafts().length; if (!items.length && remaining) throw new Error('[doubao-drafts-clear] 还有 ' + remaining + ' 条草稿但这一页一条都没删掉'); return { items, cursor: remaining ? String(Number(cursor || 0) + 1) : '' }; }",
+      "itemsAt": "items",
+      "cursorField": "cursor",
+      "maxPages": 10
+    }
+  ],
+  "observers": [],
+  "output": {
+    "itemsAt": "items",
+    "dedupeBy": "guid",
+    "targetCount": 500,
+    "mapping": {
+      "guid": "guid",
+      "title": "title"
+    },
+    "_why_targetCount": "回的是删掉的条目,一条草稿一项;500 = 不设限,删到列表空为止。"
+  },
+  "policy": {
+    "minActionIntervalMs": 500,
+    "maxTaskMs": 240000
+  },
+  "meta": {
+    "action": true,
+    "effects": [
+      "write"
+    ],
+    "type": "post",
+    "title": "清空豆包草稿",
+    "description": "把豆包网页版左栏「草稿」里的条目全部删掉(不可恢复),回每条被删草稿的标题。生图失败留下的废稿用它一次清干净。",
+    "facility": {
+      "key": "doubao",
+      "label": "豆包"
+    },
+    "discoverable": false,
+    "pick_in": [],
+    "rateLimit": {
+      "burst": 2,
+      "perMinute": 4,
+      "perHour": 30,
+      "bucket": "doubao-drafts"
+    },
+    "_why_rateLimit": "一次跑就把全部草稿清完,不需要频繁调;和生图桶分开,清草稿不该占生图额度。",
+    "member_timeout_ms": 250000,
+    "auth": {
+      "type": "session",
+      "facility": "doubao",
+      "login": "cookie",
+      "cookieDomain": "doubao.com"
+    },
+    "params_schema": {}
+  }
+}

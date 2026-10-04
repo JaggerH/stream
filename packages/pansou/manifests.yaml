@@ -1,0 +1,50 @@
+- id: pansou-search
+  adapter: pansou
+  normalizer: pansou
+  title: 网盘搜索
+  description: 输入关键词搜索全网网盘（百度/阿里/夸克/天翼/迅雷等）的共享资源链接。支持网盘类型过滤与排除规则。
+  topics: [pansou, 网盘, 资源, 搜索, 百度网盘, 阿里云盘, 夸克网盘, 天翼云盘, netdisk, search, 影视, 剧集]
+  categories: [search, resource]
+  example_queries: [搜网盘资源, 海绵宝宝 网盘, 某电影网盘资源, 某剧全集 夸克]
+  capabilities: [search]
+  auth: { type: none }
+  cadence_hint_seconds: 3600
+  params_schema:
+    keyword:
+      type: string
+      required: true
+      description: 搜索关键词（必填），如电影名、剧名、资源名称。
+    cloud_types:
+      type: string
+      required: false
+      description: >-
+        限定网盘类型，逗号分隔。可选值: baidu, aliyun, quark, tianyi, uc, 115, 123,
+        mobile, xunlei, pikpak, magnet, ed2k。默认 baidu,quark,aliyun。
+    filter:
+      type: string
+      required: false
+      description: >-
+        JSON 格式过滤规则。exclude 排除含指定关键词的结果，如 {"exclude":["预告","花絮"]}。
+        默认排除预告/花絮/试看/样片/片段/主题曲。
+    channels:
+      type: string
+      required: false
+      description: >-
+        指定搜索的 Telegram 频道列表，逗号分隔（如 yunpanx,Aliyun_4K_Movies）。
+        不传则使用容器 CHANNELS 环境变量配置的默认频道池。
+    ext:
+      type: string
+      required: false
+      description: JSON 格式扩展参数，传给 PanSou 插件系统（如 title_en 供插件使用）。
+    src:
+      type: string
+      required: false
+      description: >-
+        限定搜索来源，三选一：all（默认，两者都搜）、tg（只搜 Telegram 频道，走
+        t.me 公开网页预览）、plugin（只搜 ENABLED_PLUGINS 里的网站爬虫）。
+  fan_out:
+    dimension: channels
+    strategy: batch
+    batch_key: [cloud_types, filter, src]
+  provides: [search-download]
+  key_param: keyword

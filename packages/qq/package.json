@@ -1,0 +1,20 @@
+{
+  "name": "@streamapp/qq",
+  "version": "1.0.1",
+  "author": "stream",
+  "repository": "github:JaggerH/stream",
+  "keywords": [
+    "stream-recipe"
+  ],
+  "stream": {
+    "type": "recipe",
+    "name": "QQ",
+    "tagline": "给指定联系人发一条 QQ 消息",
+    "facility": "qq",
+    "schemaVersion": 1,
+    "contribute": {
+      "path": "packages/qq/qq-send.recipe.json"
+    }
+  },
+  "license": "Apache-2.0"
+}

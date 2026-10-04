@@ -1,0 +1,6 @@
+export type { TrackRef, ResolvedAudio, AudioResolver } from './resolver.ts'
+export { resolveAudio } from './resolver.ts'
+export { AudioArchive, type ArchivedAsset, type DownloadResult } from './archive.ts'
+export { DownloadQueue, type JobView, type QueueDeps } from './queue.ts'
+export { computeTier, type QualityMeta } from './quality.ts'
+export { extractTrackRef } from './ref.ts'

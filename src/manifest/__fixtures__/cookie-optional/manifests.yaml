@@ -1,0 +1,18 @@
+id: cookie-optional
+adapter: rsshub
+description: A source whose cookie is optional — works as a guest when none is on file.
+topics: [test]
+example_queries:
+  - cookie optional fixture
+capabilities: [search]
+auth:
+  type: cookie
+  domain: example.com
+  inject:
+    kind: transform
+    ref: example
+  optional: true
+route: /example/search/{keyword}
+cadence_hint_seconds: 1800
+params_schema:
+  keyword: { type: string, required: true }

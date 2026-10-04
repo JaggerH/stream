@@ -1,0 +1,21 @@
+{
+  "name": "@streamapp/desktop-darwin-arm64",
+  "version": "0.7.2",
+  "description": "stream-desktop binary for macOS arm64 — loaded by @streamapp/desktop (Stream Desktop)（配对 + 桌面控制均可用，桌面控制走 AX；arm64 尚未在真机上验过）。bin/ 里还带着读屏用的 PP-OCRv5 模型三件（ocr-det.onnx / ocr-rec.onnx / ocr-rec-dict.txt）与 ONNX Runtime 1.20.1 的动态库（libonnxruntime.dylib），可执行文件按同目录找它们",
+  "os": ["darwin"],
+  "cpu": ["arm64"],
+  "files": [
+    "bin/stream-desktop",
+    "bin/ocr-det.onnx",
+    "bin/ocr-rec.onnx",
+    "bin/ocr-rec-dict.txt",
+    "bin/libonnxruntime.dylib"
+  ],
+  "scripts": {
+    "prepack": "node ../../../../scripts/assert-npm-artifact.mjs"
+  },
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  }
+}

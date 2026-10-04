@@ -1,0 +1,25 @@
+{
+  "name": "@streamapp/google",
+  "version": "1.0.0",
+  "author": "stream",
+  "keywords": [
+    "stream-recipe"
+  ],
+  "stream": {
+    "type": "recipe",
+    "name": "Google",
+    "tagline": "网页搜索",
+    "facility": "google",
+    "schemaVersion": 1,
+    "cookieDomain": "google.com",
+    "_why_rateLimit": "**这三个数是量出来的，别凭手感调。** 实测（2026-08-13，用户自己那个 Chrome）：18 发查询挤在 13 秒内打出去（≈80 次/分钟），两次里有一次被 Google 的验证码页拦掉 6 发；同样 18 发拆成 3 轮 × 6 并发（≈35 次/分钟）两次都是零被拦。被拦是**瞬时**的——拦完紧接着单发照常有结果，不是持续封号。所以闸门按「一轮 6 发」这个已验证安全的形状定：burst 6 让 search agent 的一整轮一次过（`src/agent/search/flow.ts` 每轮 4–6 条查询并发），perMinute 30 把持续速率压在实测干净的那一档以下。maxWaitMs 10000：桶空了宁可等也别放弃——这条腿同时长在对话热路径上（`web_search`），而单发查询在桶满时压根不排队，会排队的只有 agent 那种连打。",
+    "_why_perHour": "**burst/perMinute 管瞬时形状，perHour 管累计量——Google 拦人数的是后者。** 实测：一小时内约一百发之后稳定回 /sorry/index，**IP 级**（换查询、单发都一样，同出口的 Brave 也跟着弹人机验证）。2026-08-15 亲历：一个 agent 15 分钟连打约 40 发就吃到拦截页，而令牌桶从头到尾一次都没拒绝过（40 发摊 15 分钟 ≈ 2.7 次/分，离 perMinute 30 的闸门差一个数量级）；反过来说，完全合规地跑满 30 次/分，一小时就是 1800 发，比撞墙门槛高 18 倍。**100 正好是实测撞墙点，所以这个预算是贴着墙走、零余量的**——它挡的是「同一小时里被打爆」，不保证一定不撞（撞墙点本身还没被连续跑一小时证明过，只是一次亲历的观察）。**这个数的实测分布正在自己攒**：每次撞墙都会把「撞墙前这一小时我们发了几发」记进 `data/block-episodes.json`（`spentLastHour`），攒够几条就能拿真分布替掉这个贴墙的猜测，不必去跑那个要占着用户浏览器一小时的低速压测。**要收紧就改这一个数**，别去动 burst/perMinute：那两个是另一维、另一份实测。撞满之后的处置不是报错也不是等（等下一格要 36s、等回满要一小时），是 src/search/web-search-ladder.ts 把这条腿当作不存在：走备胎 Brave，中文查询还有百度那条并联腿。",
+    "rateLimit": {
+      "burst": 6,
+      "perMinute": 30,
+      "perHour": 100,
+      "maxWaitMs": 10000
+    }
+  },
+  "license": "Apache-2.0"
+}

@@ -1,0 +1,36 @@
+{
+  "name": "@streamapp/xueqiu",
+  "version": "1.1.0",
+  "type": "module",
+  "author": "stream",
+  "scripts": {
+    "bundle": "node ../../scripts/bundle-code-packages.mjs .",
+    "prepack": "node ../../scripts/assert-npm-artifact.mjs"
+  },
+  "files": [
+    "dist",
+    "*.recipe.json",
+    "README.md"
+  ],
+  "keywords": [
+    "stream-recipe"
+  ],
+  "stream": {
+    "type": "recipe",
+    "name": "雪球",
+    "tagline": "某个用户的动态时间线",
+    "facility": "xueqiu",
+    "schemaVersion": 1,
+    "cookieDomain": "xueqiu.com",
+    "code": {
+      "entry": "dist/index.js",
+      "normalizers": [
+        "xueqiu"
+      ],
+      "enrichers": [
+        "xueqiu-detail"
+      ]
+    }
+  },
+  "license": "Apache-2.0"
+}

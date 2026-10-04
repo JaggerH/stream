@@ -1,0 +1,9 @@
+id: conv-source
+adapter: telegram
+type: conversation
+description: A conversation-type source for grouping tests.
+topics: [chat]
+capabilities: [timeline]
+auth:
+  type: none
+cadence_hint_seconds: 600

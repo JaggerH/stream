@@ -1,0 +1,588 @@
+# ------------------------------------------------------------------ douyin (handlers)
+# douyin-collection 已迁到 recipes/douyin/（登录态浏览器：进收藏页拦第一发 listcollection，
+# 其余批次在页内调站点自己的签名客户端）。这里的 HTTP 端点是死路：
+# `/aweme/v1/web/aweme/listcollection/` 恒 403 `Blocked by ArgusSecurityPlugin`——它挪到 Argus
+# 那套签名头（X-Argus/X-Gorgon/X-Ladon）后面了，和 bogus 无关（X-Bogus 与 a_bogus × GET/POST
+# 四种组合实测同样的 403），上游 video-service 至今没有任何 Argus 实现。
+# douyin-follow 已迁到本包的 douyin-follow.recipe.json（登录态浏览器，页内调站点自己的签名客户端打
+# `/aweme/v1/web/follow/feed/`）。这里以前那条 HTTP 成员打的是容器的 `/api/douyin/web/fetch_follow_feed`，
+# 而那个端点**在 fork 的 stream-backend 分支里根本不存在**——活体 2026-09-22 回 `HTTP 404: Not Found`，
+# 也就是说它从来没成功过。源 id 没变，已有订阅照常。
+# douyin-search 已迁到 recipes/douyin/（登录态浏览器拦 XHR）。这里的 HTTP 搜索端点是死路：
+# 无 cookie → 内层 status_code 2483「请先登录」（外层还是 200，静默空列表）；带 cookie →
+# douyin 的 cookie 有 7KB+，塞进 query 会被上游 h11 判为 Invalid HTTP request。
+# douyin-user 已迁到本包的 douyin-user.recipe.json（登录态浏览器，页内调站点自己的签名客户端打
+# `/aweme/v1/web/aweme/post/`）。这里的 HTTP 端点是死路：容器打上游恒 403
+# `Blocked by ArgusSecurityPlugin`——和 listcollection / aweme-detail 同一道闸，与 cookie 新旧无关
+# （活体 2026-09-22：整份登录 cookie 递进容器直打，同样 403）。源 id 没变，已有订阅照常。
+# `sec_user_id` 也不再需要容器的 get_sec_user_id 解析：主页链接交给浏览器，落地后从 pathname 里读。
+- id: douyin-resolve
+  adapter: Douyin_TikTok_Download_API
+  title: 抖音视频解析
+  description: 抖音作品播放解析（作品 id → play_addr 直连 CDN，带 Referer，range 串流）；video-douyin Provider 行的成员。
+  topics: [douyin, 抖音, 视频, 播放, 解析]
+  categories: [video]
+  capabilities: [anchor]
+  facility: { key: douyin, label: 抖音 }
+  auth: { type: none }
+  discoverable: false
+  cadence_hint_seconds: 3600
+  # 这条成员不再打容器，它跑的是本包的 douyin-detail recipe（在用户自己的 Chrome 里开作品页、
+  # 让页面自己算签名）——**比容器那条慢一个量级，默认 25s 的并发成员闸会在它跑完之前把结果丢掉**。
+  # 活体 2026-09-23 07:59 真撞上：recipe 还在重试循环里（作品页那一发 aweme/detail 迟迟不落地），
+  # 扇出层 24s 就报 `timed out after 25000ms`，用户侧表现成「解析失败」，而 recipe 自己什么都没做错。
+  # 预算：进场 2–4.5s + 最多 5 轮重试 × max(minActionIntervalMs 2000, 900+抖动) + 每轮最多 8s 的调用，
+  # 上限由 recipe 的 maxTaskMs 30s 封住；再加上 lane 排队，按源申报 60s（与 douyin-search 同档）。
+  # **只慢自己这一格**，别的源照常 25s。
+  member_timeout_ms: 60000
+  api: { handler: douyin-resolve } # vid → 主站链接 → 本包的 douyin-detail recipe（容器那条被 Argus 挡死）
+  params_schema:
+    vid: { type: string, required: true, description: "作品 id（aweme_id）" }
+    format: { type: string, required: false, description: "progressive | dash | audio（dash 如实回空）" }
+- id: douyin-fetch-url
+  adapter: Douyin_TikTok_Download_API
+  title: 抖音链接抓媒体
+  description: 一条抖音作品链接（主站 / 分享 / 短链）→ 标题 / 作者 / 可播放地址与图集；content.enrich 按 douyin-link 派发到它（douyin-url Provider 行的成员；链接归属由 stream.links 声明）。
+  topics: [douyin, 抖音, 链接, 媒体, 抓取]
+  categories: [transform]
+  facility: { key: douyin, label: 抖音 }
+  auth: { type: none }
+  discoverable: false
+  cadence_hint_seconds: 3600
+  # 一条链接只有一份媒体结果——成员合同是单个对象，不是数组（见 docs/PACKAGE.md §2.3 output）。
+  output: object
+  # 这条成员不再打容器，它跑的是本包的 douyin-detail recipe（在用户自己的 Chrome 里开作品页、
+  # 让页面自己算签名）——**比容器那条慢一个量级，默认 25s 的并发成员闸会在它跑完之前把结果丢掉**。
+  # 活体 2026-09-23 07:59 真撞上：recipe 还在重试循环里（作品页那一发 aweme/detail 迟迟不落地），
+  # 扇出层 24s 就报 `timed out after 25000ms`，用户侧表现成「解析失败」，而 recipe 自己什么都没做错。
+  # 预算：进场 2–4.5s + 最多 5 轮重试 × max(minActionIntervalMs 2000, 900+抖动) + 每轮最多 8s 的调用，
+  # 上限由 recipe 的 maxTaskMs 30s 封住；再加上 lane 排队，按源申报 60s（与 douyin-search 同档）。
+  # **只慢自己这一格**，别的源照常 25s。
+  member_timeout_ms: 60000
+  api: { handler: douyin-fetch-url } # url → 本包的 douyin-detail recipe → FetchUrlResult
+  params_schema:
+    url: { type: string, required: true, description: "作品链接（www.douyin.com / v.douyin.com / iesdouyin.com）" }
+# ------------------------------------------------------------------ bilibili
+- id: bilibili-video
+  adapter: Douyin_TikTok_Download_API
+  title: 视频详情
+  description: 获取特定 BV 号视频的详细元数据，包含标题、封面、播放时长以及 UP 主信息。
+  topics: [bilibili, 哔哩哔哩, b站, 视频, video, social-media]
+  categories: [social-media, video]
+  facility: { key: bilibili, label: 哔哩哔哩 }
+  example_queries:
+    - 查一下这个B站视频
+    - bilibili video detail
+  capabilities: [anchor]
+  normalizer: bilibili-web
+  auth: { type: none }
+  cadence_hint_seconds: 3600
+  api:
+    endpoint: /api/bilibili/web/fetch_one_video
+    query:
+      bv_id: { from: bv_id, required: true }
+    unwrap: data.data # video-service 透传 bilibili 官方 envelope → 内容在 data.data
+  params_schema:
+    bv_id: { type: string, required: true, description: "the video's BV id" }
+- id: bilibili-user-profile
+  adapter: Douyin_TikTok_Download_API
+  title: 用户信息
+  description: 查询指定 UID 创作者的个人主页名片，包括昵称、头像、个性签名等。
+  topics: [bilibili, 哔哩哔哩, b站, 用户, 主页, social-media]
+  categories: [social-media]
+  facility: { key: bilibili, label: 哔哩哔哩 }
+  example_queries:
+    - 查一下这个B站用户
+    - bilibili user profile
+  capabilities: [anchor]
+  normalizer: bilibili-web
+  auth: { type: none }
+  cadence_hint_seconds: 86400
+  api:
+    endpoint: /api/bilibili/web/fetch_user_profile
+    query:
+      uid: { from: uid, required: true }
+    unwrap: data.data
+  params_schema:
+    uid: { type: string, required: true, description: "bilibili numeric user id" }
+- id: bilibili-user-videos
+  adapter: Douyin_TikTok_Download_API
+  title: 用户投稿视频
+  description: 拉取特定创作者在 B 站公开发布的投稿视频列表。
+  topics: [bilibili, 哔哩哔哩, b站, up主, 投稿, 视频, video, social-media]
+  categories: [social-media, video]
+  facility: { key: bilibili, label: 哔哩哔哩 }
+  example_queries:
+    - 某个B站up主的最新视频
+    - bilibili user videos
+  capabilities: [timeline]
+  normalizer: bilibili-web
+  auth: { type: none }
+  cadence_hint_seconds: 3600
+  api:
+    endpoint: /api/bilibili/web/fetch_user_post_videos
+    query:
+      uid: { from: uid, required: true }
+      pn: { from: pn, default: 1 }
+    unwrap: data.data.list.vlist
+  params_schema:
+    uid: { type: string, required: true, description: "bilibili numeric user id" }
+    pn: { type: number, required: false, description: "page number, default 1" }
+  radar:
+    - source: ["space.bilibili.com/:uid"]
+- id: bilibili-collection
+  adapter: Douyin_TikTok_Download_API
+  title: 收藏夹视频
+  description: 获取指定公开收藏夹（folder_id）内收录的视频列表。
+  topics: [bilibili, 哔哩哔哩, b站, 收藏夹, 视频, video, social-media]
+  categories: [social-media, video]
+  facility: { key: bilibili, label: 哔哩哔哩 }
+  example_queries:
+    - B站收藏夹里的视频
+    - bilibili favorites folder videos
+  capabilities: [timeline]
+  normalizer: bilibili-web
+  auth: { type: none }
+  cadence_hint_seconds: 3600
+  api:
+    endpoint: /api/bilibili/web/fetch_user_collection_videos
+    query:
+      folder_id: { from: folder_id, required: true }
+      pn: { from: pn, default: 1 }
+    unwrap: data.data.medias
+  params_schema:
+    folder_id: { type: string, required: true, description: "collection folder id" }
+    pn: { type: number, required: false, description: "page number, default 1" }
+- id: bilibili-popular
+  adapter: Douyin_TikTok_Download_API
+  title: 综合热门视频榜
+  description: 获取当前全站最热的视频榜单及推荐流。
+  topics: [bilibili, 哔哩哔哩, b站, 热门, 榜单, 发现, video, social-media]
+  categories: [social-media, video]
+  facility: { key: bilibili, label: 哔哩哔哩 }
+  example_queries:
+    - B站热门视频
+    - bilibili popular videos
+  capabilities: [timeline]
+  normalizer: bilibili-web
+  auth: { type: none }
+  cadence_hint_seconds: 3600
+  api:
+    endpoint: /api/bilibili/web/fetch_com_popular
+    query:
+      pn: { from: pn, default: 1 }
+    unwrap: data.data.list
+  params_schema:
+    pn: { type: number, required: false, description: "page number, default 1" }
+- id: bilibili-comments
+  adapter: Douyin_TikTok_Download_API
+  title: 视频评论
+  description: 获取视频下方的用户评论列表，支持按 rpid 获取子回复。
+  topics: [bilibili, 哔哩哔哩, b站, 评论, 视频, social-media]
+  categories: [social-media]
+  facility: { key: bilibili, label: 哔哩哔哩 }
+  example_queries:
+    - 看看这个B站视频的评论
+    - bilibili video comments
+  capabilities: [timeline]
+  normalizer: bilibili-web
+  auth: { type: none }
+  cadence_hint_seconds: 1800
+  api: { handler: bilibili-comments } # rpid 有无 → 回复端点/评论端点
+  params_schema:
+    bv_id: { type: string, required: true, description: "the video's BV id" }
+    pn: { type: number, required: false, description: "page number, default 1" }
+    rpid: { type: string, required: false, description: "reply id — when set, fetches replies to this comment" }
+- id: bilibili-user-dynamic
+  adapter: Douyin_TikTok_Download_API
+  title: 用户动态
+  description: 追踪指定创作者的最新图文或转发动态流。
+  topics: [bilibili, 哔哩哔哩, b站, 动态, 用户, social-media]
+  categories: [social-media]
+  facility: { key: bilibili, label: 哔哩哔哩 }
+  example_queries:
+    - 这个B站用户发了什么动态
+    - bilibili user dynamic feed
+  capabilities: [timeline]
+  normalizer: bilibili-web
+  auth: { type: none }
+  cadence_hint_seconds: 1800
+  api:
+    endpoint: /api/bilibili/web/fetch_user_dynamic
+    query:
+      uid: { from: uid, required: true }
+      offset: { from: offset }
+    unwrap: data.data.items
+  params_schema:
+    uid: { type: string, required: true, description: "bilibili numeric user id" }
+    offset: { type: string, required: false, description: "pagination offset from a previous page" }
+  radar:
+    - source: ["space.bilibili.com/:uid"]
+- id: bilibili-danmaku
+  adapter: Douyin_TikTok_Download_API
+  title: 视频弹幕
+  description: 获取指定视频最新的实时弹幕数据流。
+  topics: [bilibili, 哔哩哔哩, b站, 弹幕, 视频, social-media]
+  categories: [social-media]
+  facility: { key: bilibili, label: 哔哩哔哩 }
+  example_queries:
+    - 这个B站视频的弹幕
+    - bilibili video danmaku
+  capabilities: [timeline]
+  normalizer: bilibili-web
+  auth: { type: none }
+  cadence_hint_seconds: 1800
+  api: { handler: bilibili-danmaku } # 两步: fetch_one_video 取 cid → fetch_video_danmaku 取 XML
+  params_schema:
+    bv_id: { type: string, required: true, description: "the video's BV id" }
+- id: bilibili-live-room
+  adapter: Douyin_TikTok_Download_API
+  title: 直播间信息
+  description: 查询直播间当前的播放状态、标题、分区及主播信息。
+  topics: [bilibili, 哔哩哔哩, b站, 直播, 直播间, social-media]
+  categories: [social-media]
+  facility: { key: bilibili, label: 哔哩哔哩 }
+  example_queries:
+    - 查一下这个B站直播间
+    - bilibili live room detail
+  capabilities: [anchor]
+  normalizer: bilibili-web
+  auth: { type: none }
+  cadence_hint_seconds: 600
+  api:
+    endpoint: /api/bilibili/web/fetch_live_room_detail
+    query:
+      room_id: { from: room_id, required: true }
+    unwrap: data.data
+  params_schema:
+    room_id: { type: string, required: true, description: "live room id" }
+- id: bilibili-live-videos
+  adapter: Douyin_TikTok_Download_API
+  title: 直播视频流
+  description: 获取指定直播间当前的视频流播放地址。
+  topics: [bilibili, 哔哩哔哩, b站, 直播, 视频流, social-media]
+  categories: [social-media]
+  facility: { key: bilibili, label: 哔哩哔哩 }
+  example_queries:
+    - 这个B站直播间的直播流
+    - bilibili live stream url
+  capabilities: [anchor]
+  normalizer: bilibili-web
+  auth: { type: none }
+  cadence_hint_seconds: 600
+  api:
+    endpoint: /api/bilibili/web/fetch_live_videos
+    query:
+      room_id: { from: room_id, required: true }
+    unwrap: data.data
+  params_schema:
+    room_id: { type: string, required: true, description: "live room id" }
+- id: bilibili-live-streamers
+  adapter: Douyin_TikTok_Download_API
+  title: 直播分区主播
+  description: 获取特定直播分区内正在进行直播的主播列表。
+  topics: [bilibili, 哔哩哔哩, b站, 直播, 分区, 主播, social-media]
+  categories: [social-media]
+  facility: { key: bilibili, label: 哔哩哔哩 }
+  example_queries:
+    - 这个B站直播分区谁在播
+    - bilibili live area streamers
+  capabilities: [timeline]
+  normalizer: bilibili-web
+  auth: { type: none }
+  cadence_hint_seconds: 600
+  api:
+    endpoint: /api/bilibili/web/fetch_live_streamers
+    query:
+      area_id: { from: area_id, required: true }
+      pn: { from: pn, default: 1 }
+    unwrap: data.data.list
+  params_schema:
+    area_id: { type: string, required: true, description: "live area id" }
+    pn: { type: number, required: false, description: "page number, default 1" }
+# ------------------------------------------------------------------ tiktok
+# ⚠️ UNWRAP UNVERIFIED (except tiktok-user-profile): tiktok endpoints need a real
+# sec_uid / item_id (and likely a login cookie) to curl-verify against the live backend.
+# The unwrap paths below are the old-adapter values; treat them as PROVISIONAL and
+# re-verify with real data — video-service may wrap tiktok's official envelope like it
+# does bilibili (data.data.*). Tracked as a follow-up task.
+- id: tiktok-video
+  adapter: Douyin_TikTok_Download_API
+  title: 视频详情
+  description: 根据作品 ID 获取 TikTok 视频的详细数据（基于 Web 端接口）。
+  topics: [tiktok, video, social-media]
+  categories: [social-media, video]
+  facility: { key: tiktok, label: TikTok }
+  example_queries:
+    - look up this tiktok video
+    - tiktok video detail
+  capabilities: [anchor]
+  normalizer: tiktok
+  auth: { type: none }
+  cadence_hint_seconds: 3600
+  api:
+    endpoint: /api/tiktok/web/fetch_one_video
+    query:
+      itemId: { from: item_id, required: true }
+    unwrap: data.itemStruct
+  params_schema:
+    item_id: { type: string, required: true, description: "the video's item id" }
+- id: tiktok-resolve
+  adapter: Douyin_TikTok_Download_API
+  title: TikTok 视频解析
+  description: TikTok 作品播放解析（作品 id → play_addr 直连 CDN）；video-tiktok Provider 行的成员。
+  topics: [tiktok, video, 播放, 解析]
+  categories: [video]
+  capabilities: [anchor]
+  facility: { key: tiktok, label: TikTok }
+  auth: { type: none }
+  discoverable: false
+  cadence_hint_seconds: 3600
+  api: { handler: tiktok-resolve } # vid → 主站链接 → /api/hybrid/video_data
+  params_schema:
+    vid: { type: string, required: true, description: "作品 id" }
+    format: { type: string, required: false, description: "progressive | dash | audio（dash 如实回空）" }
+- id: tiktok-fetch-url
+  adapter: Douyin_TikTok_Download_API
+  title: TikTok 链接抓媒体
+  description: 一条 TikTok 作品链接（主站 / vm 短链）→ 标题 / 作者 / 可播放地址；content.enrich 按 tiktok-link 派发到它（tiktok-url Provider 行的成员；链接归属由 stream.links 声明）。
+  topics: [tiktok, 链接, 媒体, 抓取]
+  categories: [transform]
+  facility: { key: tiktok, label: TikTok }
+  auth: { type: none }
+  discoverable: false
+  cadence_hint_seconds: 3600
+  # 一条链接只有一份媒体结果——成员合同是单个对象，不是数组（见 docs/PACKAGE.md §2.3 output）。
+  output: object
+  api: { handler: tiktok-fetch-url } # url → /api/hybrid/video_data → FetchUrlResult
+  params_schema:
+    url: { type: string, required: true, description: "作品链接（www.tiktok.com / vm.tiktok.com）" }
+- id: tiktok-app-video
+  adapter: Douyin_TikTok_Download_API
+  title: 视频详情(App)
+  description: 根据作品 ID 获取 TikTok 视频的详细数据（基于 App 端接口，签名机制不同）。
+  topics: [tiktok, video, social-media]
+  categories: [social-media, video]
+  facility: { key: tiktok, label: TikTok }
+  example_queries:
+    - look up this tiktok video via the app api
+  capabilities: [anchor]
+  normalizer: tiktok
+  auth: { type: none }
+  cadence_hint_seconds: 3600
+  api:
+    endpoint: /api/tiktok/app/fetch_one_video
+    query:
+      aweme_id: { from: aweme_id, required: true }
+    unwrap: data.aweme_detail
+  params_schema:
+    aweme_id: { type: string, required: true, description: "the video's aweme id" }
+- id: tiktok-user-profile
+  adapter: Douyin_TikTok_Download_API
+  title: 用户信息
+  description: 查询指定创作者的资料卡，支持 uniqueId（用户名）或 secUid。
+  topics: [tiktok, 用户, 主页, social-media]
+  categories: [social-media]
+  facility: { key: tiktok, label: TikTok }
+  example_queries:
+    - look up this tiktok user
+  capabilities: [anchor]
+  normalizer: tiktok
+  auth: { type: none }
+  cadence_hint_seconds: 86400
+  api:
+    endpoint: /api/tiktok/web/fetch_user_profile
+    query:
+      uniqueId: { from: unique_id }
+      secUid: { from: sec_uid }
+    unwrap: data.userInfo.user # ✅ curl 确证
+  params_schema:
+    unique_id: { type: string, required: false, description: "the username in the profile url" }
+    sec_uid: { type: string, required: false, description: "TikTok's internal secUid, alternative to unique_id" }
+- id: tiktok-user-post
+  adapter: Douyin_TikTok_Download_API
+  title: 用户投稿视频
+  description: 获取指定用户主页公开发布的视频作品列表。
+  topics: [tiktok, 用户, 作品, video, social-media]
+  categories: [social-media, video]
+  facility: { key: tiktok, label: TikTok }
+  example_queries:
+    - this tiktok user's latest videos
+  capabilities: [timeline]
+  normalizer: tiktok
+  auth: { type: none }
+  cadence_hint_seconds: 3600
+  api:
+    endpoint: /api/tiktok/web/fetch_user_post
+    query:
+      secUid: { from: sec_uid, required: true }
+      cursor: { from: cursor, default: 0 }
+      count: { from: count, default: 35 }
+    unwrap: data.itemList
+  params_schema:
+    sec_uid: { type: string, required: true, description: "the user's secUid" }
+    cursor: { type: number, required: false, description: "page cursor, default 0" }
+    count: { type: number, required: false, description: "page size, default 35" }
+- id: tiktok-user-playlist
+  adapter: Douyin_TikTok_Download_API
+  title: 用户播放列表
+  description: 获取特定创作者名下的视频合辑或播放列表内容。
+  topics: [tiktok, 播放列表, video, social-media]
+  categories: [social-media, video]
+  facility: { key: tiktok, label: TikTok }
+  example_queries:
+    - this tiktok user's playlist
+  capabilities: [timeline]
+  normalizer: tiktok
+  auth: { type: none }
+  cadence_hint_seconds: 3600
+  api:
+    endpoint: /api/tiktok/web/fetch_user_play_list
+    query:
+      secUid: { from: sec_uid, required: true }
+      cursor: { from: cursor, default: 0 }
+      count: { from: count, default: 30 }
+    unwrap: data.itemList
+  params_schema:
+    sec_uid: { type: string, required: true, description: "the user's secUid" }
+    cursor: { type: number, required: false, description: "page cursor, default 0" }
+    count: { type: number, required: false, description: "page size, default 30" }
+- id: tiktok-user-mix
+  adapter: Douyin_TikTok_Download_API
+  title: 合辑视频列表
+  description: 根据合辑 ID（mixId）拉取归属于该合辑的视频列表。
+  topics: [tiktok, 合辑, video, social-media]
+  categories: [social-media, video]
+  facility: { key: tiktok, label: TikTok }
+  example_queries:
+    - videos in this tiktok mix/collection
+  capabilities: [timeline]
+  normalizer: tiktok
+  auth: { type: none }
+  cadence_hint_seconds: 3600
+  api:
+    endpoint: /api/tiktok/web/fetch_user_mix
+    query:
+      mixId: { from: mix_id, required: true }
+      cursor: { from: cursor, default: 0 }
+      count: { from: count, default: 30 }
+    unwrap: data.itemList
+  params_schema:
+    mix_id: { type: string, required: true, description: "the mix/collection id" }
+    cursor: { type: number, required: false, description: "page cursor, default 0" }
+    count: { type: number, required: false, description: "page size, default 30" }
+- id: tiktok-user-like
+  adapter: Douyin_TikTok_Download_API
+  title: 点赞列表
+  description: 获取指定用户公开展示的获赞/喜欢视频列表（列表需设为公开可见）。
+  topics: [tiktok, 点赞, video, social-media]
+  categories: [social-media, video]
+  facility: { key: tiktok, label: TikTok }
+  example_queries:
+    - this tiktok user's liked videos
+  capabilities: [timeline]
+  normalizer: tiktok
+  auth: { type: none }
+  cadence_hint_seconds: 3600
+  api:
+    endpoint: /api/tiktok/web/fetch_user_like
+    query:
+      secUid: { from: sec_uid, required: true }
+      cursor: { from: cursor, default: 0 }
+      count: { from: count, default: 30 }
+    unwrap: data.itemList
+  params_schema:
+    sec_uid: { type: string, required: true, description: "the user's secUid" }
+    cursor: { type: number, required: false, description: "page cursor, default 0" }
+    count: { type: number, required: false, description: "page size, default 30" }
+- id: tiktok-user-collect
+  adapter: Douyin_TikTok_Download_API
+  title: 收藏列表
+  description: 获取当前已登录账号自身收藏的视频列表。
+  topics: [tiktok, 收藏, video, social-media]
+  categories: [social-media, video]
+  facility: { key: tiktok, label: TikTok }
+  example_queries:
+    - my tiktok favorites
+  capabilities: [timeline]
+  normalizer: tiktok
+  auth:
+    type: cookie
+    domain: tiktok.com
+    inject: { kind: env, name: TIKTOK_COOKIE }
+  cadence_hint_seconds: 3600
+  api: { handler: tiktok-user-collect } # 注入 tiktok cookie 作 query
+  params_schema:
+    sec_uid: { type: string, required: true, description: "the user's secUid (your own, for this endpoint)" }
+    cursor: { type: number, required: false, description: "page cursor, default 0" }
+    count: { type: number, required: false, description: "page size, default 30" }
+- id: tiktok-comments
+  adapter: Douyin_TikTok_Download_API
+  title: 视频评论
+  description: 获取指定视频下方的评论列表，支持按 comment_id 进一步获取回复。
+  topics: [tiktok, 评论, video, social-media]
+  categories: [social-media]
+  facility: { key: tiktok, label: TikTok }
+  example_queries:
+    - comments on this tiktok video
+  capabilities: [timeline]
+  normalizer: tiktok
+  auth: { type: none }
+  cadence_hint_seconds: 1800
+  api: { handler: tiktok-comments } # comment_id 有无 → 回复端点/评论端点
+  params_schema:
+    aweme_id: { type: string, required: true, description: "the video's item id" }
+    comment_id: { type: string, required: false, description: "comment id — when set, fetches replies to this comment" }
+    cursor: { type: number, required: false, description: "page cursor, default 0" }
+- id: tiktok-user-fans
+  adapter: Douyin_TikTok_Download_API
+  title: 粉丝列表
+  description: 获取指定用户的粉丝列表。
+  topics: [tiktok, 粉丝, social-media]
+  categories: [social-media]
+  facility: { key: tiktok, label: TikTok }
+  example_queries:
+    - this tiktok user's followers
+  capabilities: [timeline]
+  normalizer: tiktok
+  auth: { type: none }
+  cadence_hint_seconds: 21600
+  api:
+    endpoint: /api/tiktok/web/fetch_user_fans
+    query:
+      secUid: { from: sec_uid, required: true }
+      count: { from: count, default: 30 }
+      maxCursor: { from: max_cursor, default: 0 }
+      minCursor: { from: min_cursor, default: 0 }
+    unwrap: data.userList
+  params_schema:
+    sec_uid: { type: string, required: true, description: "the user's secUid" }
+    count: { type: number, required: false, description: "page size, default 30" }
+    max_cursor: { type: number, required: false, description: "max pagination cursor, default 0" }
+    min_cursor: { type: number, required: false, description: "min pagination cursor, default 0" }
+- id: tiktok-user-follow
+  adapter: Douyin_TikTok_Download_API
+  title: 关注列表
+  description: 获取指定用户的关注创作者列表。
+  topics: [tiktok, 关注, social-media]
+  categories: [social-media]
+  facility: { key: tiktok, label: TikTok }
+  example_queries:
+    - who this tiktok user follows
+  capabilities: [timeline]
+  normalizer: tiktok
+  auth: { type: none }
+  cadence_hint_seconds: 21600
+  api:
+    endpoint: /api/tiktok/web/fetch_user_follow
+    query:
+      secUid: { from: sec_uid, required: true }
+      count: { from: count, default: 30 }
+      maxCursor: { from: max_cursor, default: 0 }
+      minCursor: { from: min_cursor, default: 0 }
+    unwrap: data.userList
+  params_schema:
+    sec_uid: { type: string, required: true, description: "the user's secUid" }
+    count: { type: number, required: false, description: "page size, default 30" }
+    max_cursor: { type: number, required: false, description: "max pagination cursor, default 0" }
+    min_cursor: { type: number, required: false, description: "min pagination cursor, default 0" }

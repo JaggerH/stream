@@ -1,0 +1,127 @@
+{
+  "version": 1,
+  "kind": "html",
+  "sourceId": "zol-phones",
+  "_why_this_source": "商品清单的**直查源**：给品类和价格档，一次裸 HTTP 就拿回整页结构化的「型号 + 报价」，不用先搜索再让 LLM 从文章里配对。侦察记录见 docs/research/catalog-source-zol-recon.md。",
+  "request": {
+    "_why_price_bucket": "价格是**固定四档**、不是任意 min-max：0(1999以下) / 2000(2000-4599) / 4600(4600-7599) / 7600(7600以上)。要精确区间就取重叠的几档、拿抽出来的 price 字段自己筛——每行都有确切价格，筛得准。",
+    "_why_referer": "反爬闸会返回 **185 字节的 200**（meta-refresh 跳 service.zol.com.cn/checking），不是 4xx——只看状态码会把它当成功、然后得到 0 行。**触发条件没摸清**：2026-09-02 侦察时第一发（无 Referer）被挡、补上 Referer 后通过，但同日复验时不带 Referer 也照常返回 48 行，所以「Referer 是钥匙」这个因果是**没有被证实的**，更像首次访问或频率相关。Referer 照浏览器行为补上不亏，但**真正的兜底是下面的 assert**：被挡时 0 行会当场抛 drift，而不是安静地报「今天没有新品」。",
+    "url": "https://detail.zol.com.cn/cell_phone_index/subcate57_list_{price}_{page}.html",
+    "method": "GET",
+    "headers": {
+      "referer": "https://detail.zol.com.cn/cell_phone_index/subcate57_list_1.html"
+    }
+  },
+  "list": {
+    "_why_row": "主列表的行是 `li[data-follow-id]`。侧栏「新增点评产品」用的是 `ul.rank-list li`，**别用只写 `li` 的选择器**，会把侧栏那十几条混进来。",
+    "selector": "li[data-follow-id]",
+    "limit": 60,
+    "fields": {
+      "title": {
+        "_why_img_alt": "**别用 `h3 a` 的文本**：宣传语在嵌套的 `<span>` 里，textContent 会带上「旗舰双芯，185Hz高刷屏，2亿旗舰主摄」这类尾巴——那种名字拿去比价核价查不到、拿去去重也归不到一起。`a.pic img` 的 alt 是干净的型号（含容量），这是这一页上无歧义的那个字段。",
+        "selector": "a.pic img",
+        "attr": "alt"
+      },
+      "link": {
+        "selector": "h3 a",
+        "attr": "href",
+        "resolve": true
+      },
+      "guid": {
+        "selector": "h3 a",
+        "attr": "href",
+        "resolve": true
+      },
+      "description": {
+        "_why": "参考价，纯数字无货币符号（`.price-type` 只装数字，`￥` 在同级的 `.price-sign` 里）。实测 subcate57_list_2000_1：48 行，48 行全部有价。",
+        "selector": ".price-row .price-type",
+        "text": true
+      },
+      "image": {
+        "_why_lazy_src": "列表图是懒加载的：真实地址在 `.src` 这个自定义属性上，标准 `src` 属性此时是占位图。",
+        "selector": "a.pic img",
+        "attr": ".src",
+        "resolve": true
+      }
+    }
+  },
+  "pagination": {
+    "_why": "URL 里 {page} 由 runner 每页替换。maxPages 保守取 3——一档就有上千款，全量翻页既没意义也是在压上游；要更大覆盖面应该多取几个价格档，而不是在一档里往深了翻。",
+    "mode": "increment",
+    "param": "page",
+    "start": 1,
+    "step": 1,
+    "maxPages": 3
+  },
+  "assert": [
+    {
+      "selector": "li[data-follow-id]",
+      "desc": "产品库主列表的行存在（命不中 = 被反爬闸挡了、或站点改版）"
+    },
+    {
+      "selector": ".price-row .price-type",
+      "desc": "行里的参考价存在"
+    }
+  ],
+  "meta": {
+    "normalizer": "rsshub",
+    "type": "post",
+    "description": "中关村在线产品库 · 按价格档列出在售手机 —— 一行一款，带型号（含容量）与参考价",
+    "topics": [
+      "zol",
+      "中关村在线",
+      "手机",
+      "产品库",
+      "报价",
+      "价格",
+      "选购",
+      "phone",
+      "catalog",
+      "price"
+    ],
+    "categories": [
+      "shopping"
+    ],
+    "facility": {
+      "key": "zol",
+      "label": "中关村在线"
+    },
+    "capabilities": [
+      "search"
+    ],
+    "key_param": "price",
+    "priority": 70,
+    "discoverable": true,
+    "cadence_hint_seconds": 86400,
+    "example_queries": [
+      "中关村在线 2000-4599 元手机",
+      "zol 4600 元档手机报价"
+    ],
+    "auth": {
+      "type": "none"
+    },
+    "homepage": "detail.zol.com.cn",
+    "params_schema": {
+      "price": {
+        "type": "string",
+        "required": true,
+        "description": "价格档，固定四选一：0(1999元以下) / 2000(2000-4599元) / 4600(4600-7599元) / 7600(7600元以上)"
+      }
+    },
+    "radar": [
+      "detail.zol.com.cn/cell_phone_index"
+    ],
+    "catalog": {
+      "_why": "购买决策枚举全集时，宿主按这一格决定「手机去问哪份产品库、按哪几档问」（src/agent/purchase/universe-catalog.ts 只读表，不认识任何站）。档与 request._why_price_bucket 是同一件事：站上价格固定四档，宿主取与用户预算有交集的几档、再按每行确切价格筛。",
+      "_why_not_exhaustive": "不写 exhaustive：一档上千款而 pagination 只翻 3 页，取回的是按站点排序的前若干条，是样本不是全集——回执据此标 truncated。",
+      "category": ["手机", "phone"],
+      "param": "price",
+      "bands": [
+        { "value": "0", "max": 1999 },
+        { "value": "2000", "min": 2000, "max": 4599 },
+        { "value": "4600", "min": 4600, "max": 7599 },
+        { "value": "7600", "min": 7600 }
+      ]
+    }
+  }
+}

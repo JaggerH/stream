@@ -1,0 +1,324 @@
+# 网易云取歌（播放/下载/订阅）已全部走 netease-track Provider → 目录 download 路由（rsshub
+# matches: music.163.com/song）。进程内的 dl-znnu/dl-toubiec/dl-enclosure builtin 源已退休，
+# 播客直链下载由队列直接 fetch item 的 pageUrl。业务层不再有硬编码的音频源。
+# content-search 与 resource-search 都已拆成 provides 逐源成员（executor 并发扇出，呈现在调用点按各
+# 条 item 的产出源 manifest 决定）——不再有 content-search-aggregate / resource-search-aggregate
+# builtin 聚合器。resource-search 行 = {mode:auto, provides:search-download}（migration #2c/resource-search）。
+# baidu-share（百度分享验活）已迁为 recipe：recipes/baidu/baidu-share.recipe.json
+# ——引擎补齐 jar/params 钩子/parse 模式后，验活是热插数据，加网盘不再发版。
+- id: quark-save
+  adapter: builtin
+  title: 夸克分享转存
+  description: 把一条夸克分享转存进用户网盘的落点目录（不存在则建）；netdisk-save-quark Provider 行的成员。验活是它的姊妹源 quark-share（kind:http recipe）。
+  topics: [quark, 夸克网盘, 网盘, 转存, 分享, save, netdisk]
+  categories: [resource]
+  capabilities: [anchor]
+  # 转存的结果是一个 {saved, stage, message, …} 结果对象，不是条目批——执行器缝上按此解包。
+  output: object
+  facility: { key: quark, label: 夸克网盘 }
+  # replay 才读 recipe 的 cookieDomain；builtin 源自己经 broker 取 quark.cn 的 cookie，
+  # 故此处 auth 是陈述性的：它确实要用户的夸克登录态。
+  auth: { type: session, facility: quark, login: cookie, cookieDomain: quark.cn }
+  discoverable: false
+  cadence_hint_seconds: 3600
+  params_schema:
+    pwd_id:
+      type: string
+      required: true
+      description: 夸克分享 id（pan.quark.cn/s/<pwd_id>）
+    dest:
+      type: string
+      required: false
+      description: 目标目录名（用户网盘根目录下）；不存在时自动创建
+    subdir:
+      type: string
+      required: false
+      description: 落点下的作品子目录（如片名）；绑定是「一个目录 ↔ 一个左侧」一对一，共用落点就没有哪个绑定能把它当自己的右侧
+    passcode:
+      type: string
+      required: false
+      description: 分享提取码（如有）
+  fixed_params: { mode: quark-save }
+- id: quark-play
+  adapter: builtin
+  title: 夸克视频转码播放
+  description: 夸克文件 fid → 它自家转码好的 H.264+AAC 播放流地址（原盘 AC3/DTS 音轨浏览器无声，夸克转码后有声）；netdisk-play-quark Provider 行的成员。只读，登录态经 broker 取。
+  topics: [quark, 夸克网盘, 网盘, 播放, 转码, play, netdisk]
+  categories: [resource]
+  capabilities: [anchor]
+  # 播放解析的结果是一个 {url, resolution, …} 对象，不是条目批——执行器缝上按此解包。
+  output: object
+  facility: { key: quark, label: 夸克网盘 }
+  auth: { type: session, facility: quark, login: cookie, cookieDomain: quark.cn }
+  discoverable: false
+  cadence_hint_seconds: 3600
+  params_schema:
+    fid:
+      type: string
+      required: true
+      description: 夸克文件 id（AList fs/get 返回的 id）
+  fixed_params: { mode: quark-play }
+- id: quark-folder
+  adapter: builtin
+  title: 夸克文件夹跳转
+  description: 网盘内路径段 → 夸克网页那个文件夹的 web URL（「跳转网盘」按钮用）；netdisk-folder-quark Provider 行的成员。只读，登录态经 broker 取。
+  topics: [quark, 夸克网盘, 网盘, 跳转, folder, browse, netdisk]
+  categories: [resource]
+  capabilities: [anchor]
+  # 结果是一个 {url, fid} 对象，不是条目批——执行器缝上按此解包。
+  output: object
+  facility: { key: quark, label: 夸克网盘 }
+  auth: { type: session, facility: quark, login: cookie, cookieDomain: quark.cn }
+  discoverable: false
+  cadence_hint_seconds: 3600
+  fixed_params: { mode: quark-folder }
+- id: fetch-url
+  adapter: builtin
+  title: 通用网页抓取
+  description: 任意 URL → 标准化**媒体**。已装包声明的平台由各包的 transform 行接管，这一条只剩抖音与图片/视频直链。**不产正文**——网页正文走 article-extract 行。
+  topics: [fetch, url, 抓取, 兜底, douyin]
+  categories: [fallback]
+  capabilities: [anchor]
+  auth: { type: none }
+  discoverable: false
+  cadence_hint_seconds: 3600
+  fixed_params: { mode: fetch-url }
+- id: article-defuddle
+  adapter: builtin
+  title: 网页正文抽取（Defuddle）
+  description: 网页 URL → 正文 markdown（图片保留为 `![alt](url)`）。裸 HTTP + Defuddle（不跑页面 JS），正文太短（SPA 空壳）即弃权让给降级档；与阅读器 `/api/enrich?source=link` 共用同一份抽取与缓存。
+  topics: [article, 正文, 网页, defuddle, 抓取]
+  categories: [transform]
+  capabilities: [anchor]
+  auth: { type: none }
+  discoverable: false
+  cadence_hint_seconds: 3600
+  fixed_params: { mode: article-defuddle }
+  # 一个 URL 只有一份正文——成员合同是单个对象，不是数组（见 docs/PACKAGE.md §2.3 `output`）。
+  output: object
+- id: openai-whisper
+  adapter: builtin
+  title: OpenAI Whisper
+  description: OpenAI 云端转写 whisper-1（BYOK：OPENAI_API_KEY）。>24MB 自动切块。无说话人分离。
+  topics: [transcribe, speech, whisper, openai, 转写, 语音]
+  categories: [transcribe]
+  capabilities: [anchor]
+  auth: { type: none }
+  discoverable: false
+  cadence_hint_seconds: 3600
+  # 整集音频一次成员调用,110min 音频实测 67.7s(见 src/transcribe/openai-stt.ts 头注);10 分钟给足余量,别被全局默认 25s 掐死。
+  member_timeout_ms: 600000
+  runtime_config:
+    ref: openai
+    fields:
+      apiKey:
+        type: secret
+        label: OpenAI API Key
+        description: BYOK；不填则回退环境变量 OPENAI_API_KEY。
+        helpUrl: https://platform.openai.com/api-keys
+  fixed_params: { mode: transcribe-openai }
+- id: ocr-vlm
+  adapter: builtin
+  title: 视觉模型 OCR
+  description: 图片/PDF → Markdown，走 OpenAI 兼容 /chat/completions（消息里带一个 image 分片）；parse Provider 行的成员，一个实例 = 一个端点+视觉模型+key。
+  topics: [ocr, vision, 图片, 识别, markdown, 视觉]
+  categories: [transform]
+  capabilities: [anchor]
+  auth: { type: none }
+  discoverable: false
+  cadence_hint_seconds: 3600
+  # 与 llm-openai 同一传输层,对齐其 180s。
+  member_timeout_ms: 180000
+  # builtin adapter 按 `fixed_params.mode` 分发到 bootstrap 注册的实现函数——**不是按 source id**。
+  # 漏了它，运行期报的是 `no implementation registered for mode ""`，而不是"这个源不存在"。
+  fixed_params: { mode: ocr-vlm }
+  # 产出是**一个** {markdown} 结果对象，不是条目批——adapter 通道端到端是数组，单个对象以
+  # [obj] 骑到执行器，靠这一行在成员契约的缝上解包。漏了它，梯子会把 `[{markdown}]` 整个数组
+  # 当成赢家交出去：**成员其实成功了**，调用方读 .markdown 却是 undefined，而且因为它"赢"了，
+  # 兜底成员根本不会跑——活体上表现成"所有成员都没产出"，最难查的一种。
+  output: object
+  # 和 llm-openai 是同一个传输层（同一个端点、同一种 BYOK 钥匙），差别只在正文里多一个 image
+  # 分片、以及模型必须是**视觉**模型。所以参数形状照抄它，别另发明一套。
+  params_schema:
+    baseUrl:
+      type: string
+      required: true
+      description: OpenAI 兼容端点，到版本段为止（例：`https://open.bigmodel.cn/api/paas/v4`）。
+    model:
+      type: string
+      required: true
+      description: 必须是**能看图**的模型（例：智谱免费档 `glm-4v-flash`）。填了纯文本模型会整批失败——它读不了 image 分片。
+  runtime_config:
+    ref: ocr-vlm
+    perInstance: true
+    # 实例 key 落 `ocr:<实例名>`。命名空间必须显式声明——写 key 的端点按它限定前缀，
+    # 不声明就等于放开"任意 ref 写入"（一个源能改掉别的源的 key）。
+    instanceNamespace: ocr
+    fields:
+      apiKey:
+        type: secret
+        label: API Key
+        required: true
+        description: 该实例的端点密钥；每个成员实例各自一份，不共享。
+
+- id: ocr-mineru
+  adapter: builtin
+  title: MinerU 文档解析（本地）
+  description: 图片/PDF → Markdown，打本地 MinerU 容器；parse 行的兜底成员——born-digital PDF 直接读文字层，不靠识别。
+  topics: [ocr, pdf, 文档, markdown, mineru]
+  categories: [transform]
+  capabilities: [anchor]
+  auth: { type: none }
+  discoverable: false
+  cadence_hint_seconds: 3600
+  # 本地 standby 容器,唤醒+长 PDF 解析,整份一次成员调用。
+  member_timeout_ms: 600000
+  # 分发键，同上——builtin adapter 认 mode，不认 source id。
+  fixed_params: { mode: ocr-mineru }
+  # 同 ocr-vlm：产出是一个 {markdown} 对象，不是条目批。
+  output: object
+  # 无参数：端点来自插件描述符（plugins/mineru.yaml）/ config.mineru_url，不是成员参数。
+  params_schema: {}
+
+- id: llm-openai
+  adapter: builtin
+  title: OpenAI 兼容 LLM
+  description: 调 OpenAI 兼容 /chat/completions；llm Provider 行的成员，一个实例 = 一个端点+模型+key（默认经 Cloudflare AI Gateway）。
+  topics: [llm, chat, openai, gateway, 大模型, 总结]
+  categories: [llm]
+  capabilities: [anchor]
+  auth: { type: none }
+  discoverable: false
+  cadence_hint_seconds: 3600
+  # 长 prompt/长输出(如整篇文章摘要)可能跑到分钟级;3 分钟给足余量,别被全局默认 25s 掐死。
+  member_timeout_ms: 180000
+  # 成员参数自足：端点与默认模型都写在成员自己的 params 上（key 走 runtime_config 的实例层），
+  # 所以同一个源能带不同参数多次进同一条梯子。调用点绑定的 params.model 可以再覆盖这里的默认。
+  params_schema:
+    baseUrl:
+      type: string
+      required: true
+      description: OpenAI 兼容端点，到 /v1 为止（例：`https://gateway.ai.cloudflare.com/v1/<account_id>/<gateway>/compat`）。
+    model:
+      type: string
+      required: true
+      description: 该实例的默认模型；调用点绑定里配了 model 则以绑定为准。
+    contextWindow:
+      type: string
+      required: false
+      description: 该模型能吃多长的 prompt（token 数，如 `131072`）。**对话工作台的自动压缩就靠这个数**——梯子上最小的那个决定整条会话的压缩阈值。留空则按模型名查内置表，查不到回落到 32768 这个保守下限（宁可早压缩，也不要一路涨到上游报错）。
+  runtime_config:
+    ref: llm-openai
+    perInstance: true
+    # 实例 key 落 `llm:<实例名>`——**不是** `llm-openai:`。命名空间与 ref 是两件事，
+    # 拿 ref 推会把存量配置（llm:default / llm:zhipu）全打断。
+    instanceNamespace: llm
+    fields:
+      apiKey:
+        type: secret
+        label: API Key
+        required: true
+        description: 该实例的 OpenAI 兼容端点密钥；每个成员实例（每个连接）各自一份，不共享。
+  fixed_params: { mode: llm-chat }
+- id: tmdb-canonical
+  adapter: builtin
+  title: TMDb 权威标识
+  description: TMDb 影片/剧集候选验证，返回可复用的 TMDb 与 IMDb 标识；video-canonical Provider 的成员。
+  topics: [tmdb, 影视, 电影, 剧集, 标识]
+  categories: [video]
+  capabilities: [anchor]
+  auth: { type: none }
+  discoverable: false
+  cadence_hint_seconds: 3600
+  runtime_config:
+    ref: tmdb
+    fields:
+      apiKey:
+        type: secret
+        label: TMDb API Key
+        required: true
+        description: 登录 TMDb 后在 Account Settings → API 申请；请填写 API Key (v3 auth)，不要填 API Read Access Token。
+        helpUrl: https://www.themoviedb.org/settings/api
+      language: { type: string, label: 语言, default: zh-CN }
+  fixed_params: { mode: tmdb-canonical }
+- id: tmdb-metadata
+  adapter: builtin
+  title: TMDb 元数据
+  description: TMDb 影片/剧集查询，标准化返回标题、简介、演职员、评分和外部 ID；video-metadata Provider 的成员。
+  topics: [tmdb, 影视, 电影, 剧集, 元数据]
+  categories: [video]
+  capabilities: [anchor]
+  auth: { type: none }
+  discoverable: false
+  cadence_hint_seconds: 3600
+  runtime_config:
+    ref: tmdb
+    fields:
+      apiKey:
+        type: secret
+        label: TMDb API Key
+        required: true
+        description: 登录 TMDb 后在 Account Settings → API 申请；请填写 API Key (v3 auth)，不要填 API Read Access Token。
+        helpUrl: https://www.themoviedb.org/settings/api
+      language: { type: string, label: 语言, default: zh-CN }
+  fixed_params: { mode: tmdb-metadata }
+- id: tmdb-title-search
+  adapter: builtin
+  title: TMDb 片名搜索
+  description: TMDb 关键词搜索，一次返回电影+剧集候选（标题、年份、海报、TMDb ID）；video-search Provider 的成员。
+  topics: [tmdb, 影视, 电影, 剧集, 搜索]
+  categories: [video]
+  capabilities: [search]
+  auth: { type: none }
+  discoverable: false
+  cadence_hint_seconds: 3600
+  runtime_config:
+    ref: tmdb
+    fields:
+      apiKey:
+        type: secret
+        label: TMDb API Key
+        required: true
+        description: 登录 TMDb 后在 Account Settings → API 申请；请填写 API Key (v3 auth)，不要填 API Read Access Token。
+        helpUrl: https://www.themoviedb.org/settings/api
+      language: { type: string, label: 语言, default: zh-CN }
+  fixed_params: { mode: tmdb-title-search }
+- id: tmdb-images
+  adapter: builtin
+  title: TMDb 图片
+  description: TMDb 影片/剧集查询，返回海报、背景和标题图候选；video-images Provider 的成员。
+  topics: [tmdb, 影视, 海报, 背景图, 图片]
+  categories: [video]
+  capabilities: [anchor]
+  auth: { type: none }
+  discoverable: false
+  cadence_hint_seconds: 3600
+  runtime_config:
+    ref: tmdb
+    fields:
+      apiKey:
+        type: secret
+        label: TMDb API Key
+        required: true
+        description: 登录 TMDb 后在 Account Settings → API 申请；请填写 API Key (v3 auth)，不要填 API Read Access Token。
+        helpUrl: https://www.themoviedb.org/settings/api
+      language: { type: string, label: 语言, default: zh-CN }
+  fixed_params: { mode: tmdb-images }
+- id: research-runs
+  adapter: builtin
+  title: 研究 run 采集
+  description: 盯 cockpit_sdk 落盘的 artifacts 目录，每个新 run 一条 feed item（名字/tag/关键指标，深链 run 详情看板）。
+  topics: [research, run, backtest, artifacts, 研究, 回测]
+  categories: [research]
+  capabilities: [timeline]
+  auth: { type: none }
+  discoverable: true
+  cadence_hint_seconds: 300
+  runtime_config:
+    ref: research
+    fields:
+      artifactsDir:
+        type: string
+        label: artifacts 目录
+        description: cockpit_sdk 落盘的 artifacts 根目录绝对路径（如 /path/to/cockpit/artifacts）。
+  fixed_params: { mode: research-runs }

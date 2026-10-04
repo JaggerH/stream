@@ -1,0 +1,144 @@
+{
+  "version": 3,
+  "kind": "browser",
+  "cookieDomain": "photopea.com",
+  "_why_cookieDomain": "Photopea 免费版不用登录，这一格只是浏览器 recipe 的必填项：它决定 lane 落在哪个站、cdp 的 domain 核对用哪个域。填裸域覆盖 www。",
+  "entryUrl": "https://www.photopea.com/api/",
+  "_why_entryUrl": "故意不落 photopea.com 首页：顶层的 Photopea **不听 postMessage**（脚本 API 只在被嵌成 iframe 时才接线，实测 2026-09-19：顶层 postMessage 只收到自己的回声，`app` 也不是全局）。所以 recipe 在一张**同源的轻页**（/api/ 是 9KB 的静态文档页）里自己嵌一个 photopea.com 的 iframe，从顶层 postMessage 驱动它、收它 postMessage 回来的 ArrayBuffer。同源是关键：跨源的宿主页收不到 iframe 的 `source` 比对、也没法 `contentWindow` 直投；用 Stream 自己的页面就得再过 CORS/信任源那道门，白多一层。",
+  "entryWait": "load",
+  "rideCurrentPage": true,
+  "_why_rideCurrentPage": "persistent lane 默认「已在入口页也重载」（上一轮的渲染视为过期），可这里页面上什么都不读——真正的状态是 evaluate 自己注入的那个热 iframe（Photopea 冷载要 2–20s，热的 4s 内应一声就复用）。骑着当前页不重载，iframe 就能跨轮活着；冷启时 lane 直接落在 entryUrl（runner 见 session-recipe-executor.ts 的 landing）。",
+  "loginCheck": {
+    "loggedIn": "body",
+    "wall": "#stream-photopea-never-wall",
+    "_why": "Photopea 没有登录墙：loggedIn 填 body（页面在就算登着），wall 填一个永远不存在的 id。这两格是 BrowserRecipe 的必填结构，不是这里真的在判登录。"
+  },
+  "session": {
+    "facility": "photopea",
+    "lifecycle": "persistent",
+    "visibility": "unattended",
+    "keepAlive": true
+  },
+  "_why_session": "所有 photopea-* 共用一条 lane、一张标签，**常驻**（keepAlive：不闲置回收、撞墙也不关）：每重开一次就是一次 ~10MB 的整页加载，开得勤了 photopea.com 会掐连接（ERR_CONNECTION_CLOSED）/ 出真人验证；而且跑完的 PSD 就留在这张标签里给人看、给人改。iframe 常热、铺满标签。unattended：整段是 postMessage + 页内 canvas，没有一次可信输入，后台标签照跑。后台标签的定时器被节流到 ≥1s 一跳，所以脚本里凡是等，都等事件（message）不轮询。",
+  "observers": [],
+  "policy": {
+    "minActionIntervalMs": 0,
+    "maxTaskMs": 120000
+  },
+  "sourceId": "photopea-run",
+  "_why": "通用的一条：任意图片 + 任意 Photopea 脚本（Photoshop 脚本子集）+ 导出格式 → 文件。photopea-cutout / photopea-place 是它的两个定型用法；新需求先用这条写脚本试，定型了再抽成专用 recipe。装入规则：没给画幅 → 每张图各开成一个文档，`app.documents[i]` = 第 i 张（文档名与它第一层都叫 `img<i>`），脚本开始时 activeDocument 是第 0 张；给了 width/height → 先建透明画布 `app.documents[0]`，每张图 duplicate 进去成一层、名叫 `img<i>`（img0 在最底，`layers.getByName(\"img0\")` 能取到），脚本开始时 activeDocument 就是画布。脚本跑完导出**当时的 activeDocument**。",
+  "_why_action": "同 photopea-cutout：无账号无副作用，动作形状，只经 run_action_recipe / POST /api/recipes/action 跑。",
+  "steps": [
+    {
+      "kind": "evaluate",
+      "_why": "只干一件事：确保宿主页上有 <input type=file id=stream-files multiple>，给下一步 setFiles 用。它不产出（items 空），主体在最后那步。放在 setFiles 之前而不是并进主体，是因为 setFiles 是 runner 的动作步（CDP DOM.setFileInputFiles），页内脚本自己放不进本地文件。",
+      "call": "async () => { if (!document.getElementById('stream-files')) { const i = document.createElement('input'); i.type = 'file'; i.id = 'stream-files'; i.multiple = true; i.style.display = 'none'; document.body.appendChild(i); } return { items: [], cursor: '' }; }",
+      "itemsAt": "items",
+      "cursorField": "cursor",
+      "maxPages": 1
+    },
+    {
+      "kind": "setFiles",
+      "_why": "本地文件走这里：浏览器进程直接读盘放进 input，一个字节都不经扩展的控制通道。此前唯一的入口是 images（data URL 塞进 params），evaluate 会把整个参数袋序列化进一条求值表达式——20 层 3200×1440 的 PNG 就是一条 21MB 的消息，还挤在页内求值 30s 预算里。files 没给就跳过（trace 里记 skipped）。",
+      "selector": "#stream-files",
+      "paths": "{files}"
+    },
+    {
+      "kind": "evaluate",
+      "_why": "装入（清场 → 建画布 → 开图（本地文件读 ArrayBuffer 投给 iframe / data URL 用 app.open）→ 命名）与导出由这里做，中间那段用户脚本原样 postMessage 过去、外面包一层 try/catch 把能抓到的错回显成 \"ERR:…\" 抛出来；抓不到的（引擎内部死掉，见 README 可用表）靠超时抛「没跑完 + 脚本前 200 字 + 已收到的回音」。脚本预算 timeoutMs（默认 20s，上限 25s）再受整页 26s 预算约束——装入用掉多少，脚本就少多少；图多就先缩小。脚本驱动、就绪判据、二进制回传与 photopea-cutout 一致。",
+      "call": "async (cursor, num, params) => {\n  if (location.hostname !== 'www.photopea.com') throw new Error('[photopea-run] 这张标签没连上 photopea.com（现在是 ' + location.href.slice(0, 60) + '，多半是连接被掐断）：去那张标签按一次刷新，别关它');\n  if (window._cf_chl_opt || /请稍候|Just a moment|安全验证/.test(document.title + ' ' + (document.body ? document.body.innerText.slice(0, 200) : ''))) throw new Error('[photopea-run] Photopea 标签停在 Cloudflare 真人验证页：去那张「Photopea API」标签点一下验证（只需一次，标签常驻不关），再跑');\n  const sleep = ms => new Promise(r => setTimeout(r, ms));\n  const pageStart = Date.now();\n  const images = String(params.images || '').split('\\n').filter(Boolean);\n  if (images.some(u => !u.startsWith('data:image/'))) throw new Error('[photopea-run] images 要是 data:image/... 的 data URL（按换行拼）');\n  // 本地文件那一路：上一步 setFiles 已把文件放进宿主页的 <input id=stream-files>，这里只收 File 对象。读完就清空——input 不清，下一轮没给 files 时会把上一轮的再装一遍。\n  const inp = document.getElementById('stream-files'); const files = inp ? [...(inp.files || [])] : []; if (inp) inp.value = '';\n  if (!files.length && !images.length) throw new Error('[photopea-run] files（本地路径）和 images（data URL）至少给一样');\n  const script = String(params.script || '');\n  if (!script.trim()) throw new Error('[photopea-run] script 不能为空');\n  const format = String(params.format || 'png');\n  const W = params.width ? Number(params.width) : 0, H = params.height ? Number(params.height) : 0;\n  if ((W || H) && !(W > 0 && H > 0)) throw new Error('[photopea-run] width/height 要一起给、都是正整数');\n  const scriptMs = Math.min(Math.max(Number(params.timeoutMs || 20000), 1000), 25000);\n  // —— Photopea 宿主：同源 iframe（photopea.com 顶层不听 postMessage，嵌成 iframe 才听）——\n  const ensureFrame = async () => {\n    let f = document.getElementById('pp');\n    if (f) { // 上一轮留下的热 iframe：应一声就复用，不应就换新的\n      const alive = await new Promise(res => { const h = e => { if (e.source === f.contentWindow && e.data === 'pong') { window.removeEventListener('message', h); res(true); } }; window.addEventListener('message', h); setTimeout(() => { window.removeEventListener('message', h); res(false); }, 4000); f.contentWindow.postMessage('app.echoToOE(\"pong\");', '*'); });\n      if (alive) return f;\n      f.remove();\n    }\n    f = document.createElement('iframe'); f.id = 'pp'; f.style.cssText = 'position:fixed;left:0;top:0;width:100vw;height:100vh;border:0;background:#fff;z-index:2147483647';\n    const ready = new Promise((res, rej) => { const h = e => { if (e.source === f.contentWindow && e.data === 'done') { window.removeEventListener('message', h); res(); } }; window.addEventListener('message', h); setTimeout(() => { window.removeEventListener('message', h); rej(new Error('[photopea-run] Photopea iframe 25s 没就绪')); }, 25000); });\n    f.src = 'https://www.photopea.com/#' + encodeURIComponent(JSON.stringify({ environment: {} }));\n    document.body.appendChild(f);\n    await ready;\n    return f;\n  };\n  const f = await ensureFrame();\n  // 跑一段 Photopea 脚本，等它最后一句 echo 的标记；二进制（saveToOE）顺手收下。\n  // Photopea 脚本抛错时**不报错也不发 done**，所以：用户脚本包一层 try/catch 把 e 回显成 \"ERR:…\"（能抓到的那类），\n  // 抓不到的（引擎内部死掉）靠超时，把已收到的回音和脚本前 200 字一起抛出来。\n  const pp = (script, ms, label) => new Promise((res, rej) => {\n    const mark = 'ok#' + Math.random().toString(36).slice(2, 8); let bin = null; const got = [];\n    const h = e => { if (e.source !== f.contentWindow) return; if (e.data instanceof ArrayBuffer) { bin = e.data; return; } if (typeof e.data !== 'string') return; got.push(e.data); if (e.data === mark) { window.removeEventListener('message', h); clearTimeout(t); res({ bin, got }); } };\n    const t = setTimeout(() => { window.removeEventListener('message', h); rej(new Error('[photopea-run] ' + label + ' ' + ms + 'ms 内没跑完（Photopea 脚本出错时不报错、只是没有回音；常见死因见 README 的可用表）。脚本开头: ' + script.slice(0, 200).replace(/\\s+/g, ' ') + ' | 收到的回音: ' + (got.join(' / ') || '（无）'))); }, ms);\n    window.addEventListener('message', h);\n    f.contentWindow.postMessage(script + '\\napp.echoToOE(' + JSON.stringify(mark) + ');', '*');\n  });\n  let B = 0; // 清完临时文档后已有的文档数（用户自己开着的）；本轮的文档从 app.documents[B] 起\n  const probe = async () => (await pp('app.echoToOE(\"docs=\" + app.documents.length);', 5000, '探文档数')).got.find(s => s.startsWith('docs='));\n  const waitDocs = async (n, ms) => { const t0 = Date.now(); for (;;) { const s = await probe(); if (s === 'docs=' + (B + n)) return; if (Date.now() - t0 > ms) throw new Error('[photopea-run] 等文档就绪超时，现在 ' + s + '，要 docs=' + n); await sleep(300); } };\n  // —— 装入：先清场；有画幅就先建透明画布再把每张图开成文档、duplicate 成画布的一层（img0 在最底）；没画幅就按顺序各开成文档（app.documents[i] = 第 i 张）——\n  await pp('for (var i = app.documents.length - 1; i >= 0; i--) if (String(app.documents[i].name).indexOf(\"~stream~\") === 0) app.documents[i].close();', 8000, '清掉上轮残留的临时文档');\n  B = Number(((await probe()) || 'docs=0').slice(5).split(' ')[0]) || 0;\n  await waitDocs(0, 8000);\n  if (W) {\n    await pp('app.documents.add(' + W + ', ' + H + ', 72, \"~stream~canvas\", NewDocumentMode.RGB, DocumentFill.TRANSPARENT);', 8000, '新建画布');\n    await waitDocs(1, 8000);\n  }\n  // 装入顺序：先本地文件、后 data URL，序号连着排（img<i>）。ArrayBuffer 直接 postMessage 给 iframe 就开成一个文档\n  // （Photopea 的消息 API：字符串当脚本、二进制当文件，实测 2026-09-24），不经 base64、不占脚本预算。\n  const openBinary = (buf, label) => new Promise((res, rej) => { const h = e => { if (e.source === f.contentWindow && e.data === 'done') { window.removeEventListener('message', h); clearTimeout(t); res(); } }; const t = setTimeout(() => { window.removeEventListener('message', h); rej(new Error('[photopea-run] ' + label + ' 20s 没开成文档')); }, 20000); window.addEventListener('message', h); f.contentWindow.postMessage(buf, '*'); });\n  const total = files.length + images.length;\n  for (let i = 0; i < total; i++) {\n    if (i < files.length) await openBinary(await files[i].arrayBuffer(), '打开第 ' + i + ' 个文件 ' + files[i].name);\n    else await pp('app.open(' + JSON.stringify(images[i - files.length]) + ');', 20000, '打开第 ' + i + ' 张图');\n    await waitDocs(W ? 2 : i + 1, 20000);\n    if (W) {\n      await pp('var src = app.activeDocument; src.layers[0].duplicate(app.documents[' + B + '], ElementPlacement.PLACEATBEGINNING); src.close(); app.activeDocument = app.documents[' + B + ']; app.activeDocument.layers[0].name = \"img' + i + '\";', 8000, '把第 ' + i + ' 张图放进画布');\n      await waitDocs(1, 8000);\n    } else {\n      await pp('app.activeDocument.layers[0].name = \"img' + i + '\"; app.activeDocument.name = \"~stream~img' + i + '\";', 5000, '给第 ' + i + ' 张图命名');\n    }\n    if (Date.now() - pageStart > 22000) throw new Error('[photopea-run] 图太多，装入就用掉了一次求值的 30s 预算（已装 ' + (i + 1) + ' 张）');\n  }\n  if (!W) await pp('app.activeDocument = app.documents[' + B + '];', 5000, '切回第 0 张图');\n  // —— 用户脚本原样执行（外面包一层 try/catch 抓能抓的错）——\n  const budget = Math.min(scriptMs, 26000 - (Date.now() - pageStart));\n  const r = await pp('var BASE = ' + B + ';\\ntry {\\n' + script + '\\n} catch (e) { app.echoToOE(\"ERR:\" + (e && e.message ? e.message : e)); }', budget, '用户脚本');\n  const err = r.got.find(s => s.startsWith('ERR:'));\n  if (err) throw new Error('[photopea-run] 脚本抛错: ' + err.slice(4));\n  const echoes = r.got.filter(s => !s.startsWith('ok#') && s !== 'done');\n  // —— 导出脚本结束时的 activeDocument ——\n  const { bin, got } = await pp('var d = app.activeDocument; app.echoToOE(\"size=\" + d.width + \"x\" + d.height); app.echoToOE(\"layers=\" + d.layers.length); app.echoToOE(\"doc=\" + d.name); d.saveToOE(' + JSON.stringify(format) + ');', 20000, '导出');\n  if (!bin) throw new Error('[photopea-run] saveToOE(' + format + ') 没回二进制: ' + got.join(' / '));\n\n  const keepName = String(params.keep || '');\n  if (keepName) await pp('app.activeDocument.name = ' + JSON.stringify(keepName) + '; var kd = app.activeDocument; ' + 'for (var i = app.documents.length - 1; i >= 0; i--) if (String(app.documents[i].name).indexOf(\"~stream~\") === 0) app.documents[i].close();' + ' app.activeDocument = kd;', 8000, '留下结果');\n  else await pp('for (var i = app.documents.length - 1; i >= 0; i--) if (String(app.documents[i].name).indexOf(\"~stream~\") === 0) app.documents[i].close();', 8000, '收尾');\n  const u8 = new Uint8Array(bin); let s = ''; for (let i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000));\n  const pick = k => (got.find(x => x.startsWith(k + '=')) || '').slice(k.length + 1);\n  return { items: [{ guid: 'run-' + Date.now(), format, size: pick('size'), layers: pick('layers'), doc: pick('doc'), echoes: echoes.join('\\n'), bytes: String(u8.length), data: btoa(s) }], cursor: '' };\n}",
+      "itemsAt": "items",
+      "cursorField": "cursor",
+      "maxPages": 1
+    }
+  ],
+  "output": {
+    "itemsAt": "items",
+    "dedupeBy": "guid",
+    "targetCount": 1,
+    "mapping": {
+      "guid": "guid",
+      "format": "format",
+      "size": "size",
+      "layers": "layers",
+      "doc": "doc",
+      "echoes": "echoes",
+      "bytes": "bytes",
+      "file": "data"
+    },
+    "files": {
+      "file": {
+        "extFrom": "format"
+      }
+    },
+    "_why_files": "页内只能把导出的二进制编成 base64 交出来；这一格让宿主把它写成文件、`items[0].file` 换成绝对路径。不留 base64 在结果里：结果会原样落进 agent-runs.db，而账本拒收超过 1MB 的 result——一张导出图几十 MB，曾把账本撑到 2GB、开机 OOM。扩展名取 format（`jpg:0.8` 取冒号前）。",
+    "assert": [
+      {
+        "path": "items.0.data",
+        "desc": "没有拿到导出的图（Photopea 脚本没回二进制）"
+      }
+    ]
+  },
+  "meta": {
+    "action": true,
+    "effects": [],
+    "_why_effects": "同 photopea-cutout。",
+    "type": "post",
+    "title": "Photopea 跑脚本",
+    "description": "把图片装进 Photopea，原样执行一段 Photoshop 风格脚本，导出 activeDocument 为 png/jpg/psd 的文件（`items[0].file` 是落盘后的绝对路径）。",
+    "facility": {
+      "key": "photopea",
+      "label": "Photopea"
+    },
+    "key_param": "script",
+    "discoverable": false,
+    "pick_in": [],
+    "member_timeout_ms": 120000,
+    "params_schema": {
+      "images": {
+        "type": "string",
+        "required": false,
+        "description": "小图走这里：一张或多张 data URL，按换行拼。大图 / 多图用 files。两者至少给一样；序号 img<i> 先排 files 再排 images。"
+      },
+      "files": {
+        "type": "string",
+        "required": false,
+        "format": "path",
+        "multiple": true,
+        "default": "",
+        "description": "本地图片文件的绝对路径，多条按换行拼（后端机器上的路径，WSL 路径宿主自动翻成 Windows 侧认的）。浏览器进程直接读盘，不经 base64、不占脚本预算——几十 MB 的整幅层 PNG 走这里。第 i 个文件 = 画布里的 img<i>（有画幅）或 app.documents[BASE + i]。"
+      },
+      "script": {
+        "type": "string",
+        "required": true,
+        "description": "Photopea 脚本（Photoshop 脚本子集，见 README「怎么写脚本」与可用表），原样执行。用 app.echoToOE(\"…\") 回显的字符串会进 items[0].echoes。"
+      },
+      "format": {
+        "type": "string",
+        "required": false,
+        "description": "导出格式：png（默认，透明）| jpg（可 \"jpg:0.8\" 带质量）| webp | psd（保留图层）。"
+      },
+      "width": {
+        "type": "string",
+        "required": false,
+        "description": "给了就先新建这么大的透明画布，图片都作为它的图层装入；不给就各开成文档。与 height 一起给。"
+      },
+      "height": {
+        "type": "string",
+        "required": false,
+        "description": "同 width。"
+      },
+      "timeoutMs": {
+        "type": "string",
+        "required": false,
+        "description": "用户脚本的时限，默认 20000，上限 25000（整页求值 30s 上限减去装入用掉的）。"
+      },
+      "keep": {
+        "type": "string",
+        "required": false,
+        "default": "",
+        "description": "跑完把导出的那份文档改成这个名字**留在标签里**给人看、给人改（不给 = 本轮的临时文档全关掉）。这张 Photopea 标签常驻、人和脚本共用：脚本只碰自己建的 ~stream~ 临时文档，你开着的文档不动；但别在脚本跑的那几秒里切文档。"
+      }
+    }
+  }
+}

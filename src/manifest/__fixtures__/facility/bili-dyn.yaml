@@ -1,0 +1,14 @@
+id: bili-dyn
+adapter: rsshub
+description: Bilibili UP 主动态 — facility-grouping fixture.
+topics: [bilibili]
+example_queries:
+  - bilibili UP 主动态
+capabilities: [timeline]
+auth:
+  type: none
+cadence_hint_seconds: 1800
+params_schema: {}
+facility:
+  key: bilibili
+  label: 哔哩哔哩

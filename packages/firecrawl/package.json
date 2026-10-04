@@ -1,0 +1,35 @@
+{
+  "name": "@streamapp/firecrawl",
+  "version": "1.1.0",
+  "type": "module",
+  "author": "stream",
+  "keywords": [
+    "stream-recipe"
+  ],
+  "scripts": {
+    "bundle": "node ../../scripts/bundle-code-packages.mjs .",
+    "prepack": "node ../../scripts/assert-npm-artifact.mjs"
+  },
+  "files": [
+    "dist",
+    "*.recipe.json",
+    "manifests.yaml",
+    "README.md"
+  ],
+  "stream": {
+    "type": "recipe",
+    "id": "firecrawl",
+    "name": "Firecrawl",
+    "tagline": "网页正文抽取（云端跑 JS）+ 读 / 建 API key",
+    "facility": "firecrawl",
+    "schemaVersion": 1,
+    "cookieDomain": "firecrawl.dev",
+    "code": {
+      "entry": "dist/index.js",
+      "adapters": [
+        "firecrawl"
+      ]
+    }
+  },
+  "license": "Apache-2.0"
+}

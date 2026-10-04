@@ -1,0 +1,14 @@
+{
+  "name": "@streamapp/browser",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "stream": {
+    "id": "browser",
+    "name": "Headless Browser",
+    "tagline": "把页面渲染出来再抓",
+    "description": "Render a web page with a headless browser.",
+    "normalizer": "generic"
+  },
+  "license": "Apache-2.0"
+}

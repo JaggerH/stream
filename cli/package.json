@@ -1,0 +1,108 @@
+{
+  "name": "@streamapp/stream",
+  "version": "0.0.28",
+  "description": "Stream — a self-hostable information-flow layer: many sources into one inbox, exposed to AI over MCP",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/JaggerH/stream.git"
+  },
+  "homepage": "https://github.com/JaggerH/stream#readme",
+  "type": "module",
+  "bin": {
+    "stream": "bin/stream.mjs"
+  },
+  "files": [
+    "bin/stream.mjs",
+    "resources/",
+    "README.md",
+    "LICENSE",
+    "NOTICE",
+    "THIRD-PARTY-NOTICE"
+  ],
+  "scripts": {
+    "prepack": "node ../scripts/assert-npm-artifact.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "//dependencies": [
+    "**RSSHub 不在这里，是故意的**（2026-09-04 从这儿撤掉）：它经 `@jocmp/mercury-parser` 拖着两个",
+    "`github:` 依赖，npm 装它们必须 spawn git，而干净的 Windows 上没有 git —— 实测整条",
+    "`npm i @streamapp/stream` 直接失败，用户连一个能跑的 Stream 都拿不到。改成用到 RSSHub 源时",
+    "由 Stream 自己装到 `<dataDir>/rsshub/`（我们当那次 install 的根，`overrides` 才生效，git 也就",
+    "不需要了）。全部推理与实测在 `src/rsshub-install.ts` 的头注，版本钉在那里的 RSSHUB_PIN。",
+    "顺带：基础安装因此从 652 包 / 424MB / 43s 回到 96 包 / 230MB / 15s，engines 下限也回到 20",
+    "（RSSHub 自己要 22.22.2+，那是它被装上那一刻的事，npm 只会 warn；Stream 本体不需要）。"
+  ],
+  "//chrome-extension": [
+    "扩展的字节，发行形态唯一的来源。`scripts/build-cli.mjs` 曾把 `extension/.output/chrome-mv3`",
+    "烘进 resources/；现在改由 npm 解出（`shared/browser-relay/extension-dir.ts` 第二档），",
+    "**发行包因此小了一份扩展**，而且升级扩展不用重发 Stream。",
+    "由 `scripts/publish-extension.mjs` 发布。版本必须跟着扩展的 `manifest.version` 走：扩展 id 由固定 key 派生，",
+    "`allowed_origins` 只放行一个 id，对不上是**静默不配对**（`src/browser/extension-id.derive.test.ts` 钉着）。"
+  ],
+  "//sharp": [
+    "桌面视觉识别（`src/replay/desktop-see.ts`：读截图尺寸、把候选框叠上去、裁模板）**静态** import 它，",
+    "所以它是开机就要解析得到的东西，不是用到才碰的可选件——缺了就是 `ERR_MODULE_NOT_FOUND` 起不来",
+    "（活体 2026-09-07，干净的 Windows 上后端直接崩在这一句）。静态 import 的必须进 dependencies，",
+    "由 src/install/cli.test.ts 的「external 掉的包」那条守卫钉着。"
+  ],
+  "//isolated-vm": [
+    "动态 import（compute-sandbox.ts），缺了后端照样起——但**内置 recipe 的 compute 段全靠它**：音乐搜索 / 下载、",
+    "歌单、网盘分享验活都在里面，缺了这些功能一律失败（活体 2026-09-27，Mac 上装 0.0.26 订歌单直接报错）。",
+    "「动态 import + 降级」只保证 boot，不保证功能——所以它随包出货。放 optionalDependencies：预编译件覆盖",
+    "win32-x64 / darwin-arm64 / linux，Node 22 与 24；Intel Mac 与 Node 20 没有预编译件，npm 会现编，",
+    "编不出来（没装编译工具链）时装包照样成功、compute 那几格照旧报 ComputeError。",
+    "版本与仓库根 package.json 同一个数，由 src/install/cli.test.ts 的「内置 recipe 用了 compute」那条守卫钉着。"
+  ],
+  "dependencies": {
+    "@streamapp/chrome-extension": "^0.1.0",
+    "@sidequest/sqlite-backend": "1.16.2",
+    "better-sqlite3": "^12.6.2",
+    "playwright-core": "^1.60.0",
+    "sharp": "0.34.5",
+    "sidequest": "1.16.2"
+  },
+  "//optionalDependencies": [
+    "随包出货的 ffmpeg / ffprobe —— 干净装机上没有它时转写必然失败（活体 2026-09-04：",
+    "`spawn ffmpeg ENOENT`）。每个平台子包自带 os/cpu 字段，npm 只装匹配的那一个，",
+    "其余静默跳过 —— 这正是 optionalDependencies（不是 dependencies）的原因：",
+    "写成 dependencies 时不匹配的平台会 EBADPLATFORM 让整个安装失败。",
+    "**不进 tarball**（scripts/build-cli.mjs 的 SHIP 清单）：和 better-sqlite3 同一条规矩，",
+    "原生件交给 npm 按用户平台装，打进去只会多一份『和本机不配套』的机会。",
+    "解析与优先级见 src/media/ffmpeg-bin.ts（PATH 排在随包这份前面，理由在那儿）。",
+    "**故意不往仓库根的 package.json 加**（所以 cli.test.ts 那条『发行包依赖不许和根分家』",
+    "的守卫不覆盖这一段——它只查 dependencies）：这些包不被任何代码 import，只是二进制载荷；",
+    "开发机上 PATH 里的 ffmpeg 本来就更新更全，往根上加只是让每次 install 多下 70MB。"
+  ],
+  "//desktop-platforms": [
+    "Stream Desktop 的本机进程（exe `stream-desktop`）——桌面控制与扩展配对的那只手。**这几个",
+    "包名与 exe 名是线上常量**：它们写进配对过的机器上的 native messaging 清单/注册表和 npm",
+    "registry，改了要让每台机器重新 `--register` 一次，不重配就静默失联。",
+    "后端自己养它（src/host-agent/mount.ts，目录名是内部路径、没跟着改名）：扩展配对要经 native",
+    "messaging 向它要 relay token，没人养 = 扩展永远 never-seen 且不报错（活体 2026-09-06 win-test）。",
+    "版本必须和 capabilities/desktop/package.json 的 optionalDependencies 同一个数，",
+    "src/host-agent/mount.test.ts 钉着。平台包有 win32-x64 与 darwin-{x64,arm64}；npm 按 os/cpu",
+    "只装匹配的那一个，没出货的平台静默跳过、后端记一行 warn。**mac 上只有『配对』那一半**",
+    "（扩展拿得到 relay token，采集带得上登录态），桌面控制仍然只有 Windows——判据是",
+    "capabilities/desktop/src/host-agent/binary.ts 的 DESKTOP_CONTROL_PLATFORMS。"
+  ],
+  "optionalDependencies": {
+    "@streamapp/desktop-win32-x64": "0.7.2",
+    "@streamapp/desktop-darwin-x64": "0.7.2",
+    "@streamapp/desktop-darwin-arm64": "0.7.2",
+    "@ffmpeg-installer/win32-x64": "4.1.0",
+    "@ffmpeg-installer/linux-x64": "4.1.0",
+    "@ffmpeg-installer/darwin-x64": "4.1.0",
+    "@ffmpeg-installer/darwin-arm64": "4.1.5",
+    "@ffprobe-installer/win32-x64": "5.1.0",
+    "@ffprobe-installer/linux-x64": "5.2.0",
+    "@ffprobe-installer/darwin-x64": "5.1.0",
+    "@ffprobe-installer/darwin-arm64": "5.0.1",
+    "isolated-vm": "6.1.2"
+  },
+  "license": "Apache-2.0",
+  "publishConfig": {
+    "access": "public"
+  }
+}

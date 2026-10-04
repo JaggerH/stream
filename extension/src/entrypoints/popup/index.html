@@ -1,0 +1,74 @@
+<!doctype html>
+<html class="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Stream Companion</title>
+    <style>
+      /* A browser-action popup sizes itself to the document root, NOT to an
+         overflowing descendant. The app shell is w-[340px], but unless html/body
+         declare that width the root chain stays width:auto → Chrome collapses the
+         popup to ~min and clips the shell into a tiny square. Pin the frame here. */
+      html, body { margin: 0; width: 340px; }
+      #root { width: 340px; }
+
+      /* ── 「点了图标什么都没弹」的那道保险 ──────────────────────────────────
+         Chrome 把 action popup 的尺寸算成**文档的**尺寸。`#root` 空着时文档高度
+         就是 0，于是 340×0 的弹窗和"根本没弹出来"在屏幕上一模一样——没有边框、
+         没有白块、没有报错，用户唯一能得到的信息是"没反应"。
+
+         而 `#root` 空着是一个**真实且常见**的状态，不是理论上的：dev 构建
+         (`.output/chrome-mv3-dev`) 的每一个 script 标签都指向 Vite dev server
+         (`http://127.0.0.1:5279/...`)，`pnpm dev` 没在跑的时候它们全部加载失败，
+         React 一行都不会执行。实测 2026-09-08：装着 dev 构建、dev server 没起，
+         popup.html 的 `#root.childElementCount === 0`、`documentElement` 高度 0。
+
+         所以这份**纯静态、零 JS、零外部资源**的兜底必须活在 HTML 自己里：它给
+         文档一个非零高度（弹窗一定看得见），并在 JS 迟迟不来时把病因说出来。
+         React 挂载成功后由 main.tsx 把它摘掉（见那边的头注）。
+         用 CSS 动画延迟 1.2s 才显出诊断段，正常加载时用户根本看不到它闪一下——
+         这一步不能用 JS 计时器：MV3 扩展页的 CSP 只允许 `script-src 'self'`，
+         内联 script 会被直接拒掉，而"兜底本身需要 JS"恰好是这里最不能有的假设。 */
+      body { min-height: 76px; background: #1c1c1e; color: #f2f2f7; }
+      #boot-fallback {
+        box-sizing: border-box;
+        width: 340px;
+        padding: 14px;
+        font: 13px/1.5 -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+      }
+      #boot-fallback .bf-title { font-weight: 600; }
+      #boot-fallback .bf-diag {
+        margin-top: 10px;
+        opacity: 0;
+        animation: bf-in 0s linear 1.2s forwards;
+      }
+      @keyframes bf-in { to { opacity: 1; } }
+      #boot-fallback .bf-head { color: #ff9f0a; font-weight: 600; }
+      #boot-fallback ul { margin: 6px 0 0; padding-left: 18px; color: #aeaeb2; }
+      #boot-fallback li { margin-top: 4px; }
+      #boot-fallback code { font-size: 11px; color: #f2f2f7; }
+      #boot-fallback .bf-err {
+        margin-top: 8px;
+        font: 11px/1.45 ui-monospace, SFMono-Regular, Menlo, monospace;
+        color: #ff453a;
+        white-space: pre-wrap;
+        word-break: break-all;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <div id="boot-fallback">
+      <div class="bf-title">Stream Companion</div>
+      <div class="bf-diag">
+        <div class="bf-head">Panel failed to load</div>
+        <ul>
+          <li>Dev build? Its scripts come from the WXT dev server — start <code>pnpm dev</code>, or load <code>.output/chrome-mv3</code> instead.</li>
+          <li>Otherwise reload the extension at <code>chrome://extensions</code>.</li>
+        </ul>
+        <div class="bf-err" id="boot-error"></div>
+      </div>
+    </div>
+    <script type="module" src="./main.tsx"></script>
+  </body>
+</html>

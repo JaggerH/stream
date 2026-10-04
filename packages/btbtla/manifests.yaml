@@ -1,0 +1,17 @@
+# BT影视 磁力中转页解析：纯声明，没有代码。宿主提供通用实现（builtin mode `magnet`：抓页面、取第一条
+# magnet: 链接），它只抓命中本包 `stream.links.patterns` 里 yields:magnet 那条 download-page 文法的 URL（兼作 SSRF 白名单）。
+# `provides: [resolve-download]` 让 download-resolve 行的 auto 段收它——宿主那一行不点名任何站。
+# 局部名保持 magnet-btbtla：存量库里 download-resolve 行上的旧全名 @streamapp/builtin/magnet-btbtla
+# 由 pruneDeadMembers 的「内置层同局部名恰好一个 → 改指」规则接到这里。
+- id: magnet-btbtla
+  adapter: builtin
+  title: BT影视 磁力解析
+  description: 按需把 BT影视资源页的 /tdown/ 中转页解析成 magnet 磁力链接（只认本包申报的中转页文法）。
+  topics: [magnet, btbtla, 磁力, 种子, 解析]
+  categories: [resource]
+  capabilities: [anchor]
+  auth: { type: none }
+  discoverable: false
+  cadence_hint_seconds: 3600
+  provides: [resolve-download]
+  fixed_params: { mode: magnet }

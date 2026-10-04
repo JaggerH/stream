@@ -1,0 +1,15 @@
+id: pansou-like
+adapter: pansou
+description: A netdisk search source with a batchable channels fan-out dimension.
+topics: [netdisk, search]
+example_queries:
+  - 搜网盘资源
+capabilities: [search]
+auth:
+  type: none
+cadence_hint_seconds: 3600
+params_schema: {}
+fan_out:
+  dimension: channels
+  strategy: batch
+  batch_key: [cloud_types, filter, src]

@@ -1,0 +1,102 @@
+{
+  "name": "@streamapp/quark",
+  "version": "1.0.0",
+  "author": "stream",
+  "keywords": [
+    "stream-recipe"
+  ],
+  "stream": {
+    "type": "recipe",
+    "name": "夸克",
+    "tagline": "验分享链是否存活 + 列文件",
+    "facility": "quark",
+    "schemaVersion": 1,
+    "cookieDomain": "quark.cn",
+    "providers": [
+      {
+        "id": "netdisk-verify-quark",
+        "category": "resolve",
+        "serveKeys": [
+          "quark-verify"
+        ],
+        "strategy": "sequential",
+        "label": "夸克分享验活",
+        "description": "夸克分享 id → 是否存活 + 文件列表（文件名是判断\"是不是我要的\"的最强信号）",
+        "members": [
+          {
+            "source": "quark-share",
+            "params": {
+              "pwd_id": "$input"
+            }
+          }
+        ],
+        "callsites": [
+          "netdisk.share.verify"
+        ]
+      },
+      {
+        "id": "netdisk-save-quark",
+        "category": "resolve",
+        "serveKeys": [
+          "quark-save"
+        ],
+        "strategy": "sequential",
+        "label": "夸克分享转存",
+        "description": "夸克分享 id → 转存进落点目录（默认 From Stream）",
+        "members": [
+          {
+            "source": "@streamapp/builtin/quark-save",
+            "params": {
+              "pwd_id": "$input",
+              "dest": "From Stream"
+            }
+          }
+        ],
+        "callsites": [
+          "netdisk.share.save"
+        ]
+      },
+      {
+        "id": "netdisk-play-quark",
+        "category": "resolve",
+        "serveKeys": [
+          "quark-play"
+        ],
+        "strategy": "sequential",
+        "label": "夸克视频转码播放",
+        "description": "夸克文件 fid → 转码后的 H.264+AAC 播放流地址（有声）",
+        "members": [
+          {
+            "source": "@streamapp/builtin/quark-play",
+            "params": {
+              "fid": "$input"
+            }
+          }
+        ],
+        "callsites": [
+          "netdisk.play"
+        ]
+      },
+      {
+        "id": "netdisk-folder-quark",
+        "category": "resolve",
+        "serveKeys": [
+          "quark-folder"
+        ],
+        "strategy": "sequential",
+        "label": "夸克文件夹跳转",
+        "description": "网盘内路径段 → 夸克网页文件夹 URL",
+        "members": [
+          {
+            "source": "@streamapp/builtin/quark-folder",
+            "params": {}
+          }
+        ],
+        "callsites": [
+          "netdisk.folder"
+        ]
+      }
+    ]
+  },
+  "license": "Apache-2.0"
+}

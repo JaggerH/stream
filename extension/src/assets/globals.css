@@ -1,0 +1,267 @@
+@import 'tailwindcss';
+
+@custom-variant dark (&:is(.dark *));
+
+/* Host semantic tokens (shadcn v4). Acrylic's own --acr-* tokens are appended below by
+ * `shadcn add @acrylic/acrylic`; these are the base vars acrylic deliberately does NOT ship. */
+:root {
+  --radius: 0.625rem;
+  --background: oklch(1 0 0);
+  --foreground: oklch(0.145 0 0);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.145 0 0);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.145 0 0);
+  --primary: oklch(0.205 0 0);
+  --primary-foreground: oklch(0.985 0 0);
+  --secondary: oklch(0.97 0 0);
+  --secondary-foreground: oklch(0.205 0 0);
+  --muted: oklch(0.97 0 0);
+  --muted-foreground: oklch(0.556 0 0);
+  --accent: oklch(0.97 0 0);
+  --accent-foreground: oklch(0.205 0 0);
+  --destructive: oklch(0.577 0.245 27.325);
+  --destructive-foreground: oklch(0.985 0 0);
+  --border: oklch(0.922 0 0);
+  --input: oklch(0.922 0 0);
+  --ring: oklch(0.708 0 0);
+}
+
+.dark {
+  --background: oklch(0.145 0 0);
+  --foreground: oklch(0.985 0 0);
+  --card: oklch(0.205 0 0);
+  --card-foreground: oklch(0.985 0 0);
+  --popover: oklch(0.205 0 0);
+  --popover-foreground: oklch(0.985 0 0);
+  --primary: oklch(0.922 0 0);
+  --primary-foreground: oklch(0.205 0 0);
+  --secondary: oklch(0.269 0 0);
+  --secondary-foreground: oklch(0.985 0 0);
+  --muted: oklch(0.269 0 0);
+  --muted-foreground: oklch(0.708 0 0);
+  --accent: oklch(0.269 0 0);
+  --accent-foreground: oklch(0.985 0 0);
+  --destructive: oklch(0.704 0.191 22.216);
+  --destructive-foreground: oklch(0.985 0 0);
+  --border: oklch(1 0 0 / 10%);
+  --input: oklch(1 0 0 / 15%);
+  --ring: oklch(0.556 0 0);
+    --acr-chip: rgba(255, 255, 255, 0.08);
+    --acr-chip-hover: rgba(255, 255, 255, 0.12);
+    --acr-field: rgba(255, 255, 255, 0.05);
+    --acr-hover: rgba(255, 255, 255, 0.05);
+    --acr-border: #2a2a2c;
+    /* Relative white overlay, not a hand-picked hex — the old #232325 sat ~1
+       level from --acr-surface (#222226), collapsing to invisible on borders
+       drawn over surface/panel backgrounds. Ported from acrylic-ui upstream. */
+    --acr-border-soft: rgba(255, 255, 255, 0.08);
+    --acr-button-group-divider: rgba(255, 255, 255, 0.20);
+    --acr-button-group-control: #3a3a3f;
+    --acr-control: #1c1c1e;
+    --acr-control-hover: #252527;
+    --acr-control-border: rgba(255, 255, 255, 0.14);
+    --acr-input: #1c1c1e;
+    --acr-input-border: rgba(255, 255, 255, 0.14);
+    --acr-surface: #222226;
+    --acr-surface-hover: #2a2a2e;
+    --acr-card-nested: rgba(255, 255, 255, 0.05);
+    --acr-panel: #1c1c1e;
+    --acr-overlay: rgba(0, 0, 0, 0.60);
+    --acr-field-strong: #161618;
+    --acr-toast: var(--acr-surface);
+    --acr-solid: #ffffff;
+    --acr-solid-fg: #1c1c1e;
+    --acr-scrollbar: rgba(255, 255, 255, 0.28);
+    --acr-scrollbar-hover: rgba(255, 255, 255, 0.45);
+    --sidebar: #161618;
+    --sidebar-input: #1c1c1e;
+    --sidebar-foreground: #ffffff;
+    --sidebar-muted-foreground: rgba(255, 255, 255, 0.55);
+    --sidebar-hover: rgba(255, 255, 255, 0.08);
+    --sidebar-active: rgba(255, 255, 255, 0.14);
+    --sidebar-control: rgba(255, 255, 255, 0.10);
+    --sidebar-border: rgba(255, 255, 255, 0.12);
+    --acr-red: #ff4245;
+    --acr-orange: #ff9230;
+    --acr-yellow: #ffd600;
+    --acr-green: #30d158;
+    --acr-mint: #00dac3;
+    --acr-teal: #00d2e0;
+    --acr-cyan: #3cd3fe;
+    --acr-blue: #0091ff;
+    --acr-indigo: #6d7cff;
+    --acr-purple: #db34f2;
+    --acr-pink: #ff375f;
+    --acr-brown: #b78a66;
+}
+
+@theme inline {
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+}
+
+@layer base {
+  * {
+    border-color: var(--border);
+  }
+  body {
+    background-color: var(--background);
+    color: var(--foreground);
+  }
+}
+
+/* Light is the default EXCEPT under `.dark`. This block is defined after the
+   `.dark` block above, so without the `:not(.dark)` guard it would clobber the
+   dark `--acr-*` tokens for a plain `class="dark"` element (equal specificity,
+   later source wins) — surfaces rendered white in dark mode. `.acrylic` still
+   overrides on top for `class="dark acrylic"`. */
+:root:not(.dark), .light {
+    --acr-chip: rgba(0, 0, 0, 0.06);
+    --acr-chip-hover: rgba(0, 0, 0, 0.10);
+    --acr-field: rgba(0, 0, 0, 0.04);
+    --acr-hover: rgba(0, 0, 0, 0.04);
+    --acr-border: #e3e3e6;
+    --acr-border-soft: #ececef;
+    --acr-button-group-divider: rgba(0, 0, 0, 0.16);
+    --acr-button-group-control: #ffffff;
+    --acr-control: #ffffff;
+    --acr-control-hover: #f4f4f5;
+    --acr-control-border: rgba(0, 0, 0, 0.12);
+    --acr-input: #ffffff;
+    --acr-input-border: rgba(0, 0, 0, 0.13);
+    --acr-surface: #ffffff;
+    --acr-surface-hover: #f7f7f8;
+    --acr-card-nested: rgba(0, 0, 0, 0.04);
+    --acr-panel: #ffffff;
+    --acr-overlay: rgba(0, 0, 0, 0.32);
+    --acr-field-strong: #ffffff;
+    --acr-toast: var(--acr-surface);
+    --acr-solid: #1c1c1e;
+    --acr-solid-fg: #fafafa;
+    --acr-scrollbar: rgba(0, 0, 0, 0.28);
+    --acr-scrollbar-hover: rgba(0, 0, 0, 0.45);
+    --sidebar: #eeeef0;
+    --sidebar-input: #ffffff;
+    --sidebar-foreground: rgba(0, 0, 0, 0.88);
+    --sidebar-muted-foreground: rgba(0, 0, 0, 0.52);
+    --sidebar-hover: rgba(0, 0, 0, 0.05);
+    --sidebar-active: rgba(0, 0, 0, 0.09);
+    --sidebar-control: #ffffff;
+    --sidebar-border: #e3e3e6;
+    --text-largetitle: 26px;
+    --text-title1: 22px;
+    --text-title2: 17px;
+    --text-title3: 15px;
+    --text-headline: 13px;
+    --text-body: 13px;
+    --text-callout: 12px;
+    --text-subheadline: 11px;
+    --text-footnote: 10px;
+    --acr-red: #ff383c;
+    --acr-orange: #ff8d28;
+    --acr-yellow: #ffcc00;
+    --acr-green: #34c759;
+    --acr-mint: #00c8b3;
+    --acr-teal: #00c3d0;
+    --acr-cyan: #00c0e8;
+    --acr-blue: #0088ff;
+    --acr-indigo: #6155f5;
+    --acr-purple: #cb30e0;
+    --acr-pink: #ff2d55;
+    --acr-brown: #ac7f5e;
+}
+
+.acrylic {
+    --acr-chip: rgba(255, 255, 255, 0.10);
+    --acr-chip-hover: rgba(255, 255, 255, 0.14);
+    --acr-field: rgba(255, 255, 255, 0.06);
+    --acr-hover: rgba(255, 255, 255, 0.06);
+    --acr-border: rgba(255, 255, 255, 0.16);
+    --acr-border-soft: rgba(255, 255, 255, 0.10);
+    --acr-button-group-divider: rgba(255, 255, 255, 0.22);
+    --acr-button-group-control: #3a3a3f;
+    --acr-control: rgba(255, 255, 255, 0.14);
+    --acr-control-hover: rgba(255, 255, 255, 0.20);
+    --acr-control-border: rgba(255, 255, 255, 0.18);
+    --acr-input: rgba(255, 255, 255, 0.10);
+    --acr-input-border: transparent;
+    --acr-surface: rgba(44, 44, 48, 0.55);
+    --acr-surface-hover: rgba(58, 58, 62, 0.60);
+    --acr-card-nested: rgba(255, 255, 255, 0.06);
+    --acr-panel: rgba(40, 40, 44, 0.60);
+    --acr-overlay: rgba(0, 0, 0, 0.50);
+    --acr-field-strong: rgba(255, 255, 255, 0.14);
+    --acr-toast: var(--acr-surface);
+    --acr-solid: #f5f5f7;
+    --acr-solid-fg: #1c1c1e;
+    --acr-scrollbar: rgba(255, 255, 255, 0.28);
+    --acr-scrollbar-hover: rgba(255, 255, 255, 0.45);
+    --sidebar: rgba(28, 28, 31, 0.55);
+    --sidebar-input: rgba(255, 255, 255, 0.10);
+    --sidebar-foreground: #ffffff;
+    --sidebar-muted-foreground: rgba(255, 255, 255, 0.55);
+    --sidebar-hover: rgba(255, 255, 255, 0.08);
+    --sidebar-active: rgba(255, 255, 255, 0.14);
+    --sidebar-control: rgba(255, 255, 255, 0.10);
+    --sidebar-border: rgba(255, 255, 255, 0.12);
+    --acr-red: #ff4245;
+    --acr-orange: #ff9230;
+    --acr-yellow: #ffd600;
+    --acr-green: #30d158;
+    --acr-mint: #00dac3;
+    --acr-teal: #00d2e0;
+    --acr-cyan: #3cd3fe;
+    --acr-blue: #0091ff;
+    --acr-indigo: #6d7cff;
+    --acr-purple: #db34f2;
+    --acr-pink: #ff375f;
+    --acr-brown: #b78a66;
+}
+
+.scrollbar-mac {
+    scrollbar-width: thin;
+    scrollbar-color: var(--acr-scrollbar) transparent;
+}
+
+.scrollbar-mac::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+}
+
+.scrollbar-mac::-webkit-scrollbar-track {
+    background: transparent;
+}
+
+.scrollbar-mac::-webkit-scrollbar-thumb {
+    background-color: var(--acr-scrollbar);
+    border-radius: 999px;
+    border: 2px solid transparent;
+    background-clip: content-box;
+}
+
+.scrollbar-mac::-webkit-scrollbar-thumb:hover {
+    background-color: var(--acr-scrollbar-hover);
+    background-clip: content-box;
+}

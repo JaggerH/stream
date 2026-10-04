@@ -1,0 +1,48 @@
+- id: bilibili-resolve
+  adapter: bilibili
+  title: bilibili 视频解析
+  description: bilibili 视频播放解析（带用户 cookie 取 DASH / progressive / 纯音轨描述子）；video-bilibili Provider 行的成员。
+  topics: [bilibili, 哔哩哔哩, 视频, 播放, 解析, dash]
+  categories: [video]
+  capabilities: [anchor]
+  facility: { key: bilibili, label: 哔哩哔哩 }
+  auth: { type: none }
+  discoverable: false
+  cadence_hint_seconds: 3600
+  params_schema:
+    vid: { type: string, required: true, description: "BV 号或 av 号" }
+    format: { type: string, required: false, description: "progressive | dash | audio（默认 dash）" }
+- id: bilibili-search
+  adapter: rsshub
+  title: B 站视频搜索
+  description: 按关键词搜 B 站视频（RSSHub vsearch 路由）；content-search Provider 行按 provides 自动收它。
+  topics: [bilibili, 哔哩哔哩, b站, 搜索, 视频, video, social-media]
+  categories: [social-media, video]
+  example_queries:
+    - B站搜一下 某个关键词
+  capabilities: [search]
+  provides: [search-content]
+  normalizer: bilibili
+  facility: { key: bilibili, label: 哔哩哔哩 }
+  # 和它承接的目录路由同一份 auth（deriveCookieAuth 对 `BILIBILI_COOKIE_*` 派生的形状）：RSSHub 的 vsearch
+  # 没有 cookie 会落进浏览器分支，而我们的 worker 没有浏览器；optional 保住「没登录也能游客态搜」。
+  auth: { type: cookie, domain: bilibili.com, inject: { kind: transform, ref: bilibili }, optional: true }
+  route: /bilibili/vsearch/{keyword}
+  cadence_hint_seconds: 1800
+  params_schema:
+    keyword: { type: string, required: true, description: 搜索关键词 }
+- id: bilibili-fetch-url
+  adapter: bilibili
+  title: B 站链接抓媒体
+  description: 一条 B 站视频链接 → 标题 / UP 主 / 可播放地址；content.enrich 按 bilibili-link 派发到它（链接归属由 stream.links 声明）。
+  topics: [bilibili, 哔哩哔哩, 链接, 媒体, 抓取]
+  categories: [transform]
+  capabilities: [anchor]
+  facility: { key: bilibili, label: 哔哩哔哩 }
+  auth: { type: none }
+  discoverable: false
+  cadence_hint_seconds: 3600
+  # 一条链接只有一份媒体结果——成员合同是单个对象，不是数组（见 docs/PACKAGE.md §2.3 output）。
+  output: object
+  params_schema:
+    url: { type: string, required: true, description: 视频链接 }

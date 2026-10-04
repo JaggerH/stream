@@ -1,0 +1,34 @@
+{
+  "name": "@streamapp/xunlei",
+  "version": "1.0.0",
+  "type": "module",
+  "author": "stream",
+  "scripts": {
+    "bundle": "node ../../scripts/bundle-code-packages.mjs .",
+    "prepack": "node ../../scripts/assert-npm-artifact.mjs"
+  },
+  "files": [
+    "dist",
+    "manifests.yaml",
+    "README.md"
+  ],
+  "keywords": [
+    "stream-recipe"
+  ],
+  "stream": {
+    "type": "recipe",
+    "hostVersion": ">=0.1.0",
+    "id": "xunlei",
+    "name": "迅雷字幕",
+    "tagline": "网盘视频的在线字幕搜刮（主力档）",
+    "facility": "xunlei",
+    "schemaVersion": 1,
+    "code": {
+      "entry": "dist/index.js",
+      "adapters": [
+        "xunlei-subtitle"
+      ]
+    }
+  },
+  "license": "Apache-2.0"
+}

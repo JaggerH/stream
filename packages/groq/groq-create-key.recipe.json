@@ -1,0 +1,82 @@
+{
+  "version": 1,
+  "kind": "browser",
+  "sourceId": "groq-create-key",
+  "cookieDomain": "groq.com",
+  "entryUrl": "https://console.groq.com/keys",
+  "entryWait": "load",
+  "loginCheck": {
+    "loggedIn": "[data-testid=keys-page-create-button]",
+    "wall": "a[href*='/login']"
+  },
+  "session": {
+    "facility": "groq",
+    "lifecycle": "one-shot",
+    "visibility": "interactive"
+  },
+  "_selectors_verified": "2026-07-26 活体重定于 console.groq.com/keys。别用 button[type=submit]：这一页第一个 type=submit 是「Sign Out」，click 点第一个匹配 —— 那会把用户签退而不是建 key。",
+  "steps": [
+    {
+      "kind": "click",
+      "selector": "[data-testid=keys-page-create-button]",
+      "expect": { "selector": "input[name=\"cf-turnstile-response\"]", "timeout": 10000 }
+    },
+    {
+      "_why_position": "widget 300x72，复选框在最左侧方块区、中间是文字。点中心=点在文字上，不生效。",
+      "_why_expect": "等的不是这次点击，是挑战解出来 —— 提交按钮直到拿到 token 才渲染，而挑战要多久是它说了算。",
+      "_why_settle": "widget 在 closed shadow root 里，DOM 连续 9.3s 一个字节不动，而这段时间它正从「空」变「转圈」变「可点」。早点下去不是白点，是把它打进失败态（实测重做 8 次全废）。所以盯这块区域的画面：变过了 + 停住了 才动手。",
+      "kind": "click",
+      "selector": ":has(> input[name=\"cf-turnstile-response\"])",
+      "position": { "x": 36, "y": 36 },
+      "settle": { "selector": ":has(> input[name=\"cf-turnstile-response\"])", "stableFrames": 3, "intervalMs": 250, "timeout": 15000 },
+      "expect": { "selector": "[data-testid=key-form-submit-button]", "timeout": 45000 }
+    },
+    { "kind": "type", "selector": "[data-testid=key-name-input]", "text": "{name}" },
+    { "kind": "click", "selector": "[data-testid=key-form-submit-button]" }
+  ],
+  "observers": [],
+  "output": { "itemsAt": "", "dedupeBy": "", "targetCount": 0, "mapping": {} },
+  "allowEmpty": true,
+  "extract": { "field": "apiKey", "pattern": "gsk_[A-Za-z0-9_-]{20,}", "timeout": 20000 },
+  "meta": {
+    "description": "在 console.groq.com 自助建一把 API key，并把只显示一次的明文落进 runtime_config（不产 item）",
+    "discoverable": false,
+    "_why_pick_in": "两个选择面都不出现——配置流程：用户在场自助建 key",
+    "pick_in": [],
+    "capabilities": ["anchor"],
+    "facility": { "key": "groq", "label": "Groq" },
+    "auth": {
+      "type": "session",
+      "facility": "groq",
+      "login": "oauth",
+      "loginUrl": "https://console.groq.com/login",
+      "oauthButton": "#oauth-google",
+      "accountSelector": "[data-identifier=\"{email}\"]",
+      "cookieDomain": "groq.com"
+    },
+    "params_schema": {
+      "name": {
+        "type": "string",
+        "required": true,
+        "description": "key 名。带一段随机后缀（如 stream-auto-7f3a）——建 key 不幂等，重跑会堆出一排看不出区别的同名 key"
+      }
+    },
+    "runtime_config": {
+      "ref": "groq",
+      "fields": {
+        "apiKey": {
+          "type": "secret",
+          "label": "Groq API Key",
+          "description": "转写梯子的 Groq 成员用它。可以手填，也可以让本 recipe 自己去建一把填进来。",
+          "helpUrl": "https://console.groq.com/keys"
+        },
+        "googleAccount": {
+          "type": "string",
+          "label": "Google 账号",
+          "description": "用哪个 Google 账号登录 Groq。留空则在账号选择器上不自动选，由你自己点。",
+          "helpUrl": "https://console.groq.com/login"
+        }
+      }
+    }
+  }
+}

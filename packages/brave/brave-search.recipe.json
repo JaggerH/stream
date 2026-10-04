@@ -1,0 +1,129 @@
+{
+  "_why_version_2": "提版本不是形式：`RepairLedger` 的检疫**只有更高的 recipe 版本才解除**。这条腿刚在活体连着失败过（被 Brave 自己的人机验证页拦下，而当时的 wall 认不出它），不提版本的话它可能已经被隔离、之后静默 DECLINE。",
+  "version": 2,
+  "kind": "browser",
+  "sourceId": "brave-search",
+  "_why_allow_empty": "**「Brave 明确说匹配太少」是一个成功的 0 条，不是失败。** 这条腿的 0 条有两种来源，处置完全相反：Brave 自己给出那张「没有太多匹配的内容」的卡 → 成功空（allowEmpty 收下，梯子据此告诉模型「确实没搜到」）；条目选择器漂了/撞上拦截 → 抛错（等待步自己判，见它的头注）。allowEmpty 在这里**不会**把「静默 0 条」放回来，因为漂移那条路根本走不到这里。",
+  "allowEmpty": true,
+  "_why_cookie_domain": "Brave 搜索不需要登录，这一格只是「这个包能走到哪些域」的申报（装载器拿它卡 goto 的落点，见 `src/replay/recipe-import.ts`）。填 brave.com 以覆盖 search.brave.com。",
+  "cookieDomain": "brave.com",
+  "_why_browser": "和 google 那条腿同一个理由：值钱的是**用户自己那个 Chrome**——同一条查询在他浏览器里打 Brave 回 12 条全切题、无验证码。Brave 另有一层价值：它是**自己的索引**（不是 Google/Bing 转发），实测和真 Google 的结果只重合 2/10，补的是小众博客和论坛。",
+  "_why_entry_is_homepage": "entryUrl 是**首页**、搜索 URL 在 step#0 的 goto 上，这不是绕路：expect 的判据必须有区分力——动作前为假、动作后为真（write-recipe/references/authoring.md §3.5）。实测首页 `#mixed-main` 命中 0（首页的容器叫 `#home-wrapper`），任何一张结果页上都命中 1，于是这个 expect 是真监督。直接把搜索 URL 当 entryUrl 的话，唯一能写的 expect 在动作之前就已经成立，引擎当场判它恒真（StepExpectVacuousError）。",
+  "entryUrl": "https://search.brave.com/",
+  "entryWait": "load",
+  "_why_login_check": "这个源不需要登录，两个信号因此各自换了个更有用的意思：loggedIn 用搜索框 `#searchbox`（首页和结果页都在，命中 = 我们拿到的是 Brave 真页面）。**注意别照抄 google 那份的 `textarea[name=q]`**：实测 Brave 结果页上它命中 0（只有首页有），照抄会让 detectLoginState 在结果页恒判 UNKNOWN、白等一轮。wall 是一组**没有实测到的**候选：这台机器上一次都没撞见 Brave 的人机验证，所以只能按常见形状（Cloudflare 挑战 / turnstile / captcha 表单）先摆着。**它没命中不会造成静默错**——真撞上拦截时页面里既没有条目也没有那张「匹配太少」的卡，等待步会当成漂移抛错（响，且会被检疫），只是错误信息说得没那么准。真撞见一次就回来把选择器改准。",
+  "loginCheck": {
+    "loggedIn": "#searchbox",
+    "_why_captcha_wrapper": "`.captcha-wrapper` 是 Brave **自己那张**人机验证页（不是 Cloudflare 的）：2026-08-13 活体撞到「正在验证您不是机器人」时，`#mixed-main` 不在、`#main` 里就是这个 wrapper。少了这一条，被拦会报成一句 `step#0 expect 未满足：#mixed-main 没有出现`——那读起来是「选择器漂了」，处置完全相反（该退让，不是该改选择器），而且 facility 的冷却也不会被触发。",
+    "wall": "#challenge-form, .cf-turnstile, iframe[src*=\"challenges.cloudflare.com\"], form[action*=\"captcha\"], .captcha-wrapper"
+  },
+  "_why_one_shot": "session.lifecycle = one-shot：查完就关。这条腿是对话里临时补一发搜索，不是持续采集——没有账本要留、没有 feed 要骑，留一个常驻标签只会白占用户浏览器里的一格。",
+  "session": {
+    "facility": "brave",
+    "lifecycle": "one-shot",
+    "visibility": "unattended"
+  },
+  "steps": [
+    {
+      "_why": "{query} 由调用方按 URL 组件编码好再传进来（substitute 是纯文本替换，不编码）——查询词里一个 # 就会把 querystring 截断，而截断之后 Brave 照样回一页结果，于是「搜错了」长得和「搜到了」一模一样。不加任何条数参数：实测一页固定 20 条自然结果，够 targetCount 取 10。",
+      "kind": "goto",
+      "url": "https://search.brave.com/search?q={query}",
+      "_why_expect_is_the_page_not_the_results": "这道闸门只判「我们拿到了一张真的 Brave 结果页」，**不判它有没有结果**——两件事必须分开，否则「Brave 确实没有」和「选择器漂了」会合并成同一个失败，而那正是这条链路上最贵的一种混淆。实测三态：首页 `#mixed-main` = 0（所以这个 expect 非恒真）、有结果页 = 1（内含 20 个 `div[data-type=web]`）、**没有结果的页 `#mixed-main` 照样 = 1**（里面换成一张 `.fallback-snippet`）。这一点和 Google 正好相反——Google 没结果时 `#rso` 整个消失，Brave 的容器一直在，所以判据只能往容器**里面**看。谁是谁由下一步分辨。timeout 8s：实测渲染 2 秒出头。",
+      "expect": {
+        "selector": "#mixed-main",
+        "timeout": 8000
+      }
+    },
+    {
+      "_why": "**这一步只做一件事：等结果列表不再长了。** 结果是渐进出现的，observer 早读一步就少读几条，而少读不会报错。所以在读之前先在页面里数着 `#mixed-main div[data-type=\"web\"]`，连着 3 次 200ms 读数不变才算画完，封顶 3s。它不产 item（items 恒空），产出全在下面那个 dom observer 里。",
+      "_why_not_scroll_or_settle": "**这个等待刻意不用 settle，也不用 scroll。** settle 要「逼出一帧」（逐帧截图比字节），落到 `Page.captureScreenshot`，而对着后台标签这条 relay 命令在这台机器上稳定挂到 30s 超时（详见 write-recipe/references/failure-atlas.md 4.3.6）。scroll 则是另一个理由：driver 今天一帧都不逼、滚动本身不贵了，但本步只是「等结果区 DOM 稳定」，滚动对它没有意义，白等一个 dwell。换成纯 `Runtime.evaluate` 的等待是几十毫秒。**判据：需要真帧的东西才配付这个价**，而「等 DOM 稳定」根本不需要帧——它是 Tier A。",
+      "_why_it_also_judges": "**这一步负责把「Brave 确实没有」和「我们读不到了」分开，而且必须分成「成功空」和「抛错」两种收场**——因为失败在这条链路上不只是一句话，**它带着检疫**：`RepairLedger` 见到一个源反复失败就把它隔离，之后 `ReplayAdapter.fetch` 直接 `return DECLINED`（`src/adapters/replay/adapter.ts`），**连浏览器都不开、也不报错**，表现就是这条腿静默死掉（2026-08-12 google 那条腿真撞过）。判据是对活体量出来的：**Brave 几乎从不给「零结果」，它给的是一张「找到的匹配项太少」的卡**——`#mixed-main > .fallback-snippet`，此时 `div[data-type=web]` 恰好 0（实测查询 `site:<不存在的域> foobar`；注意**加引号的精确匹配走不到这一态**，Brave 会丢掉运算符、照样回 20 条模糊结果，页顶只挂一句「未应用 搜索运算符」）。所以：0 条 + `.fallback-snippet` 在 = Brave 明确说没有 → **正常返回空**（配 `allowEmpty`，是一个成功的 0 条）；0 条而那张卡也不在 = 真的漂了/被拦 → **抛错**（该响、也该被检疫）。**字段也要在这里验一次**（第一张卡里必须取得出 `.title` 和 `a:has(.title)`）：开了 `allowEmpty` 之后，observer 的**字段**选择器漂了会表现成「条目在、link 取不到 → 被 dedupe 丢光 → 0 条」，而 0 条现在是合法的成功——不在这一步拦住，它就变成一个安静的空答案。这一步和 observer 用同一批选择器不是重复：这里是**判据**（漂了就响），那里是**取数**。",
+      "kind": "evaluate",
+      "call": "async () => { const sel = '#mixed-main div[data-type=\"web\"]'; let last = -1, stable = 0; for (let i = 0; i < 15 && stable < 3; i++) { const c = document.querySelectorAll(sel).length; stable = (c > 0 && c === last) ? stable + 1 : 0; last = c; await new Promise(r => setTimeout(r, 200)); } const cards = document.querySelectorAll(sel); if (cards.length === 0) { if (document.querySelector('#mixed-main .fallback-snippet')) return { items: [] }; throw new Error('[brave] 结果容器在，但既没有一条自然结果、也没有「匹配太少」那张卡 —— 条目选择器漂了或撞上了拦截页'); } const first = cards[0]; if (!first.querySelector('.title') || !first.querySelector('a:has(.title)')) { throw new Error('[brave] 读到了条目，但取不出标题或链接 —— 字段选择器漂了'); } return { items: [] }; }",
+      "itemsAt": "items",
+      "maxPages": 1
+    }
+  ],
+  "observers": [
+    {
+      "_why_selectors": "2026-08-13 对活体重定过：`#mixed-main div[data-type=\"web\"]` 恰好命中 20 条自然结果，20/20 同时含 `.title` 和 `.generic-snippet`，每条的 `a:has(.title)` 恰好 1 个且 href 全是绝对 URL。**刻意不用 svelte 的那些 class**（`.svelte-jmfu5f` / `.svelte-1rq4ngz` 之类）：它们是编译期哈希，改一行样式就换一批。`#mixed-main` 是容器 id，`data-type=\"web\"` 是 Brave 给结果种类打的标，`.title` / `.generic-snippet` 是语义类名——三样都不带哈希。注意 `#mixed-main .snippet` 是 22（掺着 `#search-elsewhere` 和 `#pagination-snippet`），不能当条目单位。",
+      "_why_dom": "Brave 的结果是 SSR 进 HTML 的，页面不为它发 XHR——network observer 在这里没有东西可拦。",
+      "kind": "dom",
+      "itemSelector": "#mixed-main div[data-type=\"web\"]",
+      "fields": {
+        "title": {
+          "selector": ".title"
+        },
+        "link": {
+          "selector": "a:has(.title)",
+          "attr": "href"
+        },
+        "snippet": {
+          "selector": ".generic-snippet"
+        }
+      },
+      "trigger": "final"
+    }
+  ],
+  "output": {
+    "itemsAt": "items",
+    "_why_dedupe_link": "dom observer 产出的「原始条目」就是上面那张扁平卡片，所以 dedupeBy 走 link（页内唯一、也是这条结果的身份）。**注意这条路自己不会喊**：选择器漂了 → link 取不到 → 每条都因缺身份被丢 → 0 条，而 `allowEmpty` 开着，0 条是合法的成功。所以「漂了要响」这件事**不由这里保证**，由上面那个等待步的判据保证（它验条目数、也验第一张卡里取不取得出 `.title` 和 `a:has(.title)`）。两处的分工写在那一步的 `_why_it_also_judges` 里——改任何一边之前先读它。",
+    "dedupeBy": "link",
+    "targetCount": 10,
+    "mapping": {
+      "title": "title",
+      "link": "link",
+      "snippet": "snippet",
+      "guid": "link"
+    },
+    "assert": [
+      {
+        "path": "items",
+        "desc": "brave #mixed-main 里一条自然结果都没读到 —— 选择器漂移或撞上了拦截页"
+      }
+    ]
+  },
+  "policy": {
+    "minActionIntervalMs": 500,
+    "maxTaskMs": 60000
+  },
+  "meta": {
+    "description": "Brave 网页搜索 — 在用户自己的 Chrome 里打开结果页，读 SSR 出来的自然结果（title/link/snippet）。Brave 有自己的索引，是 web_search 里 Google 那一档的备胎",
+    "type": "post",
+    "title": "网页搜索",
+    "topics": [
+      "brave",
+      "搜索",
+      "search",
+      "web"
+    ],
+    "categories": [
+      "news"
+    ],
+    "facility": {
+      "key": "brave",
+      "label": "Brave Search"
+    },
+    "capabilities": [
+      "search"
+    ],
+    "provides": [
+      "search-content"
+    ],
+    "key_param": "query",
+    "priority": 50,
+    "_why_not_discoverable": "不进发现列表：它不是一个「可订阅的信息源」（没人要一条定时跑的搜索），只是 web_search 借的一条腿。",
+    "discoverable": false,
+    "_why_pick_in": "只在 Provider 成员面挑得到，不在频道订阅面——web_search 第二档的一条腿",
+    "pick_in": ["provider"],
+    "cadence_hint_seconds": 300,
+    "homepage": "search.brave.com",
+    "params_schema": {
+      "query": {
+        "type": "string",
+        "required": true,
+        "description": "搜索词，**已按 URL 组件编码**（调用方负责 encodeURIComponent）"
+      }
+    }
+  }
+}

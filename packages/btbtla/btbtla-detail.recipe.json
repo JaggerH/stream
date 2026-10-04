@@ -1,0 +1,76 @@
+{
+  "version": 1,
+  "kind": "html",
+  "sourceId": "btbtla-detail",
+  "request": {
+    "url": "{detailUrl}",
+    "method": "GET"
+  },
+  "list": {
+    "selector": "div[name=download-list] .module-downlist .module-row-info",
+    "limit": 100,
+    "fields": {
+      "title": {
+        "selector": ".module-row-title h4",
+        "text": true
+      },
+      "link": {
+        "selector": "a.module-row-text",
+        "attr": "href",
+        "resolve": true
+      }
+    }
+  },
+  "pagination": {
+    "mode": "increment",
+    "param": "page",
+    "start": 1,
+    "step": 1,
+    "maxPages": 1
+  },
+  "assert": [
+    {
+      "selector": "div[name=download-list] .module-downlist .module-row-info",
+      "desc": "btbtla detail download rows present"
+    }
+  ],
+  "meta": {
+    "normalizer": "rsshub",
+    "type": "post",
+    "description": "BT影视 — 详情页下载行",
+    "topics": [
+      "btbtla",
+      "BT影视",
+      "下载",
+      "磁力",
+      "网盘"
+    ],
+    "categories": [
+      "multimedia"
+    ],
+    "facility": {
+      "key": "btbtla",
+      "label": "BT影视"
+    },
+    "capabilities": [
+      "search"
+    ],
+    "key_param": "detailUrl",
+    "priority": 80,
+    "discoverable": false,
+    "_why_pick_in": "只在 Provider 成员面挑得到，不在频道订阅面——btbtla 组合体里 expand 的那一档",
+    "pick_in": ["provider"],
+    "cadence_hint_seconds": 3600,
+    "auth": {
+      "type": "none"
+    },
+    "homepage": "btbtla.com",
+    "params_schema": {
+      "detailUrl": {
+        "type": "string",
+        "required": true,
+        "description": "详情页绝对 URL"
+      }
+    }
+  }
+}
