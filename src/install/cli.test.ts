@@ -1,6 +1,27 @@
 import { describe, it, expect } from 'vitest'
 import { join, resolve } from 'node:path'
+import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { parseCliArgs, defaultDataDir, envForServer, parsePackageSpec, HELP } from './cli.ts'
+
+/** A test must not depend on `rg` being installed on the CI image. */
+function sourceLines(paths: string[], skipTests = false): string[] {
+  const visit = (path: string): string[] => {
+    const stat = statSync(path)
+    if (stat.isDirectory()) return readdirSync(path).flatMap(name => visit(join(path, name)))
+    if (skipTests && /\.test\.[cm]?[jt]sx?$/.test(path)) return []
+    return readFileSync(path, 'utf8').split('\n').map(line => `${path}:${line}`)
+  }
+  return paths.flatMap(visit)
+}
+
+function staticImportHits(paths: string[], name: string, skipTests = false): string[] {
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const pattern = new RegExp(`(from|import|require\\()[ ]*['"]${escaped}['"]`)
+  return sourceLines(paths, skipTests)
+    .filter(line => pattern.test(line))
+    .filter(line => !/:\s*(\/\/|\*|\/\*)/.test(line))
+    .filter(line => !/\bimport\s+type\b/.test(line))
+}
 
 describe('stream 这条命令的参数', () => {
   it('什么都不给 → 用默认（端口交给后端自己的默认，别在两处各写一个数）', () => {
@@ -243,30 +264,11 @@ describe('发行包的依赖不许和仓库根分家', () => {
       } else {
         // `not-imported`：仓库源码里不许出现对它的静态 import / require。出现了就说明开发机
         // 也要装它，根上没有它就不再是"走不到那条路"，而是一个会在别人机器上炸的缺口。
-        const { spawnSync } = await import('node:child_process')
-        // `rg` 无命中时 exit 1（那正是我们要的状态），所以用 spawnSync 读 stdout，
-        // 不用会因此抛的 execFileSync。不能用 git grep：公开 archive 没有 `.git`。
-        const r = spawnSync(
-          'rg',
-          [
-            '-n',
-            '-e',
-            `(from|import|require\\()[ ]*['"]${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}['"]`,
-            join(root, 'src'),
-            join(root, 'shared'),
-            join(root, 'app/src'),
-            join(root, 'capabilities'),
-            join(root, 'cli'),
-            join(root, 'scripts'),
-          ],
-          { cwd: root, encoding: 'utf8' },
-        )
-        // rg 没跑起来时 `stdout` 是空的，而空 = "没人 import"——
-        // 这条断言**恰好是通过的**，于是守卫悄悄退化成一句空话。先证明它真的搜过。
-        expect(r.error, `rg 没跑起来：${r.error?.message}`).toBeUndefined()
-        expect([0, 1], `rg 异常退出（status=${r.status}）：${r.stderr}`).toContain(r.status)
-        const hits = (r.stdout ?? '').trim()
-        expect(hits, `${name} 被静态 import 了（${hits}）。豁免的理由是"没人 import 它"（${why}）——理由没了。`).toBe('')
+        const hits = staticImportHits([
+          join(root, 'src'), join(root, 'shared'), join(root, 'app/src'),
+          join(root, 'capabilities'), join(root, 'cli'), join(root, 'scripts'),
+        ], name)
+        expect(hits, `${name} 被静态 import 了（${hits.join('\n')}）。豁免的理由是"没人 import 它"（${why}）——理由没了。`).toEqual([])
       }
     }
   })
@@ -289,7 +291,6 @@ describe('发行包的依赖不许和仓库根分家', () => {
 describe('被 --external 掉的包：静态 import 的必须随发行包出货', () => {
   it('build-server.mjs 的每个 --external，静态 import 就得在 cli/package.json 里', async () => {
     const { readFileSync } = await import('node:fs')
-    const { spawnSync } = await import('node:child_process')
     const root = resolve(import.meta.dirname, '../..')
     const buildScript = readFileSync(join(root, 'scripts/build-server.mjs'), 'utf8')
     const externals = [...buildScript.matchAll(/--external:([^'"\s]+)/g)].map((m) => m[1]!)
@@ -298,23 +299,9 @@ describe('被 --external 掉的包：静态 import 的必须随发行包出货',
 
     const cliDeps = JSON.parse(readFileSync(join(root, 'cli/package.json'), 'utf8')).dependencies as Record<string, string>
     for (const name of externals) {
-      const esc = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
       // `from 'x'` / `import 'x'` / `require('x')` 命中静态用法；`import('x')` 是动态的，
       // 后面跟的是括号不是引号，所以这个模式天然放它过去——这正是本条要区分的那件事。
-      const r = spawnSync(
-        'rg',
-        ['-n', '--glob', '!*.test.ts', '-e', `(from|import|require\\()[ ]*['"]${esc}['"]`, join(root, 'src'), join(root, 'shared')],
-        { cwd: root, encoding: 'utf8' },
-      )
-      // rg 没跑起来时 stdout 为空，而空 = "没人静态 import"——那会让守卫悄悄变成一句空话。
-      expect(r.error, `rg 没跑起来：${r.error?.message}`).toBeUndefined()
-      expect([0, 1], `rg 异常退出（status=${r.status}）：${r.stderr}`).toContain(r.status)
-      const staticHits = (r.stdout ?? '')
-        .split('\n')
-        .filter((l) => l.trim() !== '')
-        // 注释里提到包名不算引用；`import type` 在 build 期被擦掉，也不算。
-        .filter((l) => !/:\s*(\/\/|\*|\/\*)/.test(l))
-        .filter((l) => !/\bimport\s+type\b/.test(l))
+      const staticHits = staticImportHits([join(root, 'src'), join(root, 'shared')], name, true)
       if (staticHits.length === 0) continue
       expect(
         cliDeps[name],
