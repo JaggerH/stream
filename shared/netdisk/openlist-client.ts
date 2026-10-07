@@ -59,8 +59,10 @@ const MOVE_SETTLE_INTERVAL_MS = 1000
 export interface OpenListClientOptions {
   /** 基址（可带尾斜杠）；给 thunk 则每次请求现求值。 */
   baseUrl: string | (() => string)
+  /** 空串 = 还没有（只在同时给了 `refresh` 时成立：第一次请求之前经它取来）。 */
   token: string
-  /** 401 时换新 token（Stream 托管模式：用存储的 admin 密码重登）。缺省 = 不重试。 */
+  /** 取新 token（Stream 托管模式：用托管的 admin 凭证登录）。401 时换发重试一次；`token` 为空时
+   *  也是它负责第一次取。缺省 = 不重试。 */
   refresh?: () => Promise<string>
   /** 注入便于测试；默认 setTimeout。`move` 等落地时退避用。 */
   sleep?: (ms: number) => Promise<void>
@@ -113,7 +115,21 @@ export class OpenListClient {
     return { unauthorized: json.code === 401, status: r.status, json }
   }
 
+  private pendingToken: Promise<string> | undefined
+
+  /**
+   * 手里还没有 token（托管模式：启动时容器在睡，登录没跑成）→ 第一次请求之前经 refresh 取来。
+   * 不拿空 token 去试对端答不答 401：开了游客访问的 OpenList 对空 token 答 200 + 游客视图。
+   * 并发的首批请求共用一次登录；失败不缓存，下一次请求再试。
+   */
+  private async ensureToken(): Promise<void> {
+    if (this.token || !this.refresh) return
+    this.pendingToken ??= this.refresh().finally(() => { this.pendingToken = undefined })
+    this.token = await this.pendingToken
+  }
+
   protected async request<T>(method: 'GET' | 'POST', path: string, body?: unknown): Promise<T> {
+    await this.ensureToken()
     let out = await this.requestOnce<T>(method, path, body)
     if (out.unauthorized && this.refresh) {
       this.token = await this.refresh() // 48h JWT 过期 → 重登一次后重试
@@ -254,6 +270,7 @@ export class OpenListClient {
       const json = (await r.json()) as { code: number; message?: string }
       return { unauthorized: json.code === 401, status: r.status, json }
     }
+    await this.ensureToken()
     let out = await once()
     if (out.unauthorized && this.refresh) {
       this.token = await this.refresh()

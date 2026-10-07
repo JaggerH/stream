@@ -54,6 +54,31 @@ describe('OpenListClient', () => {
     await expect(dead.rawUrl('/p')).rejects.toThrow(/401/)
   })
 
+  // 托管模式下 token 是登录换来的，而登录要容器醒着：启动那一刻容器在睡就拿不到。那时手里是空 token
+  // + 一条 refresh 通道——第一次请求之前先把 token 取来，别拿空 token 去试对端答不答 401
+  // （开了游客访问的 OpenList 对空 token 答 200 + 游客视图，不是 401）。
+  it('token 为空且有 refresh 通道 → 第一次请求之前先取 token，不发匿名请求', async () => {
+    const seenTokens: string[] = []
+    let refreshed = 0
+    const fetchFn = (async (_u: string | URL, init?: RequestInit) => {
+      seenTokens.push((init?.headers as Record<string, string>).authorization)
+      return jsonResponse(200, { raw_url: 'u' })
+    }) as unknown as typeof fetch
+    const client = new OpenListClient({ baseUrl: 'http://o', token: '', fetchFn, refresh: async () => { refreshed++; return 'fresh' } })
+    await expect(client.rawUrl('/p')).resolves.toBe('u')
+    await client.rawUrl('/q')
+    expect(seenTokens).toEqual(['fresh', 'fresh'])
+    expect(refreshed).toBe(1)
+  })
+
+  it('token 为空且取 token 失败 → 抛取 token 的错，一个请求都不发', async () => {
+    let sent = 0
+    const fetchFn = (async () => { sent++; return jsonResponse(200, {}) }) as unknown as typeof fetch
+    const client = new OpenListClient({ baseUrl: 'http://o', token: '', fetchFn, refresh: async () => { throw new Error('login down') } })
+    await expect(client.rawUrl('/p')).rejects.toThrow('login down')
+    expect(sent).toBe(0)
+  })
+
   describe('move：目标目录刚建、OpenList 说 dst 不存在 → 刷一次父目录再试一次', () => {
     // 活体（2026-09-03，喜剧之王单口季 a004422b）：同一轮里第一批 move 建出 纯享/S03 并搬成 11 份，
     // 第二批（另一个源目录）往同一个 dst 搬时 OpenList 答 `failed to get dst dir: object not found`——

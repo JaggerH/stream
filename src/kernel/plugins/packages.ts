@@ -29,6 +29,7 @@ import { diffLoadedVsDisk, loadedFromPackage, type LoadedPackage, type PendingCh
 import { makeContainerOps, type ContainerOps } from '../../packages/container-ops.ts'
 import { BUILTIN_ACTIVATIONS } from '../../../packages/index.ts'
 import { provisionAlist, dockerAdminSet, fetchPermanentToken } from '../../../packages/alist/provision.ts'
+import { ALIST_SERVICE } from '../../../packages/alist/adapter.ts'
 import { isJwtLike } from '../../../shared/netdisk/token-shape.ts'
 import { hostAlistClient, resolveAlistUrl } from '../../netdisk/alist-client.ts'
 import { USER_LAYER_SCAN } from '../../replay/recipe-package.ts'
@@ -52,6 +53,9 @@ export interface AlistFacet {
   /** 接管/覆盖层解析后的地址与 token —— netdisk 域构造 `AlistClient` 用的就是这两个。 */
   url: string | undefined
   token: string | undefined
+  /** 这份 AList 归不归 Stream 托管（= `refresh` 走不走得通）。托管而 `token` 还空着 = 启动时
+   *  容器在睡、第一次接管还没跑成；消费方照常装配，带着 `refresh` 用到时再取。 */
+  managed: () => boolean
   /** 配置对话框读的状态（token 永不回显）。 */
   status: () => { url: string; hasToken: boolean; configured: boolean }
   /** 落盘覆盖层（token 留空 = 保持当前），下次重启生效。 */
@@ -59,8 +63,8 @@ export interface AlistFacet {
   /** 「测试连接」：拿传入的 url+token（未传则用存量）打一次已认证的 fs/list。 */
   test: (next?: { url?: string; token?: string }) => Promise<{ ok: boolean; error?: string }>
   /**
-   * 48h JWT 过期时的重登通道（托管模式才有；外接模式抛错）。
-   * 消费者只有一个：netdisk 域把它接进 `AlistClient` 的 `refresh` 选项（401 时重登一次再重试）。
+   * 取 token 的通道（托管模式才有；外接模式抛错）：48h JWT 过期时重登，以及启动时没接管成时的
+   * 第一次接管。两个消费者：netdisk 域的 `AlistClient`，和 alist 包的 adapter（经 `configForPackage`）。
    */
   refresh: () => Promise<string>
   /**
@@ -202,6 +206,8 @@ const PLUGIN_STATUS_PREWARM_MS = 3_000
  * 2. 容器接管（`provisionDeclaredBackends`）必须早于 AList 接管：AList 要 `/ping` 得通。
  * 3. AList 接管必须早于 `activatePackages`——`configForPackage` 是**立即求值**的，
  *    `AlistAdapter` 构造时就把 token 收进字段，提前一步拿到的就是 undefined。
+ *    （启动时这一次接管**抢不到是常态**：容器多半在睡。所以同一格里还递了 `refresh`，
+ *    消费方带着它装配、用到时再取——token 字段为空不等于坏了。）
  *
  * 句柄：只有状态预热那一个 `setTimeout`（已 unref）需要 effect —— 关停后它还会去打一轮
  * 容器健康探测，没有实害但会在测试里留一条悬空的异步。扫描/目录/容器动作都是现建现扫，不持句柄。
@@ -359,8 +365,9 @@ export const packagesPlugin = {
     let alistToken = alistCfg().token
 
     // T7 接管序列（内置托管是唯一形态，AList 是实现细节）：无显式 token 且 alist 插件启用 →
-    // 生成/复用 admin 密码，login 换 48h JWT。就绪门控 /ping 2s；容器没起 → 静默跳过，
-    // 不阻塞 boot（下次重启再接管）。
+    // 生成/复用 admin 密码，login 换 48h JWT。就绪门控 /ping 2s；容器没起 → 跳过，不阻塞 boot。
+    // 启动时这一次只是顺手：standby 管着的容器这时多半在睡（或刚被拉起、2s 内答不上），跳过是常态。
+    // 兜底在 `alistRefresh`——消费方带着它装配，第一次真用到网盘时再接管。
     const alistProvisionDeps = () => ({
       baseUrl: resolveAlistUrl(alistUrl),
       getStored: () => ({
@@ -370,11 +377,27 @@ export const packagesPlugin = {
       save: (c: { password: string; token: string }) => settings.setAlistCredentials(c),
       execAdminSet: dockerAdminSet(),
     })
+    const netdiskBaseEnabled = () => plugins.some((p) => p.id === NETDISK_BASE_PACKAGE_ID && isPluginEnabled(p))
+    /**
+     * 这份 AList 归不归 Stream 托管——即「取 token」这件事是不是我们自己能做的。两种情形算：
+     * 已经接管过（存着托管的 admin 密码），或者网盘底座包开着而手里一个 token 都没有（第一次
+     * 接管还没跑成：启动时容器在睡）。用户自己填了 token 又没有托管密码 = 外接，不归我们管。
+     */
+    const alistManaged = (): boolean =>
+      !!settings.get().alist?.adminPassword || (netdiskBaseEnabled() && !alistCfg().token)
+    /**
+     * 取 token 的通道：48h JWT 过期时重登，以及启动时没接管成的那种情况下的**第一次接管**。
+     * 包在 `withAwake` 里——登录打的是容器自己，host 档下它的地址也只在醒着时才有；启动那一刻
+     * 抢不到的东西，等到真有人要用（容器必然被唤醒）时再取。
+     */
     const alistRefresh = async (): Promise<string> => {
-      if (!settings.get().alist?.adminPassword) throw new Error('[alist] 非托管模式，无自动重登通道')
-      return provisionAlist(alistProvisionDeps())
+      if (!alistManaged()) throw new Error('[alist] 非托管模式，无自动重登通道')
+      return withAwake(ALIST_SERVICE, async () => {
+        alistToken = await provisionAlist(alistProvisionDeps())
+        return alistToken
+      })
     }
-    if (!alistToken && plugins.some((p) => p.id === NETDISK_BASE_PACKAGE_ID && isPluginEnabled(p))) {
+    if (!alistToken && netdiskBaseEnabled()) {
       const base = resolveAlistUrl(alistUrl)
       const up = await fetch(`${base}/ping`, { signal: AbortSignal.timeout(2000) })
         .then((r) => r.ok)
@@ -387,7 +410,7 @@ export const packagesPlugin = {
           log(`[stream] alist 接管失败，跳过: ${(e as Error).message}`)
         }
       } else {
-        log('[stream] alist 未就绪（/ping 不通），跳过接管 — 下次启动重试')
+        log('[stream] alist 未就绪（/ping 不通），启动时不接管 — 第一次用到网盘时再取 token')
       }
     }
 
@@ -396,7 +419,8 @@ export const packagesPlugin = {
      *  `ctx.backendUrl()` 请求时现取。 */
     const configForPackage = (id: string): Record<string, unknown> => {
       switch (id) {
-        case 'alist': return { url: alistUrl, token: alistToken }
+        // `refresh` 只在托管时递：包拿到它就不再因为「没 token」当场报错，而是用到时经它取。
+        case 'alist': return { url: alistUrl, token: alistToken, ...(alistManaged() ? { refresh: alistRefresh } : {}) }
         default: return {}
       }
     }
@@ -661,7 +685,9 @@ export const packagesPlugin = {
       pluginStatus,
       alist: {
         get url() { return alistUrl },
-        get token() { return alistToken },
+        // 活值：接管把 token 存进 row 之后（包括启动之后才跑成的那一次）这里跟着变。
+        get token() { return alistCfg().token ?? alistToken },
+        managed: alistManaged,
         status: alistStatus,
         set: setAlist,
         test: testAlist,

@@ -39,6 +39,24 @@ describe('alist activate', () => {
     expect(resolveAlistToken(snap.token)).toBe('jwt-from-provisioning')
   })
 
+  // 这条线断了的症状：启动时没拿到 token 的那一整个进程里，网盘来源每次都报「缺少 token」，
+  // 而宿主手里明明有能把 token 取来的通道。
+  it('宿主给的接管通道（config.refresh）一路递到 adapter', async () => {
+    const fetchMock = vi.fn(async (_input: string | URL | Request, _init?: RequestInit) =>
+      ({ ok: true, status: 200, json: async () => ({ code: 200, data: { raw_url: 'http://cdn/x' } }) } as Response))
+    vi.stubGlobal('fetch', fetchMock)
+    try {
+      const refresh = vi.fn(async () => 'provisioned')
+      const out = activate(ctx({ url: 'http://alist.test:5244', refresh }))
+      const manifest = { id: 'alist-resolve', adapter: 'alist', fixed_params: { mode: 'resolve' } } as unknown as SourceManifest
+      await out.adapters!.alist.fetch({ path: '/d/x' }, manifest)
+      expect(refresh).toHaveBeenCalledTimes(1)
+      expect((fetchMock.mock.calls[0]![1] as RequestInit).headers).toMatchObject({ authorization: 'provisioned' })
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
   it('没有显式 url 时容器地址来自 ctx.backendUrl，请求经 ctx.withAwake 唤醒', async () => {
     const prev = process.env.ALIST_URL
     delete process.env.ALIST_URL

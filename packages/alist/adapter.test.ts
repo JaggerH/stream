@@ -146,6 +146,19 @@ describe('AlistAdapter', () => {
     await expect(adapter.fetch({ path: '/d/x' }, manifest('resolve'))).rejects.toThrow(/token/)
     expect(fetchMock).not.toHaveBeenCalled()
   })
+
+  // 托管模式：启动时容器在睡 → 宿主没拿到 token，但递了接管通道。这时不该报「缺少 token」
+  // （那句话让人去填一个本来就该自动维护的值），而是第一次真要用时把 token 取来。
+  it('没有 token 但宿主给了接管通道 → 第一次 fetch 时取 token 再请求', async () => {
+    fetchMock.mockResolvedValue(jsonResponse(200, { raw_url: 'http://cdn/x' }))
+    const refresh = vi.fn(async () => 'provisioned')
+    const adapter = new AlistAdapter(deps(), 'http://alist', undefined, refresh)
+    await adapter.fetch({ path: '/d/x' }, manifest('resolve'))
+    await adapter.fetch({ path: '/d/y' }, manifest('resolve'))
+    expect(refresh).toHaveBeenCalledTimes(1)
+    const [, init] = fetchMock.mock.calls[0]
+    expect((init as RequestInit).headers).toMatchObject({ authorization: 'provisioned' })
+  })
 })
 
 describe('AlistAdapter mode=audio', () => {

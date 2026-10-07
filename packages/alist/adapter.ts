@@ -48,7 +48,7 @@ export class AlistAdapter implements Adapter {
     private readonly deps: AlistAdapterDeps,
     private readonly baseUrl?: string,
     private readonly token?: string,
-    /** 托管模式的 401 自动重登通道（宿主注入 provision-login）；外接模式缺省。 */
+    /** 托管模式取 token 的通道（宿主注入接管序列）：401 时重登，没 token 时负责第一次取。外接模式缺省。 */
     private readonly refresh?: () => Promise<string>,
   ) {}
 
@@ -57,11 +57,13 @@ export class AlistAdapter implements Adapter {
   private ensureClient(): AlistClient {
     if (this.client) return this.client
     const token = resolveAlistToken(this.token)
-    if (!token) throw new Error('[alist] 缺少 token：请配置 config.alist_token 或 ALIST_TOKEN 环境变量')
+    // 没 token 也没接管通道 = 外接模式漏填，说清让人去填。有通道（托管模式，启动时容器在睡、
+    // 登录没跑成）就带着空 token 建 client，第一次请求之前由它经通道取来。
+    if (!token && !this.refresh) throw new Error('[alist] 缺少 token：请配置 config.alist_token 或 ALIST_TOKEN 环境变量')
     this.client = new AlistClient({
       // 每次请求现解析：fetch 都在 withAwake 回调里，求值时容器已醒、地址才有。
       baseUrl: () => resolveAlistUrl(this.baseUrl, this.deps.backendUrl),
-      token,
+      token: token ?? '',
       refresh: this.refresh,
       fetchFn: (input, init) => this.deps.withAwake(ALIST_SERVICE, () => fetch(input, init)),
     })

@@ -512,6 +512,30 @@ describe('Scheduler', () => {
     expect(res.written).toBe(1) // src-a survived src-b's failure
   })
 
+  // 整轮没抛 = 调度那行 `tick failed` 不会出现。坏掉的那个来源不在这里说一声，后端日志里就
+  // 一个字都没有：活体上五条流的网盘来源连着三天每轮失败，日志里只看得到唯一一条**全员**失败的流。
+  it('部分来源失败：整轮不抛，但失败的那个来源在日志里留一行', async () => {
+    const boom: Adapter = {
+      id: 'fake', init: async () => {},
+      fetch: async (_p, m) => { if (m.id === 'src-b') throw new Error('boom upstream'); return [{ guid: 'a', title: 'A' }] },
+    }
+    const sched = new Scheduler({
+      registry: new Registry([mk('src-a'), mk('src-b')]), streams: [fanoutStream],
+      adapters: new Map([['fake', boom]]), resolveCreds: async () => ({}), vaultRoot: join(dir, 'vault'), dedup,
+    })
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      await sched.tick('merged')
+      const lines = logged.mock.calls.map((c) => c.join(' '))
+      expect(lines).toHaveLength(1)
+      expect(lines[0]).toContain('merged')
+      expect(lines[0]).toContain('src-b')
+      expect(lines[0]).toContain('boom upstream')
+    } finally {
+      logged.mockRestore()
+    }
+  })
+
   it('a scheduled-tick source failure surfaces through onHarvestError (non-auth)', async () => {
     const boom: Adapter = {
       id: 'fake', init: async () => {},
