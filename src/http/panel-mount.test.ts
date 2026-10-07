@@ -96,3 +96,29 @@ test('panel-boards.js 走同一条路由发出:JS content-type + CORS 头', asyn
   expect(res.headers.get('access-control-allow-origin')).toBe('*')
   expect(await res.text()).toContain('__streamBoardPanels')
 })
+
+// 面板产物是 gitignored 的构建物：重新克隆 / 清过工作区之后它就不在了，而后端照常起得来。
+// 不在挂载时说出来，唯一的症状就是浏览器里一句「加载 panel.js 失败」，后端日志里一个字都没有。
+test('产物目录里没有 panel.js 时，挂载当场说出来并给出构建命令', () => {
+  const lines: string[] = []
+  mountPanelAssets(new Hono(), { root: mkdtempSync(join(tmpdir(), 'panel-empty-')), log: (l) => lines.push(l) })
+  expect(lines).toHaveLength(1)
+  expect(lines[0]).toContain('panel.js')
+  expect(lines[0]).toContain('npm run build:panel')
+})
+
+test('产物在场时挂载不出声', () => {
+  const root = mkdtempSync(join(tmpdir(), 'panel-'))
+  writeFileSync(join(root, 'panel.js'), 'window.x=1')
+  const lines: string[] = []
+  mountPanelAssets(new Hono(), { root, log: (l) => lines.push(l) })
+  expect(lines).toEqual([])
+})
+
+test('文件不存在的 404 正文写明是没构建，不是一句裸的 Not Found', async () => {
+  const app = new Hono()
+  mountPanelAssets(app, { root: mkdtempSync(join(tmpdir(), 'panel-empty-')), log: () => {} })
+  const res = await app.request('/panel/panel.js')
+  expect(res.status).toBe(404)
+  expect(await res.text()).toContain('npm run build:panel')
+})

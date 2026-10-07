@@ -10,6 +10,7 @@
  * 会被它整段吞掉，表现是 200 + 一份 HTML——一个「加载成功但什么都没发生」的静默失败。
  */
 import { createHash } from 'node:crypto'
+import { existsSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { Hono } from 'hono'
@@ -21,13 +22,21 @@ const TYPES: Readonly<Record<string, string>> = {
   js: 'text/javascript; charset=utf-8',
 }
 
+const NOT_BUILT = '面板产物不存在，页面会报加载失败；构建：cd app && npm run build:panel'
+
 /**
  * 把 `root` 下的单层文件挂到 `GET /panel/:file`。
  * 文件名正则只允许字母数字与 `._-`，所以 `/` 和 `..` 在**路由匹配**那一层就不成立。
  * @param app - hono app.
  * @param opts.root - 面板产物目录（`app/dist-panel`）。
+ * @param opts.log - 挂载时的提示出口，缺省 `console.warn`。
  */
-export function mountPanelAssets(app: Hono, opts: { root: string }): void {
+export function mountPanelAssets(app: Hono, opts: { root: string; log?: (line: string) => void }): void {
+  // 产物是 gitignored 的构建物：重新克隆 / 清过工作区之后它不在，而后端照常起得来——不在这里
+  // 说出来，唯一的症状是浏览器里一句「加载 panel.js 失败」，后端日志里一个字都没有。
+  if (!existsSync(join(opts.root, 'panel.js'))) {
+    ;(opts.log ?? console.warn)(`[panel] ${NOT_BUILT}（找的是 ${join(opts.root, 'panel.js')}）`)
+  }
   app.get('/panel/:file{[A-Za-z0-9._-]+}', async (c) => {
     const file = c.req.param('file')
     const ext = file.split('.').pop() ?? ''
@@ -37,8 +46,8 @@ export function mountPanelAssets(app: Hono, opts: { root: string }): void {
     try {
       body = await readFile(join(opts.root, file))
     } catch {
-      // 没构建过是常态（穿刺阶段要手动 build），给干净的 404 而不是 500。
-      return c.notFound()
+      // 没构建过给 404 而不是 500，正文写明原因——裸的 Not Found 分不出是路径错了还是没构建。
+      return c.text(`[panel] ${file}: ${NOT_BUILT}`, 404)
     }
     // CORS 不是为了取文件——普通 <script>/<link> 跨源本来就不要它。它是为了**看得见报错**：
     // 没有 CORS 头的跨源脚本一旦抛异常，浏览器只给一句不带文件名和行号的 "Script error."，
