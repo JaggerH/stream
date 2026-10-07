@@ -197,6 +197,44 @@ describe('packagesPlugin', () => {
     await quiesceKernel(kernel)
   })
 
+  // 托管模式的 token 是登录换来的，登录要容器醒着。启动那一刻容器在睡（standby 管着的容器闲置
+  // 会停，而启动时只等它 2 秒）就拿不到——那之后必须还能在用到时取，不能等到下次重启：
+  // 活体（2026-10-04 起三天）六条网盘来源每轮都报「缺少 token」，网盘域整块没装配。
+  describe('alist 托管接管：启动时没拿到 token 也得留着取它的通道', () => {
+    const seedAlist = ({ packagesDir }: { packagesDir: string }) =>
+      writePackage(packagesDir, 'alist', { name: 'AList', normalizer: 'alist-norm' })
+
+    it('网盘底座包开着、没有任何 token → 算托管，接管通道递给包', async () => {
+      const { kernel } = await mount({ seed: seedAlist })
+      expect(kernel.packages.alist.token).toBeUndefined()
+      expect(kernel.packages.alist.managed()).toBe(true)
+      expect(kernel.packages.configForPackage('alist').refresh).toBeTypeOf('function')
+      await quiesceKernel(kernel)
+    })
+
+    it('外接模式（用户自己填了 token，没有托管密码）→ 不算托管，不递通道，refresh 说清', async () => {
+      const { kernel } = await mount({ seed: seedAlist, alistUrl: 'http://alist.example', alistToken: 'perm' })
+      expect(kernel.packages.alist.managed()).toBe(false)
+      expect(kernel.packages.configForPackage('alist').refresh).toBeUndefined()
+      await expect(kernel.packages.alist.refresh()).rejects.toThrow(/非托管/)
+      await quiesceKernel(kernel)
+    })
+
+    it('没装网盘底座包 → 不算托管', async () => {
+      const { kernel } = await mount()
+      expect(kernel.packages.alist.managed()).toBe(false)
+      await quiesceKernel(kernel)
+    })
+
+    it('token 读的是活值：接管把 token 存盘之后，这一格跟着变', async () => {
+      const { kernel } = await mount({ seed: seedAlist })
+      expect(kernel.packages.alist.token).toBeUndefined()
+      kernel.settings.setAlistCredentials({ password: 'pw', token: 'fresh-jwt' })
+      expect(kernel.packages.alist.token).toBe('fresh-jwt')
+      await quiesceKernel(kernel)
+    })
+  })
+
   // 一个第三方包的 package.json 坏了，以前从这里抛出去 = 后端起不来，恢复手段只有让用户自己
   // 去文件系统删包（spec 2026-08-29 §8 的同一个缺陷，早了一层）。**内置那层不接**：那是随
   // 应用发布的，坏了就该掀桌。

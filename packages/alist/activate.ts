@@ -14,6 +14,8 @@ export const activate: ActivateFn = (ctx) => ({
       { backendUrl: () => ctx.backendUrl(), withAwake: ctx.withAwake },
       ctx.config.url as string | undefined,
       ctx.config.token as string | undefined,
+      // 托管模式才有。启动时 token 可能还没拿到（容器在睡），这条通道让 adapter 用到时再取。
+      ctx.config.refresh as (() => Promise<string>) | undefined,
     ),
   },
   normalizers: { alist: alistNormalizer },

@@ -34,8 +34,8 @@ declare module 'cordis' {
  * 类型名叫 `NetdiskDomain` 而不是 `NetdiskService`：后者是这个对象**装着**的那个引擎类
  * （`src/netdisk/sync.ts`）的名字，两个同名会让"谁是谁"在每一处 import 上重新问一遍。
  *
- * `netdisk` / `netdiskRoutes` **可为 undefined**：没配 AList token 时整块不装配（门在
- * `apply` 里，语义与搬家前一字不差）。域本身照样挂——「没配」不等于「没有这一域」，
+ * `netdisk` / `netdiskRoutes` **可为 undefined**：没配 AList（没 token，且不归 Stream 托管）时
+ * 整块不装配（门在 `apply` 里）。域本身照样挂——「没配」不等于「没有这一域」，
  * 后者会让所有按 inject 取它的地方连带不激活。
  */
 export interface NetdiskDomain {
@@ -79,8 +79,9 @@ export interface NetdiskConfig {
  * 散 JSON 一次性迁入。上面长出三层：绑定同步（`NetdiskService`）、归档（`ReconcileService`）、
  * 采样转写（`makeAudioSampler` —— `netdisk_transcribe` 工具的取数腿）。
  *
- * **整域在 `if (alistToken)` 这道门内**：没配 AList 就没有网盘目录可扫，绑定/归档/采样三样
- * 天然不成立。门的语义与搬家前一字不差——门关着时两个字段是 undefined，而不是这一域不挂。
+ * **整域在「有 token，或归 Stream 托管」这道门内**：没配 AList 就没有网盘目录可扫，绑定/归档/
+ * 采样三样天然不成立。门关着时两个字段是 undefined，而不是这一域不挂。托管而启动时 token 还
+ * 空着（容器在睡、登录没跑成）**算配了**——照常装配，client 用到时经 `refresh` 取。
  *
  * 依赖全部经 inject 从内核取：
  *  - `ctx.packages.alist` —— 地址与 token（config/settings 覆盖层 + 启动时的接管结果），
@@ -112,8 +113,10 @@ export const netdiskPlugin = {
     let netdisk: NetdiskService | undefined
     let netdiskRoutes: NetdiskHttpDeps | undefined
     // 地址与 token 来自 packages 域的 AList 那一格（config/settings 覆盖层 + 启动时的接管结果）。
+    // 门：手里有 token，或者这份 AList 归 Stream 托管——后者启动时可能还没 token（容器在睡、
+    // 登录没跑成），那不是「没配」：照常装配，client 带着下面那条 `refresh` 用到时再取。
     const alistToken = alistFacet.token
-    if (alistToken) {
+    if (alistToken || alistFacet.managed()) {
       // 网盘域一库（netdisk.db）：绑定 + 整理配置/裁决/账本/审计/时长缓存。启动时把存量散 JSON
       // 一次性迁入（旧文件改名 .migrated 留备份）。
       const netdiskDb = openNetdiskDb(join(dataDir, 'netdisk.db'))
@@ -124,8 +127,9 @@ export const netdiskPlugin = {
       // 宿主生产路径一律经 `hostAlistClient`：地址 thunk 现解析 + fetch 包进 standby 唤醒。
       const alist = hostAlistClient({
         baseUrl: alistFacet.url,
-        token: alistToken,
-        // 48h JWT 过期 → 用托管的 admin 凭证重登一次再重试（`AlistClient` 401 分支）。
+        token: alistToken ?? '',
+        // 48h JWT 过期 → 用托管的 admin 凭证重登一次再重试（`AlistClient` 401 分支）；
+        // token 还空着时也是它负责第一次取。
         // **别摘掉这一行**：没有它，症状是「跑了两天之后所有网盘操作一起 401」，而 token
         // 明明能自动换发。外接模式（没托管 admin 密码）由 packages 域自己抛，与「无 refresh
         // 通道」那条分支说的是同一句话。

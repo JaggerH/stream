@@ -823,6 +823,11 @@ export class Scheduler {
       })
     }
     if (errors.length > 0 && errors.length === outcomes.length) throw errors[0]
+    // 部分失败：整轮不抛，调用方那行 `tick failed` 就不会出现——坏掉的来源在这里各说一句，否则
+    // 后端日志里一个字都没有（它只进源健康那本账）。不会刷屏：连续失败的来源已经在按退避跳班。
+    for (const o of outcomes) {
+      if (o.error) console.error(`[scheduler] ${stream.id} 来源 ${this.getSourceId(o.src)} 失败（其余来源照常入库）:`, o.error.message)
+    }
     this.reportFeedTitle(stream.id, firstTitle, rawForInference)
     return { fetched, written }
   }

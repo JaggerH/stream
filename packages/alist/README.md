@@ -35,6 +35,24 @@
   直发口（本插件未声明 `publish`），所以 standby 停它不影响外部可达性；但若日后为管理 UI 加
   `publish`，停机窗口里那个口也会跟着不可达，直到下次唤醒。
 
+## token 从哪来
+
+内置托管是唯一形态：token 不是用户填的，是宿主用托管的 admin 凭证登录换来的 48h JWT，存在
+`settings.rows('alist').token`。登录要容器醒着，所以它有两个取的时机：
+
+- **启动时顺手取一次**：`/ping` 2s 内答得上才取。standby 管着的容器这时多半在睡，**取不到是常态**，
+  不算故障——日志里是 `alist 未就绪（/ping 不通），启动时不接管`。
+- **用到时取**：宿主把同一条通道（`packages.alist.refresh`，内部 `withAwake` 后登录）经 `config.refresh`
+  递给本包的 adapter、也递给 netdisk 域的 client。手里 token 为空时，第一次请求之前先经它取；
+  401（JWT 过期）时经它换发。
+
+所以「启动时 token 为空」的两个消费方都照常装配，不要再加「没 token 就不装配 / 就报错」的门——那会把
+一次启动时序变成整个进程生命周期的失效，而且下次重启时容器多半还在睡。
+
+显式填 token（`config.yaml` 的 `alist_token` / `ALIST_TOKEN` env / 设置接口）是遗留的调试入口，不是
+一种形态：填了它而又没有托管密码时，这条通道不存在——`packages.alist.managed()` 为 false，`refresh`
+抛「非托管模式」，token 失效就是失效。
+
 ## 发布
 
 `@streamapp/alist` 是 `"private": true`，不发 npm：第三方容器钳制（`backend.service` 由宿主指派、必须写 `mem`、

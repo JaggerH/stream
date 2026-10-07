@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { mkdtempSync, mkdirSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import Database from 'better-sqlite3'
@@ -19,12 +19,18 @@ import type { PluginSummary } from '../../mcp/tools.ts'
 import type { Context } from 'cordis'
 
 /** 装到 provider 域为止（netdisk 域 inject 的七个上游全在这里备齐）。 */
-async function mountUpToProvider(opts: { alistToken?: string } = {}) {
+async function mountUpToProvider(opts: { alistToken?: string; alistPackage?: boolean } = {}) {
   const root = mkdtempSync(join(tmpdir(), 'stream-netdisk-'))
   const packagesDir = join(root, 'packages')
   const dataDir = join(root, 'data')
   mkdirSync(packagesDir, { recursive: true })
   mkdirSync(dataDir, { recursive: true })
+  if (opts.alistPackage) {
+    // 网盘底座包在场（且默认启用）= 这份 AList 归 Stream 托管。
+    mkdirSync(join(packagesDir, 'alist'))
+    writeFileSync(join(packagesDir, 'alist', 'package.json'),
+      JSON.stringify({ name: '@t/alist', version: '1.0.0', stream: { id: 'alist', name: 'AList', normalizer: 'alist-norm' } }))
+  }
 
   const kernel = createKernel()
   await kernel.plugin(settingsPlugin, { path: join(dataDir, 'settings.json') })
@@ -99,6 +105,21 @@ describe('netdiskPlugin', () => {
     expect(kernel.netdisk.netdiskRoutes).toBeUndefined()
     // 字幕缓存目录与网盘配没配无关——它是这一域的常量那一格。
     expect(kernel.netdisk.subtitleCacheDir).toBe(join(dataDir, 'subtitles'))
+    await quiesceKernel(kernel)
+  })
+
+  /**
+   * 托管模式下「启动时没 token」不等于「没配」：容器在睡、登录没跑成而已，取 token 的通道还在。
+   * 把它也挡在门外的后果是那一整个进程里绑定/归档/网盘路由全都不存在，而且要等到下次重启
+   * ——下次重启时容器多半还在睡。
+   */
+  it('托管但启动时还没拿到 token：照常装配，客户端带着取 token 的通道', async () => {
+    const { kernel, dataDir } = await mountUpToProvider({ alistPackage: true })
+    await mountNetdisk(kernel, dataDir)
+    expect(kernel.packages.alist.token).toBeUndefined()
+    expect(kernel.netdisk.netdisk).toBeDefined()
+    const alist = kernel.netdisk.netdiskRoutes!.alist as unknown as { refresh?: () => Promise<string> }
+    expect(typeof alist.refresh).toBe('function')
     await quiesceKernel(kernel)
   })
 
