@@ -13,11 +13,15 @@ export interface AlistClientOptions {
   token: string
   refresh?: () => Promise<string>
   sleep?: (ms: number) => Promise<void>
-  /** 发请求用的 fetch。**生产路径必须注入包了唤醒的那份**（宿主：`src/netdisk/alist-client.ts`
-   *  的 `hostAlistClient` 用 `withAwake('alist', …)`；包：adapter 用 `ctx.withAwake`）——standby 管着的
-   *  容器闲置会停，裸 fetch 打过去是 ECONNREFUSED。缺省是全局 fetch，只给测试注入假服务端 / 已经
-   *  拿到醒着地址的调用方用。 */
+  /** 发请求用的 fetch。缺省是全局 fetch；测试注入假服务端、宿主给上传换一条长超时连接时用。 */
   fetchFn?: typeof fetch
+  /**
+   * 包在每次请求外面的那层唤醒。**生产路径必须给**（宿主：`src/netdisk/alist-client.ts` 的
+   * `hostAlistClient` 用 `withAwake('alist', …)`；包：adapter 用 `ctx.withAwake`）——standby 管着的
+   * 容器闲置会停，裸 fetch 打过去是 ECONNREFUSED。**唤醒放这儿而不是包进 `fetchFn`**：`baseUrl`
+   * 的 thunk 是在这一层里面求值的，包进 `fetchFn` 的话地址在唤醒之前就拼好了，容器睡着时是空串。
+   */
+  around?: <T>(fn: () => Promise<T>) => Promise<T>
 }
 
 /**
@@ -45,6 +49,7 @@ export class AlistClient extends OpenListClient implements FileShelf {
       ...(opts.refresh ? { refresh: opts.refresh } : {}),
       ...(opts.sleep ? { sleep: opts.sleep } : {}),
       ...(opts.fetchFn ? { fetchFn: opts.fetchFn } : {}),
+      ...(opts.around ? { around: opts.around } : {}),
       ttlMs,
     })
   }

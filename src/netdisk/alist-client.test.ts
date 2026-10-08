@@ -75,6 +75,17 @@ describe('hostAlistClient', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1)
   })
 
+  // 同 adapter 那一条：host 档下 plugin target 只在容器醒着时有值，而唤醒发生在 withAwake 里。
+  it('容器睡着（唤醒之前 plugin target 为空）时第一个请求也能成：地址在 withAwake 里面才取', async () => {
+    let awake = false
+    setPluginTargetResolver((s) => (awake && s === 'alist' ? 'http://127.0.0.1:45001' : null))
+    withAwakeMock.mockImplementationOnce(async (_service, fn) => { awake = true; try { return await fn() } finally { awake = false } })
+    const client = hostAlistClient({ token: 'tok' })
+    fetchMock.mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ code: 200, data: { content: [] } }) } as Response)
+    await client.listDir('/d')
+    expect(String(fetchMock.mock.calls[0][0])).toBe('http://127.0.0.1:45001/api/fs/list')
+  })
+
   it('token 裸放 authorization 头', async () => {
     setPluginTargetResolver(() => 'http://alist-target')
     const client = hostAlistClient({ token: 'my-token' })

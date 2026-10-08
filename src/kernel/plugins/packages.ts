@@ -636,13 +636,14 @@ export const packagesPlugin = {
       const token = alistCfg().token ?? alistToken
       if (!token) return undefined
       if (!isJwtLike(token)) return token
-      const base = resolveAlistUrl()
+      // 地址在 withAwake 里面取：容器睡着时它是空的（同 `hostAlistClient` 的 `around`）。
+      const read = (t: string) => withAwake(ALIST_SERVICE, () => fetchPermanentToken(resolveAlistUrl(), t))
       try {
-        return await fetchPermanentToken(base, token)
+        return await read(token)
       } catch (e) {
         if (!/401/.test((e as Error).message)) throw e
         // JWT 过期：重登一次再读一次。
-        return fetchPermanentToken(base, await alistRefresh())
+        return read(await alistRefresh())
       }
     }
 
