@@ -41,7 +41,9 @@ node "$script_dir/opensource-scrub-public-docs.mjs" "$out"
 # inspection rather than deleting evidence of a failed safety gate.
 hits=()
 while IFS= read -r hit; do hits+=("$hit"); done < <(
-  rg --files --hidden "$out" -g '.env' -g '*.env' -g 'config.yaml' -g 'cookies.json' -g '*.db' || true
+  # find, not rg: this gate must not depend on an optional tool being installed
+  # (a missing rg used to read as "nothing forbidden found"), nor honor ignore files.
+  find "$out" -type f \( -name '.env' -o -name '*.env' -o -name 'config.yaml' -o -name 'cookies.json' -o -name '*.db' \)
 )
 [[ -d "$out/data" ]] && hits+=("$out/data/")
 if ((${#hits[@]})); then
