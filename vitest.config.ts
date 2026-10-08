@@ -20,6 +20,10 @@ export default defineConfig({
       'extension/**',
       'hosts/**',
       '**/.claude/**',
+      // 运行期数据目录（gitignored）。跑着后端的检出里，`data/repair-work/<id>/` 下是 AI 修复
+      // 留的整包副本——连测试文件一起，而它们的相对 import 在那个位置解析不到，于是每份副本
+      // 给全量添 5 个 FAIL。它们不是这个仓库的测试。
+      'data/**',
     ],
     // 单 worker 实测可达 2.4GB，16 worker 峰值曾把 23GB 打穿；8 是 qrun 锁失守时的第二道保险（墙钟 58s→约 75s）。
     maxWorkers: 8,
