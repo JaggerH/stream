@@ -373,12 +373,10 @@ export interface HttpDeps {
   keyState?: (sourceId: string, memberParams?: Record<string, unknown>) => 'stored' | 'env' | 'missing' | null
   /** flip a plugin's enable flag (persist + live catalog); throws for required/unknown plugins. */
   setPluginEnabled?: (id: string, enabled: boolean) => unknown
-  /** AList plugin config — read overlay status (token never echoed), write (restart-applied),
-   *  and a live connection probe for the dialog's 测试连接. */
+  /** 网盘底座（内置托管，没有可写的配置）——只读状态（token 永不回显）和一条活探测。 */
   alist?: {
-    status: () => { url: string; hasToken: boolean; configured: boolean }
-    set: (next: { url?: string; token?: string }) => Promise<{ url: string; hasToken: boolean; configured: boolean }>
-    test: (next?: { url?: string; token?: string }) => Promise<{ ok: boolean; error?: string }>
+    status: () => { hasToken: boolean }
+    test: () => Promise<{ ok: boolean; error?: string }>
     /** OpenList 的**永久** token（`x_setting_items.token`）；没铸出来时 undefined。见 `AlistFacet.permanentToken`。 */
     permanentToken: () => Promise<string | undefined>
   }
@@ -734,8 +732,8 @@ const SUMMARY_PROMPT_KEYS = ['prompt'] as const
 const VIDEO_SOURCES_KEYS = ['tmdbApiKey', 'omdbApiKey', 'language'] as const
 /** `POST /api/settings/archive/{reconcile-formats,orphans}` 认识的字段。 */
 const ARCHIVE_MAINTENANCE_KEYS = ['apply'] as const
-/** `PUT /api/settings/alist` 与 `POST /api/settings/alist/test` 认识的字段。 */
-const ALIST_KEYS = ['url', 'token'] as const
+/** `POST /api/settings/alist/test` 认识的字段：一个都没有（内置托管，探测的就是现役那一份）。 */
+const ALIST_TEST_KEYS = [] as const
 /** `POST /api/voiceprint/persons` 认识的字段。 */
 const VOICEPRINT_PERSON_KEYS = ['name', 'aliases'] as const
 /** `POST /api/voiceprint/item/:itemId/clusters/:cluster/enroll` 认识的字段。 */
@@ -4527,30 +4525,19 @@ export function createHttpApp(deps: HttpDeps): Hono {
     if (gate) return gate
     return c.json(deps.audioArchive.orphans({ apply: body.apply === true }))
   })
-  // AList plugin config — read overlay status (token never echoed), write (applied on restart),
-  // and a live connection probe. url+token layer over config.yaml alist_* / env.
+  // 网盘底座（内置托管）：只读状态（token 永不回显）和一条活探测。没有写端点——地址和凭证
+  // 都由 Stream 自己维护，没有可配的项。
   app.get('/api/settings/alist', (c) => {
     if (!deps.alist) return c.json({ error: 'unavailable' }, 503)
     return c.json(deps.alist.status())
   })
-  app.put('/api/settings/alist', async (c) => {
-    if (!deps.alist) return c.json({ error: 'unavailable' }, 503)
-    const body = (await c.req.json().catch(() => ({}))) as { url?: string; token?: string }
-    const gate = strictBody(c, body, ALIST_KEYS)
-    if (gate) return gate
-    try {
-      return c.json(await deps.alist.set({ url: body.url, token: body.token }))
-    } catch (e) {
-      return c.json({ error: errText(e) }, 400)
-    }
-  })
-  // 测试连接: probe with the posted url+token (test-before-save) or the stored overlay.
+  // 活探测：对现役那一份打一次已认证的列目录。不收任何字段（以前收的临时 url/token 没有了）。
   app.post('/api/settings/alist/test', async (c) => {
     if (!deps.alist) return c.json({ error: 'unavailable' }, 503)
-    const body = (await c.req.json().catch(() => ({}))) as { url?: string; token?: string }
-    const gate = strictBody(c, body, ALIST_KEYS)
+    const body = (await c.req.json().catch(() => ({}))) as Record<string, unknown>
+    const gate = strictBody(c, body, ALIST_TEST_KEYS)
     if (gate) return gate
-    return c.json(await deps.alist.test({ url: body.url, token: body.token }))
+    return c.json(await deps.alist.test())
   })
 
   // （`/api/transcripts` 与 `/api/parses` 两族端点、以及 `POST /api/transcripts/:id/summary`

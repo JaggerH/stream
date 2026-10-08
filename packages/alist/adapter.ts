@@ -16,29 +16,17 @@ export interface AlistAdapterDeps {
 }
 
 /**
- * token 解析：显式 ctor 参数（宿主传 config.alist_token）→ ALIST_TOKEN env。
- * 对齐 pansou 的三级回退风格（base url 的回退见 `resolveAlistUrl`）。
- */
-export function resolveAlistToken(explicit?: string): string | undefined {
-  return explicit ?? process.env.ALIST_TOKEN
-}
-
-/** server-side fetch base：显式（ctx.config.url）→ ALIST_URL env（调试逃生门，包自己读）→ 宿主此刻给的
- *  容器地址（none 档 → ''）。宿主自己那份同形的解析器在 `src/netdisk/alist-client.ts`。 */
-export function resolveAlistUrl(explicit: string | undefined, backendUrl: () => string | undefined): string {
-  return explicit ?? process.env.ALIST_URL ?? backendUrl() ?? ''
-}
-
-/**
  * AList 插件适配器 —— 一个 adapter 服务整个 alist 插件的两条 source：
  *   - alist-list（fixed_params.mode = 'list'）：列目录/枚举文件；
  *   - alist-resolve（fixed_params.mode = 'resolve'）：文件路径 → 临时直链 raw_url。
  * 复用 shared/netdisk/alist-client.ts（fs/list + fs/get + 30min 直链缓存），不重复 HTTP 逻辑；
  * 地址 thunk 与唤醒都从 deps（`ctx`）注入。
  *
- * why 惰性建 client：token 走 config/env（非 manifest auth），未配置 token 时插件仍要在
- * 插件页/Provider 成员候选里可见（source 已入 registry），但真正 fetch 才需要 token——
- * 所以 client 到首次 fetch 才构造，未配置时不影响可见性，只在被实际调用时 fail loud。
+ * 地址和 token 都没有「用户配置」这一层：地址是宿主此刻给的容器地址，token 是宿主接管换来的
+ * （见 README「token 从哪来」）。
+ *
+ * why 惰性建 client：启动时 token 可能还没拿到（容器在睡），而插件仍要在插件页/Provider 成员
+ * 候选里可见（source 已入 registry）——所以 client 到首次 fetch 才构造。
  */
 export class AlistAdapter implements Adapter {
   readonly id = 'alist'
@@ -46,24 +34,22 @@ export class AlistAdapter implements Adapter {
 
   constructor(
     private readonly deps: AlistAdapterDeps,
-    private readonly baseUrl?: string,
+    /** 宿主启动时拿到的 token；没拿到（容器在睡）就是 undefined。 */
     private readonly token?: string,
-    /** 托管模式取 token 的通道（宿主注入接管序列）：401 时重登，没 token 时负责第一次取。外接模式缺省。 */
+    /** 取 token 的通道（宿主注入接管序列）：401 时重登，没 token 时负责第一次取。 */
     private readonly refresh?: () => Promise<string>,
   ) {}
 
-  async init(_env: Record<string, string>): Promise<void> {} // 凭证走 config/env，非 manifest broker
+  async init(_env: Record<string, string>): Promise<void> {} // 凭证由宿主接管序列维护，非 manifest broker
 
   private ensureClient(): AlistClient {
     if (this.client) return this.client
-    const token = resolveAlistToken(this.token)
-    // 没 token 也没接管通道 = 外接模式漏填，说清让人去填。有通道（托管模式，启动时容器在睡、
-    // 登录没跑成）就带着空 token 建 client，第一次请求之前由它经通道取来。
-    if (!token && !this.refresh) throw new Error('[alist] 缺少 token：请配置 config.alist_token 或 ALIST_TOKEN 环境变量')
+    // 两样都没有 = 宿主没把网盘底座接上（接线断了），不是用户漏填了什么。
+    if (!this.token && !this.refresh) throw new Error('[alist] 没有 token 也没有取 token 的通道：宿主未接管网盘底座')
     this.client = new AlistClient({
       // 每次请求现解析：fetch 都在 withAwake 回调里，求值时容器已醒、地址才有。
-      baseUrl: () => resolveAlistUrl(this.baseUrl, this.deps.backendUrl),
-      token: token ?? '',
+      baseUrl: () => this.deps.backendUrl() ?? '',
+      token: this.token ?? '',
       refresh: this.refresh,
       fetchFn: (input, init) => this.deps.withAwake(ALIST_SERVICE, () => fetch(input, init)),
     })

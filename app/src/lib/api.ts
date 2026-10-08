@@ -812,14 +812,9 @@ export const api = {
    *  aren't registered). Returns the updated summary. Required plugins reject (409). */
   setPluginEnabled: (c: Connection, id: string, enabled: boolean) =>
     put<PluginSummary & Partial<PluginStatus>>(c, `/api/plugins/${encodeURIComponent(id)}/enabled`, { enabled }),
-  /** AList plugin config — read overlay status (token never echoed), write (applied on restart),
-   *  and a live 测试连接 probe. */
+  /** 网盘底座（内置托管，没有可写的配置）——一条活探测，探的是现役那一份。 */
   alist: {
-    get: (c: Connection) => get<{ url: string; hasToken: boolean; configured: boolean }>(c, '/api/settings/alist'),
-    set: (c: Connection, cfg: { url?: string; token?: string }) =>
-      put<{ url: string; hasToken: boolean; configured: boolean }>(c, '/api/settings/alist', cfg),
-    test: (c: Connection, cfg: { url?: string; token?: string }) =>
-      post<{ ok: boolean; error?: string }>(c, '/api/settings/alist/test', cfg),
+    test: (c: Connection) => post<{ ok: boolean; error?: string }>(c, '/api/settings/alist/test', {}),
   },
   pluginSources: (c: Connection, pluginId: string, opts?: { query?: string; category?: string; group?: string; limit?: number; cursor?: string; surface?: PickSurface }) => {
     const params = new URLSearchParams()

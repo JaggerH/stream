@@ -3,7 +3,7 @@ import { fileURLToPath } from 'url'
 import { dirname, join } from 'path'
 import { readFileSync } from 'node:fs'
 import { parse } from 'yaml'
-import { AlistAdapter, resolveAlistToken, resolveAlistUrl, ALIST_SERVICE, type AlistAdapterDeps } from './adapter.ts'
+import { AlistAdapter, ALIST_SERVICE, type AlistAdapterDeps } from './adapter.ts'
 import { loadPlugins } from '../../src/plugins/loader.ts'
 import type { SourceManifest } from '../../src/manifest/types.ts'
 
@@ -64,49 +64,35 @@ describe('AlistAdapter', () => {
   afterEach(() => {
     vi.unstubAllGlobals()
     delete process.env.ALIST_TOKEN
-  })
-
-  it('resolveAlistToken: explicit > ALIST_TOKEN env', () => {
-    process.env.ALIST_TOKEN = 'from-env'
-    expect(resolveAlistToken('explicit')).toBe('explicit')
-    expect(resolveAlistToken(undefined)).toBe('from-env')
-  })
-
-  it('resolveAlistUrl: explicit > ALIST_URL env > ctx.backendUrl() > 空串', () => {
-    const prev = process.env.ALIST_URL
-    try {
-      process.env.ALIST_URL = 'http://from-env'
-      expect(resolveAlistUrl('http://explicit', () => 'http://alist:5244')).toBe('http://explicit')
-      expect(resolveAlistUrl(undefined, () => 'http://alist:5244')).toBe('http://from-env')
-      delete process.env.ALIST_URL
-      expect(resolveAlistUrl(undefined, () => 'http://alist:5244')).toBe('http://alist:5244')
-      expect(resolveAlistUrl(undefined, () => undefined)).toBe('')
-    } finally {
-      if (prev === undefined) delete process.env.ALIST_URL
-      else process.env.ALIST_URL = prev
-    }
-  })
-
-  it('无显式 url 时地址来自 ctx.backendUrl，且惰性：构造期宿主还答不出、请求时才读到（host 档开机时容器睡着）', async () => {
-    const prev = process.env.ALIST_URL
     delete process.env.ALIST_URL
-    try {
-      let target: string | undefined
-      const adapter = new AlistAdapter(deps({ backendUrl: () => target }), undefined, 'tok')
-      target = 'http://127.0.0.1:45001'
-      fetchMock.mockResolvedValueOnce(jsonResponse(200, { raw_url: 'http://cdn/x' }))
-      await adapter.fetch({ path: '/d/x' }, manifest('resolve'))
-      expect(String(fetchMock.mock.calls[0][0])).toBe('http://127.0.0.1:45001/api/fs/get')
-    } finally {
-      if (prev === undefined) delete process.env.ALIST_URL
-      else process.env.ALIST_URL = prev
-    }
+  })
+
+  // 网盘底座只有内置托管一种形态：地址和 token 都由宿主给，没有环境变量这一层。
+  // 留着它们的后果是「机器上碰巧设了这个变量」就悄悄把请求引到别处 / 换了一把凭据。
+  it('ALIST_URL / ALIST_TOKEN 环境变量不再生效：地址只认 ctx.backendUrl，token 只认宿主给的', async () => {
+    process.env.ALIST_URL = 'http://from-env'
+    process.env.ALIST_TOKEN = 'env-tok'
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, { raw_url: 'http://cdn/x' }))
+    const adapter = new AlistAdapter(deps(), 'tok')
+    await adapter.fetch({ path: '/d/x' }, manifest('resolve'))
+    const [url, init] = fetchMock.mock.calls[0]
+    expect(String(url)).toBe('http://alist:5244/api/fs/get')
+    expect((init as RequestInit).headers).toMatchObject({ authorization: 'tok' })
+  })
+
+  it('地址来自 ctx.backendUrl，且惰性：构造期宿主还答不出、请求时才读到（host 档开机时容器睡着）', async () => {
+    let target: string | undefined
+    const adapter = new AlistAdapter(deps({ backendUrl: () => target }), 'tok')
+    target = 'http://127.0.0.1:45001'
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, { raw_url: 'http://cdn/x' }))
+    await adapter.fetch({ path: '/d/x' }, manifest('resolve'))
+    expect(String(fetchMock.mock.calls[0][0])).toBe('http://127.0.0.1:45001/api/fs/get')
   })
 
   it('每次打容器都经 deps.withAwake，唤醒键是本包的 service 名', async () => {
     const seen: string[] = []
     const withAwake: AlistAdapterDeps['withAwake'] = async (service, fn) => { seen.push(service); return fn() }
-    const adapter = new AlistAdapter(deps({ withAwake }), 'http://alist', 'tok')
+    const adapter = new AlistAdapter(deps({ withAwake }), 'tok')
     fetchMock.mockResolvedValueOnce(jsonResponse(200, { raw_url: 'http://cdn/x' }))
     await adapter.fetch({ path: '/d/x' }, manifest('resolve'))
     expect(seen).toEqual([ALIST_SERVICE])
@@ -115,7 +101,7 @@ describe('AlistAdapter', () => {
 
   it('resolve mode → returns {path, raw_url} from AlistClient.rawUrl', async () => {
     fetchMock.mockResolvedValueOnce(jsonResponse(200, { raw_url: 'http://cdn/01.mp4' }))
-    const adapter = new AlistAdapter(deps(), 'http://alist', 'tok')
+    const adapter = new AlistAdapter(deps(), 'tok')
     const out = await adapter.fetch({ path: '/d/01.mp4' }, manifest('resolve'))
     expect(out).toEqual([{ path: '/d/01.mp4', raw_url: 'http://cdn/01.mp4' }])
     // token reached AlistClient → authorization header carries it bare.
@@ -127,32 +113,23 @@ describe('AlistAdapter', () => {
     fetchMock.mockResolvedValueOnce(
       jsonResponse(200, { content: [{ name: '01.mp4', size: 10, is_dir: false }, { name: 'sub', size: 0, is_dir: true }] }),
     )
-    const adapter = new AlistAdapter(deps(), 'http://alist', 'tok')
+    const adapter = new AlistAdapter(deps(), 'tok')
     const out = await adapter.fetch({ path: '/d' }, manifest('list'))
     expect(out).toEqual([{ name: '01.mp4', size: 10, isDir: false }])
   })
 
-  it('token from ALIST_TOKEN env when ctor token omitted', async () => {
-    process.env.ALIST_TOKEN = 'env-tok'
-    fetchMock.mockResolvedValueOnce(jsonResponse(200, { raw_url: 'http://cdn/x' }))
-    const adapter = new AlistAdapter(deps(), 'http://alist')
-    await adapter.fetch({ path: '/d/x' }, manifest('resolve'))
-    const [, init] = fetchMock.mock.calls[0]
-    expect((init as RequestInit).headers).toMatchObject({ authorization: 'env-tok' })
-  })
-
-  it('missing token → fetch throws (fail loud), no HTTP call', async () => {
-    const adapter = new AlistAdapter(deps(), 'http://alist')
-    await expect(adapter.fetch({ path: '/d/x' }, manifest('resolve'))).rejects.toThrow(/token/)
+  it('token 和取 token 的通道都没有（宿主没接上）→ fetch 抛错说清，一个请求都不发', async () => {
+    process.env.ALIST_TOKEN = 'env-tok' // 环境变量救不了它
+    const adapter = new AlistAdapter(deps())
+    await expect(adapter.fetch({ path: '/d/x' }, manifest('resolve'))).rejects.toThrow(/宿主未接管/)
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
-  // 托管模式：启动时容器在睡 → 宿主没拿到 token，但递了接管通道。这时不该报「缺少 token」
-  // （那句话让人去填一个本来就该自动维护的值），而是第一次真要用时把 token 取来。
+  // 启动时容器在睡 → 宿主没拿到 token，但递了接管通道。第一次真要用时把 token 取来。
   it('没有 token 但宿主给了接管通道 → 第一次 fetch 时取 token 再请求', async () => {
     fetchMock.mockResolvedValue(jsonResponse(200, { raw_url: 'http://cdn/x' }))
     const refresh = vi.fn(async () => 'provisioned')
-    const adapter = new AlistAdapter(deps(), 'http://alist', undefined, refresh)
+    const adapter = new AlistAdapter(deps(), undefined, refresh)
     await adapter.fetch({ path: '/d/x' }, manifest('resolve'))
     await adapter.fetch({ path: '/d/y' }, manifest('resolve'))
     expect(refresh).toHaveBeenCalledTimes(1)
@@ -169,7 +146,7 @@ describe('AlistAdapter mode=audio', () => {
       { name: 'cover.jpg', size: 222, isDir: false },      // 非音频，滤掉
       { name: '中元聊恐怖片.m4a', size: 333, isDir: false },
     ])
-    const adapter = new AlistAdapter(deps(), 'http://alist', 'tok')
+    const adapter = new AlistAdapter(deps(), 'tok')
     // 注入假 client，避开真实 HTTP
     ;(adapter as unknown as { client: unknown }).client = { listDirRecursive } as never
 
@@ -189,7 +166,7 @@ describe('AlistAdapter mode=audio', () => {
       { name: '怡楽播客 - 069.四谈身边灵异事.mp3', size: 2, isDir: false },
       { name: '玄关笔记 - 07.甲木.mp3', size: 3, isDir: false }, // 两位号子节目前缀：不剥
     ])
-    const adapter = new AlistAdapter(deps(), 'http://alist', 'tok')
+    const adapter = new AlistAdapter(deps(), 'tok')
     ;(adapter as unknown as { client: unknown }).client = { listDirRecursive } as never
 
     const { items: out } = (await adapter.fetch({ path: '/d' }, audioManifest())) as { items: { title: string; name: string }[] }
@@ -204,7 +181,7 @@ describe('AlistAdapter mode=audio', () => {
   it('reports the directory name as the feed title', async () => {
     const audioManifest = () => ({ id: 'alist-audio', adapter: 'alist', fixed_params: { mode: 'audio' } } as unknown as SourceManifest)
     const listDirRecursive = vi.fn(async () => [{ name: '01.mp3', size: 1, isDir: false }])
-    const adapter = new AlistAdapter(deps(), 'http://alist', 'tok')
+    const adapter = new AlistAdapter(deps(), 'tok')
     ;(adapter as unknown as { client: unknown }).client = { listDirRecursive } as never
 
     const res = (await adapter.fetch({ path: '/quark/怡楽播客/' }, audioManifest())) as { title?: string }
@@ -214,7 +191,7 @@ describe('AlistAdapter mode=audio', () => {
   it('omits the feed title at the netdisk root', async () => {
     const audioManifest = () => ({ id: 'alist-audio', adapter: 'alist', fixed_params: { mode: 'audio' } } as unknown as SourceManifest)
     const listDirRecursive = vi.fn(async () => [])
-    const adapter = new AlistAdapter(deps(), 'http://alist', 'tok')
+    const adapter = new AlistAdapter(deps(), 'tok')
     ;(adapter as unknown as { client: unknown }).client = { listDirRecursive } as never
 
     const res = (await adapter.fetch({ path: '/' }, audioManifest())) as { title?: string }

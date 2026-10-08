@@ -6,8 +6,7 @@ import { loadConfig } from './bootstrap.ts'
 
 /**
  * config.yaml → AppConfig 的**传递**本身要有人守。漏传一个字段不会报错、不会有类型错
- * （字段在 `AppConfig` 上是可选的），只是运行时永远读到 undefined——真发生过：`alist_url`/
- * `alist_token` 声明了、四处在读、loadConfig 从来没往外传，config.yaml 里写什么都静默无效。
+ * （字段在 `AppConfig` 上是可选的），只是运行时永远读到 undefined，config.yaml 里写什么都静默无效。
  */
 describe('loadConfig：显式地址/凭证要真的从 config.yaml 传到 AppConfig', () => {
   let dir: string
@@ -20,16 +19,29 @@ describe('loadConfig：显式地址/凭证要真的从 config.yaml 传到 AppCon
     return p
   }
 
-  it('alist_url / alist_token 原样传出', () => {
-    const cfg = loadConfig(write('alist_url: http://127.0.0.1:45848\nalist_token: tok-abc\n'))
-    expect(cfg.alist_url).toBe('http://127.0.0.1:45848')
-    expect(cfg.alist_token).toBe('tok-abc')
+  it('mineru_url 原样传出', () => {
+    const cfg = loadConfig(write('mineru_url: http://127.0.0.1:45848\n'))
+    expect(cfg.mineru_url).toBe('http://127.0.0.1:45848')
   })
 
   it('没写就是 undefined（由各自的 env / 插件目标回落，不许在这里编一个默认值）', () => {
     const cfg = loadConfig(write('vault_enabled: false\n'))
-    expect(cfg.alist_url).toBeUndefined()
-    expect(cfg.alist_token).toBeUndefined()
+    expect(cfg.mineru_url).toBeUndefined()
+  })
+
+  // 网盘底座只有内置托管一种形态：地址由宿主现取、凭证由接管序列维护，没有「指向你自己的实例」
+  // 这回事。旧部署里留着这两个键不该静默无效——那会表现成「配了却还是连内置的」。
+  it('alist_url / alist_token 不再被读取：不传出，并各喊一声说清原因', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const cfg = loadConfig(write('alist_url: http://127.0.0.1:45848\nalist_token: tok-abc\nvault_enabled: false\n'))
+    expect(cfg).not.toHaveProperty('alist_url')
+    expect(cfg).not.toHaveProperty('alist_token')
+    expect(warn).toHaveBeenCalledTimes(1)
+    const msg = String(warn.mock.calls[0][0])
+    expect(msg).toContain('alist_url')
+    expect(msg).toContain('alist_token')
+    expect(msg).toMatch(/托管/)
+    warn.mockRestore()
   })
 
   it('browser_lanes 原样传出（不写就是 undefined —— 默认值归 RecipeSessionManager，不在这里编一份）', () => {
@@ -148,20 +160,19 @@ describe('loadConfig：已退役的容器地址键要喊一声', () => {
 
   // 归包之后宿主不再替某个包读专用地址键：一条 `<包>_url` 同样写了不生效也不报错。
   // 判据是「loadConfig 读不读这个键」，不是后缀——键名里的包名宿主不认识。
-  it('宿主不读的 <x>_url 键（归包后的旧地址键）→ 一样喊；宿主读的 alist_url / mineru_url 不喊', () => {
+  it('宿主不读的 <x>_url 键（归包后的旧地址键）→ 一样喊；宿主读的 mineru_url 不喊', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
-    const cfg = loadConfig(write('somepkg_url: http://10.0.0.9:8888\nalist_url: http://a\nmineru_url: http://m\nvault_enabled: false\n'))
-    expect(cfg.alist_url).toBe('http://a')
+    const cfg = loadConfig(write('somepkg_url: http://10.0.0.9:8888\nmineru_url: http://m\nvault_enabled: false\n'))
+    expect(cfg.mineru_url).toBe('http://m')
     expect(warn).toHaveBeenCalledTimes(1)
     const msg = String(warn.mock.calls[0][0])
     expect(msg).toContain('somepkg_url')
-    expect(msg).not.toContain('alist_url')
     expect(msg).not.toContain('mineru_url')
   })
 
   it('没有这类键 → 不喊', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
-    loadConfig(write('alist_url: http://127.0.0.1:45848\nvault_enabled: false\n'))
+    loadConfig(write('mineru_url: http://127.0.0.1:45848\nvault_enabled: false\n'))
     expect(warn).not.toHaveBeenCalled()
   })
 })

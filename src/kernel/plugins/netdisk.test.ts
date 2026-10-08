@@ -35,11 +35,10 @@ async function mountUpToProvider(opts: { alistToken?: string; alistPackage?: boo
   const kernel = createKernel()
   await kernel.plugin(settingsPlugin, { path: join(dataDir, 'settings.json') })
   await kernel.plugin(credentialsPlugin, { dataDir, log: () => {}, requiredDomains: () => [] })
+  // token 只有一个来源：接管序列存进 settings 的那一份。测试里就照它的写法先存好。
+  if (opts.alistToken) kernel.settings.setAlistCredentials({ password: 'pw', token: opts.alistToken })
   await kernel.plugin(packagesPlugin, {
     packagesDir, dataDir, manageContainers: false, log: () => {},
-    // 空串而不是 undefined：`?? process.env.ALIST_TOKEN` 会把 undefined 交给环境变量，
-    // 于是「没配 AList」那条用例在开发机上会随环境时绿时红。
-    alistToken: opts.alistToken ?? '',
     catalogSummary: (id) => ({ id } as unknown as PluginSummary),
   })
   await kernel.plugin(sourcesPlugin, {
@@ -77,7 +76,7 @@ async function mountNetdisk(kernel: Context, dataDir: string) {
 }
 
 describe('netdiskPlugin', () => {
-  it('配了 AList token：挂成 ctx.netdisk，三格都在，dispose 后消失', async () => {
+  it('手里有 token（接管过）：挂成 ctx.netdisk，三格都在，dispose 后消失', async () => {
     const { kernel, dataDir } = await mountUpToProvider({ alistToken: 'tok' })
     await mountNetdisk(kernel, dataDir)
     const d = kernel.netdisk
@@ -93,11 +92,11 @@ describe('netdiskPlugin', () => {
   })
 
   /**
-   * 门的语义：没配 AList token 时两个字段是 undefined，**但域照样挂**。
-   * 把「没配」做成「不挂域」的话，所有按 inject 取它的地方会连带不激活——那是一个
+   * 门的语义：没有网盘底座（包没开、手里也没 token）时两个字段是 undefined，**但域照样挂**。
+   * 把「没有」做成「不挂域」的话，所有按 inject 取它的地方会连带不激活——那是一个
    * 完全不同的、而且没人会喊的失效面。
    */
-  it('没配 AList token：域照挂，netdisk/netdiskRoutes 为 undefined', async () => {
+  it('没有网盘底座：域照挂，netdisk/netdiskRoutes 为 undefined', async () => {
     const { kernel, dataDir } = await mountUpToProvider()
     await mountNetdisk(kernel, dataDir)
     expect(kernel.netdisk).toBeDefined()
@@ -109,11 +108,11 @@ describe('netdiskPlugin', () => {
   })
 
   /**
-   * 托管模式下「启动时没 token」不等于「没配」：容器在睡、登录没跑成而已，取 token 的通道还在。
+   * 底座包开着时「启动时没 token」不等于「没有」：容器在睡、登录没跑成而已，取 token 的通道还在。
    * 把它也挡在门外的后果是那一整个进程里绑定/归档/网盘路由全都不存在，而且要等到下次重启
    * ——下次重启时容器多半还在睡。
    */
-  it('托管但启动时还没拿到 token：照常装配，客户端带着取 token 的通道', async () => {
+  it('底座包开着但启动时还没拿到 token：照常装配，客户端带着取 token 的通道', async () => {
     const { kernel, dataDir } = await mountUpToProvider({ alistPackage: true })
     await mountNetdisk(kernel, dataDir)
     expect(kernel.packages.alist.token).toBeUndefined()
@@ -142,15 +141,15 @@ describe('netdiskPlugin', () => {
    * 消费者——症状是「跑了两天之后所有网盘操作一起 401」，而 token 明明能自动换发。
    *
    * 这里钉的是**接线本身**（客户端手里那个 refresh 就是 packages 域那一个）：调它，
-   * 拿到的是 packages 域「非托管模式」那句话，而不是 undefined。
+   * 拿到的是 packages 域自己那句话，而不是 undefined。
    */
   it('AlistClient 的 refresh 接上了 packages 域的重登通道', async () => {
     const { kernel, dataDir } = await mountUpToProvider({ alistToken: 'tok' })
     await mountNetdisk(kernel, dataDir)
     const alist = kernel.netdisk.netdiskRoutes!.alist as unknown as { refresh?: () => Promise<string> }
     expect(typeof alist.refresh).toBe('function')
-    // 没托管 admin 密码 → packages 域自己抛这句话。抛得出来 = 这一跳真的落到了那边。
-    await expect(alist.refresh!()).rejects.toThrow(/非托管模式/)
+    // 这份装配里没有网盘底座包 → packages 域自己抛这句话。抛得出来 = 这一跳真的落到了那边。
+    await expect(alist.refresh!()).rejects.toThrow(/网盘底座包未启用/)
     await quiesceKernel(kernel)
   })
 

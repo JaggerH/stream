@@ -1,6 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
 import { activate } from './activate.ts'
-import { resolveAlistToken } from './adapter.ts'
 import type { PluginContext } from '../../src/packages/activate.ts'
 import type { SourceManifest } from '../../src/manifest/types.ts'
 
@@ -16,10 +15,6 @@ const ctx = (config: Record<string, unknown> = {}): PluginContext => ({
   config,
 })
 
-/** adapter 把宿主给的两个值收在私有字段里（client 才是惰性的），所以断的就是这两个快照。 */
-const snapshotOf = (a: unknown): { baseUrl?: string; token?: string } =>
-  a as { baseUrl?: string; token?: string }
-
 describe('alist activate', () => {
   it('registers the alist adapter', () => {
     const out = activate(ctx())
@@ -31,12 +26,18 @@ describe('alist activate', () => {
     expect(Object.keys(out.normalizers ?? {})).toEqual(['alist'])
   })
 
-  it('passes the host-resolved url and token through to the adapter', () => {
-    const out = activate(ctx({ url: 'http://alist.test:5244', token: 'jwt-from-provisioning' }))
-    const snap = snapshotOf(out.adapters?.alist)
-    expect(snap.baseUrl).toBe('http://alist.test:5244')
-    // token 走 adapter 自己的回退链（显式 → ALIST_TOKEN env）——断解析结果，不只断字段存在。
-    expect(resolveAlistToken(snap.token)).toBe('jwt-from-provisioning')
+  it('宿主给的 token（config.token）一路递到请求的 authorization 头', async () => {
+    const fetchMock = vi.fn(async (_input: string | URL | Request, _init?: RequestInit) =>
+      ({ ok: true, status: 200, json: async () => ({ code: 200, data: { raw_url: 'http://cdn/x' } }) } as Response))
+    vi.stubGlobal('fetch', fetchMock)
+    try {
+      const out = activate(ctx({ token: 'jwt-from-provisioning' }))
+      const manifest = { id: 'alist-resolve', adapter: 'alist', fixed_params: { mode: 'resolve' } } as unknown as SourceManifest
+      await out.adapters!.alist.fetch({ path: '/d/x' }, manifest)
+      expect((fetchMock.mock.calls[0]![1] as RequestInit).headers).toMatchObject({ authorization: 'jwt-from-provisioning' })
+    } finally {
+      vi.unstubAllGlobals()
+    }
   })
 
   // 这条线断了的症状：启动时没拿到 token 的那一整个进程里，网盘来源每次都报「缺少 token」，
@@ -47,7 +48,7 @@ describe('alist activate', () => {
     vi.stubGlobal('fetch', fetchMock)
     try {
       const refresh = vi.fn(async () => 'provisioned')
-      const out = activate(ctx({ url: 'http://alist.test:5244', refresh }))
+      const out = activate(ctx({ refresh }))
       const manifest = { id: 'alist-resolve', adapter: 'alist', fixed_params: { mode: 'resolve' } } as unknown as SourceManifest
       await out.adapters!.alist.fetch({ path: '/d/x' }, manifest)
       expect(refresh).toHaveBeenCalledTimes(1)
@@ -57,9 +58,7 @@ describe('alist activate', () => {
     }
   })
 
-  it('没有显式 url 时容器地址来自 ctx.backendUrl，请求经 ctx.withAwake 唤醒', async () => {
-    const prev = process.env.ALIST_URL
-    delete process.env.ALIST_URL
+  it('容器地址来自 ctx.backendUrl，请求经 ctx.withAwake 唤醒', async () => {
     const seen: string[] = []
     const withAwake: PluginContext['withAwake'] = async (service, fn) => { seen.push(service); return fn() }
     const fetchMock = vi.fn(async (_input: string | URL | Request, _init?: RequestInit) =>
@@ -73,7 +72,6 @@ describe('alist activate', () => {
       expect(seen).toEqual(['alist'])
     } finally {
       vi.unstubAllGlobals()
-      if (prev !== undefined) process.env.ALIST_URL = prev
     }
   })
 })

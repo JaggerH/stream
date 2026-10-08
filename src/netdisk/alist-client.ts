@@ -19,10 +19,11 @@ const ALIST_SERVICE = 'alist'
  */
 const PUT_AGENT = new Agent({ headersTimeout: 60 * 60_000, bodyTimeout: 60 * 60_000 })
 
-/** server-side fetch base（NOT 客户端网关路径）：显式（config）→ ALIST_URL env → bootstrap 接线的
- *  plugin target（compose 形态：容器 DNS；host 档醒着的容器 loopback；none：未设 → ''）。 */
-export function resolveAlistUrl(explicit?: string): string {
-  return explicit ?? process.env.ALIST_URL ?? pluginTarget(ALIST_SERVICE) ?? ''
+/** server-side fetch base（NOT 客户端网关路径）：bootstrap 接线的 plugin target（compose 形态：
+ *  容器 DNS；host 档醒着的容器 loopback；none：未设 → ''）。只有这一个来源——网盘底座是内置
+ *  托管的，没有「指向别处」的显式地址。 */
+export function resolveAlistUrl(): string {
+  return pluginTarget(ALIST_SERVICE) ?? ''
 }
 
 /**
@@ -31,11 +32,11 @@ export function resolveAlistUrl(explicit?: string): string {
  * standby 唤醒不能被绕过，所以这里不收 `fetchFn`（要注入假服务端的测试直接 `new` shared 那个类）。
  */
 export function hostAlistClient(
-  opts: { baseUrl?: string } & Pick<AlistClientOptions, 'token' | 'refresh' | 'sleep'>,
+  opts: Pick<AlistClientOptions, 'token' | 'refresh' | 'sleep'>,
   ttlMs?: number,
 ): AlistClient {
   return new AlistClient({
-    baseUrl: () => resolveAlistUrl(opts.baseUrl),
+    baseUrl: () => resolveAlistUrl(),
     token: opts.token,
     ...(opts.refresh ? { refresh: opts.refresh } : {}),
     ...(opts.sleep ? { sleep: opts.sleep } : {}),

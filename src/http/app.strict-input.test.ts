@@ -82,7 +82,7 @@ function buildApp(): ReturnType<typeof createHttpApp> {
       reconcileFormats: spy('audioArchive.reconcileFormats', Promise.resolve({})),
       orphans: spy('audioArchive.orphans', {}),
     },
-    alist: { status: () => ({}), set: spy('alist.set', Promise.resolve({})), test: spy('alist.test', Promise.resolve({ ok: true })) },
+    alist: { status: () => ({}), test: spy('alist.test', Promise.resolve({ ok: true })) },
     speakerRegistry: {
       listPersons: () => [],
       createPerson: spy('speakerRegistry.createPerson', { id: 'p1' }),
@@ -141,8 +141,6 @@ const CASES: Case[] = [
   { what: 'PUT /api/settings/video-sources', method: 'PUT', path: '/api/settings/video-sources', body: { tmdb_api_key: 'k' }, wrote: 'tmdb_api_key', meant: 'tmdbApiKey' },
   { what: 'POST /api/settings/archive/reconcile-formats', method: 'POST', path: '/api/settings/archive/reconcile-formats', body: { applied: true }, wrote: 'applied', meant: 'apply' },
   { what: 'POST /api/settings/archive/orphans', method: 'POST', path: '/api/settings/archive/orphans', body: { applied: true }, wrote: 'applied', meant: 'apply' },
-  { what: 'PUT /api/settings/alist', method: 'PUT', path: '/api/settings/alist', body: { urls: 'http://a' }, wrote: 'urls', meant: 'url' },
-  { what: 'POST /api/settings/alist/test', method: 'POST', path: '/api/settings/alist/test', body: { urls: 'http://a' }, wrote: 'urls', meant: 'url' },
   { what: 'POST /api/voiceprint/persons', method: 'POST', path: '/api/voiceprint/persons', body: { names: '张三' }, wrote: 'names', meant: 'name' },
   { what: 'POST /api/voiceprint/…/enroll', method: 'POST', path: '/api/voiceprint/item/i1/clusters/SPEAKER_00/enroll', body: { person_id: 'p1' }, wrote: 'person_id', meant: 'personId' },
 ]
@@ -168,6 +166,31 @@ describe('严格输入闸 · app.ts 写入面', () => {
       expect(msg).toContain(c.meant)
     })
   }
+
+  // 网盘底座是内置托管的，没有可写的配置：写端点不存在，探测也不收临时地址/凭据
+  // （以前收 url+token，等于留了一个「拿任意凭据打任意地址」的口）。
+  it('PUT /api/settings/alist 不存在；POST …/test 带任何字段 → 400，探测没发生', async () => {
+    const app = buildApp()
+    const put = await app.request('/api/settings/alist', {
+      method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ url: 'http://a', token: 't' }),
+    })
+    expect(put.status).toBe(404)
+    const probe = await app.request('/api/settings/alist/test', {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ url: 'http://a', token: 't' }),
+    })
+    expect(probe.status).toBe(400)
+    expect(((await probe.json()) as { error: { message: string } }).error.message).toContain('不认识的字段')
+    expect(calls).toEqual([])
+  })
+
+  it('POST /api/settings/alist/test 空体 → 探测现役那一份', async () => {
+    const app = buildApp()
+    const res = await app.request('/api/settings/alist/test', {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}',
+    })
+    expect(res.status).toBe(200)
+    expect(calls).toEqual(['alist.test'])
+  })
 
   it('全部写错的请求打完，一个副作用都没发生', async () => {
     const app = buildApp()

@@ -28,26 +28,21 @@ describe('toGatewayAlistUrl', () => {
 })
 
 describe('resolveAlistUrl', () => {
-  it('explicit > env > plugin target', () => {
-    const prev = process.env.ALIST_URL
-    process.env.ALIST_URL = 'http://from-env'
-    try {
-      expect(resolveAlistUrl('http://explicit')).toBe('http://explicit')
-      expect(resolveAlistUrl(undefined)).toBe('http://from-env')
-    } finally {
-      if (prev === undefined) delete process.env.ALIST_URL
-      else process.env.ALIST_URL = prev
-    }
-  })
-  it('三档都没有（mode:none）→ 空串', () => {
-    setPluginTargetResolver(() => null)
-    const prev = process.env.ALIST_URL
+  afterEach(() => {
     delete process.env.ALIST_URL
-    try {
-      expect(resolveAlistUrl(undefined)).toBe('')
-    } finally {
-      if (prev !== undefined) process.env.ALIST_URL = prev
-    }
+    setPluginTargetResolver(() => null)
+  })
+  // 网盘底座是内置托管的：地址只有「宿主此刻给的容器地址」这一个来源。留着环境变量那一层，
+  // 机器上碰巧设了 ALIST_URL 就会把所有网盘请求悄悄引到别处。
+  it('只认 plugin target；ALIST_URL 环境变量不再生效', () => {
+    process.env.ALIST_URL = 'http://from-env'
+    setPluginTargetResolver((s) => (s === 'alist' ? 'http://127.0.0.1:45001' : null))
+    expect(resolveAlistUrl()).toBe('http://127.0.0.1:45001')
+  })
+  it('没有容器地址（mode:none）→ 空串', () => {
+    process.env.ALIST_URL = 'http://from-env'
+    setPluginTargetResolver(() => null)
+    expect(resolveAlistUrl()).toBe('')
   })
 })
 
@@ -80,13 +75,13 @@ describe('hostAlistClient', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1)
   })
 
-  it('显式 baseUrl 压过 plugin target，token 裸放 authorization 头', async () => {
-    setPluginTargetResolver(() => 'http://should-not-win')
-    const client = hostAlistClient({ baseUrl: 'http://explicit', token: 'my-token' })
+  it('token 裸放 authorization 头', async () => {
+    setPluginTargetResolver(() => 'http://alist-target')
+    const client = hostAlistClient({ token: 'my-token' })
     fetchMock.mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ code: 200, data: { content: [] } }) } as Response)
     await client.listDir('/d')
     const [url, init] = fetchMock.mock.calls[0]
-    expect(String(url)).toBe('http://explicit/api/fs/list')
+    expect(String(url)).toBe('http://alist-target/api/fs/list')
     expect((init as RequestInit).headers).toMatchObject({ authorization: 'my-token' })
   })
 })

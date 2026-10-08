@@ -54,11 +54,6 @@ packages_dir: ./packages
 #   keywords: [内部专属]
 #   domains: [weidian.com]
 
-# Optional AList (netdisk direct-link playback). Point at your own AList instance;
-# generate the permanent token in AList 设置页. Env overrides: ALIST_URL / ALIST_TOKEN.
-# alist_url: http://127.0.0.1:5244
-# alist_token: alist-xxxx
-
 # 登录态导出（src/credentials/session-export.ts）——把 Stream 从你自己 Chrome 里取到的登录态，
 # 按一个**进程外消费者**的约定写成磁盘文件，由内置任务 `session-export` 每 10 分钟刷一次。
 #

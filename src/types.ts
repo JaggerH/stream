@@ -100,12 +100,6 @@ export interface AppConfig {
    * 那是包与它的用户之间的约定，宿主插一脚就得跟着包的版本走。缺席 → 每个能力拿到 `{}`。
    */
   capabilities?: Record<string, unknown>
-  /** base url of the user's AList instance (netdisk direct-link playback);
-   *  unset → ALIST_URL env or the bootstrap-injected plugin target. */
-  alist_url?: string
-  /** AList permanent token (设置页 generated), bare in Authorization header;
-   *  unset → ALIST_TOKEN env. No token → netdisk feature not wired. */
-  alist_token?: string
   /** base url of the MinerU document-parsing backend; unset → MINERU_URL env or the
    *  bootstrap-injected plugin target (compose mode: container DNS). A remote relay
    *  url here = the cloud (paid) tier. */
