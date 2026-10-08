@@ -48,23 +48,23 @@ declare module 'cordis' {
   }
 }
 
-/** AList 那一格（宿主托管的网盘门面）：配置面 + 接管后解析出来的活值。 */
+/**
+ * AList 那一格（宿主托管的网盘门面）。内置托管是唯一形态：地址由宿主现取，token 由接管序列
+ * 维护——这里没有任何「配置」可写，只有活值和取它的通道。
+ */
 export interface AlistFacet {
-  /** 接管/覆盖层解析后的地址与 token —— netdisk 域构造 `AlistClient` 用的就是这两个。 */
-  url: string | undefined
+  /** 当前的 token（活值）—— netdisk 域构造 `AlistClient` 用的就是它。可能还空着，见 `managed`。 */
   token: string | undefined
-  /** 这份 AList 归不归 Stream 托管（= `refresh` 走不走得通）。托管而 `token` 还空着 = 启动时
+  /** 网盘底座在不在用（= 那个包开没开 = `refresh` 走不走得通）。开着而 `token` 还空着 = 启动时
    *  容器在睡、第一次接管还没跑成；消费方照常装配，带着 `refresh` 用到时再取。 */
   managed: () => boolean
-  /** 配置对话框读的状态（token 永不回显）。 */
-  status: () => { url: string; hasToken: boolean; configured: boolean }
-  /** 落盘覆盖层（token 留空 = 保持当前），下次重启生效。 */
-  set: (next: { url?: string; token?: string }) => Promise<{ url: string; hasToken: boolean; configured: boolean }>
-  /** 「测试连接」：拿传入的 url+token（未传则用存量）打一次已认证的 fs/list。 */
-  test: (next?: { url?: string; token?: string }) => Promise<{ ok: boolean; error?: string }>
+  /** 面板读的状态（token 永不回显）。 */
+  status: () => { hasToken: boolean }
+  /** 面板的活探测：打一次已认证的 fs/list（没 token 时先接管）。 */
+  test: () => Promise<{ ok: boolean; error?: string }>
   /**
-   * 取 token 的通道（托管模式才有；外接模式抛错）：48h JWT 过期时重登，以及启动时没接管成时的
-   * 第一次接管。两个消费者：netdisk 域的 `AlistClient`，和 alist 包的 adapter（经 `configForPackage`）。
+   * 取 token 的通道（底座包没开时抛错）：48h JWT 过期时重登，以及启动时没接管成时的第一次接管。
+   * 两个消费者：netdisk 域的 `AlistClient`，和 alist 包的 adapter（经 `configForPackage`）。
    */
   refresh: () => Promise<string>
   /**
@@ -159,9 +159,6 @@ export interface PackagesConfig {
   /** `config.manage_containers`：要不要替用户建容器。默认 false。 */
   manageContainers: boolean
   log: (...args: unknown[]) => void
-  /** 按包分发的部署配置来源（**只传显式值**，不传解析后的快照——见 configForPackage 头注）。 */
-  alistUrl?: string
-  alistToken?: string
   /**
    * 目录里这个插件此刻的摘要行 —— `setPluginEnabled` 翻完开关要回一份。
    * 前向引用是有意的：目录住在 `StreamService`，装配序上远在本域之后，
@@ -339,37 +336,30 @@ export const packagesPlugin = {
       log,
     })
 
-    // alist 是一个配置 row（spec config-rows-slice2）：url + token(密文)。settings 用户层压
-    // config.yaml/env 部署层——分层在引擎里。`adminPassword`（bootstrap 内部凭证）与
-    // `mounts`（挂载期望态）**不是 row 字段**，留在 legacy alist 块。
+    // alist 是一个配置 row：只有 token（密文）一格。网盘底座只有内置托管一种形态——地址由宿主
+    // 现取（`resolveAlistUrl`），token 由接管序列经 `settings.setAlistCredentials` 维护。
+    // **这一行没有任何人工写入口**：`validate` 一律拒，所以通用的 `PUT /api/config/alist` 也写不进来；
+    // 没有 config.yaml / 环境变量那一层。`adminPassword`（接管用的内部凭证）与 `mounts`（挂载期望态）
+    // 不是 row 字段，留在 legacy alist 块。
     ctx.effect(() =>
       settings.rows.register({
         id: 'alist',
         schema: Schema.object({
-          url: Schema.string().description('AList 服务地址'),
-          token: Schema.string().role('secret').description('AList 永久 token（内置托管下由接管序列自动维护）'),
+          token: Schema.string().role('secret').description('网盘底座 token（由接管序列自动维护）'),
         }),
-        legacy: (s) => s.alist as Record<string, unknown> | undefined,
-        deployDefaults: () => ({
-          ...(config.alistUrl ? { url: config.alistUrl } : {}),
-          ...((config.alistToken ?? process.env.ALIST_TOKEN)
-            ? { token: config.alistToken ?? process.env.ALIST_TOKEN }
-            : {}),
-        }),
+        legacy: (s) => (s.alist?.token ? { token: s.alist.token } : undefined),
+        validate: () => { throw new Error('网盘底座由 Stream 托管，凭证自动维护，不接受手工写入') },
       })
     )
-    const alistCfg = () => settings.rows.resolve('alist') as { url?: string; token?: string }
-    // Boot-time values wire the adapter/client below; the config dialog persists changes that take
-    // effect on the next restart (no hot reconfigure path — the adapter holds the value directly).
-    const alistUrl = alistCfg().url
+    const alistCfg = () => settings.rows.resolve('alist') as { token?: string }
     let alistToken = alistCfg().token
 
-    // T7 接管序列（内置托管是唯一形态，AList 是实现细节）：无显式 token 且 alist 插件启用 →
+    // T7 接管序列（内置托管是唯一形态，AList 是实现细节）：手里没 token 且 alist 插件启用 →
     // 生成/复用 admin 密码，login 换 48h JWT。就绪门控 /ping 2s；容器没起 → 跳过，不阻塞 boot。
     // 启动时这一次只是顺手：standby 管着的容器这时多半在睡（或刚被拉起、2s 内答不上），跳过是常态。
     // 兜底在 `alistRefresh`——消费方带着它装配，第一次真用到网盘时再接管。
     const alistProvisionDeps = () => ({
-      baseUrl: resolveAlistUrl(alistUrl),
+      baseUrl: resolveAlistUrl(),
       getStored: () => ({
         password: settings.get().alist?.adminPassword, // 非 row 字段（bootstrap 内部凭证）
         token: alistCfg().token,
@@ -379,26 +369,24 @@ export const packagesPlugin = {
     })
     const netdiskBaseEnabled = () => plugins.some((p) => p.id === NETDISK_BASE_PACKAGE_ID && isPluginEnabled(p))
     /**
-     * 这份 AList 归不归 Stream 托管——即「取 token」这件事是不是我们自己能做的。两种情形算：
-     * 已经接管过（存着托管的 admin 密码），或者网盘底座包开着而手里一个 token 都没有（第一次
-     * 接管还没跑成：启动时容器在睡）。用户自己填了 token 又没有托管密码 = 外接，不归我们管。
+     * 网盘底座在不在用 = 那个包开没开。内置托管是唯一形态，所以「开着」就等于「token 归我们取」
+     * ——手里暂时没有 token（启动时容器在睡、第一次接管还没跑成）不改变这个答案。
      */
-    const alistManaged = (): boolean =>
-      !!settings.get().alist?.adminPassword || (netdiskBaseEnabled() && !alistCfg().token)
+    const alistManaged = (): boolean => netdiskBaseEnabled()
     /**
      * 取 token 的通道：48h JWT 过期时重登，以及启动时没接管成的那种情况下的**第一次接管**。
      * 包在 `withAwake` 里——登录打的是容器自己，host 档下它的地址也只在醒着时才有；启动那一刻
      * 抢不到的东西，等到真有人要用（容器必然被唤醒）时再取。
      */
     const alistRefresh = async (): Promise<string> => {
-      if (!alistManaged()) throw new Error('[alist] 非托管模式，无自动重登通道')
+      if (!alistManaged()) throw new Error('[alist] 网盘底座包未启用，无法取 token')
       return withAwake(ALIST_SERVICE, async () => {
         alistToken = await provisionAlist(alistProvisionDeps())
         return alistToken
       })
     }
     if (!alistToken && netdiskBaseEnabled()) {
-      const base = resolveAlistUrl(alistUrl)
+      const base = resolveAlistUrl()
       const up = await fetch(`${base}/ping`, { signal: AbortSignal.timeout(2000) })
         .then((r) => r.ok)
         .catch(() => false)
@@ -419,8 +407,8 @@ export const packagesPlugin = {
      *  `ctx.backendUrl()` 请求时现取。 */
     const configForPackage = (id: string): Record<string, unknown> => {
       switch (id) {
-        // `refresh` 只在托管时递：包拿到它就不再因为「没 token」当场报错，而是用到时经它取。
-        case 'alist': return { url: alistUrl, token: alistToken, ...(alistManaged() ? { refresh: alistRefresh } : {}) }
+        // `token` 可能还空着（启动时没接管成）；`refresh` 让包用到时经它取、过期时经它换发。
+        case 'alist': return { token: alistToken, refresh: alistRefresh }
         default: return {}
       }
     }
@@ -629,44 +617,31 @@ export const packagesPlugin = {
       manageEnabled: config.manageContainers,
     })
 
-    /** AList overlay status for the config dialog (token never echoed). Reads live from settings so
-     *  it reflects a just-saved value. `configured` = both a url and a token resolve. */
-    const alistStatus = () => {
-      const a = alistCfg()
-      return { url: a.url ?? '', hasToken: !!a.token, configured: !!(a.url && a.token) }
-    }
-    /** 写路径 = row 引擎（密文空串保留在引擎里）。Applied to the running adapter on
-     *  restart — the dialog surfaces this. Returns the fresh status. */
-    const setAlist = async (next: { url?: string; token?: string }) => {
-      await settings.rows.put('alist', next as Record<string, unknown>)
-      return alistStatus()
-    }
-    /** Live connection probe for the dialog's 测试连接: an authenticated fs/list on '/'. Uses the
-     *  posted url+token when given (test-before-save), else the stored/overlay values. */
-    const testAlist = async (next?: { url?: string; token?: string }): Promise<{ ok: boolean; error?: string }> => {
-      const a = alistCfg()
-      const url = next?.url ?? a.url
-      const token = (next?.token && next.token.length > 0 ? next.token : undefined) ?? a.token
-      if (!token) return { ok: false, error: 'token 未配置' }
+    /** 面板读的状态（token 永不回显）。读活值：接管在启动之后才跑成时这里跟着变。 */
+    const alistStatus = () => ({ hasToken: !!alistCfg().token })
+    /** 面板的活探测：一次已认证的 fs/list。手里没 token 时经接管通道现取——探测本身就会把
+     *  「启动时没接管成」这件事补上。 */
+    const testAlist = async (): Promise<{ ok: boolean; error?: string }> => {
+      if (!alistManaged()) return { ok: false, error: '网盘底座包未启用' }
       try {
-        await hostAlistClient({ baseUrl: url, token }).listDir('/')
+        await hostAlistClient({ token: alistCfg().token ?? '', refresh: alistRefresh }).listDir('/')
         return { ok: true }
       } catch (e) {
         return { ok: false, error: (e as Error).message }
       }
     }
 
-    /** 见 `AlistFacet.permanentToken`。读的是活值：row 里的（用户配的 / 接管刷新过的）优先，其次 boot 期解析的。 */
+    /** 见 `AlistFacet.permanentToken`。读的是活值：row 里的（接管刷新过的）优先，其次 boot 期解析的。 */
     const alistPermanentToken = async (): Promise<string | undefined> => {
       const token = alistCfg().token ?? alistToken
       if (!token) return undefined
       if (!isJwtLike(token)) return token
-      const base = resolveAlistUrl(alistCfg().url ?? alistUrl)
+      const base = resolveAlistUrl()
       try {
         return await fetchPermanentToken(base, token)
       } catch (e) {
         if (!/401/.test((e as Error).message)) throw e
-        // JWT 过期：重登一次（托管模式才有这条通道；外接模式这里会抛，让调用方说清）再读一次。
+        // JWT 过期：重登一次再读一次。
         return fetchPermanentToken(base, await alistRefresh())
       }
     }
@@ -684,12 +659,10 @@ export const packagesPlugin = {
       containerOps,
       pluginStatus,
       alist: {
-        get url() { return alistUrl },
         // 活值：接管把 token 存进 row 之后（包括启动之后才跑成的那一次）这里跟着变。
         get token() { return alistCfg().token ?? alistToken },
         managed: alistManaged,
         status: alistStatus,
-        set: setAlist,
         test: testAlist,
         refresh: alistRefresh,
         permanentToken: alistPermanentToken,

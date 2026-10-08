@@ -26,8 +26,10 @@ const summaryOf = (id: string): PluginSummary => ({
 } as unknown as PluginSummary)
 
 async function mount(opts: {
-  alistUrl?: string
+  /** 接管序列存下的 token（它只有这一个来源）；装载之前照接管的写法先存进 settings。 */
   alistToken?: string
+  /** 装载之前直接写进 settings.json 的存量（模拟旧版本留下的内容）。 */
+  rawSettings?: Record<string, unknown>
   /** 装载**之前**往两层目录里放东西——启动期那条路只有这一个观察窗口。 */
   seed?: (dirs: { packagesDir: string; userDir: string }) => void
   /** 收本域的日志行（同名两层挑一层激活那条是靠它钉的）。 */
@@ -45,8 +47,10 @@ async function mount(opts: {
   writePackage(packagesDir, 'beta', { facility: 'beta' })
   opts.seed?.({ packagesDir, userDir: join(dataDir, 'recipes') })
 
+  if (opts.rawSettings) writeFileSync(join(dataDir, 'settings.json'), JSON.stringify(opts.rawSettings))
   const kernel = createKernel()
   await kernel.plugin(settingsPlugin, { path: join(dataDir, 'settings.json') })
+  if (opts.alistToken) kernel.settings.setAlistCredentials({ password: 'pw', token: opts.alistToken })
   await kernel.plugin(credentialsPlugin, { dataDir, log: () => {}, requiredDomains: () => [] })
   await kernel.plugin(packagesPlugin, {
     packagesDir,
@@ -54,8 +58,6 @@ async function mount(opts: {
     // 关着：这条线一个 docker 调用都不发（测试里没有 docker，也不该有）。
     manageContainers: false,
     log: opts.log ?? (() => {}),
-    alistUrl: opts.alistUrl,
-    alistToken: opts.alistToken,
     catalogSummary: (id) => summaryOf(id),
     builtinActivations: opts.builtinActivations,
   })
@@ -158,10 +160,10 @@ describe('packagesPlugin', () => {
     const JWT = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VybmFtZSI6ImFkbWluIn0.abcDEF123'
     afterEach(() => vi.unstubAllGlobals())
 
-    it('手里已经是永久 token（ALIST_TOKEN / 配置给的那种）→ 原样交出，一个请求都不发', async () => {
+    it('手里已经是永久 token → 原样交出，一个请求都不发', async () => {
       const fetchMock = vi.fn()
       vi.stubGlobal('fetch', fetchMock)
-      const { kernel } = await mount({ alistUrl: 'http://alist.example', alistToken: 'alist-perm-xyz' })
+      const { kernel } = await mount({ alistToken: 'alist-perm-xyz' })
       await expect(kernel.packages.alist.permanentToken()).resolves.toBe('alist-perm-xyz')
       expect(fetchMock).not.toHaveBeenCalled()
       await quiesceKernel(kernel)
@@ -173,38 +175,57 @@ describe('packagesPlugin', () => {
         urls.push(String(url))
         return new Response(JSON.stringify({ code: 200, data: { key: 'token', value: 'alist-perm-from-setting' } }), { status: 200 })
       }))
-      const { kernel } = await mount({ alistUrl: 'http://alist.example', alistToken: JWT })
+      const { kernel } = await mount({ alistToken: JWT })
       await expect(kernel.packages.alist.permanentToken()).resolves.toBe('alist-perm-from-setting')
-      expect(urls).toEqual(['http://alist.example/api/admin/setting/get?key=token'])
+      // 地址只有宿主现取这一个来源；这份装配里没有容器，所以是空基址。
+      expect(urls).toEqual(['/api/admin/setting/get?key=token'])
       await quiesceKernel(kernel)
     })
 
     it('没有 token → undefined（不是空串、不抛）', async () => {
       vi.stubGlobal('fetch', vi.fn(async () => new Response('', { status: 500 })))
-      const { kernel } = await mount({ alistUrl: 'http://alist.example' })
+      const { kernel } = await mount()
       await expect(kernel.packages.alist.permanentToken()).resolves.toBeUndefined()
       await quiesceKernel(kernel)
     })
   })
 
-  it('alist.status 读的是覆盖层的活值（token 不回显）', async () => {
-    const { kernel } = await mount({ alistUrl: 'http://alist.example' })
-    // 本域注册的配置 row（spec config-rows-slice2）
+  it('alist.status 读的是活值（token 不回显）', async () => {
+    const { kernel } = await mount()
     expect(kernel.settings.rows.has('alist')).toBe(true)
-    expect(kernel.packages.alist.status()).toEqual({ url: 'http://alist.example', hasToken: false, configured: false })
-    const after = await kernel.packages.alist.set({ url: 'http://other.example', token: 'tok' })
-    expect(after).toEqual({ url: 'http://other.example', hasToken: true, configured: true })
+    expect(kernel.packages.alist.status()).toEqual({ hasToken: false })
+    kernel.settings.setAlistCredentials({ password: 'pw', token: 'tok' })
+    expect(kernel.packages.alist.status()).toEqual({ hasToken: true })
     await quiesceKernel(kernel)
   })
 
-  // 托管模式的 token 是登录换来的，登录要容器醒着。启动那一刻容器在睡（standby 管着的容器闲置
+  // 网盘底座只有内置托管一种形态：地址由宿主现取，token 由接管序列维护。任何「手工写」的入口
+  // 都不该存在——包括通用的配置行写入（`PUT /api/config/alist` 走的就是 rows.put）。
+  it('alist 配置行不接受手工写入：只有 token 一格，rows.put 一律拒', async () => {
+    const { kernel } = await mount()
+    expect(kernel.settings.rows.keys('alist')).toEqual(['token'])
+    await expect(kernel.settings.rows.put('alist', { token: 'hand-typed' })).rejects.toThrow(/托管/)
+    expect(kernel.packages.alist.status()).toEqual({ hasToken: false })
+    await quiesceKernel(kernel)
+  })
+
+  // 旧版本的设置面板会往这一行存 url。行里早就不认这个字段了——存量里带着它不能把读取搞坏。
+  it('存量设置里残留的 url 不影响读取 token', async () => {
+    const { kernel } = await mount({
+      rawSettings: { rows: { alist: { url: 'http://old.example', token: 'kept' } } },
+    })
+    expect(kernel.packages.alist.token).toBe('kept')
+    await quiesceKernel(kernel)
+  })
+
+  // token 是登录换来的，登录要容器醒着。启动那一刻容器在睡（standby 管着的容器闲置
   // 会停，而启动时只等它 2 秒）就拿不到——那之后必须还能在用到时取，不能等到下次重启：
   // 活体（2026-10-04 起三天）六条网盘来源每轮都报「缺少 token」，网盘域整块没装配。
-  describe('alist 托管接管：启动时没拿到 token 也得留着取它的通道', () => {
+  describe('alist 接管：启动时没拿到 token 也得留着取它的通道', () => {
     const seedAlist = ({ packagesDir }: { packagesDir: string }) =>
       writePackage(packagesDir, 'alist', { name: 'AList', normalizer: 'alist-norm' })
 
-    it('网盘底座包开着、没有任何 token → 算托管，接管通道递给包', async () => {
+    it('网盘底座包开着、还没有 token → 在用，接管通道递给包', async () => {
       const { kernel } = await mount({ seed: seedAlist })
       expect(kernel.packages.alist.token).toBeUndefined()
       expect(kernel.packages.alist.managed()).toBe(true)
@@ -212,17 +233,10 @@ describe('packagesPlugin', () => {
       await quiesceKernel(kernel)
     })
 
-    it('外接模式（用户自己填了 token，没有托管密码）→ 不算托管，不递通道，refresh 说清', async () => {
-      const { kernel } = await mount({ seed: seedAlist, alistUrl: 'http://alist.example', alistToken: 'perm' })
-      expect(kernel.packages.alist.managed()).toBe(false)
-      expect(kernel.packages.configForPackage('alist').refresh).toBeUndefined()
-      await expect(kernel.packages.alist.refresh()).rejects.toThrow(/非托管/)
-      await quiesceKernel(kernel)
-    })
-
-    it('没装网盘底座包 → 不算托管', async () => {
+    it('没装网盘底座包 → 不在用，refresh 说清原因', async () => {
       const { kernel } = await mount()
       expect(kernel.packages.alist.managed()).toBe(false)
+      await expect(kernel.packages.alist.refresh()).rejects.toThrow(/网盘底座包未启用/)
       await quiesceKernel(kernel)
     })
 

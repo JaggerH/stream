@@ -561,7 +561,7 @@ const apiToken = config.api_token || loadOrCreateApiToken(dirname(config.item_db
     packageInventory: pkgs.packageInventory,
     packagePending: pkgs.pending,
     containerOps: pkgs.containerOps,
-    alist: { status: pkgs.alist.status, set: pkgs.alist.set, test: pkgs.alist.test, permanentToken: pkgs.alist.permanentToken },
+    alist: { status: pkgs.alist.status, test: pkgs.alist.test, permanentToken: pkgs.alist.permanentToken },
     extSyncConfig: () => boot.kernel.credentials.extSyncConfig(),
     summaryPrompt: { status: agentDomain.summaryPromptStatus, set: agentDomain.setSummaryPrompt },
     // 这两格直接吃 `kernel.settings`——它们从来只是设置库的一层转调，没有 bootstrap 才有的

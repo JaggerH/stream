@@ -126,13 +126,11 @@ export const netdiskPlugin = {
       const mappingStore = new MappingStore(netdiskDb)
       // 宿主生产路径一律经 `hostAlistClient`：地址 thunk 现解析 + fetch 包进 standby 唤醒。
       const alist = hostAlistClient({
-        baseUrl: alistFacet.url,
         token: alistToken ?? '',
         // 48h JWT 过期 → 用托管的 admin 凭证重登一次再重试（`AlistClient` 401 分支）；
         // token 还空着时也是它负责第一次取。
         // **别摘掉这一行**：没有它，症状是「跑了两天之后所有网盘操作一起 401」，而 token
-        // 明明能自动换发。外接模式（没托管 admin 密码）由 packages 域自己抛，与「无 refresh
-        // 通道」那条分支说的是同一句话。
+        // 明明能自动换发。底座包没启用时由 packages 域自己抛。
         refresh: () => alistFacet.refresh(),
       })
       // 订阅流那一支左侧的两个读法（绑定 / 归档权威）住在 src/netdisk/left-from-stream.ts；

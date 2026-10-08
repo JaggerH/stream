@@ -9,7 +9,7 @@
 #   - alist-resolve 声明 provides:[netdisk-file]，作为 Provider 成员候选被选为播放兜底源
 #     （把网盘文件路径解析成临时直链；播放优先走网盘直链，官方源兜底）。
 #
-# 认证走 config alist_token / ALIST_TOKEN（adapter 内解析并注入 AlistClient），
+# 认证用的 token 由宿主的接管序列维护、经 ctx.config 递给 adapter（见 README「token 从哪来」），
 # 故 manifest 的 auth 为 none——没有 per-request 的用户登录流。
 - id: alist-list
   adapter: alist

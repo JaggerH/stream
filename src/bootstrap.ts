@@ -159,7 +159,10 @@ function resolvePackagesDir(cfg: RawConfig, underResource: (rel: string) => stri
 }
 
 /** loadConfig **读**的地址键。其余一切 `*_url` 顶层键都没人读。 */
-const READ_URL_KEYS = new Set(['alist_url', 'mineru_url'])
+const READ_URL_KEYS = new Set(['mineru_url'])
+
+/** 网盘底座的两个旧键。底座只有内置托管一种形态：地址由宿主现取、凭证由接管序列维护。 */
+const RETIRED_NETDISK_BASE_KEYS = ['alist_url', 'alist_token']
 
 /**
  * config.yaml 里**已经没人读**的地址键（`*_url`，不在 `READ_URL_KEYS` 里）：带容器的包的地址由包
@@ -172,7 +175,16 @@ const READ_URL_KEYS = new Set(['alist_url', 'mineru_url'])
  * 就得往 `READ_URL_KEYS` 加一行，否则用户写了它会被误报——`load-config.test.ts` 钉着两个现役键不喊。
  */
 function warnRetiredContainerUrlKeys(cfg: Record<string, unknown>): void {
-  const stale = Object.keys(cfg).filter((k) => k.endsWith('_url') && !READ_URL_KEYS.has(k))
+  // 这两个键单独说：通用那句让人「改用环境变量」，而网盘底座没有任何显式覆盖的入口。
+  const netdiskBase = RETIRED_NETDISK_BASE_KEYS.filter((k) => k in cfg)
+  if (netdiskBase.length > 0) {
+    console.warn(
+      `[stream] config.yaml 里的 ${netdiskBase.join(' / ')} 已不再被读取：网盘底座由 Stream 托管，`
+      + `地址和凭证都自动维护，没有可配的项`,
+    )
+  }
+  const stale = Object.keys(cfg)
+    .filter((k) => k.endsWith('_url') && !READ_URL_KEYS.has(k) && !RETIRED_NETDISK_BASE_KEYS.includes(k))
   if (stale.length === 0) return
   console.warn(
     `[stream] config.yaml 里的 ${stale.join(' / ')} 已不再被读取；容器地址的显式覆盖用环境变量`
@@ -202,12 +214,6 @@ export function loadConfig(path = resolveConfigPath(process.env.STREAM_DATA_DIR)
     manage_containers:
       cfg.manage_containers ??
       (process.env.STREAM_MANAGE_CONTAINERS === '1' || process.env.STREAM_MANAGE_CONTAINERS === 'true'),
-    // AList 与上面几个同构：config.yaml 给显式地址/凭证，不给就由 `resolveAlistUrl` 回落到
-    // ALIST_URL env / 插件目标、token 回落到 ALIST_TOKEN env。**这两行以前漏了**——`AppConfig`
-    // 声明了字段、四处 `config.alist_url`/`config.alist_token` 在读，loadConfig 却没往外传，
-    // 于是 config.yaml 里写什么都是静默无效（既不报错也不生效）。
-    alist_url: cfg.alist_url,
-    alist_token: cfg.alist_token,
     mineru_url: cfg.mineru_url, // unset → MineruClient falls back to MINERU_URL env / plugin target
     // catalog（RSSHub 全量路由长尾）只有开发检出里有：`assets/build/routes.json` 是 RSSHub 的
     // 构建产物，**不在 npm 包 `rsshub` 的 tarball 里**（那里只有 `dist-lib/`）。所以发行安装是
@@ -341,8 +347,6 @@ export async function bootstrap(
     dataDir,
     manageContainers: config.manage_containers === true,
     log,
-    alistUrl: config.alist_url,
-    alistToken: config.alist_token,
     // 前向引用的惰性 thunk：目录住在采集调度域的 `StreamService`（那一域晚挂），而这个只在
     // 翻开关那一刻才调。
     catalogSummary: (id) => kernel.scheduling.service.plugins().find((p) => p.id === id),

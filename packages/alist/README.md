@@ -49,9 +49,12 @@
 所以「启动时 token 为空」的两个消费方都照常装配，不要再加「没 token 就不装配 / 就报错」的门——那会把
 一次启动时序变成整个进程生命周期的失效，而且下次重启时容器多半还在睡。
 
-显式填 token（`config.yaml` 的 `alist_token` / `ALIST_TOKEN` env / 设置接口）是遗留的调试入口，不是
-一种形态：填了它而又没有托管密码时，这条通道不存在——`packages.alist.managed()` 为 false，`refresh`
-抛「非托管模式」，token 失效就是失效。
+地址和 token 都没有任何手工入口：`config.yaml` 里没有对应的键（写了 `alist_url` / `alist_token`
+启动时会喊一声「不再被读取」），不读 `ALIST_URL` / `ALIST_TOKEN` 环境变量，没有写接口，配置行
+`alist` 的写入一律被拒（所以通用的 `PUT /api/config/alist` 也写不进来）。别加回来——每一个这样的
+入口都是「机器上碰巧设了个值就把网盘请求悄悄引到别处」的机会。
+
+这个包没启用时没有网盘底座：`packages.alist.managed()` 为 false，`refresh` 抛「网盘底座包未启用」。
 
 ## 发布
 

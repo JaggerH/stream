@@ -102,20 +102,16 @@ export function PluginConfigSheet({
 }
 
 /** 内置网盘底座实例只读状态。凭证由 Stream 自动接管（provision：admin 密码生成 + JWT 换发），
- *  用户没有任何要填的 —— 只展示实例地址和一条活探测（POST /api/settings/alist/test 空体 = 探存储态；
+ *  用户没有任何要填的 —— 只展示一条活探测（POST /api/settings/alist/test = 探现役那一份；
  *  这组端点属于宿主的网盘底座领域，见 `docs/PACKAGE.md` 边界一节的豁免栏）。 */
 function NetdiskBaseInfo({ conn }: { conn: Connection }) {
-  const [url, setUrl] = useState('')
   const [probe, setProbe] = useState<'loading' | 'ok' | 'err'>('loading')
   const [err, setErr] = useState('')
 
   useEffect(() => {
     let alive = true
     setProbe('loading')
-    api.alist.get(conn)
-      .then((s) => { if (alive) setUrl(s.url) })
-      .catch(() => {})
-    api.alist.test(conn, {})
+    api.alist.test(conn)
       .then((r) => { if (!alive) return; setProbe(r.ok ? 'ok' : 'err'); setErr(r.error || '') })
       .catch((e) => { if (!alive) return; setProbe('err'); setErr((e as Error).message) })
     return () => { alive = false }
@@ -135,12 +131,6 @@ function NetdiskBaseInfo({ conn }: { conn: Connection }) {
           )
         }
       />
-      {url ? (
-        <SettingsRow
-          label="地址"
-          control={<span className="block max-w-[16rem] truncate font-mono text-[11px] text-muted-foreground">{url}</span>}
-        />
-      ) : null}
       {probe === 'err' && err ? <SettingsNote className="text-destructive">{err}</SettingsNote> : null}
     </SettingsSection>
   )

@@ -4,15 +4,12 @@ import { PluginConfigSheet, type PluginConfigTarget } from './PluginConfigSheet.
 
 const fetchMock = vi.hoisted(() => vi.fn())
 
-/** AList 配置面板 的后端依赖：内置实例只读状态（GET /api/settings/alist + POST …/test 空体探活）
+/** AList 配置面板 的后端依赖：内置实例的活探测（POST /api/settings/alist/test 空体）
  *  + 网盘挂载期望态（/api/netdisk/mounts）。AList 已统一内置托管 —— 没有 url+token 表单，也没有部署模式单选。 */
 function routeFetch(url: string) {
   const u = String(url)
   if (u.includes('/api/settings/alist/test')) {
     return Promise.resolve({ ok: true, json: async () => ({ ok: true }) })
-  }
-  if (u.includes('/api/settings/alist')) {
-    return Promise.resolve({ ok: true, json: async () => ({ url: 'http://127.0.0.1:5244', hasToken: true, configured: true }) })
   }
   if (u.includes('/api/netdisk/mounts')) {
     return Promise.resolve({
@@ -68,8 +65,11 @@ describe('PluginConfigSheet', () => {
     render(<PluginConfigSheet open onOpenChange={vi.fn()} conn={conn} plugin={netdiskBase()} />)
     await waitFor(() => expect(screen.getByText('运行中')).toBeTruthy())
     expect(screen.getByText('内置实例')).toBeTruthy()
-    expect(screen.getByText('http://127.0.0.1:5244')).toBeTruthy()
-    // 外部接入入口彻底移除：无部署模式单选，无 URL/Token 可编辑表单。
+    // 探测不带任何字段：探的是现役那一份，没有「临时地址/凭据」这回事。
+    const probe = fetchMock.mock.calls.find(([u]) => String(u).includes('/api/settings/alist/test'))
+    expect(JSON.parse(String((probe![1] as RequestInit).body))).toEqual({})
+    // 外部接入入口彻底移除：无部署模式单选，无 URL/Token 可编辑表单，也不展示地址。
+    expect(screen.queryByText('地址')).toBeNull()
     expect(screen.queryByLabelText('部署模式')).toBeNull()
     expect(screen.queryByText('接入已有实例')).toBeNull()
     expect(screen.queryByText('AList 地址')).toBeNull()

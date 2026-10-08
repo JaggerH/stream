@@ -67,7 +67,7 @@
        `POST /v1/images/generations`（会出图的动作 recipe 的 OpenAI 形状出口；`/v1/*` 过同一道门）
      - 设置：`POST /api/source-runtime-config/status`、`PUT /api/source-runtime-config`、
        `POST /api/source-runtime-config/provision`、
-       `PUT /api/settings/{harvest-browser,summary-prompt,video-sources,alist}`、
+       `PUT /api/settings/{harvest-browser,summary-prompt,video-sources}`、
        `POST /api/settings/alist/test`、`POST /api/settings/archive/{reconcile-formats,orphans}`
      - 声纹：`POST /api/voiceprint/persons`、
        `POST /api/voiceprint/item/:itemId/clusters/:cluster/enroll`
