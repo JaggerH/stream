@@ -43,6 +43,7 @@ function fakeDriver(script: {
   let pending = ''
   let scope = ''
   let removed = false
+  let clock = 1_000_000
   const confirmTitle = script.confirmWindow === undefined ? CONFIRM_WIN : script.confirmWindow
 
   const driver = {
@@ -94,7 +95,10 @@ function fakeDriver(script: {
     // 确认框那个「移除」走的是**坐标点击**（`fallbackClick`）——Chrome 弹层里的 Views 按钮
     // 不吃 UIA invoke。这里把它记下来，测试才能断言"确实点了确认"。
     click: vi.fn(async () => { calls.push('click'); return { via: 'coords' as const } }),
-    sleep: vi.fn(async () => {}),
+    // 虚拟时钟：sleep 不花真时间但推着 `__now` 走——等窗口按墙钟超时，不给它时钟，"确认框始终
+    // 不出现"那几条就在真实的十几秒里空转，每一轮都被 vi.fn 记账，能把 worker 的堆吃满。
+    sleep: vi.fn(async (ms: number) => { clock += ms }),
+    __now: () => clock,
     readSubtree: vi.fn(async () => []),
     screenshot: vi.fn(async () => null),
     url: vi.fn(async () => 'app#win'),
@@ -114,6 +118,8 @@ const happy = {
 
 const deps = (over: Record<string, unknown>) => ({
   waitForDisconnected: vi.fn(async () => true),
+  // 假 driver 的虚拟时钟（见 fakeDriver 的 sleep）
+  now: (over.driver as { __now?: () => number } | undefined)?.__now,
   ...over,
 }) as unknown as Parameters<typeof uninstallExtension>[0]
 
