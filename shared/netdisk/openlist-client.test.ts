@@ -38,6 +38,35 @@ describe('OpenListClient', () => {
     expect(urls[0]).toBe('http://late:5244/api/fs/get')
   })
 
+  // host 档下容器的地址只在它醒着时才有，而唤醒发生在 `around` 里。地址要是在 `around` 外面
+  // 先拼好，容器睡着时拿到的是空串——于是「把容器叫醒的那个请求」自己必然失败
+  // （`Failed to parse URL from /api/fs/list`），下一个才成功。活体上每次容器睡着后的第一轮都中。
+  it('基址在 around 里求值：进去之前地址还不存在也没关系', async () => {
+    let awake = false
+    const urls: string[] = []
+    const client = new OpenListClient({
+      baseUrl: () => (awake ? 'http://127.0.0.1:45001' : ''),
+      token: 't',
+      around: async (fn) => { awake = true; try { return await fn() } finally { awake = false } },
+      fetchFn: (async (u: string | URL) => { urls.push(String(u)); return jsonResponse(200, { raw_url: 'u' }) }) as unknown as typeof fetch,
+    })
+    await client.rawUrl('/p')
+    expect(urls).toEqual(['http://127.0.0.1:45001/api/fs/get'])
+  })
+
+  it('put 也一样：上传的地址在 around 里求值', async () => {
+    let awake = false
+    const urls: string[] = []
+    const client = new OpenListClient({
+      baseUrl: () => (awake ? 'http://127.0.0.1:45001' : ''),
+      token: 't',
+      around: async (fn) => { awake = true; try { return await fn() } finally { awake = false } },
+      fetchFn: (async (u: string | URL) => { urls.push(String(u)); return jsonResponse(200, null) }) as unknown as typeof fetch,
+    })
+    await client.put('/quark/a.txt', () => new Blob(['hi']).stream() as ReadableStream<Uint8Array>, 2)
+    expect(urls).toEqual(['http://127.0.0.1:45001/api/fs/put'])
+  })
+
   it('401 且有 refresh 通道 → 换 token 重试一次；没有通道 → 抛出说清', async () => {
     let n = 0
     const seenTokens: string[] = []

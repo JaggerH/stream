@@ -28,8 +28,9 @@ export function resolveAlistUrl(): string {
 
 /**
  * 宿主生产路径构造 `AlistClient` 的**唯一入口**：地址走 `resolveAlistUrl` 的 thunk（host 档下 origin
- * 是容器醒着时才存在的，每次请求现解析），唯一的 fetch 调用点包在 `withAwake('alist', …)` 里——
- * standby 唤醒不能被绕过，所以这里不收 `fetchFn`（要注入假服务端的测试直接 `new` shared 那个类）。
+ * 是容器醒着时才存在的，每次请求现解析），每次请求都包在 `withAwake('alist', …)` 里、地址在它
+ * 里面才取——standby 唤醒不能被绕过，所以这里不收 `fetchFn`（要注入假服务端的测试直接 `new`
+ * shared 那个类）。
  */
 export function hostAlistClient(
   opts: Pick<AlistClientOptions, 'token' | 'refresh' | 'sleep'>,
@@ -40,9 +41,12 @@ export function hostAlistClient(
     token: opts.token,
     ...(opts.refresh ? { refresh: opts.refresh } : {}),
     ...(opts.sleep ? { sleep: opts.sleep } : {}),
-    fetchFn: (input, init) => withAwake(ALIST_SERVICE, () => init?.method === 'PUT'
+    // 唤醒包在请求外面、地址（上面那个 thunk）在它里面取。别把 withAwake 包回 fetchFn 里：那样
+    // 地址在唤醒之前就拼好了，容器睡着时是空串，叫醒容器的那个请求自己必败。
+    around: (fn) => withAwake(ALIST_SERVICE, fn),
+    fetchFn: (input, init) => init?.method === 'PUT'
       ? undiciFetch(input as string, { ...init, dispatcher: PUT_AGENT } as Parameters<typeof undiciFetch>[1]) as unknown as Promise<Response>
-      : fetch(input, init)),
+      : fetch(input, init),
   }, ttlMs)
 }
 

@@ -1,11 +1,12 @@
 /**
  * OpenList（AList v3 同一套 `/api`）客户端的**核心**——两个宿主同吃一份：Stream 后端
  * （`./alist-client.ts` 的 `AlistClient` 继承它当文件货架；standby 唤醒与地址解析由宿主
- * `src/netdisk/alist-client.ts` / alist 包的 adapter 经 `fetchFn` 与 `baseUrl` thunk 注入）和
+ * `src/netdisk/alist-client.ts` / alist 包的 adapter 经 `around` 与 `baseUrl` thunk 注入）和
  * 网盘能力包（`capabilities/netdisk/`，external 档直接用它）。所以这里对宿主零假设：
  *
- * - `fetchFn` 注入（Stream 那边包成 `withAwake`，插件那边就是全局 fetch）；
- * - `baseUrl` 可以是 thunk——host 档下容器醒着时地址才存在，构造期快照必得空串；
+ * - `fetchFn` 注入（缺省全局 fetch）；
+ * - `around` 注入（Stream 那边是 `withAwake`，插件那边不给）——包在每次请求外面；
+ * - `baseUrl` 可以是 thunk——host 档下容器醒着时地址才存在，所以它在 `around` **里面**才求值；
  * - 认证：token **裸放** `Authorization` 头。OpenList 对 `Bearer ` 前缀答 401（活体实测 2026-09-02），
  *   别"顺手"加。
  *
@@ -68,6 +69,11 @@ export interface OpenListClientOptions {
   sleep?: (ms: number) => Promise<void>
   /** 出站 fetch。缺省 = 调用时的全局 fetch（不在构造期捕获，测试 stub 全局才生效）。 */
   fetchFn?: typeof fetch
+  /**
+   * 包在每一次出站请求外面的一层（Stream 那边是 standby 唤醒）。**基址在它里面求值**——
+   * 容器的地址只在它醒着时才有，在外面先拼好拿到的是空串。缺省 = 直接跑。
+   */
+  around?: <T>(fn: () => Promise<T>) => Promise<T>
   ttlMs?: number
 }
 
@@ -77,6 +83,7 @@ export class OpenListClient {
   private readonly refresh: (() => Promise<string>) | undefined
   private readonly sleep: (ms: number) => Promise<void>
   private readonly fetchFn: typeof fetch
+  private readonly around: <T>(fn: () => Promise<T>) => Promise<T>
   private readonly ttlMs: number
   private linkCache = new Map<string, { url: string; expiresAt: number }>()
   private idCache = new Map<string, { id: string; expiresAt: number }>()
@@ -88,11 +95,17 @@ export class OpenListClient {
     this.refresh = opts.refresh
     this.sleep = opts.sleep ?? ((ms) => new Promise<void>((r) => setTimeout(r, ms)))
     this.fetchFn = opts.fetchFn ?? ((input, init) => fetch(input, init))
+    this.around = opts.around ?? ((fn) => fn())
     this.ttlMs = opts.ttlMs ?? 30 * 60 * 1000
   }
 
   private get baseUrl(): string {
     return this.resolveBase().replace(/\/$/, '')
+  }
+
+  /** 唯一的出站口：地址在 `around` 里面拼（见 `OpenListClientOptions.around`），别在外面先算好。 */
+  private send(path: string, init: RequestInit): Promise<Response> {
+    return this.around(() => this.fetchFn(`${this.baseUrl}${path}`, init))
   }
 
   /** 单次请求。unauthorized 单独上报（HTTP 401 或信封 code 401），供上层决定是否重登重试。 */
@@ -101,7 +114,7 @@ export class OpenListClient {
     path: string,
     body?: unknown,
   ): Promise<{ unauthorized: boolean; status: number; json?: { code: number; message?: string; data: T } }> {
-    const r = await this.fetchFn(`${this.baseUrl}${path}`, {
+    const r = await this.send(path, {
       method,
       headers: {
         authorization: this.token,
@@ -252,7 +265,7 @@ export class OpenListClient {
    */
   async put(path: string, body: () => ReadableStream<Uint8Array>, size: number): Promise<void> {
     const once = async (): Promise<{ unauthorized: boolean; status: number; json?: { code: number; message?: string } }> => {
-      const r = await this.fetchFn(`${this.baseUrl}/api/fs/put`, {
+      const r = await this.send('/api/fs/put', {
         method: 'PUT',
         headers: {
           authorization: this.token,

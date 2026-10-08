@@ -47,11 +47,12 @@ export class AlistAdapter implements Adapter {
     // 两样都没有 = 宿主没把网盘底座接上（接线断了），不是用户漏填了什么。
     if (!this.token && !this.refresh) throw new Error('[alist] 没有 token 也没有取 token 的通道：宿主未接管网盘底座')
     this.client = new AlistClient({
-      // 每次请求现解析：fetch 都在 withAwake 回调里，求值时容器已醒、地址才有。
+      // 每次请求现解析：client 在下面那层 `around`（= withAwake）里面才求它，那时容器已醒、地址才有。
       baseUrl: () => this.deps.backendUrl() ?? '',
       token: this.token ?? '',
       refresh: this.refresh,
-      fetchFn: (input, init) => this.deps.withAwake(ALIST_SERVICE, () => fetch(input, init)),
+      // 唤醒包在请求外面、地址在它里面取——别把它包回 fetchFn 里（那样地址在唤醒之前就拼好了）。
+      around: (fn) => this.deps.withAwake(ALIST_SERVICE, fn),
     })
     return this.client
   }

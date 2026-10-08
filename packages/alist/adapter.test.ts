@@ -89,6 +89,17 @@ describe('AlistAdapter', () => {
     expect(String(fetchMock.mock.calls[0][0])).toBe('http://127.0.0.1:45001/api/fs/get')
   })
 
+  // 活体上的样子：容器睡着时 `ctx.backendUrl()` 答 undefined，只有 withAwake 里面才有地址。
+  // 地址在外面先拼好的话，叫醒容器的那个请求自己必败（`Failed to parse URL from /api/fs/list`）。
+  it('容器睡着（唤醒之前没有地址）时第一个请求也能成：地址在 withAwake 里面才取', async () => {
+    let awake = false
+    const withAwake: AlistAdapterDeps['withAwake'] = async (_s, fn) => { awake = true; try { return await fn() } finally { awake = false } }
+    const adapter = new AlistAdapter(deps({ withAwake, backendUrl: () => (awake ? 'http://127.0.0.1:45001' : undefined) }), 'tok')
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, { raw_url: 'http://cdn/x' }))
+    await adapter.fetch({ path: '/d/x' }, manifest('resolve'))
+    expect(String(fetchMock.mock.calls[0][0])).toBe('http://127.0.0.1:45001/api/fs/get')
+  })
+
   it('每次打容器都经 deps.withAwake，唤醒键是本包的 service 名', async () => {
     const seen: string[] = []
     const withAwake: AlistAdapterDeps['withAwake'] = async (service, fn) => { seen.push(service); return fn() }
