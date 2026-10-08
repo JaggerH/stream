@@ -41,6 +41,9 @@ export interface UninstallDeps {
   driver: DesktopDriver
   /** 等中继断开，超时回 false。 */
   waitForDisconnected: () => Promise<boolean>
+  /** 时钟，透传给 `runDesktopRecipe`（等窗口按墙钟超时）。省略 = `Date.now`；测试给一个跟着
+   *  假 driver 的 `sleep` 走的时钟，否则"确认框始终不出现"那条要空转满超时。 */
+  now?: () => number
 }
 
 /** 卸载这一趟的 recipe。没有参数——要删哪个扩展写死在名字里（`EXTENSION_DISPLAY_NAME`）。 */
@@ -110,7 +113,7 @@ export async function uninstallExtension(deps: UninstallDeps): Promise<Uninstall
   const { driver } = deps
   await driver.ensureApp({ args: [BLANK_URL], force: true })
 
-  const run = await runDesktopRecipe(UNINSTALL_EXTENSION_RECIPE, {}, driver)
+  const run = await runDesktopRecipe(UNINSTALL_EXTENSION_RECIPE, {}, driver, deps.now ? { now: deps.now } : {})
   if (run.outcome !== 'ok') {
     return { status: 'blocked', reason: run.driftReason ?? `这一趟没走通（${run.outcome}）` }
   }
