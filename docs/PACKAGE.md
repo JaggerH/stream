@@ -348,6 +348,10 @@ id 多少），再回答**派发**（交给哪条 Provider 行）。认领只有
 
 包贡献的每个 Source 是清单里的一项（顶层 YAML 列表）。一项 = 一个调用模式，字段语义见 `src/manifest/types.ts`；写法范例见 §10。
 
+`description` / `topics` / `example_queries` 是 `stream_search` 匹配的对象——写不好这条源就搜不到。
+`route` 里用 `{key}` 占位符，由流的 `params` 填（如 `/bilibili/user/dynamic/{uid}`）；临时路由走不可发现的
+`rsshub-raw` 源，它吃一个字面的 `route` 参数。
+
 > 关键事实：source manifest 的 `auth: { type: 'cookie', domain }` **已经是**凭证声明（不要再发明 `needs_credential`）。plugin descriptor 的 `credentials: [domain, ...]` 声明的是该插件的**后端容器**通过 broker 需要的 cookie 域（§5）。
 
 ### 1.1 sourceId：你写局部名，宿主合成全名

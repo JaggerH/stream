@@ -18,6 +18,42 @@
 整套容器化(backend+frontend+Caddy)只属于**自托管旁支**(NAS/VPS:那种形态没有"用户的浏览器"这一侧)
 ——`pnpm plugins compose --selfhost`,见文末。
 
+## 从源码跑起来
+
+| 前置 | 说明 |
+|---|---|
+| Node 20+ | RSSHub 自己要 22.22.2+,但它是用到才装,不是依赖 |
+| pnpm 10+ | `npm install -g pnpm` |
+| WSL2 / Linux 原生文件系统 | 要克隆 **RSSHub** 就放在 `~/projects/`(ext4)下,别放 `/mnt/c/...`——pnpm 的符号链接在 drvfs 上建不出来 |
+| Docker + Compose(可选) | 只有插件后端(pansou / AList / Douyin …)和 `stream add` 装的容器包(`@streamapp/ddddocr` / `dewatermark` / `mineru` / `voiceprint`,源在 [stream-packages](https://github.com/JaggerH/stream-packages))才用得到。采集不需要——登录态来自浏览器扩展 |
+
+```bash
+git clone <this-repo-url> stream && cd stream
+pnpm install                                 # 会编译 better-sqlite3(pnpm-workspace.yaml 的 allowBuilds 已放行)
+cp config.example.yaml config.yaml           # 改路径;逐项注释在 config.example.yaml 里
+pnpm test && pnpm typecheck
+pnpm dev                                     # 后端 :8900
+curl -s http://127.0.0.1:8900/api/health     # {"ok":true}
+```
+
+订阅存在 `data/stream.db`(首次启动时建)——从界面、`POST /api/streams` 或 MCP 的 `subscribe_source` 加。
+
+**RSSHub 克隆是可选的。** `pnpm install` 已经装了预编译的 `rsshub` 包,没有克隆时跑的就是它。
+只在要这两样之一时才克隆:自己写 RSSHub 路由(克隆在场时跑的是它的 TypeScript 源码,它赢过包),
+或者要选源器里那份完整的约 3000 条路由目录(`assets/build/routes.json` 是克隆的构建产物,npm 包里没有)。
+
+```bash
+git clone --depth 1 https://github.com/DIYgod/RSSHub.git ~/projects/RSSHub
+cd ~/projects/RSSHub && pnpm install && pnpm build:routes   # routes.js 是必需的
+```
+
+克隆不在默认位置时设 `RSSHUB_PKG=/abs/path/RSSHub/lib/pkg.ts`。
+
+**库早于 `33221b4c` 的老装机别直接升到最新。** 系统 Provider 的身份住在代码里
+(`src/providers/system/`),启动期没有任何 provider 数据迁移;一份早于 `33221b4c` 的库直接升上来
+会缺改名的行、退役的行和补过的成员。先 checkout `33221b4c` 跑一次(让它把库带到当前形状),
+再升到新版。全新安装无此顾虑。
+
 ## 起停 / 日志 / 测试
 
 ```bash
