@@ -1,414 +1,411 @@
 ---
-title: 给对话 agent 加能力——工具、提示词、怎么验它真照做
+title: Adding Capabilities to a Chat Agent: Tools, Prompts, and How to Verify That It Really Follows Them
 status: cookbook
 type: guide
 tags: [stream, agent, llm, tooling, verification]
 ---
 
-# 给对话 agent 加能力
+# Adding Capabilities to a Chat Agent
 
-这份文档管一件事：**往 MCP 工具面（`src/mcp/`）加一个工具、或者用提示词要求模型做某个动作时，
-该守什么、该怎么验。** 概念模型在 `docs/ARCHITECTURE.md`，怎么跑起来在 `docs/DEVELOPMENT.md`，
-这里只讲"让模型真的照做"这条线。
+This document governs one thing: **when adding a tool to the MCP tool surface (`src/mcp/`), or when using prompts to require the model to perform an action,
+what rules to follow and how to verify it.** The conceptual model is in `docs/ARCHITECTURE.md`, and how to run it is in `docs/DEVELOPMENT.md`;
+this document only covers the line of making the model actually follow instructions.
 
-**对话由用户自己的宿主承担**（Claude Code / Codex / DSH），Stream 这一侧只提供工具面
-（`/api/mcp`）和 skill 这两样——模型是用户在宿主里配的（见 `docs/ARCHITECTURE.md`「对话」一节），
-不经 Stream。
-系统提示词也不在我们手里——**这让下面第 1 条变得更重要，不是更不重要**：
-我们能施加影响的位置只剩工具描述和工具返回值两处。
+**The user's own host handles the conversation** (Claude Code / Codex / DSH). On the Stream side, we only provide the tool surface
+(`/api/mcp`) and skills — the model is configured by the user in the host (see the "Conversation" section in `docs/ARCHITECTURE.md`),
+and does not go through Stream.
+The system prompt is not in our hands either — **this makes item 1 below more important, not less important**:
+the only remaining places where we can exert influence are tool descriptions and tool return values.
 
-## 1. 最贵的一条：模型会把动作叙述成已完成
+## 1. The Most Expensive Rule: The Model Will Narrate an Action as Completed
 
-**对模型来说，"说一句话"和"调一个工具"是同一种输出**——都是它在挑下一步吐什么。没有任何机制
-把"它说它做了"和"它真做了"绑在一起。所以它可以生成一句「我已经记录了您的需求」，而不生成那次
-工具调用。
+**For the model, "say a sentence" and "call a tool" are the same kind of output** — both are what it chooses to emit as the next step. There is no mechanism
+that binds "it said it did it" to "it actually did it". So it can generate the sentence `我已经记录了您的需求` ("I have recorded your request"), without generating the corresponding
+tool call.
 
-**实测标本**（2026-08-13，真模型）：让它订阅一个 Stream 接不进来的博客。`resolve_intent` 空手，
-它正确地说了"接不进来"，然后告诉用户"我已经记录了您的需求"——清单里一条没有。它的推理里白纸
-黑字写着「我需要调用 note_unonboardable」，**知道该做，然后跳过动作直接叙述成了完成**。
+**Measured specimen** (2026-08-13, real model): ask it to subscribe to a blog that Stream cannot onboard. `resolve_intent` came back empty-handed;
+it correctly said "cannot onboard", then told the user `我已经记录了您的需求` ("I have recorded your request") — while the list had no new entry. In its reasoning, it wrote in black and white,
+`我需要调用 note_unonboardable` ("I need to call note_unonboardable"): **it knew what it should do, then skipped the action and directly narrated it as completed**.
 
-**为什么这类缺陷特别贵**：
+**Why this kind of defect is especially expensive**:
 
-- **它是静音的。** 没有报错、没有日志、回答听起来比正常情况还妥帖。
-- **用户发现不了。** 谁会去翻清单核对助手说的话。
-- **它不限于某一个工具。** 凡是"靠提示词/描述要求模型去做某个动作"的地方都可能中招。
+- **It is silent.** There is no error, no log, and the answer sounds even more appropriate than the normal case.
+- **The user cannot discover it.** Who would inspect the list to verify what the assistant said.
+- **It is not limited to one tool.** Anywhere that relies on a prompt/description to ask the model to perform an action can be hit.
 
-## 2. 判据：只看副作用，不看它说了什么
+## 2. Check: Only Look at Side Effects, Not at What It Said
 
-判断有没有中招只有一个办法——**去看那个动作应该留下的痕迹**：清单里多没多一条、频道里多没多
-一条流、库里多没多一行。**模型自己的话不能当证据**，它说得越顺越要去查。
+There is only one way to judge whether this happened — **look at the trace that action should have left**: whether the list gained an entry, whether the Channel gained
+a Stream, whether the library gained a row. **The model's own words are not evidence**; the smoother it sounds, the more you need to check.
 
-这条同样适用于日常排查：用户报「它说订好了但我没看到」时，先打端点看副作用，别先读对话记录。
+The same rule applies to daily troubleshooting: when a user reports "it said it subscribed, but I do not see it", first hit the endpoint and look at side effects; do not read the conversation transcript first.
 
-## 3. 指令放在哪：越靠近决策点越有效
+## 3. Where to Put Instructions: The Closer to the Decision Point, the More Effective
 
-三个位置，从远到近：
+Three positions, from farthest to closest:
 
-| 位置 | 离决策点 | 用来放什么 |
+| Position | Distance from decision point | What it is used for |
 |---|---|---|
-| 系统提示词 | 最远（几千 token 之前）| **不在我们手里**——那是宿主的 |
-| skill（`src/skills/shipped.ts` 出货那几份）| 远（宿主按需读进来）| 「什么时候用哪个工具」这类手艺；宿主决定什么时候加载它 |
-| 工具描述（`description`）| 中间 | 这个工具是什么、什么时候用、和谁不是一回事 |
-| **工具返回值** | **最近（模型刚读到的那份数据）** | **"接下来必须做什么"** |
+| System prompt | Farthest (thousands of tokens earlier) | **Not in our hands** — that belongs to the host |
+| skill (the shipped ones in `src/skills/shipped.ts`) | Far (the host reads them on demand) | Craft such as "when to use which tool"; the host decides when to load it |
+| Tool description (`description`) | Middle | What this tool is, when to use it, and what it is not the same as |
+| **Tool return value** | **Closest (the model just read that data)** | **"What must be done next"** |
 
-上面那次翻车时，提示词和工具描述里都写了"空手要记一笔"，模型照样跳过。修法是把这句指令塞进
-`resolve_intent` 的**返回体**（空 `matches` 时加一格 `next_step`，见 `src/mcp/tool-catalog.ts`）——
-它刚读完这段数据就要决定下一步，指令在这儿最难被绕过。复验时它就真调了。同形状的第二处是
-`read_content`：正文那层还没跑时返回体里加一句「先调 extract，拿到之前别描述内容」。
+In the failure above, both the prompt and the tool description said "record a note when empty-handed", and the model still skipped it. The fix is to put that instruction into
+the **return body** of `resolve_intent` (add a `next_step` field when `matches` is empty; see `src/mcp/tool-catalog.ts`) —
+once it has just read that data, it must decide the next step, so the instruction is hardest to route around there. On re-verification, it really did call the tool. A second place with the same shape is
+`read_content`: when the body layer has not run yet, add a sentence to the return body: "call extract first; do not describe the content before you get it".
 
-**注意这不是保证，是提高命中率。** 没有任何写法能让模型 100% 照做，所以第 2 条（看副作用）
-永远是必要的，第 5 条（活体验收）永远不能省。
+**Note that this is not a guarantee; it only raises the hit rate.** No wording can make the model follow instructions 100% of the time, so item 2 (look at side effects)
+is always necessary, and item 5 (live verification) can never be skipped.
 
-### 3.1 第四档：结构性收口——产品底线不许放进任何一档提示词
+### 3.1 Fourth Tier: Structural Closure — Product Bottom Lines Must Not Go into Any Tier of Prompt
 
-三档全铺满也可能整体失效。实测标本（2026-08-24，extract 窄回执线，同一道「对比深读三条」跑
-四轮）：PERSONA、工具描述、返回体 `next_step` 三处都写了「多条深读要扇出 / 别把全文读进主会
-话」，模型三档全部无视；给 `read_content` 加了结构性压缩后，**它第一轮就从 schema 里发现
-`full` 参数、三条全带 `full: true` 绕过**——用户原话里根本没提全文。
+Even when all three tiers are filled, they can still fail as a whole. Measured specimen (2026-08-24, narrow extract receipt line, the same `对比深读三条` ("compare and deeply read three items") run
+for four rounds): PERSONA, the tool description, and the return-body `next_step` all said "fan out for multiple deep reads / do not read full text into the main session";
+the model ignored all three tiers. After structural compression was added to `read_content`, **in the first round it discovered
+the `full` parameter from the schema, passed `full: true` for all three items, and routed around it** — the user's original words did not mention full text at all.
 
-两条不变量：
+Two invariants:
 
-- **产品底线（这里是"长文不许整份进模型上下文"）只能靠结构保证**：返回体里就没有全文，模型
-  想搬也没得搬。提示词三档只用来提高"锦上添花"类行为的命中率，不背底线。
-- **schema 里可见的绕过参数 = 对不服从模型的摆设。** 需要豁免时别做成参数，把豁免拆到别的
-  通道：人眼要全文 → UI 自己打 API（ExtractCard「查看全文」，零 token）；模型的罕见正当
-  需求 → 留一条形状天然有摩擦的路（`get_conversions`）。设计全文见
-  `internal design record`；两个 schema 各有一条
-  「不含 full」的守卫测试钉着，别加回来。
+- **Product bottom lines (here, "long-form text must not enter the model context in full") can only be guaranteed structurally**: the return body does not contain the full text, so the model
+  has nothing to move even if it wants to. The three prompt tiers are only for improving the hit rate of "nice-to-have" behavior; they must not carry bottom lines.
+- **Bypass parameters visible in the schema = props for a disobedient model.** When an exemption is needed, do not make it a parameter; split the exemption into another
+  channel: humans need full text -> the UI hits the API itself (ExtractCard "查看全文" ("View full text"), zero tokens); rare legitimate
+  model needs -> leave a path whose shape naturally has friction (`get_conversions`). The full design is in
+  `internal design record`; the two schemas each have a guard test
+  saying "does not contain full" pinned down; do not add it back.
 
-### 3.2 后台自动派生出来的层：产物直接进上游回执，不许「给半份 + 叮嘱一句」
+### 3.2 Background-Automatically-Derived Layers: Put the Artifact Directly into the Upstream Receipt, Do Not "Give Half + Add a Reminder"
 
-有些层是后台**自动派生**的（转写落定 → 抽帧取画面文字，`src/conversions/derive.ts`）。上游工具
-交出回执时它可能还没跑完，也可能已经躺在库里。两种情况各有一个坑，而且都很安静：
+Some layers are **automatically derived** in the background (transcription settled -> extract frames to obtain on-screen text, `src/conversions/derive.ts`). When the upstream tool
+hands over its receipt, that layer may not have finished yet, or it may already be in the database. Each of the two situations has a pitfall, and both are very quiet:
 
-**坑一：模型不知道它存在，等于它不存在。** 而且模型不会说"我不知道"，它会说**"系统没有提供
-这个工具"**——听起来像一句关于系统的事实陈述。
+**Pitfall one: if the model does not know it exists, it is equivalent to not existing.** And the model will not say "I don't know"; it will say **`系统没有提供这个工具` ("the system did not provide this tool")** — which sounds like a factual statement about the system.
 
-**坑二（更贵）：上游回执说 `done`，就是在说"这条的正文齐了"。** 对视频来说那是假的：转写往往
-只是零头，字全在画面上。
+**Pitfall two (more expensive): when the upstream receipt says `done`, it is saying "the body of this item is complete".** For video, that is false: transcription is often
+only a small part; all the words are on the screen.
 
-同一条 item（`54302ede4b47213a`，一条只有背景音乐的抖音新闻，字全在画面上）连撞两次：
+The same item (`54302ede4b47213a`, a Douyin news item with only background music and all text on-screen) hit this twice in a row:
 
-| | 回执给了什么 | 模型干了什么 |
+| | What the receipt gave | What the model did |
 |---|---|---|
-| 2026-08-29 | 只有转写，对 frames 只字不提 | 答「系统没有提供对视频画面做 OCR 的工具」——而那一层当时已经跑完落地了 |
-| 2026-08-30 | 转写 + 一句「稍等再用 get_conversions 取，别先断言」 | **照样**在「画面文字·抽取中」时就把总结发了出来，总结的是那句 14 个字的歌词 |
+| 2026-08-29 | Only transcription, with not a word about frames | Answered `系统没有提供对视频画面做 OCR 的工具` ("the system did not provide a tool for OCR on video frames") — while that layer had already finished and landed at the time |
+| 2026-08-30 | Transcription + a sentence saying "wait and then use get_conversions to fetch it; do not assert first" | **Still** sent the summary while `画面文字·抽取中` ("on-screen text: extracting") was showing; the summary was of that 14-character lyric |
 
-第二次是关键：**指路失败了**。这正是 §3.1 那条不变量——产品底线只能靠结构保证。所以规矩是：
+The second time is the key: **signposting failed**. This is exactly the invariant from §3.1 — product bottom lines can only be guaranteed structurally. So the rule is:
 
-- **那一层还在跑，而这条的正文基本全在那一层里 → 上游回执报 `running`，且不带 result。**
-  手里没有字，才总结不了。「正文站不站得住」用那一层自己的闸门判，别新造判据
-  （`src/mcp/transcript-stands-alone.ts` 复用 `framesGate`）；站得住的（转写完整、那一层只是
-  补充）照给正文，另挂一条「还缺一层」。
-- **那一层落定 → 把产物直接拼进回执**，别指路让模型自己再调一次。上面两次已经把「赌它照做」
-  这条路走死了。
-- **「还在跑」「跑过了没料」「后端失败」三者必须分得开。** 把前两者中的任何一个说成"没有"，
-  模型就会当场断言"视频里没有文字"。
-- **人也要看得见。** 卡片上同样分档（`ExtractCard`：等画面文字 / 画面上的字 / 没有转写之外的字）
-  ——用户看不到那一层存在，就无从知道该追问。
+- **If that layer is still running, and the item's body is basically all in that layer -> the upstream receipt reports `running`, and carries no result.**
+  If there is no text in hand, it cannot summarize. Use that layer's own gate to judge whether "the body stands on its own"; do not invent a new check
+  (`src/mcp/transcript-stands-alone.ts` reuses `framesGate`). For items that stand on their own (complete transcription, with that layer only being
+  supplemental), provide the body normally and attach a separate note saying "one layer is still missing".
+- **When that layer settles -> splice the artifact directly into the receipt**; do not signpost and make the model call again by itself. The two runs above already killed off the path of "bet it will follow instructions".
+- **"Still running", "ran but yielded no material", and "backend failed" must be distinguishable.** If either of the first two is described as "none",
+  the model will immediately assert "there is no text in the video".
+- **Humans must be able to see it too.** The card uses the same tiers (`ExtractCard`: waiting for on-screen text / words on screen / no words beyond transcription)
+  — if the user cannot see that layer exists, they have no way to know to follow up.
 
-判据在 `src/mcp/extract-frames-layer.ts`（extract → frames 那一份），照着抄。
+The check is in `src/mcp/extract-frames-layer.ts` (the extract -> frames piece); copy it.
 
-代价要认：转成文字对「真有画面文字的视频」会变慢。这是要的——拿半份被总结错，比多等几十秒贵
-得多。而且大多数条目不受影响：非视频压根没有这一层，判为纯口播的视频在闸门那一步就出局，
-几百毫秒内落定。
+Acknowledge the cost: turning true on-screen-text video into text becomes slower. That is intended — summarizing a half result incorrectly is much more expensive
+than waiting a few dozen seconds. And most items are unaffected: non-video items do not have this layer at all; videos judged to be pure speech are eliminated at the gate step,
+and settle within a few hundred milliseconds.
 
-### 3.3 「还没好」要在**服务端等**，绝不让模型轮询
+### 3.3 "Not Ready Yet" Must Be Waited for on the **Server Side**; Never Let the Model Poll
 
-上一节那条「报 running、不带 result」有个显而易见的续集：模型收到 running 会立刻再调一次。
-**它必须立刻——模型没有 sleep。** 于是轮询频率由它的出字速度决定，跟那件事要多久毫无关系：
-一次转成文字被调五遍，用户看到五张卡片刷屏，上下文里进五份回执，中间四份没有一个新字。
+The previous section's "report running, carry no result" has an obvious sequel: when the model receives `running`, it immediately calls again.
+**It has to be immediate — the model has no sleep.** So the polling frequency is decided by how fast it emits text, and has nothing to do with how long the work takes:
+one transcription was called five times; the user saw five cards flood the screen, the context took in five receipts, and four of the middle ones did not have a single new word.
 
-正确的形状是**在工具这一侧等到好再返回**，而且这不需要任何额外机制：
+The right shape is **to wait on the tool side until the result is ready, then return**, and this does not require any extra mechanism:
 
-- **DSH 一次工具调用只画一张卡，而且那张卡是活的。** 工具视图拿到一份 `ToolCallBlock`，
-  先是 running 形态、结果落地后同一张卡原地重画成 settled 形态
-  （`@deepseek-ai/dsh-client-ui-tool` 的渲染约定）。「一张卡片更新状态」= 「一次不提前返回的
-  调用」，就这么简单。
-- **没有「跑完了回调你」这条路。** MCP 一次 `tools/call` 一个应答，没有第二次；DSH 自己那套
-  长任务注册表（`dsh-jobs`：job id、`wait`、`onJobDone`）的约定原文写着**「约定是进程内的」**，
-  而我们是另一个进程里的 MCP server，够不着。别再去找了。
-- **天花板是 MCP 客户端定的，不是 DSH 的工具超时。** `dsh-mcp-client` 的 `toolCallTimeoutMs`
-  是每次 `callTool` 的超时，**默认 60000**；超了模型拿到的是硬错误 `TOOL_TIMEOUT`，不是你那份
-  说得清「还在跑」的回执。**等待预算必须严格小于宿主那个数**，而那个数归用户配，我们钉不住它——
-  所以工具侧的预算要按最紧的那一档定。（别和 `ToolDefinition.timeoutMs` 搞混：那是声明，
-  `dsh-tools` 注册表从不强制，管的也是 DSH 进程内的工具。）
-- **预算按量出来的分布定，别追重尾。** `/api/conversions` 的 `timing.totalMs` 是现成的样本：
-  转写 1–16 秒（一直够），画面文字层 17–861 秒（重尾，成本全在逐帧 OCR）。90 秒盖住三分之二；
-  为了最长那条把整个对话冻十几分钟，比落到「还在跑」那一档坏得多。
-- **等不到的那一档，一定要明确禁止重试。** 这时候写「过几秒再调一次」是最坏的一句——每重试
-  一次就再冻满一个预算，还是等不到。写「别再调，告诉用户这一层还在抽、过几分钟再问」。
+- **One DSH tool call renders exactly one card, and that card is live.** The tool view receives a `ToolCallBlock`;
+  it is first in the running state, and after the result lands the same card is redrawn in place into the settled state
+  (the rendering convention of `@deepseek-ai/dsh-client-ui-tool`). "One card updates its state" = "one call that does not return early";
+  it is that simple.
+- **There is no path for "call you back when it finishes".** One MCP `tools/call` has one response, not a second one; DSH's own
+  long-task registry (`dsh-jobs`: job id, `wait`, `onJobDone`) has a convention whose original text says **`约定是进程内的` ("the convention is in-process")**,
+  while we are an MCP server in another process, so we cannot reach it. Do not look for it again.
+- **The ceiling is set by the MCP client, not DSH's tool timeout.** `dsh-mcp-client`'s `toolCallTimeoutMs`
+  is the timeout for each `callTool`, **default 60000**; when it is exceeded, the model receives the hard error `TOOL_TIMEOUT`, not your receipt
+  that clearly says "still running". **The waiting budget must be strictly smaller than the host's number**, and that number belongs to the user's configuration, so we cannot pin it down —
+  therefore the tool-side budget must be set by the tightest tier. (Do not confuse this with `ToolDefinition.timeoutMs`: that is a declaration;
+  the `dsh-tools` registry never enforces it, and it also governs tools inside the DSH process.)
+- **Set the budget by the measured distribution; do not chase the heavy tail.** `/api/conversions`'s `timing.totalMs` is an existing sample:
+  transcription takes 1-16 seconds (always enough), while the on-screen text layer takes 17-861 seconds (heavy tail, all cost in per-frame OCR). 90 seconds covers two thirds;
+  freezing the whole conversation for more than ten minutes for the longest item is much worse than falling into the "still running" tier.
+- **The tier that cannot be waited for must explicitly prohibit retries.** Writing "call again in a few seconds" here is the worst sentence — each retry
+  freezes for a full budget again, and still cannot wait long enough. Write "do not call again; tell the user this layer is still being extracted, and ask again in a few minutes".
 
-## 4. 测试能证明什么、不能证明什么
+## 4. What Tests Can and Cannot Prove
 
-| 测试 | 证明的 | **不**证明的 |
+| Test | Proves | Does **not** prove |
 |---|---|---|
-| 工具单测 | 工具装上了、调它会写盘、参数形状对 | 模型会不会调它 |
-| 注册表 parity（`src/mcp/dsh-ui-registry-parity.test.ts`）| 每个工具都被登记过一次「怎么渲染」 | 它渲染得好不好 |
-| 全量绿 | 上面几样 | 同上 |
+| Tool unit test | The tool is installed, calling it writes to disk, and the parameter shape is correct | Whether the model will call it |
+| Registry parity (`src/mcp/dsh-ui-registry-parity.test.ts`) | Every tool has been registered once for "how to render" | Whether it renders well |
+| Full green | The items above | Same as above |
 
-**模型手里到底有哪些工具，我们没有报警器**——那份清单由用户的宿主合成（profile / preset /
-它自己的内建工具），Stream 只知道自己经 `/api/mcp` 递出去的那些。
+**We have no alarm for exactly which tools the model has in hand** — that list is assembled by the user's host (profile / preset /
+its own built-in tools); Stream only knows the ones it hands out via `/api/mcp`.
 
-**提示词那一档同理**（系统提示词归宿主）。所以凡是「只写在提示词/描述里」的产品行为，
-唯一的证据就是活体跑一次看副作用。
+**The prompt tier is the same** (the system prompt belongs to the host). So for any product behavior that is "only written in the prompt/description",
+the only evidence is to run it once live and look at side effects.
 
-## 5. 活体验收：怎么跑
+## 5. Live Verification: How to Run It
 
-真模型、真后端，看副作用。花的是真钱，但上面四条决定了它不可省。
+A real model, a real backend, and side effects. It costs real money, but the four rules above make it non-skippable.
 
-**主路是在任一宿主里跑一轮**（DSH：`dsh web`，装进 web profile 时；单独 profile 则 `dsh --profile stream`；Claude Code：MCP 指
-`/api/mcp`）——说那句话 → 看副作用。工具调用在消息流里逐条可见，那是事实；正文是说辞。
+**The main path is to run one round in any host** (DSH: `dsh web`, when installed into the web profile; for a standalone profile use `dsh --profile stream`; Claude Code: MCP points to
+`/api/mcp`) — say that sentence -> look at side effects. Tool calls are visible one by one in the message stream; that is fact. The body text is rhetoric.
 
-只想验"工具本身通不通"、不牵扯模型时，直接打 MCP 面（不需要起对话）：
+When you only want to verify "whether the tool itself works" and the model is not involved, hit the MCP surface directly (no conversation required):
 
 ```bash
-# 列出工具面（确认它真的注册了）
+# List the tool surface (confirm it really registered)
 curl -sS 127.0.0.1:8900/api/mcp -H 'content-type: application/json' \
   -H 'accept: application/json, text/event-stream' \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | head -c 2000
 
-# 调一个（把 name/arguments 换成要验的那个）
+# Call one (replace name/arguments with the one to verify)
 curl -sS 127.0.0.1:8900/api/mcp -H 'content-type: application/json' \
   -H 'accept: application/json, text/event-stream' \
   -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"resolve_intent","arguments":{"input":"https://example.com/blog"}}}'
 
-# 副作用在这儿（工具回什么不算数）
+# The side effect is here (what the tool returns does not count)
 curl -sS 127.0.0.1:8900/api/onboard/wishlist
 ```
 
-**两个场景都要跑**：能成的那条（它该调工具）和不能成的那条（它该如实说 + 该做补偿动作）。
-后者才是出事的地方——上面那次翻车就在这一条。
+**Run both scenarios**: the one that can succeed (it should call the tool), and the one that cannot succeed (it should say so truthfully + perform the compensating action).
+The latter is where things break — the failure above happened on this path.
 
-**没照做时的分诊顺序**（别先改描述）：
+**Triage order when it did not follow instructions** (do not edit the description first):
 
-1. **工具在不在栈里**：`tools/list` 里有没有它。没有 → 接线断了（多半是某个 extras 格没转发，
-   见第 6 条），去查装配，别去改提示词。
-2. 在栈里但模型不主动调 → 按第 3 条把指令往决策点挪（挪进返回体）。
-3. 调了但没效果 → 看副作用端点，不是看它的回执。
+1. **Whether the tool is in the stack**: whether it appears in `tools/list`. If not -> wiring is broken (most likely some `extras` cell was not forwarded;
+   see item 6), inspect assembly; do not edit prompts.
+2. It is in the stack but the model does not proactively call it -> follow item 3 and move the instruction closer to the decision point (move it into the return body).
+3. It called it but there is no effect -> look at the side-effect endpoint, not at its receipt.
 
-### 5.1 活体验收：「缺一把 key」这条线（`capability_status` + `provision_capability_key`）
+### 5.1 Live Verification: The "Missing a Key" Line (`capability_status` + `provision_capability_key`)
 
-这条线**天生就在踩第 1 条**：模型完全可以说「我已经帮你申请好了 Groq 的 key」而一个工具都没调，
-而且这句话听起来比正常情况还妥帖。所以它的验收只有一条判据——**那一格 `configured` 真的翻了**，
-不是模型说它翻了。
+This line **naturally steps on item 1**: the model can absolutely say `我已经帮你申请好了 Groq 的 key` ("I have already applied for the Groq key for you") without calling any tool,
+and that sentence sounds even more appropriate than the normal case. So its acceptance has only one check — **that `configured` cell really flipped**,
+not that the model said it flipped.
 
-**开跑之前先把现场做成"缺 key"**：`POST /api/source-runtime-config/status`
-（body `{pluginId,sourceId}`，或直接读 `/api/config/source:<ref>`）看那一格是不是 `configured:false`。
-已经配着就没什么可验的——别去删用户的 key 来造现场。
+**Before starting, first make the scene "missing key"**: use `POST /api/source-runtime-config/status`
+(body `{pluginId,sourceId}`, or read `/api/config/source:<ref>` directly) and check whether that cell is `configured:false`.
+If it is already configured, there is nothing to verify — do not delete the user's key to manufacture the scene.
 
-**三轮，缺一轮就没验到：**
+**Three rounds; missing any one means it was not verified:**
 
-1. **能替他配的那一档（`needs-key-self-serve`）。** 在宿主里问一句「这条播客帮我转成文字」
-   （或直接「转写现在能用吗」）。判据全在副作用，不在它的话里：
-   - 消息流里**第一个**工具调用是 `capability_status`（它没调就直接答"用不了"= 猜的，红）；
-   - 它接着**问了用户**要「我帮你申请」还是「我自己去拿」，并且**报出了那条自助申请页的地址**
-     ——二选一没给出来就是漏了产品意图的一半；
-   - 用户说"你帮我" → 消息流里出现一次不带 `confirmed` 的 `provision_capability_key`
-     （回执 `status:"needs-confirmation"`），**且此刻浏览器里什么都没发生**；
-   - 用户点头 → 第二次调用带 `confirmed:true`，用户自己的 Chrome 真的打开了那一页；
-   - **最后这一步才是判据**：
+1. **The tier that can configure it for the user (`needs-key-self-serve`).** In the host, ask `这条播客帮我转成文字` ("help me turn this podcast into text")
+   (or directly `转写现在能用吗` ("can transcription be used right now?")). The checks are all in side effects, not in its words:
+   - the **first** tool call in the message stream is `capability_status` (if it answers "cannot use it" directly without calling it = guessed, red);
+   - it then **asked the user** whether to choose "I help you apply" or "I get it myself", and **reported the URL of that self-service application page**
+     — if it does not provide both choices, it missed half of the product intent;
+   - the user says `你帮我` ("you help me") -> the message stream shows one `provision_capability_key` call without `confirmed`
+     (receipt `status:"needs-confirmation"`), **and at this moment nothing has happened in the browser**;
+   - the user nods -> the second call carries `confirmed:true`, and the user's own Chrome really opens that page;
+   - **only this last step is the check**:
      ```bash
-     curl -sS 127.0.0.1:8900/api/config/source:groq   # 换成那一轮的 ref
+     curl -sS 127.0.0.1:8900/api/config/source:groq   # replace with the ref for that round
      ```
-     `secrets.apiKey.configured` 为 `true` 才算数。工具回执里那句 `status:"done"` **也是**代码
-     核对过的（`provisionConfigSlot` 跑完重新读了一次），但活体验收要的是站在工具外面的那一眼。
-2. **白跑的那一档（`ran-but-empty`）。** 站点改版 / 人机验证没过 / 登录墙的表现全在这里，而它
-   是整条链最贵的一档：不核对就会报假成功。造现场最省事的办法是**先把那个站点登出**再跑一轮。
-   判据：回执是 `ran-but-empty`、模型**如实说没拿到**并指了 `failures/`，**而不是**说"已经申请好了"。
-   `<dataDir>/failures/` 下确实多出一张失败现场。
-3. **不是缺 key 的那一档（`blocked-other`）。** 最容易被误报成"我帮你申请一把"。造现场：
-   `STREAM_FFMPEG_PATH=/nonexistent` 起一份后端（换端口 + `STREAM_DATA_DIR`，别抢活体那一份），
-   再问一次转写。判据：`capability_status` 报 `state:'blocked-other'`、blocker 里有
-   `kind:'tool'`，而模型说的是"这台机器上没有 ffmpeg"，**一个字都没提申请 key**。
+     `secrets.apiKey.configured` being `true` is what counts. The `status:"done"` sentence in the tool receipt **is also**
+     verified by code (`provisionConfigSlot` reads again after finishing), but live verification wants the glance from outside the tool.
+2. **The tier that ran but produced nothing (`ran-but-empty`).** Site redesign / bot verification failure / login wall all show up here, and it
+   is the most expensive tier in the whole chain: without checking, it reports false success. The cheapest way to create the scene is to **log out of that site first** and run one round.
+   Check: the receipt is `ran-but-empty`, the model **truthfully says it did not obtain anything** and points to `failures/`, **instead of** saying "already applied".
+   A failed-scene artifact really appears under `<dataDir>/failures/`.
+3. **The tier that is not missing a key (`blocked-other`).** This is the easiest one to misreport as "I will apply for one for you". Create the scene:
+   start a backend with `STREAM_FFMPEG_PATH=/nonexistent` (use a different port + `STREAM_DATA_DIR`; do not steal the live one),
+   then ask about transcription again. Check: `capability_status` reports `state:'blocked-other'`, the blocker includes
+   `kind:'tool'`, and the model says "this machine does not have ffmpeg", **without mentioning applying for a key by even one word**.
 
-**第 4 种表现，别当成失败**：跑成功之后能力仍然报不可用。转写那条梯子是**后端启动那一刻**按
-「哪些 key 在」建出来的（`src/providers/seed.ts` 的 `ensureTranscribeRow`），配完不重启挂不上。
-`capability_status` 对这一档给的是 `kind:'restart'` 的 blocker；模型该说"重启一次后端"，
-**不该再申请一把 key**——那是这一档唯一会犯的错，而且它跑起来毫无异样。
+**Do not treat the fourth behavior as a failure**: after a successful run, the capability still reports unavailable. That transcription ladder is built **at backend startup** based on
+"which keys exist" (`src/providers/seed.ts`'s `ensureTranscribeRow`), and after configuring it, it will not attach without a restart.
+For this tier, `capability_status` returns a blocker with `kind:'restart'`; the model should say "restart the backend once",
+**and should not apply for another key** — that is the only mistake this tier can make, and it runs with no visible oddity.
 
-### 5.2 `unblock`：不等模型自己想起来去问「这是不是缺配置」
+### 5.2 `unblock`: Do Not Wait for the Model to Remember to Ask "Is This Missing Configuration?"
 
-上面 5.1 那条线有个前提：模型得**先意识到**该调 `capability_status`。而它最常见的失败不是调错
-工具，是**根本没往那个方向想**——一次 extract 失败了，它照着 `error` 那句话如实汇报"转写失败"
-然后收工，用户到此以为这台机器就是没这个能力，而其实只差一把可以由它当场去建的 key。
+The line in 5.1 has one precondition: the model must **first realize** it should call `capability_status`. Its most common failure is not calling the wrong
+tool; it is **not thinking in that direction at all** — an extract fails, it reports "transcription failed" according to the `error` sentence,
+then stops, and the user believes this machine simply does not have that capability, when in fact it is only missing a key that the model can create on the spot.
 
-所以这条接缝**不靠提示词，靠把结论直接放进回执**：`extract` 失败时，`slimExtractReceipt`
-（`src/mcp/extract-receipt.ts`）在回执上多给一格 `unblock`——梯子上哪个成员因为**缺配置**弃权、
-哪条 recipe 能补上（`unblockOptionsFor`，`src/auth/unblock.ts`）。指令写在那个字段的注释旁边，
-不是写在系统提示里（§3：越靠近决策点越有效）。
+So this seam **does not rely on prompts; it puts the conclusion directly into the receipt**: when `extract` fails, `slimExtractReceipt`
+(`src/mcp/extract-receipt.ts`) adds an `unblock` cell to the receipt — which member on the ladder abstained because it is **missing configuration**,
+and which recipe can fill it in (`unblockOptionsFor`, `src/auth/unblock.ts`). The instruction is written next to the comment for that field,
+not in the system prompt (§3: the closer to the decision point, the more effective).
 
-三条设计约束，每条都对应一种"更坏的建议"：
+Three design constraints, each corresponding to a "worse suggestion":
 
-- **只认 `outcome:'miss'`，不认 `error`。** miss 是"没配，去配置"，error 是"试了但失败，去查
-  故障"，方向相反。把 error 也算进来，就会在上游挂掉的时候去劝用户重新申请一把 key。
-- **有人赢了就整格不出现。** 梯子的意义就是有人弃权也照样出结果；这时候提"你还缺 groq key"
-  是噪音，用户什么都没损失。
-- **空数组不出现，整格消失。** 一格白烧的上下文，还会让模型以为"我看过了、没有"从而多说一句
-  废话。
+- **Only accept `outcome:'miss'`, not `error`.** miss means "not configured, go configure it"; error means "tried but failed, go diagnose
+  the fault"; the directions are opposite. If error is also counted, then when upstream fails it will advise the user to apply for another key.
+- **If someone wins, the whole cell is absent.** The point of the ladder is that even if someone abstains, a result still appears; mentioning "you are missing a groq key"
+  at that time is noise, because the user lost nothing.
+- **An empty array does not appear; the whole cell disappears.** It burns context for nothing, and also makes the model think "I checked; there is none", causing it to add
+  one useless sentence.
 
-**活体判据（同 §2，只看副作用）**：把 groq 那把 key 清空，对一条视频 item 说「把这个转成文字」。
-- 消息流里 `extract` 的回执里**有** `unblock` 那一格（没有 = 接线断了，去核 `registry.all()`
-  是不是真传进去了——那个参数**故意没有默认值**，就是为了让接错线时 tsc 当场红，而不是静默恒空）；
-- 模型**提议了**自助补，而不是只说"你没配 key"就收工；
-- 用户说 go 之后走 5.1 的判据：`/api/config/source:groq` 的 `secrets.apiKey.configured` 从
-  `false` 变 `true`。**它说"我已经帮你建好了"但这一格还是 false = 失败**，不是成功。
+**Live check (same as §2: only look at side effects)**: clear the groq key, and say `把这个转成文字` ("turn this into text") to a video item.
+- The `extract` receipt in the message stream **has** the `unblock` cell (absent = wiring broken; verify whether `registry.all()`
+  really got passed in — that parameter **intentionally has no default value**, precisely so tsc goes red immediately on miswiring, instead of silently staying empty forever);
+- The model **proposed** self-service filling, rather than just saying "you do not have a key configured" and stopping;
+- After the user says go, follow the checks in 5.1: `/api/config/source:groq`'s `secrets.apiKey.configured` changes from
+  `false` to `true`. **If it says "I have already created it for you" but this cell is still false = failure**, not success.
 
-## 6. 加一个工具时的规矩
+## 6. Rules When Adding a Tool
 
-- **没有落点就不装这个工具。** 例：`note_unonboardable` 只在注入了账本时才装（`extras.wishlist`）。
-  装一个写不进任何地方的记录工具，模型会以为记下了、并据此告诉用户"已经记下"——**一句谎话比
-  缺个功能糟**。
-- **注册门就是 extras 那一格在不在**，所以**转发表漏一格 = 那个工具安静地不注册**。这张表在
-  `src/kernel/plugins/agent.ts`（`mcpExtrasDeps`），格数由 `MCP_EXTRAS_DEP_COUNT` 在装配期自检
-  + `agent.test.ts` 钉着：加一格必须同时改数字。
-- **Stream UI 插件要知道怎么画它**：`hosts/dsh/registry-table.json` 登记一行，
-  `custom`（做了定制卡）或 `generic`（写清为什么通用卡够用）。双向差集由
-  `src/mcp/dsh-ui-registry-parity.test.ts` 钉住，漏登记当场变红。
-- **两个工具容易被混起来时，描述里要互相点名。** 模型挑工具靠的是描述，不是我们心里的分类。
-  实测标本（2026-08-19）：问「总结时间线里某人近期的发言」，模型调了 `content_search`——那是
-  **现搜**（联网扇出到已配置的可搜索源、结果不落库），于是回来一堆刚搜到的网页；接着猜源 id
-  调 `stream_read` 连错 4 次；最后 `read_url` 抓整页，累计 416K token，上游 400。
-  修法是补上 `inbox_search`（读**已采集进库**的条目）**并在两边的描述里写清对方是什么**：
-  「读库、不联网、不触发采集」对「现搜、不落库」。**同族工具的边界不写进描述，就等于没有。**
-- **回执必须是投影，不是把存量对象原样发出去。** 上面那轮失败的直接原因就是回执体积。凡是
-  返回一批条目的工具，投影里逐个问「这一格会不会把回执撑大」，并给一条**钉死禁项**的守卫测试
-  （`src/mcp/inbox-search.test.ts` 钉 `raw`/`body_html`/`content.media` 三样绝不出现——把投影改回
-  `{...item}` 它当场红）。截断了就在回执里明写截断（模型会把半截当全文，静默答错）。
-- **描述和回执里的"下一步"是承诺，不是提示——先确认这条路对这类数据成立。** 活体实测
-  （2026-08-19）：`inbox_search` 的描述写着「截断了就调 `extract` 取全文」，模型于是对 8 条
-  **纯文本**帖调了 10 次 extract——而那类条目的正文本来就在库里，extract 只是把同一段文字原样
-  再取一遍（10 个白跑的转换任务 + 一轮上下文）。两条可执行的：
-  **(a) 指路要有条件**，条件写成回执里的一格（`full_text: true` = 全文已在此，别再取），
-  模型刚读到那格就要做决定，比描述里的一句通则管用；
-  **(b) 条件用现成的权威判据**，别现造一个"看着像纯文本"的嗅探——这里用的是
-  `shared/extract/plan.ts` 的 `planExtract`（前端的「转成文字」按钮吃的是同一份），
-  自己再写一份就是第三份会漂移的判据，而漂移的表现是回执**悄悄指错路**，没有一处会报错。
-  同类自查还有一条：**告诉模型"用 X 去查一下"之前，先确认它手上真有 X**——描述里曾写着
-  「按频道 id 过滤」，而工具面上没有任何一个工具能列频道，那句话对模型等于让它猜。
-- **副作用工具要先说明再执行**：订阅、删除这类改用户数据的动作，工具描述里明说"先跟用户确认"。
-  这条只有活体能验。
+- **If there is no destination, do not install this tool.** Example: `note_unonboardable` is only installed when the ledger is injected (`extras.wishlist`).
+  Installing a note-taking tool that cannot write anywhere makes the model think it recorded the note, and tell the user "already recorded" accordingly — **one lie is worse than
+  a missing feature**.
+- **The registration gate is whether that `extras` cell exists**, so **one missing cell in the forwarding table = that tool quietly does not register**. This table is in
+  `src/kernel/plugins/agent.ts` (`mcpExtrasDeps`); the number of cells is self-checked at assembly time by `MCP_EXTRAS_DEP_COUNT`
+  and pinned by `agent.test.ts`: adding a cell must also update the number.
+- **The Stream UI plugin must know how to draw it**: register one row in `hosts/dsh/registry-table.json`,
+  either `custom` (a custom card is implemented) or `generic` (state clearly why the generic card is enough). The bidirectional diff is pinned by
+  `src/mcp/dsh-ui-registry-parity.test.ts`; a missing registration goes red immediately.
+- **When two tools are easy to confuse, their descriptions must name each other.** The model chooses tools by description, not by the taxonomy in our heads.
+  Measured specimen (2026-08-19): asked `总结时间线里某人近期的发言` ("summarize someone's recent statements in the timeline"), the model called `content_search` — that is
+  **live search** (fan out online to configured searchable Sources; results are not written to the database), so it came back with a pile of freshly searched web pages; then it guessed Source ids and
+  called `stream_read` wrong 4 times; finally `read_url` fetched the whole page, totaling 416K tokens, and upstream returned 400.
+  The fix is to add `inbox_search` (read items **already harvested into the database**) **and write clearly in both descriptions what the other is**:
+  "read the database, no network access, no harvest triggered" versus "live search, not written to the database". **If boundaries between same-family tools are not written into descriptions, they do not exist.**
+- **The receipt must be a projection, not the existing object sent out as-is.** The direct cause of the failed round above was receipt size. For every tool
+  that returns a batch of items, ask for each cell in the projection: "will this cell inflate the receipt?", and add a guard test with **pinned forbidden items**
+  (`src/mcp/inbox-search.test.ts` pins that `raw`/`body_html`/`content.media` never appear — if the projection is changed back to
+  `{...item}`, it goes red immediately). If truncated, write the truncation explicitly in the receipt (the model will treat a half excerpt as full text and answer silently wrong).
+- **"Next step" in descriptions and receipts is a commitment, not a suggestion — first confirm that this path is valid for this kind of data.** Live measurement
+  (2026-08-19): the `inbox_search` description said "if truncated, call `extract` to fetch the full text", so the model called extract 10 times for 8
+  **plain-text** posts — but the body of that kind of item was already in the database; extract only fetched the same text again verbatim
+  (10 wasted conversion tasks + one round of context). Two executable rules:
+  **(a) signposts must be conditional**, and the condition should be a cell in the receipt (`full_text: true` = full text is already here; do not fetch again);
+  once the model has just read that cell, it must decide what to do, so it is more effective than a general sentence in the description;
+  **(b) the condition uses an existing authoritative check**, do not invent a sniff test that "looks like plain text" — here it uses
+  `shared/extract/plan.ts`'s `planExtract` (the frontend "turn into text" button consumes the same source),
+  and writing another copy yourself creates a third drifting check; drift manifests as the receipt **quietly pointing in the wrong direction**, with no error anywhere.
+  There is another same-kind self-check: **before telling the model "use X to check it", first confirm that it really has X in hand** — the description once said
+  "filter by Channel id", while the tool surface had no tool that could list Channels; to the model, that sentence was equivalent to telling it to guess.
+- **Side-effect tools must explain before executing**: for actions such as subscribing and deleting that modify user data, the tool description must say explicitly "confirm with the user first".
+  Only live verification can verify this.
 
-## 7. 用户在输入框里 `@` 一条内容 —— 正文随附，不赌模型去取
+## 7. When the User `@` Mentions Content in the Input Box — Attach the Body, Do Not Bet on the Model Fetching It
 
-输入框里打 `@` 能引 Stream 的内容（"我正在看的这条"排第一）。走的是 DSH 官方的输入触发器
-扩展点（`ctx.inputTriggers.registerSource`），源在 `hosts/dsh/src/client/input/
-stream-ref-source.ts`——**不改 DSH 的输入框、不抢它的槽**，`@` 本来就是那条管线认的触发字符。
+Typing `@` in the input box can reference Stream content ("the item I am currently viewing" ranks first). It uses DSH's official input-trigger
+extension point (`ctx.inputTriggers.registerSource`), with source in `hosts/dsh/src/client/input/
+stream-ref-source.ts` — **it does not modify DSH's input box or grab its slot**; `@` is already the trigger character recognized by that pipeline.
 
-**这条链路唯一决定成败的地方是 `codec.serialize`**：它的返回值被逐字拼进发给模型的那段
-prompt（ui-conversation 的 `sinkSerialized`）。所以引用**把正文直接写进去**，不是只给一个 id
-让模型自己回头调 `extract`——那正是第 1、2 节讲的那类赌注：我们要求过 ≠ 它照做了。正文随附之后，
-默认路径**零工具调用**就成立。
+**The only place in this chain that decides success or failure is `codec.serialize`**: its return value is spliced character-for-character into the
+prompt sent to the model (`sinkSerialized` in ui-conversation). Therefore a reference **writes the body directly into it**, instead of only giving an id
+and making the model come back and call `extract` by itself — that is exactly the kind of bet described in sections 1 and 2: we asked for it != it followed. Once the body is attached,
+the default path works with **zero tool calls**.
 
-随附的是**截断**的正文（`app/src/panel/itemRef.ts` 的 `EXCERPT_LIMIT`）。截断这件事**明写在
-序列化文本里**并给出 `extract({item:"<id>"})` 这个加深入口——不写的后果是模型拿半截当全文，
-静默答错，没有任何一处会喊。
+What is attached is a **truncated** body (`EXCERPT_LIMIT` in `app/src/panel/itemRef.ts`). The truncation is **written explicitly in
+the serialized text**, and gives `extract({item:"<id>"})` as the deepening entrypoint — if it is not written, the model treats the half excerpt as full text,
+and silently answers incorrectly, with nothing shouting anywhere.
 
-两条容易漏的边界，都由测试钉着（`hosts/dsh/test/stream-ref-source.test.ts`）：
+Two easy-to-miss boundaries are both pinned by tests (`hosts/dsh/test/stream-ref-source.test.ts`):
 
-- **`ReferenceInsert.source` 必须等于源名**——发送时按这个字符串在 roster 里回查 codec，
-  不等就是"没有序列化器"，整条消息发不出去。
-- **快照找不到那条时不许抛错**：`serialize` 失败会阻断发送，而"引用的那条已经不在手边"
-  （切了频道 / 刷新过）完全正常——如实交出 id 比让用户发不出消息好。
+- **`ReferenceInsert.source` must equal the source name** — on send, this string is used to look up the codec in the roster;
+  if it differs, there is "no serializer", and the entire message cannot be sent.
+- **Do not throw when the snapshot cannot find that item**: a `serialize` failure blocks sending, while "the referenced item is no longer at hand"
+  (switched Channels / refreshed) is completely normal — honestly handing over the id is better than making the user unable to send the message.
 
-"当前在看哪条"是**跨 bundle**的：内容在面板 bundle（`app/src/panel/`），触发器源在壳
-（`dsh-plugin-stream-ui`）。通路照抄频道名录那条现成的——面板经 mount 的 `onItemContext`
-回调把整份状态推给壳侧的单例 store（`panel/item-context-store.ts`），别再发明第二种传法。
+"Which item is currently being viewed" is **cross-bundle**: the content is in the panel bundle (`app/src/panel/`), and the trigger source is in the shell
+(`dsh-plugin-stream-ui`). Copy the existing path used by the Channel roster — through the mount `onItemContext`
+callback, the panel pushes the entire state to the singleton store on the shell side (`panel/item-context-store.ts`); do not invent a second transport.
 
-## 8. 工具描述是一份承诺——它说的话必须是代码真在做的事
+## 8. A tool description is a promise: what it says must be what the code actually does
 
-模型**只按描述选工具**。描述里出现一个它实际不做的动词，模型就会拿它去干那件事，然后把结果
-当那件事的答案交给用户。**没有任何一处会报错**：工具正常返回、数据也真实，只是答非所问。
+The model **chooses tools only by their descriptions**. If the description contains a verb that the tool does not actually perform, the model uses it for that task and then gives the result to the user
+as the answer to that task. **Nothing reports an error anywhere**: the tool returns normally and the data is real; it is just answering the wrong question.
 
-一句话判据：**描述里出现「已采集 / 已订阅 / persisted / stored / the user's content」这类词之前，
-先去看那条实现是不是真的在读库。** 现取（`fetchSource` / `invoke`）就必须在描述里明说「这是
-实时联网取，不是读你已经收进来的东西」。
+One-sentence check: **before words like "harvested / subscribed / persisted / stored / the user's content" appear in a description,
+first check whether that implementation is really reading from the database.** If it fetches on demand (`fetchSource` / `invoke`), the description must say explicitly: "this
+fetches live from the network; it is not reading things you have already collected."
 
-这条不是措辞洁癖，两个真在栈上的例子：
+This is not wording pedantry; two real examples are on the stack:
 
-- **`content_search` 是现搜**（`ctx.search.contentSearch` → `executor().invoke('content-search')`），
-  每次调用都往用户启用的可搜索源扇出联网请求；结果**不落库**，每条的 `fetched_at` 就是这次调用
-  的时刻。用户启用的源里可能有百度/B 站这类搜索桥，所以它回来的常常是刚现搜到的网页。
-- **`price_search` 是它的比价姊妹档**（`ctx.search.priceSearch` → `invoke('price-search')`，
-  HTTP `GET /api/search?scope=price`）：同一套现搜/不落库/瘦身机制，只是扇出的是
-  `provides=search-price` 的比价源（慢慢买…），回来「商品 → 各平台报价」（title=商品、author=平台、
-  excerpt=价格）。**比价单独成一档、不并进 content**：商品报价混进内容搜索会被网页结果淹没。
-  同 `content_search`，它的 id **不落库**，别拿去 `extract`。
-- **残值是第三档**（`ctx.search.resaleSearch` → `invoke('resale-search')`，HTTP `GET /api/search?scope=resale`）：
-  扇出 `provides=search-resale` 的二手回收源（转转…），回来「型号 → 今日最高回收价」。它没有独立的
-  MCP 工具——唯一消费端是 `purchase_decide` 的残值格。**不并进 price**：回收价混进新品报价，模型会把
-  1200 元的回收价当成一个便宜的购买选项。
-- **`stream_read` 也是现取**（`Scheduler.readStream` 逐个成员源 `fetchSource` 再合并），
-  「读一个流」这个名字听起来像读库，实际是再跑一遍采集。
+- **`content_search` is live search** (`ctx.search.contentSearch` → `executor().invoke('content-search')`).
+  Each call fans out network requests to the searchable Sources the user has enabled; results **are not written to the database**, and each item's `fetched_at` is the time of this call.
+  The Sources the user has enabled may include search bridges such as Baidu/Bilibili, so what comes back is often a web page that was just found by live search.
+- **`price_search` is its price-comparison sibling** (`ctx.search.priceSearch` → `invoke('price-search')`,
+  HTTP `GET /api/search?scope=price`): the same live-search / no-write-to-database / slimming mechanism, except it fans out to
+  price-comparison Sources with `provides=search-price` (慢慢买 (Manmanbuy)...), returning "product → quotes from each platform" (title=product, author=platform,
+  excerpt=price). **Price comparison is its own tier and is not merged into content**: product quotes mixed into content search are drowned out by web results.
+  Like `content_search`, its id **is not written to the database**; do not pass it to `extract`.
+- **Residual value is the third tier** (`ctx.search.resaleSearch` → `invoke('resale-search')`, HTTP `GET /api/search?scope=resale`):
+  it fans out to second-hand recycling Sources with `provides=search-resale` (转转 (Zhuanzhuan)...), returning "model → today's highest recycling price." It has no independent
+  MCP tool; its only consumer is the residual-value cell in `purchase_decide`. **Do not merge it into price**: if recycling prices are mixed into new-product quotes, the model treats
+  a 1200-yuan recycling price as a cheap purchase option.
+- **`stream_read` also fetches on demand** (`Scheduler.readStream` calls `fetchSource` on each member Source and then merges the results).
+  The name "read a Stream" sounds like reading from the database; in reality it runs harvest again.
 
-**反面代价是实测过的**：描述写着「the user's CONFIGURED content」，用户问「总结我时间线里某人
-近期的发言」，模型选了 `content_search`，把一堆刚现搜的百度/B 站网页当成用户的订阅内容答了回去。
+**The negative cost has been measured in practice**: the description said "the user's CONFIGURED content"; the user asked "总结我时间线里某人近期的发言" ("summarize someone's recent posts on my timeline");
+the model chose `content_search` and answered with a pile of just-searched Baidu/Bilibili web pages as if they were the user's subscribed content.
 
-**购买这条线在工具面上只有一个入口：`purchase_decide`。** 用户给品类（可以只有品类）就直接调，
-整条路线（枚举全集 → 横评里谁被点名 → 逐台取价 → 支配运算）在代码里跑完，回执就是终稿，Stream
-UI 插件直接画成对比卡。**它是异步的**：立刻回 `{runId}`，模型隔 20–30 秒 `get_agent_run` 一次（跑着时报
-当前阶段，跑完 `receipt` 就是回执）。**跑两三分钟的 job 不许做成同步工具**：宿主的 MCP 单次调用
-上限各不相同（我们 bundle 里给 `stream-mcp` 那一行设的是 200s、Claude Code 约 120s），同步等的下场是"任务没做完就被掐断、
-后端还在跑、重试再叠一个"。**「怎么用、怎么讲」只有一份源码：`.claude/skills/purchase-decision/SKILL.md`**——
-出货给每个宿主的都是这一份（`src/skills/shipped.ts`）。这是往后每条闭合 job 的固定形状：**一个 MCP 工具
-（路线，代码）+ 一份 skill（说法，一份源码）**；换宿主只需接上 Stream 的 MCP、装上 skill。判据照本文档的原则**只看副作用**，三条：(1) 会话日志里第一个工具调用是
-`purchase_decide`，**且在它之前没有对用户的追问**——活体（2026-09-03）里模型收到「5000 以内、
-一年后出掉」仍先甩了一张五行问卷，那就是红；(2) 答案里点名的型号集合 ⊆ 回执里的型号集合；
-(3) 答案带着回执的 `coverage` 数字。**别再给这条线加第二个工具**：曾经有「素材工具 + 手工组装
-终稿工具」那一对，模型会把 job 的回执逐字段手抄进后者，抄的时候把「残值查不到」补成
-「残值按 0 计」（`internal design record`）。
+**The purchase path has only one entrypoint at the tool surface: `purchase_decide`.** When the user gives a category (even only a category), call it directly.
+The whole route (enumerate the complete set → who is named in cross-comparisons → fetch prices one by one → dominance computation) runs in code; the receipt is the final draft, and the Stream
+UI plugin renders it directly as comparison cards. **It is asynchronous**: it immediately returns `{runId}`, and the model calls `get_agent_run` once every 20-30 seconds (while it is running, it reports
+the current stage; when it finishes, `receipt` is the receipt). **Do not make a two- or three-minute job a synchronous tool**: chat hosts' MCP single-call
+limits differ (the line for `stream-mcp` in our bundle is set to 200s; Claude Code is about 120s). Waiting synchronously ends as "the task is cut off before it finishes,
+the backend is still running, and a retry stacks another one on top." **There is only one source file for "how to use it and how to explain it": `.claude/skills/purchase-decision/SKILL.md`**.
+Every host receives that same file (`src/skills/shipped.ts`). This is the fixed shape for every closed job going forward: **one MCP tool
+(route, code) + one skill (wording, one source file)**; switching hosts only requires connecting Stream's MCP and installing the skill. The checks follow this document's principle and **look only at side effects**, three of them: (1) the first tool call in the session log is
+`purchase_decide`, **and there is no follow-up question to the user before it**: in live verification (2026-09-03), the model received "5000 以内、一年后出掉" ("under 5000, sell it after one year") and still threw out a five-line questionnaire first; that is red; (2) the set of models named in the answer is a subset of the model set in the receipt;
+(3) the answer carries the receipt's `coverage` number. **Do not add a second tool to this path again**: there used to be a pair of "materials tool + manually assemble
+final-draft tool"; the model would hand-copy the job receipt field by field into the latter, and while copying it would fill "residual value unavailable" as
+"残值按 0 计" ("residual value counted as 0") (`internal design record`).
 
-### 一条路线反复被跳步 → 别再改提示词，把它搬进代码
+### If a route is repeatedly skipped over, do not keep changing the prompt; move it into code
 
-购买线的第一版把「深读横评 → 枚举候选集 → 收敛型号 → 逐个比价 → 交终稿」九步写成一段
-几百词的回执 `next_steps`，交给模型自觉执行。**那段文字质量不低,
-该说的都说了,包括「不经 verdict 直接写散文是不行的」——模型照样跳步**,活体证据记在
-`2026-09-01-candidate-set-discovery-design.md` §5。最常被跳的是枚举那一步,而它一跳,支配运算
-就落在一个任意子集上:**结论不是"不完整",是误导**。
+The first version of the purchase path wrote the nine steps "deep-read cross-comparisons → enumerate candidate set → converge models → compare prices one by one → deliver final draft" into a
+hundreds-of-words receipt `next_steps` and gave it to the model to execute conscientiously. **That text was not low quality;
+it said everything it should, including "writing prose directly without going through verdict is not acceptable" -- and the model still skipped steps**. The live evidence is recorded in
+`2026-09-01-candidate-set-discovery-design.md` §5. The step skipped most often was enumeration, and when that step is skipped, the dominance computation
+lands on an arbitrary subset: **the conclusion is not "incomplete"; it is misleading**.
 
-**这不是提示词写得不够用力,是放错了地方。** 一条要求"每次都照做"的路线,住在模型可以选择读或
-不读的地方,就等于没有路线。修法是把阶段搬进代码(`src/agent/purchase/job.ts`,工具
-`purchase_decide`),模型只剩三个窄口,跳步在结构上不成立。
+**This is not because the prompt was not forceful enough; it was in the wrong place.** A route that must be followed every time is equivalent to no route at all if it lives somewhere the model can choose to read
+or not read. The fix is to move the stages into code (`src/agent/purchase/job.ts`, tool
+`purchase_decide`), leaving the model only three narrow openings; skipping steps is structurally impossible.
 
-判据仍然只看副作用,而且现在能写成测试:**答案里出现的型号必须是回执里型号集合的子集**。
-这条抓的是最坏那种失真——模型自己又加了一台。另一条是"交付的回答对应一条真实存在的 run 记录"。
+The check still looks only at side effects, and now it can be written as a test: **models that appear in the answer must be a subset of the model set in the receipt**.
+This catches the worst distortion: the model adds another machine by itself. Another check is "the delivered answer corresponds to a real run record."
 
-⚠️ **搬进代码之后,那段失效的路线说明必须同步改掉**,别留在回执里——它会让下一个人(和模型)
-以为路线还在那儿。`brief.ts` 的 `next_steps` 现在指向 `purchase_decide`,并把手动那条降级成
-明确的 fallback。设计:`internal design record`。
+⚠️ **After moving it into code, the invalidated route explanation must be updated at the same time**; do not leave it in the receipt, because it makes the next person (and the model)
+think the route is still there. `brief.ts`'s `next_steps` now points to `purchase_decide` and demotes the manual path into an explicit
+fallback. Design: `internal design record`.
 
-### 描述里的**下一步指路**也是承诺——写「接着用 X」之前先确认 X 在这条数据上真跑得通
+### The next-step pointer in a description is also a promise: before writing "next use X," confirm that X really works on this data
 
-这一条比上面那条更容易漏，因为主路径通常是通的，只有某一类数据上不通。**判据是拿这个工具真实
-回执里的值去跑一遍那个下一跳**，不是「X 这个工具存在」。
+This is easier to miss than the previous rule, because the main path usually works; it fails only on one class of data. **The check is to take values from this tool's real
+receipt and actually run the next hop with them**, not "the tool X exists."
 
-在栈上的例子：`extract` 的句柄解析是 `itemStore.get(handle)`（`src/mcp/mcp-extras.ts` 的
-`extractImpl`），库里没有、又不是网盘绑定的 `tmdb:` 句柄就直接回 `{status:'error', error:'item
-not found'}`。所以**它只对已经在收件箱里的条目成立**；`content_search` 的命中不落库，拿那些 id
-调 `extract` 必然空手。这类现搜命中要深挖只有一条路：走它的 `url` 调 `read_url`。指错了的代价
-和 §8 主条一样——模型照着走进死胡同，而没有任何一处报错。
+Example on the stack: `extract` parses handles through `itemStore.get(handle)` (`extractImpl` in `src/mcp/mcp-extras.ts`).
+If the handle is not in the database and is not a netdisk-bound `tmdb:` handle, it directly returns `{status:'error', error:'item
+not found'}`. So **it only holds for items already in the inbox**; `content_search` hits are not written to the database, and calling `extract` with those ids
+necessarily comes up empty. There is only one way to dig deeper into these live-search hits: call `read_url` with their `url`. The cost of pointing to the wrong next step
+is the same as the main rule in §8: the model follows it into a dead end, and nothing reports an error anywhere.
 
-## 9. 回执体积是硬约束——在工具边界瘦身，不在数据源
+## 9. Receipt size is a hard constraint: slim at the tool boundary, not in the data source
 
-一个工具回执几十 KB，几次调用就把整轮对话顶到上下文上限，然后 400 `Prompt exceeds max length`
-——**整轮对话直接死掉**，不是降级。所以「这个回执有多大」和「这个工具好不好用」是同一个问题。
+A tool receipt can be tens of KB; a few calls push the whole conversation to the context limit and then produce a 400 `Prompt exceeds max length`
+error: **the entire conversation dies directly**, it does not degrade. So "how large is this receipt" and "how usable is this tool" are the same question.
 
-- **瘦身落在工具边界**（`src/mcp/content-search-slim.ts`、`web_search` 的 hits 上限），
-  **不落在数据源**。同一个能力常有第二个消费方胃口不同：`content_search` 的扇出前端搜索页也在吃，
-  前端要完整条目（媒体清单、`body_html`、`raw`）去渲染卡片，在扇出里瘦身会静默弄坏搜索页。
-- **给模型的那份只留判「切不切题」用得上的格**：id / 标题 / 作者 / 时间 / url / 截断的正文摘要 /
-  有没有媒体。深挖留给下一跳（现搜命中走 `url` + `read_url`）。**`raw` 一格永远不给**——它是整个
-  源站响应对象，B 站那种还嵌着 `<iframe>` 和成串图片 URL，一条就顶得上几十条摘要。
-  实测（一次真实的 `content_search`，111 条命中）：原样 2,501,691 字节 → 瘦身后 6,147 字节。
-- **条数封顶，并把截掉了多少条明写进回执**。不写的后果和 §7 里正文截断不写是同一个：模型拿一份
-  被悄悄裁过的结果当全集，静默答错。
-- **守卫要钉在线上载荷上**，不是只测纯函数：判据是发出去那份 JSON 文本里搜不到 `raw` / `body_html`
-  （`src/mcp/content-search-slim.test.ts`）。写完把实现改回胖回执确认它真的红——这类测试天然容易假绿。
+- **Slimming belongs at the tool boundary** (`src/mcp/content-search-slim.ts`, the hit limit for `web_search`),
+  **not at the data source**. The same capability often has a second consumer with a different appetite: the fan-out frontend search page also consumes `content_search`;
+  the frontend needs complete items (media list, `body_html`, `raw`) to render cards. Slimming inside fan-out silently breaks the search page.
+- **The version for the model keeps only fields useful for judging "relevant or not"**: id / title / author / time / url / truncated body summary /
+  whether media exists. Deep digging is left to the next hop (live-search hits use `url` + `read_url`). **The `raw` field is never given**: it is the entire
+  source-site response object; for sources like Bilibili, it can also contain `<iframe>` and strings of image URLs, so one item can be worth dozens of summaries.
+  Measured in practice (one real `content_search`, 111 hits): original 2,501,691 bytes → slimmed 6,147 bytes.
+- **Cap the item count, and write explicitly in the receipt how many items were cut off**. The consequence of not writing this is the same as not writing body truncation in §7: the model treats a
+  silently cut result as the complete set and silently answers wrong.
+- **Guards must pin the on-the-wire payload**, not only test pure functions: the check is that the JSON text being sent does not contain `raw` / `body_html`
+  (`src/mcp/content-search-slim.test.ts`). After writing the test, change the implementation back to the fat receipt and confirm it really turns red; this kind of test is naturally prone to false green.
 
-## 10. 相关
+## 10. Related
 
-- 概念模型与对话的形状：`docs/ARCHITECTURE.md`
-- 对话归宿主（Stream 不托管 DSH）：`internal design record`
-- 「搜到 → 接成订阅」这条链路的设计：`internal design record`
-- Search Agent（另一条 agent 路径，目标导向的搜索循环）：
+- Conceptual model and conversation shape: `docs/ARCHITECTURE.md`
+- Conversation belongs to the host (Stream does not host DSH): `internal design record`
+- Design for the "found by search → connect as subscription" path: `internal design record`
+- Search Agent (another agent path, a goal-directed search loop):
   `internal design record`
