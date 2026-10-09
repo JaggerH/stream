@@ -1,288 +1,288 @@
-# PACKAGE.md — Stream 包：能填哪几格、每格的契约是什么
+# PACKAGE.md — Stream packages: which slots they can fill and the contract of each slot
 
-**扩展 Stream 的单位只有一种：Stream 包。** 内置包住在仓库的 `packages/<id>/`（49 个），用户从 npm 装的第三方包住在 `<dataDir>/recipes/<@scope__name>/`（目录名是历史布局，装载器对两处一视同仁）。同一份 `package.json#stream` 描述、同一个扫描器、同一条装载路径。
+**There is exactly one unit for extending Stream: the Stream package.** Built-in packages live in the repo under `packages/<id>/` (49 of them); third-party packages the user installs from npm live under `<dataDir>/recipes/<@scope__name>/` (the directory name is a historical layout; the loader treats both locations identically). Same `package.json#stream` descriptor, same scanner, same loading path.
 
-**内置包 = 出厂快照，npm = 更新通道。** 每个内置 recipe 包同时是一个 npm 包（`packages/<id>/package.json` 的 `name`，`@streamapp/<id>`）。改 recipe 的动作是：改 → bump 该包 `version` → 合 `main`，CI（`release-recipes.yml`）把 npm 上没有的版本发出去；不 bump 就不发。**前提：只有已经在 npm 上的包由 CI 跟版本**——一个包的首发是人手动 `npm publish` 一次（哪些包公开是生意上的决定，CI 不靠"npm 上查不到"去推断该发）。用户 `stream update` 把新版装进 `<dataDir>/recipes/`，同名包整包盖住内置那份（`mountRecipePackages`），CLI 主包不用重发。`@streamapp/` scope 的包与内置层同等信任（凭据注入照常，`OFFICIAL_SCOPE`）；别的 scope 用同名照旧不拿凭据。**`STREAM_NPM_REGISTRY` 指着镜像时，`@streamapp/` 包多向官方源核一次校验和**（`officialRegistryIfMirror` → `mirrorVerdict`）：一致才算官方；不一致 / 官方源没这个版本 / 连不上 → 照装，但包目录里落一份 `.stream-trust.json`（`TRUST_SIDECAR`），闸 3 按第三方对待、`stream update` 也不走自动装。不核的话镜像站就成了「谁能拿凭据」的信任根，而信任根只能是 npm 官方的 scope 归属。后端每天查一次更新（调度中心里的 `recipe-update-check` 任务，可手动立即跑一次），只在日志里提示（`STREAM_RECIPE_UPDATE_CHECK=0` 关掉）。
+**Built-in package = factory snapshot; npm = update channel.** Every built-in recipe package is also an npm package (the `name` in `packages/<id>/package.json`, `@streamapp/<id>`). The workflow for changing a recipe: change it → bump that package's `version` → merge to `main`; CI (`release-recipes.yml`) publishes the versions npm does not have yet; no bump, no publish. **Precondition: CI tracks versions only for packages that are already on npm** — the first release of a package is a manual `npm publish` by a human (which packages are public is a business decision; CI does not infer "should publish" from "not found on npm"). The user's `stream update` installs the new version into `<dataDir>/recipes/`, and a package of the same name replaces the built-in copy as a whole (`mountRecipePackages`); the main CLI package does not need to be re-released. Packages in the `@streamapp/` scope are trusted at the same level as the built-in layer (credential injection works as usual, `OFFICIAL_SCOPE`); the same name under any other scope still gets no credentials. **When `STREAM_NPM_REGISTRY` points at a mirror, `@streamapp/` packages are additionally checked against the official registry's checksum** (`officialRegistryIfMirror` → `mirrorVerdict`): only a match counts as official; a mismatch / a version the official registry does not have / an unreachable official registry → the package is installed anyway, but a `.stream-trust.json` (`TRUST_SIDECAR`) is written into the package directory, gate 3 treats it as third-party, and `stream update` does not auto-install it. Without this check, the mirror would become the root of trust for "who gets credentials", and the root of trust can only be npm's official scope ownership. The backend checks for updates once a day (the `recipe-update-check` task in the scheduling center, which can also be run immediately by hand) and only prints a hint in the log (`STREAM_RECIPE_UPDATE_CHECK=0` turns it off).
 
-一个包声明它填了哪几个**能力槽位**：
+A package declares which **capability slots** it fills:
 
-| 槽位 | 声明处 | 它让宿主替包做什么 | 契约在 |
+| Slot | Declared in | What it lets the host do for the package | Contract in |
 |---|---|---|---|
-| Source 清单 | `manifests.yaml` 或 `stream.sources` | 把这些 Source 注册进 registry | §1 |
-| recipe 数据 | `*.recipe.json` + `stream.facility` | 交给 replay 运行时，manifest 由 recipe 的 `meta` 派生 | §2 |
-| 代码 | `activate.ts` + `stream.code` | 启动时调 `activate(ctx)`，收下它交出的 adapter / normalizer / 动作 | §3 |
-| 能力 | `stream.capability` | 在后端进程里 `mount(ctx, config)` 它，把它注册的工具接到 `/api/mcp` 上 | §5.9 |
-| docker 容器 | `stream.backend` | 建容器、接 `stream` 网络、健康检查、standby 回收、`/_p/<id>` 网关 | §4 |
-| 凭证域 | `stream.credentials` | 铸 broker token，容器凭它取 cookie | §5 |
+| Source manifests | `manifests.yaml` or `stream.sources` | Register these Sources into the registry | §1 |
+| recipe data | `*.recipe.json` + `stream.facility` | Hand them to the replay runtime; the manifest is derived from the recipe's `meta` | §2 |
+| code | `activate.ts` + `stream.code` | Call `activate(ctx)` at startup and accept the adapters / normalizers / actions it hands over | §3 |
+| capability | `stream.capability` | `mount(ctx, config)` it inside the backend process and wire the tools it registers to `/api/mcp` | §5.9 |
+| docker container | `stream.backend` | Create the container, attach it to the `stream` network, health-check it, standby reclaim, the `/_p/<id>` gateway | §4 |
+| credential domains | `stream.credentials` | Mint a broker token; the container uses it to fetch cookies | §5 |
 
-一个「插件」= 填了插件类槽位的包。它的目录长这样：
+A "plugin" = a package that fills the plugin-class slots. Its directory looks like this:
 
 ```text
 packages/<id>/
-  package.json      # descriptor：npm 壳（name/version）+ `stream` 字段承载领域字段
-                    #   （id、catalog 展示字段、backend 容器声明、credentials、normalizer key）
-  manifests.yaml    # 该包贡献的 Source manifests（顶层 YAML 列表）
-  adapter.ts        # 独占归属的 adapter 代码（可选收编；核心/共享 adapter 留在 src/，见 §10 表格）
-  activate.ts       # code 槽位的入口：导出 activate(ctx)，交出这个包贡献的 adapter / normalizer / 动作（见 §3）
+  package.json      # descriptor: the npm shell (name/version) + the `stream` field carrying domain fields
+                    #   (id, catalog display fields, backend container declaration, credentials, normalizer key)
+  manifests.yaml    # Source manifests contributed by this package (top-level YAML list)
+  adapter.ts        # adapter code owned exclusively by this package (optionally absorbed; core/shared adapters stay in src/, see the §10 table)
+  activate.ts       # entry point of the code slot: exports activate(ctx), hands over the adapters / normalizers / actions this package contributes (see §3)
 ```
 
-纯 recipe 包一格插件槽位都不填，目录里只有 `package.json` + 若干 `*.recipe.json`（例：`packages/bt0/`）。
-一个 recipe 包也可以再填代码槽位——`packages/xhs/` 就是四份 recipe + `activate.ts`（normalizer / enricher / adapter 全经
-`ctx.readSource` 跑本包自己的 recipe，见 §3.2），填了代码槽位它就进 `/api/plugins`。
+A pure recipe package fills none of the plugin slots; its directory contains only `package.json` + some `*.recipe.json` (example: `packages/bt0/`).
+A recipe package can also fill the code slot — `packages/xhs/` is four recipes + `activate.ts` (the normalizer / enricher / adapter all
+run the package's own recipes through `ctx.readSource`, see §3.2); once it fills the code slot it appears in `/api/plugins`.
 
-> 扫描器（`src/packages/scan.ts` 的 `scanPackages`，`src/plugins/loader.ts` 是它的薄壳）按文件夹装载：`package.json` 的 `stream` 字段为描述符（解析器 `src/packages/descriptor.ts` 的 `parseStreamDescriptor`），`manifests.yaml` 的顶层列表并入 `sources`（两处同时声明会直接报错）。`packages/` 顶层的散装 `*.yaml` 不是包，会被大声拒绝。内置包目录由配置字段 **`packages_dir`** 指定（默认 `./packages`）。包形状的权威设计见 `internal design record`，发布/安装流程见 `.claude/skills/share-recipes/SKILL.md`。Recipe 包的 Source **自描述**：由 recipe 的 `meta` 块经 `recipeToManifest`（`src/replay/recipe-manifest.ts`）派生出 `SourceManifest`——agent/用户生成的 recipe 无需手写 `manifests.yaml`（存在时是可选全量覆盖逃生口，仍过同一个 `manifestSchema`）。
+> The scanner (`scanPackages` in `src/packages/scan.ts`; `src/plugins/loader.ts` is a thin shell around it) loads by folder: the `stream` field of `package.json` is the descriptor (parsed by `parseStreamDescriptor` in `src/packages/descriptor.ts`), and the top-level list of `manifests.yaml` is merged into `sources` (declaring both at once is a hard error). A loose `*.yaml` at the top level of `packages/` is not a package and is rejected loudly. The built-in package directory is set by the config field **`packages_dir`** (default `./packages`). The authoritative design of the package shape is in `internal design record`; the publish/install flow is in `.claude/skills/share-recipes/SKILL.md`. The Sources of a recipe package are **self-describing**: a `SourceManifest` is derived from the recipe's `meta` block via `recipeToManifest` (`src/replay/recipe-manifest.ts`) — recipes generated by an agent/user need no hand-written `manifests.yaml` (when present it is an optional full-override escape hatch and still goes through the same `manifestSchema`).
 
-### 「是不是插件」按槽位判，不按目录判
+### "Is it a plugin" is decided by slot, not by directory
 
-判据是一个具名函数：**`fillsPluginSlot`**（`src/plugins/loader.ts`）——包填了 `backend` / `code` / `capability` / `normalizer` / `sources` / `sourceGrouping` / `credentials` 里任意一格，它就有东西要经插件那条投影出去。
+The check is a named function: **`fillsPluginSlot`** (`src/plugins/loader.ts`) — if a package fills any one of `backend` / `code` / `capability` / `normalizer` / `sources` / `sourceGrouping` / `credentials`, it has something to project through the plugin path.
 
-- **`/api/plugins` 只列填了插件类槽位的包**（今天 **22 个**，仓库 49 个包里的一部分）。纯 recipe 包不在那儿列。这是**产品口径**，不是遗漏——`/api/plugins` 回答的是「宿主替谁干活」。用户看的那份「我装了什么」是第三个读模型 `GET /api/packages`（两层全部的包，见 §8）。
-- **一个包两条槽位都填是合法的**（带容器的 recipe 包），它会同时出现在两个投影里——这正是按槽位判而不是按目录判的意义。
-- **判据宁可宽**：漏掉一个包 = 它的容器不被接管、`/_p/<id>` 恒 404、凭证 token 不铸，且**这类缺失没有任何日志会提到**。往 `StreamDescriptor` 加一个「要宿主替它做点什么」的新槽位时，`fillsPluginSlot` 也要加一行；数字由 `src/plugins/loader.real.test.ts` 钉着，判据一放宽就当场变红。
-- **两个投影不能重复吃同一份 manifest**：插件包的 `manifests.yaml` 已经走插件那条注册进 registry，recipe 投影就不许再吃一遍——同一份 manifest 进两个 registry group，`Registry.swapGroup` 会抛 `Duplicate manifest id`，后端起不来。
-- **想让界面上多列几个包，改的是投影，不是 `fillsPluginSlot`。** 这个判据同时管着三件事——容器要不要接管、`/_p/<id>` 通不通、凭证 token 铸不铸。为了让某个包在界面上露个面而放宽它，等于顺手让宿主去接管一个它本来不该碰的容器。「界面上列谁」和「宿主替谁干活」是两个问题，别用同一个开关。
+- **`/api/plugins` lists only packages that fill plugin-class slots** (today **22**, a subset of the 49 packages in the repo). Pure recipe packages are not listed there. This is the **product scope**, not an omission — `/api/plugins` answers "for whom does the host do work". The "what have I installed" view the user sees is a third read model, `GET /api/packages` (all packages from both layers, see §8).
+- **Filling both kinds of slot is legal** (a recipe package that carries a container); it then appears in both projections — which is exactly why the decision is by slot and not by directory.
+- **Keep the check generous**: missing a package = its container is not taken over, `/_p/<id>` is always 404, the credential token is not minted, and **nothing in any log mentions this kind of gap**. When adding a new slot to `StreamDescriptor` that means "the host should do something for the package", `fillsPluginSlot` needs a new line too; the number is pinned by `src/plugins/loader.real.test.ts`, which goes red on the spot if the check is loosened.
+- **The two projections must not consume the same manifest twice**: the `manifests.yaml` of a plugin package is already registered into the registry through the plugin path, so the recipe projection must not consume it again — the same manifest in two registry groups makes `Registry.swapGroup` throw `Duplicate manifest id`, and the backend does not start.
+- **To list more packages in the UI, change the projection, not `fillsPluginSlot`.** This check governs three things at once — whether the container is taken over, whether `/_p/<id>` is reachable, whether the credential token is minted. Loosening it just to make a package show up in the UI would incidentally make the host take over a container it should not touch. "Who is listed in the UI" and "for whom the host does work" are two different questions; do not use one switch for both.
 
-### 界面上的两个入口：「源」和「组件」
+### The two UI entry points: "Sources" and "Components"
 
-按用户在做的动作分，不按代码分层分：
+Split by what the user is doing, not by code layering:
 
-| 入口 | 回答的问题 | 频率 | 吃哪个端点 |
+| Entry | Question it answers | Frequency | Endpoints it consumes |
 |---|---|---|---|
-| **源**（`/sources`） | 找一个源，把它配成我的流 | 天天 | `/api/plugins` + `/api/plugins/:id/sources` |
-| **组件**（`/packages`） | 装了什么 / 还活着吗 / 怎么配 / 再装一个 | 出事或想扩能力才来 | `/api/packages` + `/api/providers`（装卸走 `/api/recipes/packages/*`） |
+| **Sources** (`/sources`) — UI label 「源」 | Find a Source and configure it into my Stream | Every day | `/api/plugins` + `/api/plugins/:id/sources` |
+| **Components** (`/packages`) — UI label 「组件」 | What is installed / is it still alive / how do I configure it / install another one | Only when something breaks or when extending capabilities | `/api/packages` + `/api/providers` (install/uninstall go through `/api/recipes/packages/*`) |
 
-接缝在**使用与拥有**之间。所以启用开关、容器状态、装卸升级**只在「组件」页有一份实现**——
-源页那边只有一个只读的「已停用」标记和一颗跳过去的按钮。同一个开关在两处各写一份，
-迟早说法不一致，而不一致的表现是"这一页说开着、那一页说关着"，两边单看都正常。
+The seam sits between **using and owning**. So the enable switch, container status, and install/uninstall/upgrade
+**have exactly one implementation, on the Components page** —
+the Sources page only has a read-only "disabled" marker (「已停用」) and a button that jumps over. If the same switch were written twice,
+the two copies would sooner or later disagree, and the symptom of disagreement is "this page says it is on, that page says it is off", with each page looking fine on its own.
 
-组件页同列两类组件：**包**（三段，见下）与 **Provider 行**（能力行段：类别/成员数/parked，
-点行进 Provider 工作台——成员/路由/测配那套定制编辑面整套在工作台里，`/providers` 路由保留
-但**不是一级入口**，spec `2026-08-17-component-page-design.md`）。
+The Components page lists two kinds of component side by side: **packages** (three bands, see below) and **Provider rows** (the capability-row band: category / member count / parked;
+clicking a row enters the Provider workbench — the whole custom editing surface for members / routes / test-and-configure lives in the workbench; the `/providers` route is kept
+but is **not a first-level entry**; spec `2026-08-17-component-page-design.md`).
 
-包的部分按**「坏了会怎样」**分三段（具名判据 `bandOf`，`app/src/components/packages/PackagesPage.tsx`）：
-容器（`hosted`）/ 内置能力（提供源清单或代码）/ 抓取配方（只有 recipe 数据）。
-容器那段**只在出事时占版面**：出错的常驻浮出，其余收进折叠。设计见
-`internal design record`。
+The package part is split into three bands by **"what happens when it breaks"** (named criterion `bandOf`, `app/src/components/packages/PackagesPage.tsx`):
+containers (`hosted`) / built-in capabilities (provide Source manifests or code) / harvest recipes (recipe data only).
+The container band **takes up space only when something goes wrong**: erroring ones are pinned open, the rest are folded away. The design is in
+`internal design record`.
 
-### 宿主替包做的那些事在哪
+### Where the things the host does for a package live
 
-Stream 进程（`src/`）是 host/orchestrator。它负责：
+The Stream process (`src/`) is the host/orchestrator. It is responsible for:
 
-- 加载 **source manifests**（`packages/<id>/manifests.yaml`）——每个数据源的声明式契约（`src/manifest/types.ts`）。
-- 加载 **plugin descriptors**（`packages/<id>/package.json` 的 `stream` 字段）——把设施变成 Stream 托管插件的标准（`src/plugins/types.ts`）。
-- 注册 **adapters**——把设施 API → Stream item，按 `manifest.adapter` 路由。设施的 adapter 由**包自己**在 `activate(ctx)` 里交出（`packages/<id>/adapter.ts` + `activate.ts`，见 §3）；`src/bootstrap.ts` 手工织的只剩宿主四件（builtin / rsshub / replay / browser）。
-- 注册 **normalizers**（`src/content/normalize.ts` 的 `registerNormalizer`）——把原始 item 归一化成展示模型，按 `manifest.normalizer` 路由（`presenter` 字段仍被接受，作为向后兼容别名）。有包的 normalizer 由包在 `activate` 里交出；名字撞了一律硬拒、不覆盖。
-- 解析 **credentials**（`src/credentials/*`）——登录态 cookie 是凭证提供方 #1（见 §5）。
-- 把包交出的 **enricher** 露到两个面上（`src/http/app.ts` 的 `GET /api/enrich` 与 `src/http/enrich-ws.ts` 的 WS 命令 `enrich.open`）——「这条 item 打开时去哪现取」由包的 normalizer 写在 `Content.enrich` 里，前端照着调，宿主不认识任何站（契约见 §3.2，协议见 `docs/API.md`「包交出来的处理器」）。
-- 读 **facility 级声明**（`package.json#stream` 的 `rateLimit` / `cookieDomain` / `serving` / `retires` / `providers` / `links` / `rsshubNamespaces` / `rsshubNoBrowserNamespaces` / `rsshubCookieEnv` / `item`）——它们是**关于这个站的事实**，宿主只是读表：限速、拉登录态、媒体直链走代理、把被顶掉的 RSSHub 路由挡在目录外、建这个包出的 Provider 行、认出「这条链接归谁、是什么」、给认领的 RSSHub 命名空间盖上 normalizer、不因上游虚标的 `requirePuppeteer` 丢掉纯 HTTP 能跑的路由、把登录态按 RSSHub 要的环境变量名递过去。**声明 ≠ 槽位**：填了它们的包仍是纯 recipe 包，不进 `/api/plugins`（`fillsPluginSlot` 不认它们）。见下一节。
+- Loading **source manifests** (`packages/<id>/manifests.yaml`) — the declarative contract of each data source (`src/manifest/types.ts`).
+- Loading **plugin descriptors** (the `stream` field of `packages/<id>/package.json`) — the standard that turns a facility into a Stream-hosted plugin (`src/plugins/types.ts`).
+- Registering **adapters** — facility API → Stream item, routed by `manifest.adapter`. A facility's adapter is handed over by the **package itself** in `activate(ctx)` (`packages/<id>/adapter.ts` + `activate.ts`, see §3); what `src/bootstrap.ts` still wires by hand is only the four host ones (builtin / rsshub / replay / browser).
+- Registering **normalizers** (`registerNormalizer` in `src/content/normalize.ts`) — normalize a raw item into the display model, routed by `manifest.normalizer` (the `presenter` field is still accepted as a backward-compatible alias). A package's normalizer is handed over by the package in `activate`; a name collision is always a hard rejection, never an override.
+- Resolving **credentials** (`src/credentials/*`) — login-state cookies are credential provider #1 (see §5).
+- Exposing the **enricher** a package hands over on two surfaces (`GET /api/enrich` in `src/http/app.ts` and the WS command `enrich.open` in `src/http/enrich-ws.ts`) — "where to fetch on demand when this item is opened" is written by the package's normalizer into `Content.enrich`, the frontend calls accordingly, and the host knows no site (contract in §3.2, protocol in "Handlers a package hands over" of `docs/API.md`).
+- Reading **facility-level declarations** (`rateLimit` / `cookieDomain` / `serving` / `retires` / `providers` / `links` / `rsshubNamespaces` / `rsshubNoBrowserNamespaces` / `rsshubCookieEnv` / `item` of `package.json#stream`) — they are **facts about this site**, and the host merely reads the table: rate limiting, pulling login state, routing media direct links through the proxy, keeping RSSHub routes that have been superseded out of the catalog, building the Provider rows this package contributes, recognizing "who owns this link and what is it", stamping a normalizer onto the RSSHub namespaces it has claimed, not dropping routes that run fine over plain HTTP because of an upstream falsely marked `requirePuppeteer`, and handing login state over under the environment-variable name RSSHub expects. **Declaration ≠ slot**: a package that fills them is still a pure recipe package and does not enter `/api/plugins` (`fillsPluginSlot` does not recognize them). See the next section.
 
-### 宿主与包的边界：什么算「宿主认识某个站」
+### The host/package boundary: what counts as "the host knows a site"
 
-**一句话：宿主只放机制和接口；「某个站长什么样、怎么调它」住在那个站的包里。**「宿主」= 后端 `src/`、
-`shared/`、前端 `app/src/`、扩展 `extension/src/`、DSH 产物 `hosts/dsh/src/`、能力包 `capabilities/*/src/`
-——守卫 `src/no-facility-names.guard.test.ts` 拿同一张名单扫这六个根（`.ts` / `.tsx`）。
+**In one sentence: the host holds only mechanisms and interfaces; "what a site looks like and how to call it" lives in that site's package.** "Host" = backend `src/`,
+`shared/`, frontend `app/src/`, extension `extension/src/`, the DSH artifact `hosts/dsh/src/`, and capability packages `capabilities/*/src/`
+— the guard `src/no-facility-names.guard.test.ts` scans these six roots (`.ts` / `.tsx`) against one and the same list.
 
-判「宿主认不认识某个站」只看代码，不看散文：
+Whether "the host knows a site" is decided by code only, not by prose:
 
-| 算「认识」（不许出现在宿主） | 不算（允许） |
+| Counts as "knows" (must not appear in the host) | Does not count (allowed) |
 |---|---|
-| 站点域名的**代码级**出现（字符串、正则、URL 拼接） | 注释里拿某站当**活体证据**（哪天、哪条、多少秒、哪个 CDN 拒了） |
-| 源 id / 包名 / 平台键的字面量（`'<站>-detail'`、`@streamapp/<站>`） | 自动生成的整网目录（`app/src/lib/source-domains.ts`，RSSHub 全站表，按完整路径豁免） |
-| 只为某站存在的标识符（`<站>Comment`、`<站>NoteId`、`fetch<站>`） | 金样语料（`golden-*.ts`、`gold.ts`）与测试夹具（`__fixtures__/`、`*.test.*`） |
-| 读某站上游响应的字段名 | **宿主的领域模型**：TMDb id 作为影视身份主键；网盘分享链接文法（`shared/netdisk/share-link.ts`，覆盖没有包的网盘） |
-| | **网盘领域实现**：`shared/netdisk/<盘>/`（夸克 / 百度的验分享、转存、播放、跳转客户端）与宿主侧的网盘驱动映射（`src/netdisk/backend.ts`、`src/netdisk/sync.ts` 的挂载路径 / 驱动名 → 网盘键）。网盘是宿主的一等领域（匹配、归档、追更都建在它上面），逻辑只有一份、由宿主与 `capabilities/netdisk` 能力包共用——与分享链接文法同一性质 |
-| | **AList / OpenList 是宿主的网盘底座**：`src/netdisk/alist-client.ts`、接管序列、`settings.rows('alist')`、离线成员 `{plugin:'alist', source:'alist-audio'}` 属于领域模型。「哪个包是底座」全仓只由 `src/netdisk/base-package.ts` 的 `NETDISK_BASE_PACKAGE_ID` 回答；**前端仍不按包 id 分支**——后端在 `/api/packages` 出线上标 `role: 'netdisk-base'`，前端只看 `role` |
-| 按站名分支（`stream_id.includes('<站>')`、`source === '<站>-detail'`） | **宿主的产品默认值**：梯子默认成员的顺序、默认频道的种子源——必须写**包全名**（`@streamapp/<包>/<源>`），且在旁边注释写「为什么是宿主的判断」 |
+| A site domain appearing in **code** (strings, regexes, URL concatenation) | A comment citing a site as **live evidence** (which day, which item, how many seconds, which CDN rejected) |
+| Literals of Source ids / package names / platform keys (`'<site>-detail'`, `@streamapp/<site>`) | The auto-generated whole-network catalog (`app/src/lib/source-domains.ts`, the full RSSHub site table, exempted by its full path) |
+| Identifiers that exist for one site only (`<site>Comment`, `<site>NoteId`, `fetch<site>`) | Golden corpora (`golden-*.ts`, `gold.ts`) and test fixtures (`__fixtures__/`, `*.test.*`) |
+| Reading the field names of a site's upstream response | **The host's domain model**: the TMDb id as the primary key of film/TV identity; the netdisk share-link grammar (`shared/netdisk/share-link.ts`, which also covers netdisks that have no package) |
+| | **Netdisk domain implementation**: `shared/netdisk/<disk>/` (the Quark / Baidu clients for verifying shares, saving, playback, redirects) and the host-side netdisk driver mapping (the mount path / driver name → netdisk key in `src/netdisk/backend.ts` and `src/netdisk/sync.ts`). The netdisk is a first-class domain of the host (matching, archiving and the follow loop are all built on it), and the logic exists once, shared by the host and the `capabilities/netdisk` capability package — the same nature as the share-link grammar |
+| | **AList / OpenList is the host's netdisk base**: `src/netdisk/alist-client.ts`, the takeover sequence, `settings.rows('alist')`, and the offline member `{plugin:'alist', source:'alist-audio'}` belong to the domain model. "Which package is the base" is answered in exactly one place in the whole repo, `NETDISK_BASE_PACKAGE_ID` in `src/netdisk/base-package.ts`; **the frontend still does not branch on package id** — the backend puts `role: 'netdisk-base'` on the wire in `/api/packages`, and the frontend looks only at `role` |
+| Branching on site name (`stream_id.includes('<site>')`, `source === '<site>-detail'`) | **The host's product defaults**: the order of the default members of a ladder, the seed Sources of the default Channels — must be written with the **full package name** (`@streamapp/<package>/<source>`), with a comment next to it saying "why this is the host's call" |
 
-**前端同一条规则，还多一条：前端不按站分支。** 前端只渲染 item / content / 源目录**申报了什么**：
-作者头像去哪取（`item.author_enrich`）、有没有点赞按钮（`item.actions`）、源叫什么（`item.source_label`）、
-图标用哪个域名（`item.source_site` / 源目录的 `site`）都由包声明、后端投影给前端（出线口见 `docs/API.md`
-「Items 出线形状里的投影格」）。
+**The frontend follows the same rule, plus one more: the frontend does not branch on site.** The frontend only renders what the item / content / Source catalog **declares**:
+where to fetch the author avatar (`item.author_enrich`), whether there is a like button (`item.actions`), what the Source is called (`item.source_label`),
+which domain the icon uses (`item.source_site` / the `site` of the Source catalog) are all declared by the package and projected to the frontend by the backend (the wire format is in `docs/API.md`,
+"Projection cells in the Items wire shape").
 
-**知识该放哪个声明位**（`package.json#stream` 的全部键以 `STREAM_DECLARATION_KEYS` 为准、`code` 的子格以
-`codeSchema` 为准，均在 `src/packages/descriptor.ts`）：
+**Which declaration slot the knowledge belongs in** (all keys of `package.json#stream` are as defined by `STREAM_DECLARATION_KEYS`, and the sub-cells of `code` as defined by
+`codeSchema`, both in `src/packages/descriptor.ts`):
 
-| 我要告诉宿主的是…… | 声明位 | 契约 |
+| What I want to tell the host… | Declaration slot | Contract |
 |---|---|---|
-| 这个包是谁、叫什么、官网在哪（官网主机 = 源目录与条目的 `site`） | `id` / `name` / `tagline` / `description` / `homepage` / `repository` / `docsUrl` / `author` / `facility` | §0 |
-| 要求哪个版本的宿主 | `hostVersion` | §6.3 |
-| 我出哪些 Source | `sources` / `manifests.yaml`；recipe 的 `meta` 派生 | §1、§2 |
-| 这些 Source 怎么在选择面上分组 | `sourceGrouping` | §8 |
-| 我的原始条目怎么变成 Content | `normalizer`（旧别名 `presenter`）+ `code.normalizers` | §3 |
-| 我的 Source 由哪段代码执行 | `code.entry` + `code.adapters` | §3.1 |
-| 条目打开时去哪现取剩下的 | `code.enrichers` + normalizer 写的 `Content.enrich` | §3.2 |
-| 登录态掉了怎么重登 | `code.connect`（域名必须在 `credentials` 里） | §3.2、§3.4.6 |
-| 我需要哪些域的登录态 | `credentials` / `cookieDomain` | §5 |
-| 我要一个容器 | `backend` | §4 |
-| 我带一个能力（MCP 工具） | `capability` | §5.9 |
-| 这个站多快会封我 | `rateLimit` | §0.5 |
-| 这个站的媒体直链浏览器拿不到 | `serving` | §0.5 |
-| 我顶掉了哪些 RSSHub 目录路由 | `retires` | §0.5 |
-| 我出 Provider 行、是哪些调用点的默认成员 | `providers`（`callsites`） | §0.5 |
-| 哪些链接归我（主机、短链）、是什么（曲目 / 下载中转页） | `links`（`hosts` / `shortHosts` / `patterns`；老别名 `trackUrl` / `downloadPages`） | §0.5「`links`」 |
-| RSSHub 目录里这些命名空间归我渲染 / 其实不要浏览器 / cookie 按什么环境变量名递 | `rsshubNamespaces` / `rsshubNoBrowserNamespaces` / `rsshubCookieEnv` | §0.5 |
-| 资源搜索里我这个源怎么认 | `searchSources` | §0.5 |
-| 我的条目上要画作者头像 / 可点动作 | `item`（`authorEnrich` / `actions`） | §0.5 |
-| 我这份 recipe 能被哪类聚合自动收进去 / 是哪个品类的产品库 | recipe 的 `meta.provides` / `meta.catalog` | §0.5 末 |
-| 旧形 recipe 包的判别字段 | `type` / `schemaVersion` | §2.7.1 |
-| 这个包不许用户关 | `required` | §8 |
+| Who this package is, what it is called, where its website is (website host = the `site` of the Source catalog and of items) | `id` / `name` / `tagline` / `description` / `homepage` / `repository` / `docsUrl` / `author` / `facility` | §0 |
+| Which host version is required | `hostVersion` | §6.3 |
+| Which Sources I provide | `sources` / `manifests.yaml`; derived from the recipe's `meta` | §1, §2 |
+| How these Sources are grouped on the selection surface | `sourceGrouping` | §8 |
+| How my raw items become Content | `normalizer` (old alias `presenter`) + `code.normalizers` | §3 |
+| Which code executes my Source | `code.entry` + `code.adapters` | §3.1 |
+| Where to fetch the rest on demand when an item is opened | `code.enrichers` + the `Content.enrich` written by the normalizer | §3.2 |
+| How to log in again when the login state is lost | `code.connect` (the domain must be in `credentials`) | §3.2, §3.4.6 |
+| Which domains' login state I need | `credentials` / `cookieDomain` | §5 |
+| I want a container | `backend` | §4 |
+| I carry a capability (MCP tools) | `capability` | §5.9 |
+| How fast this site will ban me | `rateLimit` | §0.5 |
+| This site's media direct links are not reachable by the browser | `serving` | §0.5 |
+| Which RSSHub catalog routes I supersede | `retires` | §0.5 |
+| I provide Provider rows, and for which callsites I am the default member | `providers` (`callsites`) | §0.5 |
+| Which links belong to me (hosts, short links) and what they are (track / download relay page) | `links` (`hosts` / `shortHosts` / `patterns`; old aliases `trackUrl` / `downloadPages`) | §0.5 "`links`" |
+| In the RSSHub catalog, which namespaces I render / which in fact need no browser / under which environment-variable name the cookie is handed over | `rsshubNamespaces` / `rsshubNoBrowserNamespaces` / `rsshubCookieEnv` | §0.5 |
+| How my Source is recognized in resource search | `searchSources` | §0.5 |
+| My items need an author avatar / clickable actions drawn | `item` (`authorEnrich` / `actions`) | §0.5 |
+| Which kind of aggregation may automatically take this recipe in / which category's product library it is | the recipe's `meta.provides` / `meta.catalog` | end of §0.5 |
+| The discriminator fields of an old-form recipe package | `type` / `schemaVersion` | §2.7.1 |
+| The user may not turn this package off | `required` | §8 |
 
-**新增声明位的规矩**：先查上表有没有能表达的；没有才加。加的时候四样一起给：schema（`descriptor.ts`）、
-装载期校验（坏声明整个包拒装，错误信息指到字段路径）、漂移守卫（`STREAM_DECLARATION_KEYS` 驱动的
-`src/replay/recipe-package.declares-knowledge.test.ts` 会逼你回答「它算不算 facility 知识」）、上表一行。
+**Rules for adding a declaration slot**: first check whether the table above can already express it; add one only if not. When adding, give four things together: the schema (`descriptor.ts`),
+load-time validation (a bad declaration makes the whole package refuse to install, and the error message points at the field path), a drift guard (the
+`src/replay/recipe-package.declares-knowledge.test.ts`, driven by `STREAM_DECLARATION_KEYS`, forces you to answer "does it count as facility knowledge"), and a row in the table above.
 
-> 本文只覆盖架构中的 **Plugin 层**（Source 的归属与执行边界）。五个概念
-> （Channel / Stream / Provider / Source / Plugin）的权威定义、不变量与数据流见
-> **[docs/ARCHITECTURE.md](ARCHITECTURE.md)**。
-
----
-
-## 0. 终局形态：组件模型（目标态，分片落地中）
-
-> 本节写的是**目标态**，不是现状。现状（各槽位怎么声明、怎么装载）从 §1 起；本节定的是
-> 这一切最终收敛成什么样，分片迁移的 spec 落地一片就把那一片从"目标态"改写成正文。
-
-**组件 = 可装、可配、可停、可被引用的管理单位。** Stream 里够得上组件的只有两类：
-**包**（builtin / npm 装入）和 **Provider 行**（系统件 / 用户自建）。**Source 不是组件**——
-它是包声明出来的展开项，管理面上折叠在所属包之下；**Channel 不是组件**——它是用户数据
-（订阅与视图），归频道页管。
-
-三条收敛，对齐 DSH/cordis 家族的组件形状：
-
-1. **一切可配置的东西 = 一个带 schema 的 row。** schema 用
-   [schemastery](https://github.com/shigma/schemastery)（cordis 家族的 schema 库；内核已是
-   cordis，DSH 用的同一个）声明字段、类型、默认值。一份声明三处受益：写入校验、分层合并
-   时的默认值语义、**表单自动生成**。今天的四套手搓各归各位：6 个 `/api/settings/*` 端点族
-   的手写 GET/PUT + 手画表单、源 `runtime_config` 的 `withRuntimeDefaults` 两层合并、
-   Provider 行的自带编辑面、频道槽位的局部覆盖——全部换成同一个 row 模型。手写表单只留给
-   真需要定制交互的（如网盘目录选择器）。
-2. **存储一张分层表**：`层 + rowId + 值`，合并顺序固定为 **内置默认 → 用户全局 → 局部**
-   （频道槽位 `options.slots` 就是局部层的一个实例，语义不变只换存法）。既有判据保住：
-   空串 = 用户主动清空，不回落默认。
-3. **一张组件表的管理面**——就是「组件」页：包三段 + Provider 能力行段同列，Provider
-   工作台是点行进入的详情面，管理入口共 3 个（见上「界面上的两个入口」）。尚欠：包行的
-   「被谁引用」（Stream 成员 / binding 反查）。
-
-**不动的边界**：「Stream 包 ≠ Cordis 插件」不变量保持（见 ARCHITECTURE 内核一节）——
-收敛的是**配置与管理模型**，不是装载机制；包仍是跨进程信任边界，六格槽位契约（§1–§5）
-原样有效。装载层是否也交给 cordis Loader 是独立的后续决策，不在本节承诺内。
+> This document covers only the **Plugin layer** of the architecture (ownership and execution boundary of a Source). The authoritative definitions, invariants and data flow of the five concepts
+> (Channel / Stream / Provider / Source / Plugin) are in
+> **[docs/ARCHITECTURE.md](ARCHITECTURE.md)**.
 
 ---
 
-## 0.5 facility 级声明：`rateLimit` / `cookieDomain` / `serving` / `retires` / `providers` / `links` / `rsshubNamespaces` / `rsshubNoBrowserNamespaces` / `rsshubCookieEnv` / `searchSources` / `item`
+## 0. End state: the component model (target state, landing in slices)
 
-**包 = 一个 facility 的全部知识单位。** 一家站的事实在它的包上声明一次，所属每条 recipe 自动继承；
-源码里只有泛化机制。判据："这条知识是关于**站**的（CDN 脾气、限速、登录域、顶掉了哪条上游路由），
-还是关于**某个接口**的（字段路径）？"前者进 `package.json#stream`，后者进 recipe。
+> This section describes the **target state**, not the current state. The current state (how each slot is declared and loaded) starts at §1; this section defines
+> what it all eventually converges to, and each time a migration slice's spec lands, that slice is rewritten from "target state" into body text.
 
-| 字段 | 含义 | 消费方 | 生效时机 |
+**Component = a management unit that can be installed, configured, stopped, and referenced.** Only two kinds of thing in Stream qualify as components:
+**packages** (built-in / installed from npm) and **Provider rows** (system-provided / user-created). **A Source is not a component** —
+it is an expansion item declared by a package, folded under its owning package in the management surface; **a Channel is not a component** — it is user data
+(subscriptions and views), managed by the Channels page.
+
+Three convergences, aligned with the component shape of the DSH/cordis family:
+
+1. **Everything configurable = a row with a schema.** The schema is declared with
+   [schemastery](https://github.com/shigma/schemastery) (the schema library of the cordis family; the kernel is already
+   cordis, and DSH uses the same one) for fields, types and defaults. One declaration benefits three places: write-time validation, default-value semantics in layered
+   merging, and **automatic form generation**. The four hand-rolled mechanisms of today each go to their place: the hand-written GET/PUT + hand-drawn forms of the 6 `/api/settings/*`
+   endpoint families, the two-layer merge of `withRuntimeDefaults` for a Source's `runtime_config`, the Provider row's own editing surface, the partial overrides of Channel slots — all replaced by the same row model. Hand-written forms remain only for what
+   genuinely needs custom interaction (such as the netdisk directory picker).
+2. **One layered table for storage**: `layer + rowId + value`, with a fixed merge order of **built-in default → user global → local**
+   (the Channel slot `options.slots` is one instance of the local layer; the semantics are unchanged, only the storage changes). The existing criterion is preserved:
+   an empty string = the user deliberately cleared it, and does not fall back to the default.
+3. **One management surface over one component table** — the "Components" page: the three package bands + the Provider capability-row band listed side by side, the Provider
+   workbench is the detail surface entered by clicking a row, and there are 3 management entry points in total (see "The two UI entry points" above). Still owed: the package row's
+   "referenced by whom" (reverse lookup of Stream members / bindings).
+
+**Boundary that does not move**: the invariant "Stream package ≠ Cordis plugin" holds (see the kernel section of ARCHITECTURE) —
+what converges is the **configuration and management model**, not the loading mechanism; a package remains a cross-process trust boundary, and the six-slot contract (§1–§5)
+stays in force as is. Whether the loading layer is also handed to the cordis Loader is a separate later decision, not committed to in this section.
+
+---
+
+## 0.5 Facility-level declarations: `rateLimit` / `cookieDomain` / `serving` / `retires` / `providers` / `links` / `rsshubNamespaces` / `rsshubNoBrowserNamespaces` / `rsshubCookieEnv` / `searchSources` / `item`
+
+**Package = the complete knowledge unit of one facility.** The facts of a site are declared once on its package, and every recipe that belongs to it inherits them automatically;
+the source code holds only generic mechanisms. The check: "is this piece of knowledge about the **site** (the CDN's temperament, rate limits, login domains, which upstream routes it supersedes),
+or about **one particular endpoint** (field paths)?" The former goes into `package.json#stream`, the latter into the recipe.
+
+| Field | Meaning | Consumer | When it takes effect |
 |---|---|---|---|
-| `rateLimit` | 频率闸门（多包同 facility 取最严） | 采集 `FacilityRateLimiter` | 热重载即生效 |
-| `cookieDomain` | 登录态从哪个域拉 | 凭证注入 | 热重载即生效 |
-| `serving[]` | `{ match, hosts?, referer?, reason }`：命中 `match` 的媒体直链改由后端代理、可换 `hosts` 里的备选主机；`referer` = 这台主机的字节要带哪个 Referer 才给（反向防盗链的图床，范例 `packages/rsshub` 的豆瓣图床），宿主替它取字节的每一处（图片代理 / 海报比对 / 本表的代理透传）都带上 | `src/media/serving.ts` `servingPolicyFor`（播放 + 转写取字节）、`refererForUrl`（`src/http/image-fetch.ts` / `src/video/poster-similarity.ts`） | 热重载即生效（thunk 现取） |
-| `retires` | `{ 'rsshub:<ns>/<path>': 理由 }`：这个包顶掉了哪些 RSSHub 目录路由——上游已使它失效，**或本包一条源接管了同一条路由** | `src/rsshub-catalog.ts` 解析目录时挡掉；`src/providers/seed.ts` `pruneDeadMembers` 清掉指向它的系统行成员 | **下一次目录刷新 / 重启**（目录只在那时解析） |
-| `providers[]` | 这个包出的 Provider 行（`{id, category, serveKeys, strategy, label, description, members, callsites?, fallback?, contract?, expand?, provides?}`，形状见 `src/packages/descriptor.ts` 的 `ProviderDeclaration`）。宿主并进身份表、`ensureSystemRows` 建行并标 `system:true`。`strategy:'expand'` 必须带 `expand`（A→B 组合子配置，同进同退）；`provides:[标签]` 让这条行**以组合成员的身份**被任何 `{mode:'auto', provides:标签}` 段收进去（与源 manifest 的 `provides` 同一张标签表，拿原始输入，本行与祖先行自动跳过）——包出的组合体行靠它进宿主的聚合行，不点名 | `src/providers/identities.ts` → `src/providers/seed.ts`；auto 段在 `src/providers/executor.ts` | **下一次启动**（身份表是快照，理由见 identities.ts 头注） |
-| `links` | 「哪些链接归我、是什么东西」：`{ hosts, shortHosts?, patterns? }`——认领的主机（带 / 不带 platform）、短链主机、路径级类型（`track` 带命名组 `id`；`download-page` 带 `yields`，兼作 SSRF 白名单）。详见本节末「`links`」 | 认领函数 `src/links/recognize.ts`（`content.enrich` 派发键、曲目识别、下载中转页、`GET /api/links/recognize`）；校验 `src/packages/links.ts` | 热重载即生效（thunk 现取） |
-| `trackUrl[]` / `downloadPages[]` | 迁移期别名，装载时翻译成 `links.patterns`，见本节末「`links`」。内置包不许再写 | — | — |
-| `searchSources[]` | 「资源搜索里我这个源怎么认」：`{ source \| provider, key, label, param, kind: 'digest'\|'flat', nsfw?, searchUrl? }`。`source`（本包局部名，装载期补全名；含 `:` 的 RSSHub 目录路由 id `rsshub:<ns>/<path>` 原样保留——目录路由不归任何包命名空间，范例 `packages/rsshub`）与 `provider`（本包出的行 id，组合体以行的身份出现）恰给一个；`key` 打在 `Release.source` 上给前端配徽标；`param` 是主查询参数名；`kind` 是条目形状（`digest` = 一条是「片名 + 一串网盘链接」的合集体，`flat` = 一行一个种子）；`searchUrl` 是站内搜索页模板，`{q}` 换成编码后的查询词 | `src/search/seeds.ts` `searchMetaBySourceId`（整张表都来自包声明，宿主不留一行） | 热重载即生效（thunk 现取，同 `links`） |
-| `rsshubNamespaces[]` | 「RSSHub 目录里这些命名空间的路由用我的 normalizer」，normalizer 键 = 包 facility | `src/rsshub-catalog.ts` 解析目录时盖上 `normalizer`，同时把路由的 `facility.label` 换成包名（`facility.key` 不变） | **下一次目录刷新 / 重启** |
-| `rsshubNoBrowserNamespaces[]` | 「目录里这些命名空间的路由标了 `requirePuppeteer`，但带 cookie 走纯 HTTP 就能跑」——包对上游标记的一句反证。不声明的命名空间里标了 puppeteer 的路由一律不进目录（宿主没有浏览器，也不点名任何站） | `src/rsshub-catalog.ts` 解析目录时不因 `requirePuppeteer` 丢掉它们（各包声明取并集，两个包说同一个命名空间不算冲突） | **下一次目录刷新 / 重启** |
-| `item` | 「本包的源产出的条目上多带什么」：`{ authorEnrich?: { enricher, params }, actions?: [{ id, icon, label, recipe, params, toggle: [未按下发的, 已按下发的] }] }`。`params` 的值里只认 `{点路径}` 占位符（从条目上取：`author`、`content.enrich.params.<k>`、`content.meta.<k>`…），**任何一个取不到那条整条不出**；不做表达式、不做条件。`authorEnrich` 只在条目没有 `author_avatar` 且有 `author` 时出，enricher 回 `{ name?, face?, url? }`（`url` 是作者主页，站点地址只住包里）。动作点一下走 `POST /api/recipes/action`，参数 = `params` + `action: toggle[…]`。装载期校验（任一不过整个包拒装）：`recipe` 必须是**本包全名**（包没有 npm 名就不许声明动作）、`icon` 在宿主词表（`shared/item/actions.ts` 的 `ITEM_ACTION_ICONS`，今天 `heart` / `bookmark`）、`toggle` 恰两个非空值、动作 id 不重复、`authorEnrich.enricher` 在本包 `code.enrichers` 里。**只作用于本包的源**：`rsshub:<ns>/…` 按 `rsshubNamespaces` 认领，其余按源目录那条的 `facility.key` | `src/packages/item-projection.ts`，经出线口 `toClientItem`（四条条目读口都走它）**投影时现算**——不写进入库的 content，存量立刻生效、包升级也立刻生效 | 热重载即生效（thunk 现取） |
-| `rsshubCookieEnv` | `NAME_{CookieName}`：把该域的 cookie 串写进这个环境变量交给 RSSHub，`{CookieName}` 换成同名 cookie 的值。文法 `/^[A-Z][A-Z0-9_]*(\{[A-Za-z0-9_]+\}[A-Z0-9_]*)*$/`，命中不了整个包拒装。模板表按**包 facility 和 `rsshubNamespaces` 里每个命名空间**各登记一份（RSSHub 路由的 `inject.ref` 是命名空间），两个包对同一个键给出不同模板时后到的被忽略并落一行日志 | `src/credentials/cookie-provider.ts`（先查它，再查宿主 `transformRegistry`） | 热重载即生效（thunk 现取） |
+| `rateLimit` | Rate gate (when several packages share one facility, the strictest wins) | Harvest `FacilityRateLimiter` | Takes effect on hot reload |
+| `cookieDomain` | Which domain to pull the login state from | Credential injection | Takes effect on hot reload |
+| `serving[]` | `{ match, hosts?, referer?, reason }`: media direct links that hit `match` are proxied by the backend instead, and may be switched to the alternative hosts in `hosts`; `referer` = the Referer that must accompany a fetch of this host's bytes (an image host with reverse hotlink protection, example: the Douban image host in `packages/rsshub`), and every place where the host fetches bytes on its behalf (image proxy / poster comparison / this table's proxy passthrough) sends it | `servingPolicyFor` in `src/media/serving.ts` (playback + fetching bytes for transcription), `refererForUrl` (`src/http/image-fetch.ts` / `src/video/poster-similarity.ts`) | Takes effect on hot reload (thunk, fetched on demand) |
+| `retires` | `{ 'rsshub:<ns>/<path>': reason }`: which RSSHub catalog routes this package supersedes — upstream has already made them dead, **or one Source of this package takes over the same route** | Blocked by `src/rsshub-catalog.ts` when it resolves the catalog; `pruneDeadMembers` in `src/providers/seed.ts` clears the system-row members that point at it | **Next catalog refresh / restart** (the catalog is resolved only then) |
+| `providers[]` | The Provider rows this package contributes (`{id, category, serveKeys, strategy, label, description, members, callsites?, fallback?, contract?, expand?, provides?}`, shape in `ProviderDeclaration` in `src/packages/descriptor.ts`). The host merges them into the identity table, and `ensureSystemRows` builds the rows and marks them `system:true`. `strategy:'expand'` must carry `expand` (A→B composite-unit config, entering and leaving together); `provides:[tag]` lets this row be taken in **as a composite member** by any `{mode:'auto', provides:tag}` segment (the same tag table as a source manifest's `provides`, receiving the raw input; this row and its ancestor rows are skipped automatically) — a composite row contributed by a package enters the host's aggregate row through it, without being named | `src/providers/identities.ts` → `src/providers/seed.ts`; the auto segment is in `src/providers/executor.ts` | **Next startup** (the identity table is a snapshot, rationale in the header comment of identities.ts) |
+| `links` | "Which links are mine and what are they": `{ hosts, shortHosts?, patterns? }` — claimed hosts (with / without platform), short-link hosts, path-level types (`track` carries the named group `id`; `download-page` carries `yields` and doubles as the SSRF allowlist). See "`links`" at the end of this section | The recognition function `src/links/recognize.ts` (the `content.enrich` dispatch key, track recognition, download relay pages, `GET /api/links/recognize`); validation in `src/packages/links.ts` | Takes effect on hot reload (thunk, fetched on demand) |
+| `trackUrl[]` / `downloadPages[]` | Migration-period aliases, translated into `links.patterns` at load time, see "`links`" at the end of this section. Built-in packages must not write them anymore | — | — |
+| `searchSources[]` | "How my Source is recognized in resource search": `{ source \| provider, key, label, param, kind: 'digest'\|'flat', nsfw?, searchUrl? }`. Exactly one of `source` (this package's local name, completed to the full name at load time; an RSSHub catalog route id containing `:`, `rsshub:<ns>/<path>`, is kept as is — catalog routes belong to no package namespace, example `packages/rsshub`) and `provider` (the id of a row this package contributes; a composite appears under the row's identity) is given; `key` is stamped on `Release.source` so the frontend can attach a badge; `param` is the name of the main query parameter; `kind` is the item shape (`digest` = one entry is a collection of "title + a string of netdisk links", `flat` = one torrent per row); `searchUrl` is the in-site search page template, with `{q}` replaced by the encoded query | `searchMetaBySourceId` in `src/search/seeds.ts` (the whole table comes from package declarations, the host keeps not a single line) | Takes effect on hot reload (thunk, fetched on demand, same as `links`) |
+| `rsshubNamespaces[]` | "Routes in these namespaces of the RSSHub catalog use my normalizer"; normalizer key = the package's facility | `src/rsshub-catalog.ts` stamps `normalizer` on them when resolving the catalog and also replaces the route's `facility.label` with the package name (`facility.key` unchanged) | **Next catalog refresh / restart** |
+| `rsshubNoBrowserNamespaces[]` | "Routes in these namespaces of the catalog are tagged `requirePuppeteer`, but run fine over plain HTTP with a cookie" — the package's one-line rebuttal of the upstream tag. In namespaces that are not declared, routes tagged puppeteer never enter the catalog (the host has no browser, and does not name any site) | `src/rsshub-catalog.ts` does not drop them for `requirePuppeteer` when resolving the catalog (declarations of all packages are unioned; two packages naming the same namespace is not a conflict) | **Next catalog refresh / restart** |
+| `item` | "What extra the items produced by this package's Sources carry": `{ authorEnrich?: { enricher, params }, actions?: [{ id, icon, label, recipe, params, toggle: [value sent when not pressed, value sent when pressed] }] }`. Only `{dotted-path}` placeholders are recognized in the values of `params` (taken from the item: `author`, `content.enrich.params.<k>`, `content.meta.<k>`…), and **if any one cannot be resolved, the whole thing is omitted for that item**; no expressions, no conditions. `authorEnrich` is emitted only when the item has no `author_avatar` and has an `author`; the enricher returns `{ name?, face?, url? }` (`url` is the author's homepage; site addresses live only in the package). Clicking an action goes through `POST /api/recipes/action`, with parameters = `params` + `action: toggle[…]`. Load-time validation (failing any one makes the whole package refuse to install): `recipe` must be **this package's full name** (a package without an npm name may not declare actions), `icon` must be in the host vocabulary (`ITEM_ACTION_ICONS` in `shared/item/actions.ts`, today `heart` / `bookmark`), `toggle` must be exactly two non-empty values, action ids must not repeat, and `authorEnrich.enricher` must be in this package's `code.enrichers`. **Applies only to this package's Sources**: `rsshub:<ns>/…` is claimed by `rsshubNamespaces`, the rest by the `facility.key` of the Source catalog entry | `src/packages/item-projection.ts`, **computed at projection time** through the wire exit `toClientItem` (all four item read paths go through it) — nothing is written into the stored content, so existing items take effect immediately and so does a package upgrade | Takes effect on hot reload (thunk, fetched on demand) |
+| `rsshubCookieEnv` | `NAME_{CookieName}`: write that domain's cookie string into this environment variable handed to RSSHub, with `{CookieName}` replaced by the value of the cookie of that name. Grammar `/^[A-Z][A-Z0-9_]*(\{[A-Za-z0-9_]+\}[A-Z0-9_]*)*$/`; a non-match makes the whole package refuse to install. The template table is registered once for the **package facility and once for each namespace in `rsshubNamespaces`** (the `inject.ref` of an RSSHub route is a namespace); when two packages give different templates for the same key, the later one is ignored and one log line is written | `src/credentials/cookie-provider.ts` (consulted first, then the host `transformRegistry`) | Takes effect on hot reload (thunk, fetched on demand) |
 
-**recipe 级也有两格站点知识**，写在 `*.recipe.json` 的 `meta` 里（manifest 投影会剥掉未知键，消费方读的是
-原始 recipe）：`meta.provides: [标签]` 让这份 recipe 被同标签的 `{mode:'auto', provides}` 段自动收成聚合成员
-（`search-download` / `resolve-download` / `search-price` / `search-resale` / `search-content`…，装上即入、关掉即出，
-宿主行不点名任何站；manifest 源同样用 `provides` 申报，如 BT影视包的 `magnet-btbtla`）；
-`meta.catalog: { category, param?, bands?, exhaustive? }` 是「购买决策枚举全集时，这个品类去问我、按这几档问」的
-产品库声明（宿主 `src/agent/purchase/universe-catalog.ts` 只读表；缺省不写 `exhaustive` 就当样本标 `truncated`；
-范例 `packages/zol/zol-phones.recipe.json`）。
+**The recipe level also has two cells of site knowledge**, written in the `meta` of `*.recipe.json` (the manifest projection strips unknown keys, and consumers read the
+original recipe): `meta.provides: [tag]` lets this recipe be automatically taken in as an aggregate member by `{mode:'auto', provides}` segments with the same tag
+(`search-download` / `resolve-download` / `search-price` / `search-resale` / `search-content`…; installing it brings it in, turning it off takes it out,
+and the host rows name no site; manifest Sources declare it with `provides` too, such as `magnet-btbtla` in the BT Movies (BT影视) package);
+`meta.catalog: { category, param?, bands?, exhaustive? }` is the declaration of a product library — "when a purchase decision enumerates the full set, this category comes to ask me, in these bands"
+(the host's `src/agent/purchase/universe-catalog.ts` is a read-only table; if `exhaustive` is omitted, the result is treated as a sample and marked `truncated`;
+example `packages/zol/zol-phones.recipe.json`).
 
-**同一个 npm 名的包两层都在**（内置 `packages/<id>` + 用户 `stream add` 装来的同名新版）时，**只装载版本高的
-那一层的一切**——代码、`manifests.yaml`、recipe、上表里的声明与 `states.json`——另一层整包跳过并留一行日志
-（`[stream] package <npm 名>: user layer <v> supersedes builtin <v>` / `builtin <v> kept, user layer <v> skipped`）。
-尺子 = `shared/package-sdk/semver.ts`：用户层严格更高 → 用户层；相等、更低、任一层缺合法 `x.y.z` → 内置（看不懂的
-版本号——`v1.0.0`、`1.2`、缺失——按「不比内置高」读）。为什么两头都要：内置包随宿主同版本出货，它的声明与宿主机制
-对得上，用户层那份可能是任何旧版，旧版少一格声明就是静默丢能力（播放变 502、目录路由消失、Provider 行建不出来），
-没有一处会喊——所以旧版不许赢；而内置包也发 npm，`stream update` 拿到的新版本就是为了让用户不升宿主也能拿到
-新声明——所以新版必须赢，赢的是**整包**（新版少一格声明 = 作者删的，不叠加旧版的）。决定只有一处：
-`pickLayers`（`src/packages/pick-layer.ts`），四个消费者拿同一个结论——代码激活（`src/kernel/plugins/packages.ts`）、
-recipe / manifests 装载与声明归并（`src/replay/recipe-package.ts` 的 `mountRecipePackages` /
-`mergeRecipePackagesByFacility`）、curated 投影（`src/kernel/plugins/sources.ts`：被顶掉的内置包的 `manifests.yaml`
-不再从插件描述那条路进 registry——否则与用户层那份撞成 `Duplicate manifest id`，用户装的整包被跳过）。不整层
-一起挑、各条路各自"同 id 覆盖"是不够的：内置包的 `manifests.yaml` 有 curated 这条第二条路，逐条覆盖管不到它。
-判的是 npm 名不是 `stream.id`：id 是包自己写的，npm 名的唯一性由 registry 保证；没有 npm 名的手放本地包不参与
-比对（同全名时 user 层盖 builtin，撞了 curated 由启动期的逐包重试摘掉）。被顶掉的内置包仍留在 `/api/plugins`
-目录里（那是启动时的描述符快照，只标内置那份的元数据），`/api/packages` 的目录与 `stream list` 才是「装了什么」
-的真相。**被禁用的内置照样按版本参赛**（整包规则不看开关）；用户层赢了而内置那个插件被禁用 → 用户层那份
-也不装（开关的机制是"禁用的插件不出 curated"，被顶掉的内置本来就不出，所以要连用户层一起挡，否则开关形同虚设），
-翻开开关后下一次热重载装回来。**运行中**装进同名新版：取舍冻在启动那份（curated 不热换，现算会让之后每一轮
-热重载都撞 `Duplicate`），这一轮先不装它、日志说 `user layer installed, takes over on restart`（只在顶掉的内置
-确有 curated 清单时；顶掉的是纯 recipe 包就直接生效）——重启后切换。
+**When a package with the same npm name exists in both layers** (built-in `packages/<id>` + a newer same-name version installed by the user via `stream add`), **everything of only the higher-version
+layer is loaded** — code, `manifests.yaml`, recipes, the declarations in the table above, and `states.json` — and the other layer is skipped as a whole with one log line
+(`[stream] package <npm name>: user layer <v> supersedes builtin <v>` / `builtin <v> kept, user layer <v> skipped`).
+The yardstick = `shared/package-sdk/semver.ts`: user layer strictly higher → user layer; equal, lower, or either layer lacking a valid `x.y.z` → built-in (version strings that cannot be parsed —
+`v1.0.0`, `1.2`, missing — are read as "not higher than the built-in"). Why both directions are needed: a built-in package ships with the same version as the host, so its declarations
+match the host mechanisms, whereas the user-layer copy may be any old version, and an old version missing one declaration cell silently loses a capability (playback turns into 502, catalog routes vanish, Provider rows cannot be built),
+and nothing anywhere complains — so an old version must not win; yet built-in packages are also published to npm, and the new version `stream update` fetches exists so that the user can get the
+new declarations without upgrading the host — so a new version must win, and what wins is the **whole package** (a new version missing a declaration cell = the author deleted it, and the old version's is not layered in). The decision lives in exactly one place:
+`pickLayers` (`src/packages/pick-layer.ts`), and four consumers take the same conclusion — code activation (`src/kernel/plugins/packages.ts`),
+recipe / manifests loading and declaration merging (`mountRecipePackages` /
+`mergeRecipePackagesByFacility` in `src/replay/recipe-package.ts`), and the curated projection (`src/kernel/plugins/sources.ts`: the `manifests.yaml` of a superseded built-in package
+no longer enters the registry through the plugin-descriptor path — otherwise it collides with the user-layer copy as `Duplicate manifest id`, and the package the user installed is skipped as a whole). Picking per layer as a whole is required:
+letting each path do its own per-id "same id overrides" is not enough: the `manifests.yaml` of a built-in package has the curated path as a second route, which per-item overriding cannot reach.
+What is compared is the npm name, not `stream.id`: the id is written by the package itself, while uniqueness of npm names is guaranteed by the registry; local packages placed by hand without an npm name do not take part in
+the comparison (with the same full name the user layer covers builtin, and on a collision with curated, the per-package retry at startup removes it). A superseded built-in package stays in the `/api/plugins`
+catalog (that is a snapshot of descriptors at startup, marking only the metadata of the built-in copy), while the catalog of `/api/packages` and `stream list` are the source of truth for "what is installed".
+**A disabled built-in package still takes part by version** (the whole-package rule does not look at the switch); if the user layer wins while the built-in plugin is disabled → the user-layer copy
+is not installed either (the switch works by "a disabled plugin does not emit curated", the superseded built-in emits nothing anyway, so the user layer must be blocked together with it, otherwise the switch is a dead letter),
+and it is installed back on the next hot reload after the switch is turned on. When a same-name new version is installed **while running**: the choice stays frozen at what was decided at startup (curated is not hot-swapped; computing it live would make every later round
+of hot reload collide on `Duplicate`), so this round does not install it yet, and the log says `user layer installed, takes over on restart` (only when the superseded built-in
+really has a curated list; if the superseded one is a pure recipe package it takes effect directly) — the switch happens after a restart.
 
-**同一个 facility 两层都有包、npm 名不同**（第三方给这个 facility 的附加包）时：两层的 recipe 都挂上（归并键是
-`<npm 包名>/<局部名>` 全名，包名不同就并存）；描述符按 facility 归并，不同包的版本号不可比，**上表里除 `rateLimit`
-外的声明、以及 `states.json`，一律内置为准**（名单 = `src/replay/recipe-package.ts` 的 `DECLARATION_FIELDS`），
-用户层只叠加内置没声明的格、recipe 与展示字段（`stream.name` / npm name / version 用用户层的）；`rateLimit` 取最严。
+**When both layers have a package of the same facility but with different npm names** (an add-on package from a third party for this facility): the recipes of both layers are mounted (the merge key is the
+full name `<npm package name>/<local name>`, so different package names coexist); descriptors are merged by facility, and version numbers of different packages are not comparable, so **declarations in the table above other than `rateLimit`,
+and `states.json`, are always taken from the built-in** (the list = `DECLARATION_FIELDS` in `src/replay/recipe-package.ts`),
+the user layer only layers on cells the built-in did not declare, plus recipes and display fields (`stream.name` / npm name / version come from the user layer); `rateLimit` takes the strictest.
 
-`match` 至少两段标签（`.fm` 拒、`.lizhi.fm` 收）：带上 `hosts` 之后这条策略会**替换主机**，
-一段标签等于替整个后缀下所有 facility 决定字节从哪来。
+`match` must have at least two label segments (`.fm` is rejected, `.lizhi.fm` accepted): once `hosts` is attached, this policy **replaces the host**,
+and a single label segment would amount to deciding, for every facility under that whole suffix, where the bytes come from.
 
-`serving.hosts` 是让**后端**去连的地址——第三方包能借它让后端打内网。装载时把这串主机按 URL 层
-真正会去连的那个形式归一（`0177.0.0.1`、`[::ffff:127.0.0.1]`、`localhost.` 都先还原）再判：私网 /
-loopback / 链路本地 IP、单标签名、解析不出来的串，命中任一整个包拒装。**解析到私网 IP 的公网主机名
-判不出来**（装载不做 DNS），安装确认页因此必须亮出 `proxies`（preview 字段），让用户看见它要连谁。
-`retires` 只放两类："上游已使它失效"的，和"本包一条源接管了同一条路由"的（同一条路由目录里再留它，
-内容搜索就出两份）；"我们更喜欢自己那份、但两条路由不同"归 `priority`。
+`serving.hosts` are addresses the **backend** connects to — a third-party package could use them to make the backend hit the intranet. At load time this list of hosts is normalized to the form
+the URL layer would actually connect to (`0177.0.0.1`, `[::ffff:127.0.0.1]`, `localhost.` are all restored first) and then judged: private network /
+loopback / link-local IPs, single-label names, and strings that cannot be parsed — hitting any one makes the whole package refuse to install. **A public hostname that resolves to a private IP
+cannot be detected** (loading does no DNS), so the install confirmation page must display `proxies` (a preview field), letting the user see whom it will connect to.
+`retires` holds only two kinds: those "upstream has already made dead", and those "one Source of this package takes over the same route" (keeping the old route in the same catalog
+would make content search return two copies); "we prefer our own copy, but the two routes differ" belongs to `priority`.
 
-**`providers` 的撞名规则（硬拒，不覆盖）**：`id` 撞任何现有行、或 `serveKeys` 里任一键已被**同 category**
-的某行 serve → 拒这一条并落一行日志，其余照进；同 category 里第二个 `fallback` 也这么拒。两个包声明同一个
-键时先到先得。用户**自建**的行（`system: 0`）不参与这条判据——那是用户自己的数据。包卸载后下一次启动，
-`ensureSystemRows` 现有的「`system=1` 且 id 不在身份表里 → 清槽 + 删行」清退路径自然把它收走，不需要迁移。
-同一次启动里，系统行上指向「已加载的包不再提供」的具名成员由 `pruneDeadMembers` 清掉，指向被
-`retires` 的目录路由的系统行成员同样清掉（精确规则见 `src/providers/seed.ts` 头注）。安装确认页据 preview 的 `providers` 字段亮出这些行，并说明它们**重启后端
-后才出现**。
+**Name-collision rules for `providers` (hard rejection, no override)**: if `id` collides with any existing row, or any key in `serveKeys` is already served by a row of the **same category**
+→ that one declaration is rejected and one log line is written, the rest go in as usual; a second `fallback` in the same category is rejected likewise. When two packages declare the same
+key, first come first served. Rows the user **built** (`system: 0`) do not take part in this check — that is the user's own data. On the next startup after a package is uninstalled,
+the existing clean-up path in `ensureSystemRows` ("`system=1` and the id is not in the identity table → clear the slot + delete the row") collects it naturally, and no migration is needed.
+In the same startup, named members on system rows that point at something "a loaded package no longer provides" are cleared by `pruneDeadMembers`, and members of system rows that point at a catalog route
+declared in `retires` are cleared the same way (exact rules in the header comment of `src/providers/seed.ts`). The install confirmation page shows these rows from the preview's `providers` field and states that they **appear only after the backend
+is restarted**.
 
-`callsites` 的语义：这一行是这些调用点的**默认成员**。调用点的默认行列表 = 宿主自己的默认 ∪ 所有
-声明了该调用点的包行（`ensureDefaults` 跳过默认为空的调用点）；`/api/providers` 上这一行的「调用位置」
-注记也由调用点的 `label` 反查生成（`src/providers/seed.ts` 的 `callSitesOf`）——宿主自己那些行仍是手写
-一张表，包行不必进那张表。**所有 dispatch 调用点都读包行 `callsites`**（`src/providers/callsites.ts` 里
-`mode: 'dispatch'` 的那些，判据由 `src/providers/identities.ts` 现取，不手抄名单）：`music.track.resolve` /
-`music.track.download` / `video.resolve` / `content.enrich`，以及网盘四个 `netdisk.share.verify` /
-`netdisk.share.save` / `netdisk.play` / `netdisk.folder`（夸克、百度的包行就是这么进去的）：
+Semantics of `callsites`: this row is the **default member** of those callsites. The default row list of a callsite = the host's own defaults ∪ all
+package rows that declared the callsite (`ensureDefaults` skips callsites whose default is empty); the "call location"
+note of this row on `/api/providers` is also generated by reverse lookup from the callsite's `label` (`callSitesOf` in `src/providers/seed.ts`) — the host's own rows are still a hand-written
+table, and package rows need not enter that table. **All dispatch callsites read the package rows' `callsites`** (the ones with
+`mode: 'dispatch'` in `src/providers/callsites.ts`, the check is fetched on demand from `src/providers/identities.ts`, no hand-copied list): `music.track.resolve` /
+`music.track.download` / `video.resolve` / `content.enrich`, plus the four netdisk ones `netdisk.share.verify` /
+`netdisk.share.save` / `netdisk.play` / `netdisk.folder` (this is how the Quark and Baidu package rows get in):
 
-- `video.resolve` 按平台派发，键是 `<平台>-video`；`GET /api/media/play|dash` 与转写 / 抽帧取字节都从这里走。
-- `content.enrich` 按 `<平台>-link` 派发（平台来自认领函数，见本节末「`links`」；`stream_fetch_url` /
-  `GET /api/media/from-url`），默认成员 = 宿主的兜底行 `fetch-url` ∪ 声明了 `callsites: ['content.enrich']`
-  的包行。**一条 `serveKeys` 是 `<平台>-link` 的 transform 行，不写这一格就永远不可达**——没有别的调用点会问它；
-  **包也得在 `links.hosts` 里认领那些主机**，否则认领函数认不出平台，键拼不出来。
+- `video.resolve` dispatches by platform, with the key `<platform>-video`; `GET /api/media/play|dash` and fetching bytes for transcription / frame extraction all go through here.
+- `content.enrich` dispatches by `<platform>-link` (the platform comes from the recognition function, see "`links`" at the end of this section; `stream_fetch_url` /
+  `GET /api/media/from-url`), and the default members = the host's fallback row `fetch-url` ∪ package rows that declared `callsites: ['content.enrich']`.
+  **A transform row whose `serveKeys` is `<platform>-link` is unreachable forever if this cell is not written** — no other callsite will ask for it;
+  **the package must also claim those hosts in `links.hosts`**, otherwise the recognition function cannot identify the platform and the key cannot be assembled.
 
-这两个调用点给成员的输入是**普通对象**（`{vid, format}` / `{url}`），包的源收到的是空键 + 对象整个
-展开进 `params`（`memberCallArgs`，`src/providers/invoke-types.ts`）——所以包的 adapter / recipe 从
-`params.vid`、`params.url` 读，不从位置参数读。
+The input these two callsites give to a member is a **plain object** (`{vid, format}` / `{url}`), and the package's Source receives an empty key + the whole object
+spread into `params` (`memberCallArgs`, `src/providers/invoke-types.ts`) — so the package's adapter / recipe reads from
+`params.vid` and `params.url`, not from positional arguments.
 
-`rsshubNamespaces`：两个包认领同一个命名空间 → 装载期抛（那是两份互相看不见的渲染规则争同一批路由，
-先到先得会随磁盘顺序漂）。宿主自己那张 `NS_NORMALIZER` 今天是空的（机制保留）。
+`rsshubNamespaces`: two packages claiming the same namespace → throws at load time (that is two rendering rule sets that cannot see each other contending for the same routes,
+and first-come-first-served would drift with disk order). The host's own `NS_NORMALIZER` table is empty today (the mechanism is kept).
 
-上面这张表是**描述符字段**。还有一类站点知识不走描述符、走代码槽位（§3）：normalizer 在每条
-`Content` 上写 `enrich: { source, params }`，宿主把包交出的 enricher 同时露在 `GET /api/enrich` 与 WS 命令
-`enrich.open` 两个面上（同 source 一次一条在飞、新点顶旧、同 params 搭车；协议见 `docs/API.md`）——
-「这条打开时去哪现取剩下的」于是也由包说，宿主里没有任何一站的详情分支。
+The table above lists **descriptor fields**. There is another kind of site knowledge that does not go through the descriptor but through the code slot (§3): the normalizer writes `enrich: { source, params }` on each
+`Content`, and the host exposes the enricher a package hands over on both surfaces, `GET /api/enrich` and the WS command
+`enrich.open` (for the same source, one request in flight at a time, a new click displaces the old one, and the same params share a ride; protocol in `docs/API.md`) —
+"where to fetch the rest on demand when this item is opened" is therefore also stated by the package, and the host contains no per-site detail branch.
 
-范例：`packages/netease/package.json`（`providers` / `links`（曲目 pattern）/ `rsshubNamespaces` 三样齐全）、
-`packages/btbtla/package.json`（`links` 的 `download-page`）、
-`packages/xhs/package.json`（`rsshubNoBrowserNamespaces` / `item.actions`）、
-`packages/lizhi/package.json`（`serving` / `retires`）、`packages/bilibili/package.json`
-（`rsshubCookieEnv` / `retires` / `links`（含短链）/ 两条 `providers`（`video.resolve` 与 `content.enrich` 各一）/
-`code.enrichers` / `code.connect` / `item.authorEnrich` 齐全）、`packages/Douyin_TikTok_Download_API/package.json`（**一个容器包服务
-两家平台**：四条 `providers`——每家一条 `resolve`（`<平台>-video`）+ 一条 `transform`（`<平台>-link`，`links.hosts` 显式写 platform），成员全骑
-同一个 adapter 打容器，地址经 `ctx.backendUrl` 现取；完整拆解见 §10.1）。
+Examples: `packages/netease/package.json` (`providers` / `links` (the track pattern) / `rsshubNamespaces` all present),
+`packages/btbtla/package.json` (`links`' `download-page`),
+`packages/xhs/package.json` (`rsshubNoBrowserNamespaces` / `item.actions`),
+`packages/lizhi/package.json` (`serving` / `retires`), `packages/bilibili/package.json`
+(`rsshubCookieEnv` / `retires` / `links` (including short links) / two `providers` (one each for `video.resolve` and `content.enrich`) /
+`code.enrichers` / `code.connect` / `item.authorEnrich` all present), `packages/Douyin_TikTok_Download_API/package.json` (**one container package serving
+two platforms**: four `providers` — per platform one `resolve` (`<platform>-video`) + one `transform` (`<platform>-link`, with `links.hosts` writing the platform explicitly), all members riding
+the same adapter that calls the container, with the address fetched on demand through `ctx.backendUrl`; full breakdown in §10.1).
 
-### `links`：「哪些链接归我、是什么东西」
+### `links`: "which links are mine and what are they"
 
-用户贴一条链接、说「下载它的视频 / 播放 / 读正文」，系统先回答**认领**（这条链接是哪个包、哪个平台、什么类型、
-id 多少），再回答**派发**（交给哪条 Provider 行）。认领只有一张表——各包的 `stream.links`；宿主只有一个认领函数
-`recognizeLink(url)`（`src/links/recognize.ts`），不认识任何站。
+When a user pastes a link and says "download its video / play it / read the body", the system first answers **recognition** (which package, which platform, what type, and
+what id this link has), then answers **dispatch** (which Provider row to hand it to). Recognition has exactly one table — the `stream.links` of each package; the host has exactly one recognition function,
+`recognizeLink(url)` (`src/links/recognize.ts`), and knows no site.
 
 ```json
 "links": {
@@ -295,140 +295,140 @@ id 多少），再回答**派发**（交给哪条 Provider 行）。认领只有
 }
 ```
 
-- **`hosts`**：这些主机（含子域，按 label 边界后缀匹配——`evil-example.com` 不算 `example.com`）归本包。字符串或
-  `{ host, platform }`。
-- **`shortHosts`**：本包的短链主机，每个都必须被 `hosts` 覆盖。`recognizeLink` 只对它们发请求展开
-  （`redirect:'manual'`、最多 3 跳、每跳 5 秒；下一跳主机没人认领就停，按停下前的地址认；展开失败按原链接认，
-  原因进 DebugBox `links` 频道）——只打包声明过的公网主机，所以不是开放代理。
-- **`patterns`**：路径级的类型认领，`kind` 是宿主的封闭词表，今天两个值：
-  - `track`：必须有命名组 `id`。曲目识别（贴 URL 意图识别、音乐搜索结果）吃它，结果是 `platform:id`。
-  - `download-page`：必须以 `$` 结尾、带 `yields`（`magnet|ed2k|quark|baidu|aliyun|unknown`）。解析器据此给行打
-    `needsResolve`，下载解析据此放行抓取——**它兼作 SSRF 白名单**，`magnet` 有通用解法（抓页面取第一条 `magnet:`）。
-  - 加新类型 = 宿主词表加一个值，且要有第一个消费方同时落地；不预留没人用的类型。
-- 认领顺序：先 `patterns`（声明序，先声明先赢）给出 kind / id；没命中再按 `hosts` 只给 platform（最长后缀胜）。
+- **`hosts`**: these hosts (including subdomains, matched as a suffix on label boundaries — `evil-example.com` does not count as `example.com`) belong to this package. A string or
+  `{ host, platform }`.
+- **`shortHosts`**: this package's short-link hosts, each of which must be covered by `hosts`. `recognizeLink` sends requests only to them to expand
+  (`redirect:'manual'`, at most 3 hops, 5 seconds per hop; if nobody claims the next hop's host it stops and recognizes by the address it stopped at; on expansion failure it recognizes by the original link,
+  and the reason goes to the DebugBox `links` channel) — it only hits public hosts a package has declared, so it is not an open proxy.
+- **`patterns`**: path-level type claims; `kind` is a closed vocabulary of the host, with two values today:
+  - `track`: must have the named group `id`. Track recognition (intent recognition on a pasted URL, music search results) consumes it, and the result is `platform:id`.
+  - `download-page`: must end with `$` and carry `yields` (`magnet|ed2k|quark|baidu|aliyun|unknown`). The resolver uses it to mark rows
+    `needsResolve`, and download resolution uses it to allow fetching — **it doubles as the SSRF allowlist**, and `magnet` has a generic solution (fetch the page and take the first `magnet:`).
+  - Adding a new type = adding a value to the host vocabulary, and the first consumer must land at the same time; no types are reserved that nobody uses.
+- Recognition order: `patterns` first (declaration order, first declared wins) give kind / id; if none hits, `hosts` gives only the platform (longest suffix wins).
 
-**平台归属**：`platform` 缺省 = 包的 `stream.facility`；没有 facility 时每条都必须显式写（一包两平台的
-`Douyin_TikTok_Download_API` 就是这样写的）。平台键只收 `[A-Za-z0-9][A-Za-z0-9_-]*`——它要拼进派发键。
-**一个主机、一个平台只归一个包**：装载时按声明序并表（`src/replay/recipe-package.ts` 的 `linkTableOf`），撞了就
-拒掉后到那个包的**整份** `links`，落日志并发 `recipe-reload` 频道（同 `serveKeys` 撞键：后到的拒）。同一个包的
-内置层与用户层只剩一份（「同名两层只装高版本」），不算撞；嵌套主机分属两个包（`example.com` / `m.example.com`）
-也不算撞，认领时最长后缀胜。
+**Platform ownership**: `platform` defaults to the package's `stream.facility`; when there is no facility, every entry must write it explicitly (`Douyin_TikTok_Download_API`, one package with two platforms,
+is written exactly this way). Platform keys accept only `[A-Za-z0-9][A-Za-z0-9_-]*` — it gets spliced into the dispatch key.
+**A host and platform belong to only one package**: at load time the tables are merged in declaration order (`linkTableOf` in `src/replay/recipe-package.ts`), and on a collision the **entire** `links` of the later package
+is rejected, logged, and emitted on the `recipe-reload` channel (same as a `serveKeys` collision: the later one is rejected). The built-in layer and user layer of the same package leave only one copy
+("when the same name exists in both layers, only the higher version is loaded"), which does not count as a collision; nested hosts belonging to two packages (`example.com` / `m.example.com`)
+do not count as a collision either, and at recognition time the longest suffix wins.
 
-**装载期校验**（命中任一整个包拒装；`src/packages/links.ts` 的 `linkPatternProblem` 与 `normalizeLinks`）：
+**Load-time validation** (hitting any one makes the whole package refuse to install; `linkPatternProblem` and `normalizeLinks` in `src/packages/links.ts`):
 
-- pattern 以 `^https://` 或 `^https?://` 开头；能编译、不匹配空串；源串不超 200 字符、不含嵌套量词（`(a+)+`），
-  拿病理串实跑两次、最好的一次不超 50ms；不许命中任何一条别人家的控制 URL（`https://example.com/` 这类）。
-- pattern 主机段（协议之后、第一个 `/` 之前）至少指名一个字面域名（转义的 `\.` + 字母），**每个都落在本包的
-  `hosts` 里**——包不能靠 pattern 认领别家的链接；主机段不许有能越过主机边界的通配（裸 `.`、`[^…]`、`\S`）。
-- `hosts` / `shortHosts`：至少两段标签、不是公共后缀，且过 `servingHostProblem`（只收公网主机）。
+- The pattern starts with `^https://` or `^https?://`; it compiles and does not match the empty string; the source string is at most 200 characters and contains no nested quantifiers (`(a+)+`);
+  it is run twice on pathological strings, and the better run must not exceed 50ms; it must not hit any other party's control URL (such as `https://example.com/`).
+- The host segment of the pattern (after the scheme, before the first `/`) must name at least one literal domain (an escaped `\.` + letters), and **each one must fall within this package's
+  `hosts`** — a package cannot claim other sites' links through a pattern; the host segment must not contain wildcards that can cross the host boundary (bare `.`, `[^…]`, `\S`).
+- `hosts` / `shortHosts`: at least two label segments, not a public suffix, and passing `servingHostProblem` (public hosts only).
 
-**派发键约定：`<platform>-<名词>`，由认领结果拼，任何声明里都不写域名形状的键**（内置包由
-`src/packages/legacy-link-fields.guard.test.ts` 守着）：
+**Dispatch-key convention: `<platform>-<noun>`, assembled from the recognition result; no domain-shaped keys are written in any declaration** (built-in packages are guarded by
+`src/packages/legacy-link-fields.guard.test.ts`):
 
-| 调用点 | 键 |
+| Callsite | Key |
 |---|---|
-| `content.enrich`（贴链接抓媒体） | `<platform>-link` |
+| `content.enrich` (paste a link to grab media) | `<platform>-link` |
 | `video.resolve` | `<platform>-video` |
-| `music.track.resolve` / `music.track.download` | 平台键 |
-| `netdisk.*` | `<网盘>-verify` 等 |
+| `music.track.resolve` / `music.track.download` | platform key |
+| `netdisk.*` | `<netdisk>-verify` etc. |
 
-**`trackUrl` / `downloadPages` 是迁移期别名**：已经发到 npm 的旧版包里还有，装载时翻译成 `links.patterns`
-（`trackUrl` 补 `^https?://(?:[a-z0-9-]+\.)*` 前缀、首个捕获组改名 `(?<id>…)`；`downloadPages` 的 `kind` 变
-`yields`；`hosts` 从字面域名推出来，`platform` = 包的 facility），翻译后照样过上面的校验。`content.enrich`
-在 `<platform>-link` 派发不到时再按老的主机键（完整主机、apex）试一次，命中照用并在 DebugBox `links` 频道留痕。
-新包一律写 `links`。
+**`trackUrl` / `downloadPages` are migration-period aliases**: older versions of packages already published to npm still have them, and at load time they are translated into `links.patterns`
+(`trackUrl` gets the prefix `^https?://(?:[a-z0-9-]+\.)*` prepended and its first capture group renamed `(?<id>…)`; the `kind` of `downloadPages` becomes
+`yields`; `hosts` is inferred from the literal domains, and `platform` = the package's facility), and after translation they pass the validation above as usual. When `content.enrich`
+cannot dispatch on `<platform>-link`, it tries once more with the old host key (full host, apex); a hit is used as is and leaves a trace in the DebugBox `links` channel.
+New packages always write `links`.
 
-`GET /api/links/recognize?url=` 回认领结果（`docs/API.md`）。设计与取舍见 spec
-`internal design record`。
+`GET /api/links/recognize?url=` returns the recognition result (`docs/API.md`). Design and trade-offs are in the spec
+`internal design record`.
 
 
 ---
 
-## 1. 槽位：Source 清单（`manifests.yaml`）
+## 1. Slot: Source manifests (`manifests.yaml`)
 
-包贡献的每个 Source 是清单里的一项（顶层 YAML 列表）。一项 = 一个调用模式，字段语义见 `src/manifest/types.ts`；写法范例见 §10。
+Each Source a package contributes is one entry in the manifest (a top-level YAML list). One entry = one invocation mode; field semantics are in `src/manifest/types.ts`; examples of how to write them are in §10.
 
-`description` / `topics` / `example_queries` 是 `stream_search` 匹配的对象——写不好这条源就搜不到。
-`route` 里用 `{key}` 占位符，由流的 `params` 填（如 `/bilibili/user/dynamic/{uid}`）；临时路由走不可发现的
-`rsshub-raw` 源，它吃一个字面的 `route` 参数。
+`description` / `topics` / `example_queries` are what `stream_search` matches against — if they are poorly written, the Source cannot be found by search.
+In `route`, use `{key}` placeholders, filled from the Stream's `params` (such as `/bilibili/user/dynamic/{uid}`); ad-hoc routes go through the non-discoverable
+`rsshub-raw` Source, which takes a literal `route` parameter.
 
-> 关键事实：source manifest 的 `auth: { type: 'cookie', domain }` **已经是**凭证声明（不要再发明 `needs_credential`）。plugin descriptor 的 `credentials: [domain, ...]` 声明的是该插件的**后端容器**通过 broker 需要的 cookie 域（§5）。
+> Key fact: the source manifest's `auth: { type: 'cookie', domain }` **already is** the credential declaration (do not invent `needs_credential` again). The `credentials: [domain, ...]` of the plugin descriptor declares the cookie domains that the plugin's **backend container** needs through the broker (§5).
 
-### 1.1 sourceId：你写局部名，宿主合成全名
+### 1.1 sourceId: you write the local name, the host synthesizes the full name
 
-一个 Source 的 id 是 **`<npm 包名>/<局部名>`**，叫它**全名**。
+The id of a Source is **`<npm package name>/<local name>`**, called the **full name**.
 
 ```
-@streamapp/xhs/xhs-detail          scoped 包，全名里有两个 "/"
+@streamapp/xhs/xhs-detail          scoped package, the full name has two "/"
 @streamapp/builtin/fetch-url
-my-recipes/fetch-url               无 scope 包
-local/<目录名>/<局部名>              手放进 <dataDir>/recipes/ 的本地包（package.json 没有 name）
+my-recipes/fetch-url               unscoped package
+local/<directory name>/<local name>              a local package placed by hand into <dataDir>/recipes/ (package.json has no name)
 ```
 
-**包作者写的永远是局部名**——`manifests.yaml` 的 `id`、recipe 的 `sourceId`，都不写自己的包名。
-前缀是**宿主在装载期合成的**（`src/registry/source-id.ts` + `toPluginDescriptor` /
-`loadRecipePackages`），与 `pluginId` 同构：派生字段进 Registry 之前写死，读取端零推导。
-理由很实际：包名写进每一个 recipe 文件，改包名就得改一遍；而本地开发时包名往往还没定。
+**What a package author writes is always the local name** — the `id` in `manifests.yaml` and the `sourceId` in the recipe never carry the package's own name.
+The prefix is **synthesized by the host at load time** (`src/registry/source-id.ts` + `toPluginDescriptor` /
+`loadRecipePackages`), isomorphic to `pluginId`: the derived field is written in stone before entering the Registry, and the read side does zero derivation.
+The reason is practical: writing the package name into every recipe file means a rename requires editing them all, and during local development the package name is often not decided yet.
 
-**全局唯一性由 npm registry 保证**，宿主不维护任何名字表。两个包的全名相同 ⇒ npm 名相同 ⇒
-它们本来就是同一个包。
+**Global uniqueness is guaranteed by the npm registry**, and the host maintains no name table. Two packages with the same full name ⇒ the same npm name ⇒
+they were the same package all along.
 
-局部名有两条硬约束，装载期就拒（`validateRecipe` 与 `scanPackages` 两侧各一道——两条装载路径
-独立，只钉一道会从另一侧漏过去）：
+The local name has two hard constraints, rejected at load time (`validateRecipe` and `scanPackages` each have one check — the two loading paths
+are independent, and pinning only one would let things slip through from the other side):
 
-- **不得含 `/`**：它是包名与局部名的分隔符。含了就多出一族二义（包 `<p>` 的局部名 `a/b`
-  和包 `<p>/a` 的局部名 `b` 长得一模一样）。
-- **不得含 `:`**：`:` 被存量 stream 行的 plugin 前缀占着（下面第 2 级），含了会让剥离规则在
-  全名上误触发。
+- **Must not contain `/`**: it is the separator between package name and local name. Allowing it creates a whole family of ambiguity (the local name `a/b` of package `<p>`
+  looks exactly like the local name `b` of package `<p>/a`).
+- **Must not contain `:`**: `:` is occupied by the plugin prefix of existing stream rows (level 2 below), and allowing it would make the stripping rule misfire on
+  a full name.
 
-#### 怎么解析一个 id（`Registry.get` 的四级规则）
+#### How an id is resolved (the four-level rule of `Registry.get`)
 
-| 级 | 规则 | 存在理由 |
+| Level | Rule | Reason for existing |
 |---|---|---|
-| 1 | 精确命中 | 全名，以及 RSSHub catalog 的 `rsshub:…` |
-| 2 | 含 `:` → 剥掉首个 `:` 之前的段，回到第 1 级 | 库里的 stream 行按 `plugin_id` + `source_template_id` 两列存，`canonicalSourceId` 把它们拼回 `xhs:<id>` |
-| 3 | 裸名（局部名）→ 唯一命中则解析 | 库里的行、别人分享来的旧 bundle、用户手打的 id 都是裸名 |
-| 4 | 裸名命中多条 → **内置层那条胜出**（记一条歧义记录到 `recipe-reload` 频道）；内置层里有 ≥2 条、或候选全在第三方层 → 抛 `AmbiguousSourceIdError`，消息里列出全部候选全名 | 见下 |
+| 1 | Exact hit | The full name, and the `rsshub:…` ids of the RSSHub catalog |
+| 2 | Contains `:` → strip the segment before the first `:`, return to level 1 | Stream rows in the database are stored in two columns, `plugin_id` + `source_template_id`, and `canonicalSourceId` joins them back into `xhs:<id>` |
+| 3 | Bare name (local name) → resolves if there is a unique hit | Rows in the database, old bundles shared by others, and ids typed by users are all bare names |
+| 4 | A bare name hits several → **the built-in layer's one wins** (an ambiguity record is logged to the `recipe-reload` channel); if the built-in layer has ≥2, or all candidates are in the third-party layer → throw `AmbiguousSourceIdError`, with all candidate full names listed in the message | See below |
 
-第 3、4 级作用在第 2 级剥离**之后**的那个串上，顺序不能反。
+Levels 3 and 4 act on the string **after** the level-2 stripping, and the order cannot be reversed.
 
-**裸名解析是永久能力，不是过渡。** 它服务的是用户数据（库里的行、旧 bundle、手打的 id），
-这些东西永远存在。它也不是"旧路"，是"短名"——和 shell 在 `PATH` 里按裸名找可执行文件同构。
+**Bare-name resolution is a permanent capability, not a transition.** It serves user data (rows in the database, old bundles, hand-typed ids),
+and such things will always exist. It is also not an "old path", it is a "short name" — isomorphic to the shell looking up an executable by bare name in `PATH`.
 
-**歧义为什么内置优先**：一条写着裸名的存量记录，写下的那一刻只可能指内置那条——第三方包是
-后来装的。让后来者改变一条旧记录的含义，是这条线上最贵的那种静默失真。分不出胜者时**抛**
-而不是返回 `undefined`：「这个源不存在」和「它存在两份」的处置完全不同（前者是配置错，后者
-要用户改写全名），压成同一个 `undefined` 就是把一个能说清楚的错变成一个说不清的错。
+**Why the built-in wins on ambiguity**: a stored record that holds a bare name could, at the moment it was written, only have meant the built-in one — the third-party package was
+installed later. Letting a latecomer change the meaning of an old record is the most expensive kind of silent distortion on this line. When no winner can be determined, it **throws**
+instead of returning `undefined`: "this Source does not exist" and "it exists in two copies" call for entirely different handling (the former is a configuration error, the latter
+needs the user to rewrite with the full name), and squashing them into the same `undefined` turns an error that could be explained clearly into one that cannot.
 
-**但宿主自己的代码不吃裸名。** 源码里、`SYSTEM_IDENTITIES` 的 `defaultMembers` 里、
-`VIDEO_RANKING_STREAMS`（影视频道默认榜单种子）里的具名 source 一律写全名——第三方装一个同名包就能把宿主自己的调用推进
-歧义分支。这条由 `src/providers/system/index.real.test.ts` 的「every named default member points
-at a real source」钉着。RSSHub catalog id（`rsshub:…`）不属于任何包命名空间，不加前缀、也不进
-按局部名建的那张索引。
+**But the host's own code does not eat bare names.** Named sources in the source code, in the `defaultMembers` of `SYSTEM_IDENTITIES`, and in
+`VIDEO_RANKING_STREAMS` (the seed list of default rankings for the film/TV channel) are always written with the full name — a third party installing a same-name package could push the host's own calls into the
+ambiguity branch. This is pinned by "every named default member points
+at a real source" in `src/providers/system/index.real.test.ts`. RSSHub catalog ids (`rsshub:…`) belong to no package namespace, get no prefix, and do not enter
+the index built by local name.
 
-### `uses`：这个源要靠别的源才完整
+### `uses`: this Source is complete only with other Sources
 
-一个 Source 的产出如果**依赖另一个 Source**，在 `uses` 里申报（`manifests.yaml` 的 `uses`，
-recipe 写 `meta.uses`）。它回答的是反过来那个问题：**一份 recipe 坏了会连累谁**。
+If a Source's output **depends on another Source**, declare it in `uses` (`uses` in `manifests.yaml`,
+`meta.uses` in a recipe). It answers the question the other way around: **when one recipe breaks, who gets dragged down**.
 
 ```json
 "meta": { "uses": ["xhs-detail"] }
 ```
 
-**同包内写局部名，宿主在装载期合成全名**（和 `sourceId` 同一条规矩，见 §1.1）。要指别的包里的源
-就写全名——局部名不许含 `/`，所以「含 `/` = 全名」是个精确判据，不是猜。
+**Within the same package write local names, and the host synthesizes full names at load time** (the same rule as `sourceId`, see §1.1). To point at a Source in another package,
+write the full name — local names must not contain `/`, so "contains `/` = full name" is an exact check, not a guess.
 
-**方向是「用的人申报」。** 被共用的那份 recipe **不**登记自己的用户：那样每来一个新消费方就得
-回去改它，漏了不报错、只是安静地少算一个。申报写在消费方自己的文件里，加一个消费方只碰它自己
-那一个文件。
+**The direction is "the user declares".** The shared recipe **does not** register its own users: otherwise every new consumer would require going back to edit it,
+and a miss would raise no error and just quietly undercount by one. The declaration is written in the consumer's own file, and adding a consumer touches only that
+one file.
 
-**它不影响调度**——宿主不会因为一格 `uses` 就去替你跑那个源。这是一份供诊断读的声明，
-消费面是 `GET /api/sources/affected?id=…`（[API.md](API.md)），以及漂移记账那一刻写进
-修复账本的 `affectedSources`（`src/replay/repair-ledger.ts`）。
+**It does not affect scheduling** — the host will not run that Source for you because of a `uses` cell. It is a declaration for diagnostics to read,
+consumed by `GET /api/sources/affected?id=…` ([API.md](API.md)) and by the `affectedSources` written into the
+repair ledger at the moment drift is recorded (`src/replay/repair-ledger.ts`).
 
-**活体那一条**：`xhs-home` / `xhs-search` 都 `uses: ["xhs-detail"]`——打开一条笔记要的正文、
-图集、评论是共用的 detail recipe 现取的。detail 漂了，这两个源**采集照常成功、健康状态一路是
-绿的**，只是每一条笔记都点不开；不申报，就没有任何一处会把它们算进受影响的源。
+**The live case**: `xhs-home` / `xhs-search` both `uses: ["xhs-detail"]` — the body text, image sets,
+and comments needed to open a note are fetched on demand by the shared detail recipe. When detail drifts, these two Sources **keep harvesting successfully, with health status green all the way**,
+yet every note cannot be opened; without the declaration, nothing anywhere would count them among the affected Sources.
 
 ### Runtime Source Configuration
 
@@ -445,78 +445,79 @@ runtime_config:
       type: secret
       label: TMDb API Key
       required: true
-      description: 简短说明，显示在 Source Config Sheet 字段下方。
+      description: Short note, shown below the field in the Source Config Sheet.
       helpUrl: https://provider.example.com/api-keys
-    language: { type: string, label: 语言, default: zh-CN }
+    language: { type: string, label: 语言, default: zh-CN }   # label 语言 = "Language"
 ```
 
 `secret` values are write-only and their HTTP status exposes only whether they are configured.
 `string` values are returned to the Source Config Sheet. A Source may share a `ref` only when its
 fields describe exactly the same facility configuration.
 
-**端点例外**：只有真正私密、不因调用而变的值才落 `runtime_config`。可自托管、有公开默认值的
-端点（大多数人不需要碰）走 `params_schema`（`baseUrl`，`required: false`，description 写明
-默认值），只把密钥本身留给 `runtime_config`——`ocr-vlm`、`article-firecrawl`（住 `packages/firecrawl/`）都是这个形状：
-`baseUrl` 在 `params_schema`，`apiKey` 在 `runtime_config`。
+**Endpoint exception**: only values that are truly private and do not vary per call go into `runtime_config`. Endpoints that can be self-hosted and have a public default
+(which most people need not touch) go through `params_schema` (`baseUrl`, `required: false`, with the description stating the
+default), leaving only the secret itself to `runtime_config` — `ocr-vlm` and `article-firecrawl` (living in `packages/firecrawl/`) both have this shape:
+`baseUrl` in `params_schema`, `apiKey` in `runtime_config`.
 
-**可选密钥（keyless）**：一些设施提供匿名免费额度，`runtime_config.fields.apiKey` 可以声明
-`required: false` 放行不填。但 keyless 额度通常按**出口 IP** 记账、与同一出口的其他调用方
-共享，被别人先吃掉时只表现为一个 429，从调用方这边完全无从排查——`article-firecrawl`
-（Firecrawl keyless 免费档 1000 credits/月）就是这个坑。声明 `required: false` 的字段，
-`description` 必须点破这个坑并给出退路（注册一个免费账号填 key，额度相同但记在自己账上、
-可预期）。
+**Optional secret (keyless)**: some facilities provide an anonymous free quota, and `runtime_config.fields.apiKey` may declare
+`required: false` to let it go unfilled. But a keyless quota is usually metered by **egress IP** and shared with other callers behind the same egress; when someone else has used it up first, it shows up only as a 429,
+which the caller has no way to investigate — `article-firecrawl`
+(Firecrawl keyless free tier, 1000 credits/month) is exactly this trap. For a field declared `required: false`,
+the `description` must point out this trap and give a way out (register a free account and fill in a key: the quota is the same but is booked to your own account and
+predictable).
 
-### 1.2 歌词源的 key 文法
+### 1.2 Key grammar for lyrics Sources
 
-`categories` 含 `lyrics` 的源，`lyrics-search` 那行按类目现取它们（成员 `{mode:'auto', category:'lyrics'}`），
-订阅键由 `buildParams` 灌进 `key_param` 指定的那个参数。key 是 `<platform>:<id>`（已知曲目引用，
-`platform` = 某个包的 facility）或 `<title>::<artist>`（模糊）。
+For Sources whose `categories` contain `lyrics`, the `lyrics-search` row fetches them on demand by category (member `{mode:'auto', category:'lyrics'}`), and
+the subscription key is poured by `buildParams` into the parameter named by `key_param`. The key is `<platform>:<id>` (a known track reference,
+`platform` = the facility of some package) or `<title>::<artist>` (fuzzy).
 
-**收到别家平台前缀要返回 `[]`（decline）**，把机会让给梯子的下一档；不要返回 `{matched:false}`
-——那是"我查过了，没有"，会把别家的歌钉死成查无此歌。缓存归调用方（`GET /api/resolutions` 与 MCP 的
-`resolve` 共用 `src/audio/lyrics-cache.ts`），源里不要自己缓存。范例 `packages/netease/lyrics.ts`。
+**On receiving another platform's prefix, return `[]` (decline)** to leave the chance to the next rung of the ladder; do not return `{matched:false}`
+— that means "I checked, and there is none", and it would nail another platform's song down as a song that cannot be found. Caching belongs to the caller (`GET /api/resolutions` and the MCP
+`resolve` share `src/audio/lyrics-cache.ts`); a Source must not cache on its own. Example `packages/netease/lyrics.ts`.
 
 ---
 
-## 2. 槽位：recipe 数据（`*.recipe.json`）
+## 2. Slot: recipe data (`*.recipe.json`)
 
-Recipe 是 Stream 对浏览器采集行为的正式称呼：一份**可录制、可校验、可回放、可修复**的
-版本化数据契约。它描述如何使用一个带登录态的浏览器 session 完成动作、观察页面产生的
-数据、映射为 item，并判断登录失效或站点漂移。
+A recipe is Stream's formal name for browser harvest behavior: a versioned data contract that can be
+**recorded, validated, replayed, and repaired**. It describes how to use a logged-in browser session to
+perform actions, observe the data the page produces, map it to items, and detect login expiry or site
+drift.
 
-- 从零编写一份 recipe 的作者流程见 `.claude/skills/write-recipe/references/authoring.md`。
-- **拟人采集管线（用户自己的 Chrome + facility 单会话 + 拦截 XHR）怎么跑、怎么观察、怎么修：
-  `.claude/skills/write-recipe/SKILL.md` 是唯一真相源。** 本节只定义概念与契约，
-  不重复运行经验；两边冲突时以 skill 为准。
-- 本节是 Recipe 的权威概念、语义与验证术语；代码锚点在 `src/replay/`。
+- For the authoring workflow for writing a recipe from scratch, see `.claude/skills/write-recipe/references/authoring.md`.
+- **How the human-like harvest pipeline (the user's own Chrome + a single facility session + intercepted XHR) runs, how to observe it, and how to repair it:
+  `.claude/skills/write-recipe/SKILL.md` is the single source of truth.** This section only defines concepts and the contract,
+  and does not repeat operating experience; when the two conflict, the skill wins.
+- This section holds the authoritative concepts, semantics, and validation terms for Recipe; the code anchor is `src/replay/`.
 
-### 2.1 Recipe 不是什么
+### 2.1 What a Recipe is not
 
-- Recipe **不是 Source**。Source 是用户可理解的入口；Recipe 是该入口的执行契约。
-- Recipe **不是新的 Workflow 业务层**。动作编排是 Recipe 内部结构，不另立顶层概念。
-- DOM、XHR、page state、eval **不是不同 Source**。它们是执行期间读取结果的手段。
-- persistent shadow session **不是 Stream**。它只是 Provider 调用复用的浏览器执行资源。
-- Recipe 是数据，不是任意站点代码容器。通用能力进入 schema/runner；站点 selector、URL
-  pattern 和 mapping 留在 recipe。
-- Recipe **不是独立的分发单位**。分发单位只有一种：**Stream 包**。recipe 数据是包的一个
-  **槽位**（`*.recipe.json` + `stream.facility`），与 Source 清单 / 代码 / docker 容器 /
-  凭证域这几格并列——同一个包可以同时填 recipe 槽位和容器槽位。
+- A Recipe is **not a Source**. A Source is the entry point a user can understand; a Recipe is the execution contract of that entry point.
+- A Recipe is **not a new Workflow business layer**. Action orchestration is internal structure of the Recipe, not a separate top-level concept.
+- DOM, XHR, page state, and eval are **not different Sources**. They are the means of reading results during execution.
+- A persistent shadow session is **not a Stream**. It is only a browser execution resource reused across Provider calls.
+- A Recipe is data, not a container for arbitrary site code. General capabilities go into the schema/runner; site selectors, URL
+  patterns, and mappings stay in the recipe.
+- A Recipe is **not an independent unit of distribution**. There is only one unit of distribution: the **Stream package**. Recipe data is one
+  **slot** of a package (`*.recipe.json` + `stream.facility`), alongside the Source manifest / code / docker container /
+  credential domain slots — the same package can fill both the recipe slot and the container slot.
 
-例如小红书按语义保留这几个入口（下表写的是**局部名**，也就是 recipe 文件里的 `sourceId`；
-它们在 registry 里的全名是 `@streamapp/xhs/<局部名>`，见 §1.1）：
+For example, Xiaohongshu keeps these entries by semantics (the table below lists **local names**, i.e. the `sourceId` in the recipe file;
+their full names in the registry are `@streamapp/xhs/<local name>`, see §1.1):
 
-| 局部名 | 角色 | 数据落点 |
+| Local name | Role | Data destination |
 |---|---|---|
-| `xhs-home` | 首页推荐时间线 Source（可订阅） | 入库 |
-| `xhs-search` | Search Source / Provider | 临时返回，不入库 |
-| `xhs-detail` | Home/Search 共用的私有 detail recipe；`discoverable:false` 的内部 Source，由本包的 `xhs-detail` enricher 经 `ctx.readSource` 调（§3.2） | enrich 临时结果，不入库 |
-| `xhs-like` | 互动写入（点赞/收藏），on-demand、从不被调度；前端经 `POST /api/recipes/action` 触发 | 不产 item |
+| `xhs-home` | Home recommendation timeline Source (subscribable) | Stored |
+| `xhs-search` | Search Source / Provider | Returned transiently, not stored |
+| `xhs-detail` | Private detail recipe shared by Home/Search; an internal Source with `discoverable:false`, called by this package's `xhs-detail` enricher through `ctx.readSource` (§3.2) | Transient enrich result, not stored |
+| `xhs-like` | Interaction write (like/favorite), on-demand and never scheduled; the frontend triggers it via `POST /api/recipes/action` | Produces no items |
 
-不得再按实现路径派生 `xhs-home-xhr`、`xhs-home-dom`、`xhs-home-click` 等 Source。
+Do not derive further Sources by implementation path, such as `xhs-home-xhr`, `xhs-home-dom`, or `xhs-home-click`.
 
-### 2.2 Recipe 的正交组成
+### 2.2 The orthogonal composition of a Recipe
 
-Browser Recipe 目标结构由五部分组成：
+The target structure of a Browser Recipe consists of five parts:
 
 ```ts
 interface BrowserRecipe {
@@ -540,460 +541,461 @@ interface BrowserRecipe {
 
 #### Session
 
-- `one-shot`：一次执行获得 tab，完成后释放，适合普通 fetch/browser recipe。
-- `persistent`：facility-scoped session，由 session manager 长期持有；Search/Detail 可复用。
-- `unattended`：采集。后台标签，用户不必在场，**永远不抢屏幕**。所有 Source 都是这一档。
-- `interactive`：用户得亲自动手的流程（登录、扫码、自助建 key）。开在他当前窗口里可见，因为他要在上面点。
-- **没有 `transport` 字段可选**：浏览器只有一个（用户自己的 Chrome）。老 recipe 写 `'ext-cdp'`
-  照收但无效，写 `'cloak'` **装载即拒**并指出迁移动作（`src/replay/recipe-store.ts`）。
+- `one-shot`: one execution obtains a tab and releases it when done; suited to ordinary fetch/browser recipes.
+- `persistent`: a facility-scoped session held long-term by the session manager; Search/Detail can reuse it.
+- `unattended`: harvest. A background tab; the user need not be present, and it **never grabs the screen**. Every Source uses this tier.
+- `interactive`: a flow where the user must act in person (login, QR scan, self-service key creation). It opens visibly in the window the user is currently in, because the user has to click on it.
+- **There is no `transport` field to choose**: there is only one browser (the user's own Chrome). Old recipes that write `'ext-cdp'`
+  are still accepted but have no effect; writing `'cloak'` is **rejected at load time** with the migration action spelled out (`src/replay/recipe-store.ts`).
 
-判据是**谁动手**，不是谁想看。写 recipe 时只需要问一句：这次运行要用户伸手吗？要 → `interactive`，
-不要 → `unattended`。开发期想看着它跑**不是**改这个字段的理由（那是一次运行的临时需求，写进随 git
-走的文件里就得记着改回去）——用 `RECIPE_PROBE` 的分阶段账本和 `data/failures` 的失败现场。
+The criterion is **who acts**, not who wants to watch. When writing a recipe, ask one question: does this run need the user to reach in? If yes → `interactive`,
+if not → `unattended`. Wanting to watch it run during development is **not** a reason to change this field (that is a temporary need of one run, and writing it into a file that
+travels with git means having to remember to change it back) — use `RECIPE_PROBE`'s staged ledger and the failure scenes in `data/failures` instead.
 
-**看得见 ≠ 抢焦点。** 采集标签一直在标签栏里，用户随时能自己切过去；`interactive` 只决定标签开在
-前台还是后台，runner 一层不碰焦点。把窗口提到最前只发生在用户**显式要求**时（点「在浏览器里完成
-登录」→ `RecipeSessionManager.focusFacilityTab`）。
+**Visible ≠ stealing focus.** The harvest tab is always in the tab bar, and the user can switch to it at any time; `interactive` only decides whether the tab opens in the
+foreground or background, and the runner never touches focus at any layer. Bringing the window to the front happens only when the user **explicitly asks** (clicking "Finish
+login in the browser" → `RecipeSessionManager.focusFacilityTab`).
 
-后台档为什么点得动：lane 建好就发一条 `Emulation.setFocusEmulationEnabled`，隐藏标签的可信输入
-因此照常落地；配上"鼠标事件不等 Chrome 回执"（`extension/src/lib/driver.ts` 的 `FIRE_AND_FORGET`），
-一次可信点击 0.19–0.33s。
-所以**"要可信点击"从来不是要前台的理由**。**要合成器真产出一帧的命令（截图 / `settle`）不吃这条
-红利**——那由 OS 那层"Chrome 窗口显不显示在屏幕上"说了算，见 `write-recipe` skill 的
-`references/session-runtime.md`。
+Why the background tier can still click: as soon as a lane is built it sends one `Emulation.setFocusEmulationEnabled`, so trusted input to a hidden tab
+lands as usual; combined with "mouse events do not wait for Chrome's receipt" (`FIRE_AND_FORGET` in `extension/src/lib/driver.ts`),
+one trusted click takes 0.19–0.33s.
+So **"needs a trusted click" has never been a reason to need the foreground**. **Commands that need the compositor to actually produce a frame (screenshots / `settle`) do not get this
+benefit** — those are governed by the OS layer, namely whether the Chrome window is displayed on screen; see
+`references/session-runtime.md` of the `write-recipe` skill.
 
-四档对照数字、病理，以及"它对页面撒了什么谎"，见 `.claude/skills/write-recipe/references/session-runtime.md`
-的 `visibility` 一节（运行经验的真相源在 skill，本节只定概念契约）。
+For the numbers comparing the four tiers, the pathologies, and "what lie it tells the page", see the `visibility` section of `.claude/skills/write-recipe/references/session-runtime.md`
+(the source of truth for operating experience is in the skill; this section only defines the conceptual contract).
 
-#### Ledger（这份 recipe 的产出同时是一本有序账本）
+#### Ledger (the output of this recipe is also an ordered ledger)
 
-`ledger: { idField }` 声明"这次运行在这条 lane 的页面上铺开了哪些条目、按什么顺序"。它是下游
-`locate` step 的**坐标系**：detail 要在 feed 上找到目标卡片、滚进视口、可信点击，靠的就是这本账本。
-调用方没传 `params[orderedParam]` 时，**运行时按这份 recipe 的 facility 从 `FeedLedger` 填**
-（`SessionRecipeExecutor` 的 `orderedFor` → `RecipeRunner`）——「在 feed 上找卡片」当然要 feed 的
-顺序，那是 locate 步的运行契约，不是某个调用方的事；显式传了（哪怕是 `[]`）就用传的。
+`ledger: { idField }` declares "which entries this run laid out on this lane's page, and in what order". It is the **coordinate system** of the downstream
+`locate` step: for detail to find the target card on the feed, scroll it into the viewport, and click it with trusted input, it relies on this ledger.
+When the caller did not pass `params[orderedParam]`, **at run time it is filled from `FeedLedger` by this recipe's facility**
+(`orderedFor` of `SessionRecipeExecutor` → `RecipeRunner`) — "finding a card on the feed" naturally needs the feed's
+order, which is the locate step's run-time contract and not any caller's business; if it was passed explicitly (even `[]`), the passed value is used.
 
-- **谁是来源谁声明。** 引擎不认 sourceId，只按声明记账——"哪个字段是身份"是站点知识，属于 recipe
-  这份数据。`idField` 必须和消费方 `locate` 的 `identityParam` 是同一个字段。
-- **整本替换，不是追加。** 一次运行 = 那个标签被换成了这一批。
-- **lane 关掉，账本一起丢。** 它描述的是那个标签；标签没了账本就是废纸。
-- 没有账本不是故障：`locate` 立刻 MISS，走 `fallbackUrl` 整页导航，数据照出（降级）。
+- **Whoever is the origin declares.** The engine does not know sourceId and only keeps the books by declaration — "which field is the identity" is site knowledge and belongs to the recipe
+  data. `idField` must be the same field as the consumer `locate`'s `identityParam`.
+- **Whole replacement, not append.** One run = that tab was replaced with this batch.
+- **When the lane closes, the ledger is lost with it.** It describes that tab; once the tab is gone the ledger is waste paper.
+- Having no ledger is not a fault: `locate` MISSes immediately, takes `fallbackUrl` for a full-page navigation, and the data still comes out (degraded).
 
-Recipe runner 不创建或销毁 tab；它向 session manager acquire/release session handle。扩展只
-操作自己创建并登记的 owned tab，绝不 attach/关闭用户手动 tab。
+The recipe runner does not create or destroy tabs; it acquires/releases a session handle from the session manager. The extension only
+operates on owned tabs that it created and registered itself, and never attaches to or closes a tab the user opened manually.
 
 #### Steps
 
-Steps 表达站点可观察到的用户行为，例如导航、输入、提交、滚动、点击目标卡片、返回。
-生产回放使用 CDP trusted input。Humanization 是任务动作的 pacing/trajectory policy，不是
-随机制造与用户意图无关的点击。
+Steps express user behavior observable on the site, such as navigating, typing, submitting, scrolling, clicking a target card, and going back.
+Production replay uses CDP trusted input. Humanization is a pacing/trajectory policy for task actions, not
+randomly manufactured clicks unrelated to the user's intent.
 
-`click` 是"按下这个具名元素"（与 `openItems`「打开信息流第 N 条」是两件事）。它可带
-`position: {x, y}`——相对元素 rect 左上角的 CSS px 偏移，省略即中心；字段名与语义取自
-Playwright 的 `locator.click({ position })`。存在的理由是**中心对某些目标就是错的点**，
-而不是可调优的旋钮。
+`click` means "press this named element" (a different thing from `openItems`, "open the Nth entry of the feed"). It can carry
+`position: {x, y}` — a CSS px offset relative to the top-left corner of the element rect, defaulting to the center when omitted; the field name and semantics come from
+Playwright's `locator.click({ position })`. It exists because **for some targets the center is simply the wrong point**,
+not as a tunable knob.
 
-`setFiles` 是"把浏览器所在机器上的本地文件放进页面的 `<input type=file>`"（CDP
-`DOM.setFileInputFiles`）：`{ kind:'setFiles', selector, paths }`，`paths` 是按换行拼的绝对路径，
-通常写 `{files}`——一个 `format:'path', multiple:true` 的参数翻译后的形状（WSL 路径宿主已翻成
-Windows 侧认的）。**大文件不该走控制通道**：`evaluate` 会把整个参数袋序列化进一条求值表达式，
-几十 MB 的图编成 data URL 塞 params 就是一条几十 MB 的 CDP 消息，还挤在页内求值 30s 预算里；
-这一步让**浏览器进程直接读盘**，页面拿到的 `File` 和用户在文件对话框里选中的一样。`paths` 为空
-（参数缺席）就跳过并记进 trace；元素不在 / 不是文件输入框 / CDP 拒绝都抛。范例：
-`packages/photopea/photopea-run.recipe.json`（宿主页上先由一步 `evaluate` 建好 input）。
+`setFiles` means "put local files on the browser's machine into the page's `<input type=file>`" (CDP
+`DOM.setFileInputFiles`): `{ kind:'setFiles', selector, paths }`, where `paths` is absolute paths joined by newlines,
+usually written as `{files}` — the shape after translating a parameter with `format:'path', multiple:true` (WSL paths already translated by the host to
+the Windows-side form). **Large files should not go through the control channel**: `evaluate` serializes the whole parameter bag into one evaluation expression,
+and encoding a tens-of-MB image as a data URL and stuffing it into params makes a tens-of-MB CDP message that also squeezes into the in-page evaluation 30s budget;
+this step lets the **browser process read the disk directly**, and the `File` the page receives is the same as one the user picks in a file dialog. If `paths` is empty
+(the parameter is absent), the step is skipped and recorded in the trace; the element being absent / not a file input / CDP refusing all throw. Example:
+`packages/photopea/photopea-run.recipe.json` (the input is first built on the host page by an `evaluate` step).
 
-每个 step 还可以带两道闸门，它们回答的是**两个不同的问题**：
+Each step can also carry two gates, which answer **two different questions**:
 
-- **`settle`（动作之前）——"现在能动手了吗"**。等目标那块区域**画完并停住**再执行。判据是
-  「变过了 + 停住了」，逐帧比较该元素 rect 裁出的画面。它存在，是因为有些目标**就绪与否从 DOM
-  里根本观察不到**（活在 closed shadow root 里的挑战控件），而**过早动手是有害的，不只是无效**。
-  截哪里由 DOM 的 rect 给：**DOM 说在哪，画面说什么时候。**
-  **每一类步骤都收它**（`locate` / `openTarget` / `evaluate` 也在内）；不声明就是零代价的空操作。
-  `evaluate` 不操作页面、只调站点自己的 JS，通常没必要声明。
-- **`expect`（动作之后）——"我做的这件事生效了吗"**。`{ selector, state: 'present'|'gone',
-  timeout, retryEvery }`，语义取自 Playwright 的 `waitFor({ state, timeout })`。不满足就**在这一步
-  断掉**：因果链断在这里，后面的步骤只会以无关的症状失败。状态叫 `present` 而不是 `visible`，
-  因为判据是元素挂没挂上 DOM、不是 CSS 可见性——名字得说实话。
+- **`settle` (before the action) — "can I act now?"** Wait until the region of the target has **finished painting and stopped moving** before executing. The criterion is
+  "has changed + has stopped", comparing the picture cropped to that element's rect frame by frame. It exists because for some targets **readiness cannot be observed from the DOM
+  at all** (a challenge widget living in a closed shadow root), and **acting too early is harmful, not merely ineffective**.
+  Where to capture is given by the DOM's rect: **the DOM says where, the picture says when.**
+  **Every kind of step accepts it** (`locate` / `openTarget` / `evaluate` included); if not declared it is a zero-cost no-op.
+  `evaluate` does not operate on the page and only calls the site's own JS, so it usually needs no declaration.
+- **`expect` (after the action) — "did what I did take effect?"** `{ selector, state: 'present'|'gone',
+  timeout, retryEvery }`, with semantics taken from Playwright's `waitFor({ state, timeout })`. If it is not satisfied, it **breaks at this step**:
+  the causal chain breaks here, and later steps would only fail with unrelated symptoms. The state is called `present` rather than `visible`,
+  because the criterion is whether the element is attached to the DOM, not CSS visibility — the name has to tell the truth.
 
-**等待属于 `expect`，不属于动作自己的 timeout。** 一个步骤等的从来不是"我这次点击要多久"，
-而是"它引发的事什么时候发生"。
+**Waiting belongs to `expect`, not to the action's own timeout.** What a step waits for is never "how long this click takes",
+but "when the thing it triggers happens".
 
-**`expect` 在 `locate` / `openTarget` 上的位置。** 这两类步骤自带**内建确认**（打开后看 URL 带不带
-identity；不成就回落 `fallbackUrl`），它回答的是「**打开了没**」。`expect` 是使用者自己写的额外判据，
-回答「**打开的是不是我要的那个 / 页面到位了没**」——所以它跑在**内建确认之后、observers 读之前**。
-在 observers 之前是硬要求：observer 一旦从一个错的页面上把数据读走，拿到的是真数据、只是来自别处，
-这是最难查的一类错。走 `fallback-nav` 回落的那条路**同样要过这道闸门**：`expect` 判的是最终状态，
-不是走哪条路到的。
+**Where `expect` sits on `locate` / `openTarget`.** These two kinds of step carry a **built-in confirmation** (after opening, check whether the URL carries the
+identity; if not, fall back to `fallbackUrl`), which answers "**did it open?**". `expect` is an extra criterion written by the user,
+answering "**is what opened the one I want / is the page in place?**" — so it runs **after the built-in confirmation and before the observers read**.
+Before the observers is a hard requirement: once an observer reads data off a wrong page, what it gets is real data that merely comes from elsewhere,
+which is the hardest kind of error to trace. The path that falls back via `fallback-nav` **goes through this gate as well**: `expect` judges the final state,
+not which route got there.
 
-**这两类步骤不支持 `expect.retryEvery`，装载时就报错**（不是静默忽略）。`retryEvery` 的语义是"每隔
-这么久把**动作**重做一遍"，而它们各自已经有自己的重试：`locate` 失败会回落 `fallbackUrl`（重做一次
-locate = 重新滚动定位 + 一次拟人点击，humanize 是这条路径的耗时大头），`openTarget` 自带 `maxScrolls`
-重试循环。再叠一层重做是重复且昂贵的；要放宽只调 `expect.timeout`。
+**These two kinds of step do not support `expect.retryEvery`, and loading reports an error** (it is not silently ignored). The semantics of `retryEvery` is "every
+so often, redo the **action**", but they each already have their own retry: a `locate` failure falls back to `fallbackUrl` (redoing locate
+= re-scrolling to locate + one human-like click, and humanize is the bulk of this path's time), and `openTarget` has its own `maxScrolls`
+retry loop. Stacking another redo on top is redundant and expensive; to loosen it, adjust only `expect.timeout`.
 
-一次运行失败时会留下**现场**（停在哪个 URL、页面可见文本、视口截图、失败那一步自己的观测）：
-一次性会话失败即销毁，现场只有这一次机会。
+When a run fails it leaves behind a **scene** (which URL it stopped at, the page's visible text, a viewport screenshot, and the observation of the failing step itself):
+a one-shot session is destroyed on failure, so the scene gets only this one chance.
 
 #### Observers
 
-Observers 在 steps 执行期间按限定窗口读取结果，可组合而非互斥：
+Observers read results within a bounded window during step execution, and can be combined rather than being mutually exclusive:
 
-- `network`：订阅匹配的 CDP Network response，按 requestId 读取 body。
-- `state`：读取页面已产生的结构化 state（如 `__INITIAL_STATE__`）。
-- `dom`：读取当前渲染结果，通常作为定位、校验或 fallback。
+- `network`: subscribes to matching CDP Network responses and reads the body by requestId.
+- `state`: reads structured state the page has already produced (such as `__INITIAL_STATE__`).
+- `dom`: reads the current rendering result, usually used for locating, validation, or fallback.
 
-Observer 只读已经由页面流程产生的内容。主动调用站点内部 webpack request client 不等同于
-"观察 XHR"，不得作为模拟用户浏览的默认路径；若保留，只能是显式、受限的兼容 step。
+An Observer only reads content already produced by the page flow. Actively calling the site's internal webpack request client is not equivalent to
+"observing XHR" and must not be the default path for simulating user browsing; if retained, it can only be an explicit, restricted compatibility step.
 
-CDP event body 只在匹配 observer 的有限窗口读取，避免无限日志和敏感数据扩散。
+A CDP event body is read only within the bounded window of a matching observer, to avoid unbounded logs and the spread of sensitive data.
 
 #### Output
 
-Output 负责去重、assert、mapping 和 normalizer 前的原始 item 形状。多个 observer 的结果由
-backend observer pipeline 合并；extension 不解释 Recipe、不做字段映射。
+Output is responsible for dedup, assert, mapping, and the raw item shape before the normalizer. The results of multiple observers are merged by the
+backend observer pipeline; the extension does not interpret the Recipe and does no field mapping.
 
-- **`timestampFrom: 'harvest-order'`**（可选）：条目时间戳不取 mapping 里的 `pubDate`，改成
-  「本轮采集时刻 − 序号秒」，即**按采到的先后排**。给「我的收藏」这类清单用：上游只给内容的
-  发布时间、不给「我什么时候收藏的」，而页面顺序就是收藏顺序。不开的后果是昨天收藏的一条
-  老视频按发布时间沉到底，收藏页前 30 条里看得见、Stream 里翻不到，长得像「采集漏了」。
-  盖章只在 `stampHarvestOrder`（`src/adapters/replay/adapter.ts`）一处，observer 首批与
-  evaluate 翻页批合并之后一起盖——别在 recipe 的 mapping 里自己算，network observer 的
-  mapping 是声明式 dot-path，算不了。
-- **`files`**（可选，只对**动作 recipe** 生效）：哪些 mapping 字段是**文件**——页内以 base64 交出来的
-  二进制。宿主把它写进 `<dataDir>/action-artifacts/`（7 天回收），回执里那一格换成绝对路径。
-  键是 mapping 字段名，值给 `ext`（写死扩展名）或 `extFrom`（同一条 item 里装格式的字段，
-  `jpg:0.8` 取冒号前）；两者都不是 mapping 字段就装载期报错。**文件类产物没有第二条路**：回执会
-  原样落进 run 账本（`agent-runs.db`），而账本拒收超过 1MB 的结果（`RESULT_MAX_BYTES`）——一张
-  导出图几十 MB，编成文本塞进账本的下场是账本撑到 GB、开机 OOM。范例：`packages/photopea/`。
-- **`track_id`**（mapping 保留字段，音频源用）：这条 item 在源站的稳定音轨 id 的**字段路径**。
-  normalizer 用它 + 所属包的 `facility` 组出 `(platform, track_id)`——归档 / 网盘对齐 / 播放解析的键。
-  `platform` **不许在 mapping 里写**，恒等于包的 facility：一个包不能把音轨挂进别家的 id 空间。
-  有 `track_id` 没 `enclosure_url` = 付费/独家集（`resolveOnly`，只有网盘里有才可播）。
+- **`timestampFrom: 'harvest-order'`** (optional): the entry timestamp is not taken from `pubDate` in the mapping but becomes
+  "this round's harvest time − sequence number in seconds", i.e. **ordered by the order harvested**. It is for lists like "my favorites": upstream only gives the content's
+  publish time and not "when I favorited it", while page order is the favoriting order. The consequence of not enabling it is that an
+  old video favorited yesterday sinks to the bottom by publish time, visible in the first 30 entries of the favorites page but unreachable by scrolling in Stream, which looks like "the harvest missed it".
+  Stamping happens in exactly one place, `stampHarvestOrder` (`src/adapters/replay/adapter.ts`), after the observer's first batch and the
+  evaluate pagination batches are merged — do not compute it yourself in the recipe's mapping; the network observer's
+  mapping is a declarative dot-path and cannot compute.
+- **`files`** (optional, effective only for **action recipes**): which mapping fields are **files** — binaries handed over as base64 from inside the page.
+  The host writes them to `<dataDir>/action-artifacts/` (reclaimed after 7 days), and that cell in the receipt is replaced with an absolute path.
+  The key is the mapping field name, and the value gives `ext` (a fixed extension) or `extFrom` (a field in the same item holding the format;
+  for `jpg:0.8` the part before the colon is taken); if neither is a mapping field, loading reports an error. **File-type outputs have no second route**: the receipt
+  is written as-is into the run ledger (`agent-runs.db`), and the ledger rejects results over 1MB (`RESULT_MAX_BYTES`) — an
+  exported image is tens of MB, and encoding it as text into the ledger ends with the ledger swelling to GB and an OOM at boot. Example: `packages/photopea/`.
+- **`track_id`** (a reserved mapping field, used by audio sources): the **field path** of this item's stable audio-track id on the source site.
+  The normalizer uses it + the owning package's `facility` to compose `(platform, track_id)` — the key for archive / netdisk alignment / playback resolution.
+  `platform` **must not be written in the mapping** and is always equal to the package's facility: a package cannot hang a track into another package's id space.
+  Having `track_id` without `enclosure_url` = a paid/exclusive episode (`resolveOnly`, playable only if it exists in the netdisk).
 
-#### Extract（一次性抽取：Recipe 唯一的写效应）
+#### Extract (one-time extraction: the Recipe's only write effect)
 
-`extract` 是 Recipe 契约里**唯一会改变 Stream 自身状态**的东西：把页面上只显示一次的明文
-（刚建好的 API key）落进这个 Source 自己的 `runtime_config` secret 槽。除它以外，Recipe 全部
-是"操作站点 + 读回 item"，不写本地。
+`extract` is the **only** thing in the Recipe contract that **changes Stream's own state**: it writes plaintext shown only once on the page
+(a freshly created API key) into this Source's own `runtime_config` secret slot. Apart from it, a Recipe is entirely
+"operate the site + read items back", and writes nothing locally.
 
-因为写的是凭据存储，边界写在契约里，不留给实现自觉：
+Because what it writes is the credential store, the boundary is written into the contract rather than left to the implementation's good conduct:
 
-- **`extract` 里没有 ref。** 目标由执行侧从这份 Recipe **自己 manifest** 的
-  `runtime_config.ref` 绑定，所以 Recipe 在运行期无法指名去写别人的配置。
-- **字段必须在同一份 `runtime_config` 里声明为 `type:'secret'`**，否则拒写；这条在**装载点**
-  就拒（一份共享 Recipe 被审查的时刻），不是运行时静默失效。
-- **恰好命中一处才写**。0 处或多处都拒——多个候选挑哪个都是猜，而猜错的凭据只会在很远的
-  下游变成一句"key 无效"。
-- **只写不读**：没有把 `runtime_config` secret 送回页面的路径。
-- 值不进 trace / outcome / 日志；`outcome.extract` 只报字段名与长度。
+- **There is no ref in `extract`.** The target is bound by the executing side from the `runtime_config.ref` of this Recipe's **own manifest**,
+  so a Recipe cannot name someone else's config to write to at run time.
+- **The field must be declared `type:'secret'` in the same `runtime_config`**, otherwise the write is refused; this is refused at the **load point**
+  (the moment a shared Recipe is reviewed), not silently ineffective at run time.
+- **Write only when exactly one place matches.** 0 or multiple matches are both refused — picking any of several candidates is a guess, and a wrongly guessed credential only
+  turns into a "key invalid" far downstream.
+- **Write-only, never read**: there is no path that sends a `runtime_config` secret back to the page.
+- The value does not enter the trace / outcome / logs; `outcome.extract` reports only field names and lengths.
 
-一个 `extract` Recipe 可以完全不产 item（`observers: []` + `allowEmpty`），它的产出就是那把 key。
+An `extract` Recipe can produce no items at all (`observers: []` + `allowEmpty`); its output is that key.
 
-**声明了它就等于报名当这一格的自助申请入口。** 宿主按具名判据 `provisionedConfigSlot`
-（`src/replay/recipe-provisioner.ts`）反查「ref → 谁能产出它」，配置卡上那颗「一键帮我完成」
-按钮就是这份索引的投影（机制见 `docs/ARCHITECTURE.md`「自助申请」）。两条要知道的边界：
-**只有内置包**进这份索引（第三方包声明同一个 ref 不会让内置那张卡长出按钮）；同一个 ref 有多条
-候选时按 Source 全名排序取第一条——今天 `firecrawl` 就有两条（`-create-key` / `-read-key`），
-入口给的是排在前面那条。
+**Declaring it amounts to signing up as the self-service application entry for that slot.** The host looks up "ref → who can produce it" by the named criterion `provisionedConfigSlot`
+(`src/replay/recipe-provisioner.ts`), and the "Do it for me" button
+on the config card is a projection of this index (mechanism in `docs/ARCHITECTURE.md`, "Self-Service Provisioning"). Two boundaries to know:
+**only built-in packages** enter this index (a third-party package declaring the same ref does not make the built-in card grow a button); when the same ref has multiple
+candidates, the first by Source full name is taken — today `firecrawl` has two (`-create-key` / `-read-key`),
+and the entry points to the one sorted first.
 
-**明文从哪里取——两档，由 `extract.from` 定：**
+**Where the plaintext comes from — two tiers, decided by `extract.from`:**
 
-- 缺省 = **页面可见文本**（含表单控件的 `value`：只显示一次的凭据几乎总放在只读输入框里配一个
-  复制按钮）。
-- `from: { network: '<url glob>' }` = **响应正文**。给有些平台准备的：明文**从不进 DOM**。
-  智谱建完 key，列表里永远是掩码，明文只在点复制时由 `/api_keys/copy/<id>` 单独返回、直接进
-  剪贴板——页面文本这条路对它是死的。
+- Default = **the page's visible text** (including the `value` of form controls: a credential shown only once almost always sits in a read-only input box next to a
+  copy button).
+- `from: { network: '<url glob>' }` = **the response body**. Meant for platforms where the plaintext **never enters the DOM**.
+  After Zhipu creates a key, the list always shows a mask, and the plaintext is returned separately by `/api_keys/copy/<id>` only when copy is clicked, going straight into the
+  clipboard — the page-text route is dead for it.
 
-  这一档的捕获由**引擎自己挂**（只捕获、不累积）。**Recipe 不要为此声明 network observer**：
-  凭证不是 item，声明成 observer 就会进 items 管线，它抓到的那份响应会被空 `output` 判成
-  malformed → **drift**，而 drift 优先级高于 `allowEmpty`，于是抽取本身的结论被盖住、看不见。
+  The capture for this tier is **attached by the engine itself** (capture only, no accumulation). **A Recipe must not declare a network observer for this**:
+  a credential is not an item, and declaring it as an observer sends it into the items pipeline, where the response it captured is judged by the empty `output` as
+  malformed → **drift**, and drift outranks `allowEmpty`, so the extraction's own verdict is covered up and invisible.
 
 #### Policy
 
-Policy 描述速率、停留、滚动距离、重试和任务预算。其目标是让动作序列与真实任务一致并避免
-过快请求，不是生成表面随机噪声。风控、登录墙或无法克服的后台节流出现时必须停止并通知用户。
+Policy describes rate, dwell time, scroll distance, retries, and the task budget. Its goal is to make the action sequence consistent with a real task and avoid
+overly fast requests, not to generate superficial random noise. When risk control, a login wall, or insurmountable background throttling appears, it must stop and notify the user.
 
-### 2.3 Probe 原型（`kind:'http'` 的探针形态）
+### 2.3 The Probe archetype (the probe form of `kind:'http'`)
 
-Feed 之外的第二种 recipe 原型：**问一个目标一个问题，交回一个判决对象**（网盘验活是范例：
-`packages/quark/quark-share.recipe.json`、`packages/baidu/baidu-share.recipe.json`）。契约与
-feed 的差异全部显式声明：
+The second recipe archetype besides Feed: **ask a target one question and hand back a verdict object** (netdisk liveness checking is the example:
+`packages/quark/quark-share.recipe.json`, `packages/baidu/baidu-share.recipe.json`). All differences from the contract of
+feed are declared explicitly:
 
-- **`output: 'object'`**：`decode` 的返回值就是成员结果，不过 pagination/mapping（装载校验
-  拒绝混写）；`null` = 主动弃权。判决以对象身份进 Provider 成员契约（`manifest.output`
-  投影 + 执行器缝上解包），不穿 item 的衣服。
-- **`acceptNonOk: true`**：探针的判决常长在上游错误响应体里（quark 403/404 的 code 就是
-  死因），非 2xx 交给 decode 而不是抛错。feed 绝不该开这个——500 读成「今天没新闻」会把
-  一条流的 items 清空。
-- **探针语义三分（不变式）**：「目标死了」（not-usable）、「看不进去」（unknown）、
-  「网络/风控坏了」（抛错 → 上层归 unknown）永不合并。把「提取码被拒」报成死链，会让一条
-  活链在默认隐藏下静悄悄消失。
-- **`jar: true`**（可选）：记住上游 `Set-Cookie` 供本次执行的后续请求携带。三条铁规归引擎
-  强制：按域名分桶永不跨站；只活一次执行、不落盘不回写 broker；与 broker 凭据分账（发送时
-  按 cookie 名去重、jar 值胜）。配套：`compute.params`（请求前派生参数）、prefetch
-  `parse: 'json'|'text'|'none'`、`request.redirect: 'manual'`。
+- **`output: 'object'`**: the return value of `decode` is the member result, bypassing pagination/mapping (load validation
+  rejects mixing them); `null` = actively abstain. The verdict enters the Provider member contract as an object identity (`manifest.output`
+  projection + unwrapping at the executor seam), not dressed up as an item.
+- **`acceptNonOk: true`**: a probe's verdict often lives in an upstream error response body (the code of a quark 403/404 is
+  the cause of death), so a non-2xx goes to decode instead of throwing. A feed must never enable this — reading a 500 as "no news today" would empty
+  a stream's items.
+- **The probe semantics are three-way (invariant)**: "the target is dead" (not-usable), "cannot see in" (unknown), and
+  "the network/risk control is broken" (throws → the upper layer files it as unknown) are never merged. Reporting "extraction code rejected" as a dead link makes
+  a live link silently disappear under default hiding.
+- **`jar: true`** (optional): remembers upstream `Set-Cookie` for the later requests of this execution to carry. Three iron rules are enforced by the
+  engine: bucketed by domain, never crossing sites; lives for one execution only, not written to disk and not written back to the broker; kept separate from broker credentials (deduped by
+  cookie name when sending, jar value wins). Companions: `compute.params` (parameters derived before the request), prefetch
+  `parse: 'json'|'text'|'none'`, `request.redirect: 'manual'`.
 
-写能力（转存、删除、点赞/收藏）**也可以是 recipe**：recipe 可写用户账户，不做信任分级/出身审定。
-分享/加载第三方 recipe 只做统一免责声明（①安全性不做保障 ②第三方内容需用户自行确认是否可信）。
-画线全貌见 `internal design record` §2。
+Write capabilities (save, delete, like/favorite) **can also be recipes**: a recipe may write to the user's account, with no trust grading / provenance vetting.
+Sharing/loading a third-party recipe only carries a uniform disclaimer (① security is not guaranteed ② the user must decide for themselves whether third-party content is trustworthy).
+For the full picture of where the line is drawn, see `internal design record` §2.
 
-写操作的 recipe 在 `meta` 里自报 `effects: ['write']`（缺省 = 只读），npm 包安装 preview 展示的
-capabilities/effects 就是读这个自报字段——**宿主不做交叉验证**，一个会点赞/收藏/转存的 recipe
-只要不如实标 `effects: ['write']`，确认页就会显示"无副作用"。这条契约只对诚实包成立；发布/安装
-流程（检查清单、preview/install API）见 `.claude/skills/share-recipes/SKILL.md`。
+A write-operation recipe self-reports `effects: ['write']` in `meta` (default = read-only), and the capabilities/effects shown in the npm package install preview
+are read from this self-reported field — **the host does no cross-validation**, so a recipe that likes/favorites/saves
+will make the confirmation page show "no side effects" as long as it does not truthfully mark `effects: ['write']`. This contract holds only for honest packages; for the publish/install
+flow (checklist, preview/install API) see `.claude/skills/share-recipes/SKILL.md`.
 
-### 2.4 桌面 recipe（`kind:'desktop'`）
+### 2.4 Desktop recipes (`kind:'desktop'`)
 
-驱动**原生桌面应用**（非浏览器、非 HTTP）的 recipe，走 `a11y` 感知词汇（role/name/native-class +
-native invoke）而不是 CSS selector。**独立的 `DesktopDriver` 接口 + desktop runner**（`src/replay/
-desktop-*.ts`），与浏览器 `PageDriver`/`Transport` 并列、互不侵入（沿 http/html 先例）。运行时是宿主
-上的 `host-desktop` Engine（`app/host-agent/` Rust sidecar：Windows UIA 读 + enigo 动），后端经
-`/api/host` WS relay 驱动它（镜像 ext-cdp 的进程边界）。这个 sidecar 的生命周期由 Stream 后端自己在进程内持有
-（`src/host-agent/mount.ts` 把 `capabilities/desktop/`（**Stream Desktop**）当成一件**内置能力**交给
-`src/capabilities/host.ts` 挂上，§5.9），二进制按平台走 npm 子包
-（`@streamapp/desktop-<os>-<cpu>`）——**桌面控制不需要装桌面壳**。首个 recipe `telegram-search`（`packages/
-telegram/`）：驱动 Telegram 桌面客户端搜索、读结果为资源 item，纯读。概念与两轴模型（Engine /
-Perception Vocabulary）见 `docs/ENGINE.md`；完整设计与活体验证见 `internal design records/specs/
-2026-07-19-desktop-uia-engine-telegram-design.md`。
+A recipe that drives a **native desktop application** (not a browser, not HTTP). It uses the `a11y` perception vocabulary (role/name/native-class +
+native invoke) rather than CSS selectors. It has a **separate `DesktopDriver` interface + desktop runner** (`src/replay/
+desktop-*.ts`), alongside the browser `PageDriver`/`Transport` and not intruding on it (following the http/html precedent).
+The runtime is the `host-desktop` Engine
+on the host (the `app/host-agent/` Rust sidecar: Windows UIA for reading + enigo for acting), and the backend drives it through the
+`/api/host` WS relay (mirroring the process boundary of ext-cdp). The lifecycle of this sidecar is held in-process by the Stream backend itself
+(`src/host-agent/mount.ts` hands `capabilities/desktop/` (**Stream Desktop**) to
+`src/capabilities/host.ts` to mount as a **built-in capability**, §5.9), and the binary ships per platform as an npm sub-package
+(`@streamapp/desktop-<os>-<cpu>`) — **desktop control does not require installing the desktop shell**. The first recipe is `telegram-search` (`packages/
+telegram/`): it drives the Telegram desktop client to search and reads the results as resource items, read-only. For the concepts and the two-axis model (Engine /
+Perception Vocabulary) see `docs/ENGINE.md`; for the full design and live verification see `internal design records/specs/
+2026-07-19-desktop-uia-engine-telegram-design.md`.
 
-> 写/调这类 recipe 时的运行经验（复位、同 role 多组列表、drift 隔离怎么解除）见
-> `.claude/skills/write-recipe/references/surface-desktop.md`。
+> For operating experience when writing/debugging this kind of recipe (resetting, multiple same-role lists, how to lift drift isolation) see
+> `.claude/skills/write-recipe/references/surface-desktop.md`.
 
-#### 动作型：只做事、不读东西
+#### Action type: only does things, reads nothing
 
-一条桌面 recipe 不一定产 item（"给某联系人发一条消息"、"把这个目录装成扩展"）。这一档
-**`allowEmpty: true`，并且把 `observer` / `read` 整个省掉**——别为了过"一条都没读到就判 drift"
-那道闸去伪造一个恒真的 observer：伪造的比缺失更坏，它读什么、读到没读到都不再有人看，却长得
-像一份真的验证。
+A desktop recipe does not necessarily produce items ("send a message to a contact", "install this directory as an extension"). This tier is
+**`allowEmpty: true`, and omits `observer` / `read` entirely** — do not forge an always-true observer to get past the gate that
+judges "nothing read at all" as drift: a forged one is worse than a missing one, because what it reads and whether it read anything are no longer watched by anyone, yet it looks
+like a real verification.
 
-动作型 recipe 要 `meta.action: true` 显式 opt-in，然后有三个入口，**同一条后端路**
-（`src/mcp/action-recipe.ts`：两步确认、按 `params_schema` 校验、凭据注入、限速），别各接各的：
+An action-type recipe needs `meta.action: true` as an explicit opt-in, and then has three entry points, all on **the same backend path**
+(`src/mcp/action-recipe.ts`: two-step confirmation, validation against `params_schema`, credential injection, rate limiting); do not wire each separately:
 
-| 入口 | 谁用 | 确认怎么给 |
+| Entry point | Used by | How confirmation is given |
 |---|---|---|
-| MCP `run_action_recipe` | 对话宿主里的 agent | 先不带 `confirmed` 拿回执，用户点头后带 `confirmed:true` |
-| `POST /api/recipes/action` | 脚本 / 界面 | 同上，`confirmed` 字段 |
-| `stream recipe run <id> [--param k=v]… [--yes]` | 命令行、**调度中心的命令执行体** | `--yes`；不带它只打印会做什么、退出码 2 |
+| MCP `run_action_recipe` | The agent in a chat host | First call without `confirmed` to get a receipt; after the user agrees, call with `confirmed:true` |
+| `POST /api/recipes/action` | Scripts / UI | Same as above, the `confirmed` field |
+| `stream recipe run <id> [--param k=v]… [--yes]` | Command line, **the command executor of the scheduling center** | `--yes`; without it, it only prints what it would do and exits with code 2 |
 
-要让一条动作 recipe **定时、无人值守、不经模型**跑，就是第三行：任务的命令填 `stream`、参数填
-`recipe run <id> … --yes`（`src/tasks/user-tasks.ts` 只认 command / action 两种执行体，不为 recipe
-另加一种——CLI 就是那个桥）。退出码非 0 任务中心记红，3 表示"没正常收尾、动作可能已做了一部分"。
+To run an action recipe **on a schedule, unattended, without going through a model**, use the third row: the task's command is `stream` and its arguments are
+`recipe run <id> … --yes` (`src/tasks/user-tasks.ts` only recognizes two kinds of executor, command / action, and does not add a third kind for
+recipes — the CLI is that bridge). A non-zero exit code is marked red by the task center, and 3 means "did not finish normally; part of the action may already have been done".
 
-**跑完有产物的动作**再多一格申报：`meta.produces: "images"`。申报了的 recipe 以 sourceId 为模型名出现在
-宿主的 OpenAI 形状生图口（`GET /v1/models` / `POST /v1/images/generations`，`src/http/image-generation-routes.ts`），
-条目要带 `url`（退回带水印图的那张标 `watermarked:'true'`），`output.targetCount` 是一轮的上限（实际出几张由站点定，少了路由会再开一轮）；要接图生图就在 `params_schema` 里声明 `images`（参考图的 data URL，多张按行拼），`/v1/images/edits` 会递进来。那条口是
-**宿主的适配器**，不认包名——接一个新的生图站点就是再写一份申报了 `produces` 的 recipe，宿主一行不改。
-包**没有**"自己挂 HTTP 路由"的槽位（`PluginContext` 里没有），别往 `src/http/` 里写带包名的路由。
+**An action that leaves an artifact when it finishes** declares one more cell: `meta.produces: "images"`. A recipe that declares it appears, with its sourceId as the model name, in
+the host's OpenAI-shaped image-generation endpoint (`GET /v1/models` / `POST /v1/images/generations`, `src/http/image-generation-routes.ts`);
+entries must carry `url` (the one that fell back to a watermarked image is marked `watermarked:'true'`), `output.targetCount` is the upper limit of one round (how many images actually come out is decided by the site; if too few, the route opens another round); to wire up image-to-image, declare `images` in `params_schema` (data URLs of the reference images, joined by lines when multiple), which `/v1/images/edits` passes in. That endpoint is
+a **host adapter** that does not know package names — wiring up a new image-generation site means writing one more recipe that declares `produces`, with not a line changed in the host.
+A package has **no** slot for "mounting its own HTTP routes" (there is none in `PluginContext`); do not write routes carrying a package name into `src/http/`.
 
-四样让"一套固定的界面操作"能整个写进 recipe 的东西（都是**通用形状**，不是某条流程的特例）：
+Four things that let "a fixed set of UI operations" be written entirely into a recipe (all are **general shapes**, not special cases of one flow):
 
-| 写法 | 解决的问题 |
+| Syntax | Problem it solves |
 |---|---|
-| `skipIf: <query>` | **别人在场就跳过这一步**。幂等开关要它：Chrome 的「开发者模式」toggle 一直都在、名字不带状态，读不出开关状态，而已经开着还点一次就是把它关掉。（`optional` 问的是"我自己的目标在不在"，是另一回事，别混。） |
-| `{ kind: 'window', match, timeoutMs?, focus?, waitFor?, optional? }` | **换到另一个顶层窗口**并等它出现。原生文件对话框是主窗口的 owned window，**不是** `app` 那棵树的后代（进程可能还是同一个——Chrome 的文件夹对话框实测就在 `chrome.exe` 里，别指望按进程名区分），不换窗就永远在原来那棵树里找路径框。`waitFor`：标题先变、界面后建，再等一个恒在的控件出现。`optional`：等不到就跳过——**一段"锦上添花"的步骤要整段可跳过**，只把里面的 `invoke` 标成 optional、漏掉它们赖以立足的 `window`，等于留了个能把已经成功的流程判死的洞。 |
-| `{ kind: 'pickFile', path, dialog?, timeoutMs?, closeTimeoutMs? }` | **喂一个已经弹出来的系统文件对话框**：等它出现 → 把 `path` 写进文件名框 → 让文件名框拿焦点、回车 → 等它消失 → 范围与前台目标**自动换回**这一步之前的窗口。前一步（点「发送文件」图标）负责把对话框弹出来。它收编的是此前要手抄的四步（`window` 等对话框 → `type` 填路径 → `invoke` 点确认 → `window` 换回），并修掉其中最脆的一格：**确认键不一定在控件树里**（微信「选择文件」对话框，同一台机器两次抓树一次有 `Button`「打开(O)」一次没有，2026-09-18）——主路是 setValue + Enter（活体验过），树里有确认键只当 Enter 没关掉时的备选。`path` 通常写 `{path}`（`format:"path"` 参数翻译后的形状）。`dialog` 省略 = 按 agent 报的平台取默认：win32 `{process:<app 进程>, titleAnyOf:['打开','选择文件','Open']}`（comdlg 默认「打开」，应用可改），darwin 是 NSOpenPanel（合成标题 `<无标题 AXSheet>` / `<无标题 AXDialog>`）；给了就按它认，标题包含匹配、`{param}` 照填。`timeoutMs` 等出现（默认 12s，第一次弹出实测要几秒）、`closeTimeoutMs` 等消失（默认 8s）。它是动作步：`expect` 在范围换回之后、在原窗口里验（"文件卡片出现在输入区"），恒真预检也在原窗口做，上一轮留下的同名卡片会被当场指出；写不出判据就 `blind`。**失败四个前缀各指一段**：`pickFile/dialog-missing`（没弹——前一步没点中）/ `pickFile/edit-missing`（对话框在、文件名框不在——界面语言或版本）/ `pickFile/set-value-failed` / `pickFile/dialog-still-open`（确认了它不关——路径打不开或弹了错误框）。走通的回执 `DesktopRunOutcome.pickFile[label]`：`via`（`value+enter` / `keyboard+enter` / `button` / darwin `goto+enter`）、`ms{appear,fill,close,total}`、`foregroundBack`（对话框没了之后主窗回到前台没有——没有文字判据的挂载（图片）只剩这一个弱信号，只记不判）。**macOS 那条路没有真机，按 AppKit 惯例写（面板上敲 `/` → `PathTextField` 写路径 → 回车 → `OKButton`），全部待活体验证（2026-09-18 起）。** |
-| 窗口标题**是包含匹配** | 所以两个 `window` 步骤的候选标题**不许互相包含**。活体撞过：扩展页写成「扩展程序」，而文件夹对话框叫「选择扩展程序目录。」——装完那一步匹配上了正在关闭的对话框，报出来的却是"没能回到扩展页"。写全（「扩展程序 - Google Chrome」），并拿一条测试钉住这个不变量。 |
-| `nameAnyOf: []` / `titleAnyOf: []` | **多候选名**。控件名和窗口标题跟着界面语言走，押一门语言换台机器就是空结果，而空结果和"这个版本改了界面"长得一模一样。展开在 runner 本地，不上 wire。 |
-| `type` 的 `requireTarget: true` | **找不到输入框就停手**，不退回键盘。默认那条退路对采集是对的，但对"往特定框里填特定内容"是有害的：文字会打给碰巧有焦点的东西，而这一步照样"成功"。 |
-| 步骤的 `label` | 失败时给人看的那句话。没有它，一条二十步的 recipe 失败了只报一个 JSON 查询，读的人得回去数第几步。**面向用户的流程必须写。** 跑的时候它也是接管提示条的第二行（`<label> (i/n)`）。 |
-| `meta.title` / `meta.purpose` | **接管提示条的第一行**：`<title> · <purpose 填参>`（`微信发消息 · 发给 文件传输助手`）。`title` 就是这条 Source 的显示名（投影进 manifest `title`，缺省退回 sourceId）；`purpose` 才是提示条专有的：这一次目的的模板，`{x}` 只能引用 `params_schema` 声明过的键（装载期拒），且**不许引用 `secret_params`**——purpose 是这条链路上唯一一处让参数值上屏的地方，作者点名要露的才露，步骤 label 里的 `{contact}` 仍原样留着。两个都可选。 |
+| `skipIf: <query>` | **Skip this step if something is already present.** Idempotent switches need it: Chrome's "Developer mode" toggle is always there and its name carries no state, so the switch state cannot be read, and clicking it again when it is already on turns it off. (`optional` asks "is my own target present", which is a different matter; do not confuse them.) |
+| `{ kind: 'window', match, timeoutMs?, focus?, waitFor?, optional? }` | **Switch to another top-level window** and wait for it to appear. A native file dialog is an owned window of the main window and **not** a descendant of the `app` tree (the process may even be the same one — Chrome's folder dialog was measured to live inside `chrome.exe`, so do not expect to tell them apart by process name); without switching windows, the path box is searched for in the original tree forever. `waitFor`: the title changes first and the UI is built later, so also wait for an always-present control to appear. `optional`: skip if it does not appear — **a "nice to have" stretch of steps should be skippable as a whole**; marking only the `invoke`s inside as optional while leaving out the `window` they stand on leaves a hole that can sentence an already-successful flow to death. |
+| `{ kind: 'pickFile', path, dialog?, timeoutMs?, closeTimeoutMs? }` | **Feed a system file dialog that has already popped up**: wait for it to appear → write `path` into the file-name box → give the file-name box focus and press Enter → wait for it to disappear → the scope and foreground target are **automatically switched back** to the window from before this step. The previous step (clicking the "send file" icon) is responsible for popping the dialog up. It absorbs the four steps that used to be copied by hand (`window` waits for the dialog → `type` fills in the path → `invoke` clicks confirm → `window` switches back), and fixes the most fragile cell among them: **the confirm button is not necessarily in the control tree** (WeChat's "Select file" dialog; on the same machine, two captures of the tree once had a `Button` "打开(O)" ("Open (O)") and once did not, 2026-09-18) — the main path is setValue + Enter (verified live), and a confirm button in the tree is only a fallback for when Enter did not close it. `path` is usually written as `{path}` (the shape after a `format:"path"` parameter is translated). When `dialog` is omitted = the default is taken by the platform the agent reports: on win32 `{process:<app process>, titleAnyOf:['打开','选择文件','Open']}` (the comdlg default is "打开" ("Open"), which an application can change), on darwin it is NSOpenPanel (synthesized titles `<无标题 AXSheet>` ("<untitled AXSheet>") / `<无标题 AXDialog>` ("<untitled AXDialog>")); if given, it is recognized as given, with title containment matching and `{param}` filled in as usual. `timeoutMs` waits for appearance (default 12s; the first pop-up was measured at several seconds), `closeTimeoutMs` waits for disappearance (default 8s). It is an action step: `expect` is verified in the original window after the scope switches back ("the file card appears in the input area"), and the always-true pre-check is also done in the original window, so a same-named card left over from the previous round is pointed out on the spot; if no criterion can be written, use `blind`. **The four failure prefixes each point to one segment**: `pickFile/dialog-missing` (did not pop up — the previous step did not click the target) / `pickFile/edit-missing` (the dialog is there but the file-name box is not — UI language or version) / `pickFile/set-value-failed` / `pickFile/dialog-still-open` (confirmed but it does not close — the path cannot be opened or an error box popped up). The receipt of a successful run is `DesktopRunOutcome.pickFile[label]`: `via` (`value+enter` / `keyboard+enter` / `button` / darwin `goto+enter`), `ms{appear,fill,close,total}`, and `foregroundBack` (whether the main window returned to the foreground after the dialog was gone — for a mount with no text criterion (an image) this is the only weak signal left, recorded but not judged). **The macOS path has no real machine and is written by AppKit convention (type `/` on the panel → `PathTextField` writes the path → Enter → `OKButton`); all of it awaits live verification (since 2026-09-18).** |
+| Window titles **are matched by containment** | So the candidate titles of two `window` steps **must not contain each other**. This was hit in live use: the extensions page was written as "扩展程序" ("Extensions"), while the folder dialog is called "选择扩展程序目录。" ("Select extensions directory.") — the step after installation matched the dialog that was closing, yet what was reported was "could not return to the extensions page". Write the full title ("扩展程序 - Google Chrome" ("Extensions - Google Chrome")), and pin this invariant with a test. |
+| `nameAnyOf: []` / `titleAnyOf: []` | **Multiple candidate names.** Control names and window titles follow the UI language; betting on one language and changing machines gives an empty result, and an empty result looks exactly like "this version changed the UI". Expansion happens locally in the runner and does not go on the wire. |
+| `requireTarget: true` on `type` | **Stop if the input box is not found**, without falling back to the keyboard. The default fallback is right for harvest but harmful for "fill specific content into a specific box": the text goes to whatever happens to have focus, and this step still "succeeds". |
+| A step's `label` | The sentence shown to a human on failure. Without it, a twenty-step recipe that fails reports only a JSON query, and the reader has to go back and count which step it was. **Required for user-facing flows.** While running, it is also the second line of the takeover banner (`<label> (i/n)`). |
+| `meta.title` / `meta.purpose` | **The first line of the takeover banner**: `<title> · <purpose with parameters filled in>` (`微信发消息 · 发给 文件传输助手` ("WeChat send message · send to File Transfer Assistant")). `title` is this Source's display name (projected into the manifest `title`, falling back to sourceId when absent); `purpose` is specific to the banner: a template for this run's purpose, where `{x}` may only reference keys declared in `params_schema` (rejected at load time), and **must not reference `secret_params`** — purpose is the only place on this path where a parameter value reaches the screen, and it is exposed only when the author names it explicitly, while `{contact}` in a step label is still left as-is. Both are optional. |
 
-#### 桌面 recipe 的 `see` / `expect` / `interrupts`
+#### `see` / `expect` / `interrupts` in desktop recipes
 
-**`see`：指屏幕上人眼看得到的东西，不指坐标。** `invoke` / `type` 的目标除了 `query`（a11y 的
-role/name）之外可以写 `see`，两个只能给一个——一个目标只押一种词汇。`see` 里 `text`（屏幕上的这段
-文字，支持 `{param}` 插值）与 `icon`（没有文字可指时的一句话描述）恰给一个，可选 `region` 按窗口九宫格
-限定在哪一块找（边缘档取 1/3，`center` 取中央 1/3×1/3），或者反过来用 `not-left` / `not-right` /
-`not-top` / `not-bottom` 排除某一侧三分之一、其余都算——给**固定宽度侧栏**用的：微信会话标题紧挨着
-固定宽的左栏，随窗口尺寸在中间与左侧三分之一之间漂，没有一个正向格罩得住它，而「左栏以外」在任何尺寸下
-都成立。**固定像素的栏（微信左栏 335 逻辑像素、顶部标题条 80、底部输入区 220）用 `{unit:'dip', x, y, w?, h?}`**：
-逻辑像素、从窗口左上角量、负的 x/y 从右/下边往回量、w/h 省略 = 到窗口边，运行时乘当次读屏的 `scale`。
-比例矩形押的是"占窗口的比例"，这类栏不随窗口走——4K 最大化时左栏只占 0.09，`x:0.2` 会把紧贴左栏的
-会话标题和正文开头整个切掉（OCR 读出半截字，包含匹配落空），而 1600 宽的窗上同一份 recipe 又是好的。
-怎么把这句意图变成一个框归识别层
-（`src/replay/desktop-see.ts`，梯子见 `docs/ENGINE.md` §3），recipe 里一个数字都不该出现——
-坐标押的是"窗口这次摆在这个位置、这台机器是这个缩放比"，换台机器就点到别处，而每一步照样"成功"。
+**`see`: points at what a human eye can see on the screen, not at coordinates.** Besides `query` (a11y
+role/name), the target of `invoke` / `type` can be written as `see`; only one of the two can be given — a target bets on one vocabulary only. In `see`, exactly one of `text` (this piece of
+text on screen, supporting `{param}` interpolation) and `icon` (a one-sentence description when there is no text to point at) is given, and an optional `region` limits where to look by the window's nine-grid
+(edge cells take 1/3, `center` takes the central 1/3×1/3), or conversely uses `not-left` / `not-right` /
+`not-top` / `not-bottom` to exclude one third of one side and count everything else — meant for **fixed-width sidebars**: WeChat conversation titles sit right next to the
+fixed-width left column and drift between the middle and the left third as the window size changes, so no positive cell can cover them, while "outside the left column" holds at any size.
+**Fixed-pixel bars (WeChat's left column 335 logical pixels, top title bar 80, bottom input area 220) use `{unit:'dip', x, y, w?, h?}`**:
+logical pixels, measured from the window's top-left corner, with negative x/y measured back from the right/bottom edge, w/h omitted = to the window edge, multiplied at run time by the `scale` of that screen read.
+A proportional rectangle bets on "the fraction of the window", and such bars do not move with the window — when maximized at 4K the left column takes only 0.09, and `x:0.2` would cut off entirely the
+conversation title and the start of the body right next to the left column (OCR reads half-words and the containment match misses), while on a 1600-wide window the same recipe is fine.
+How this intent is turned into a box belongs to the recognition layer
+(`src/replay/desktop-see.ts`; for the ladder see `docs/ENGINE.md` §3), and not a single number should appear in the recipe —
+coordinates bet on "the window being placed at this position this time and this machine having this scale", and on another machine they click somewhere else while every step still "succeeds".
 
-**`see.below` / `see.notBelow`：按小标题分节找。** 分节列表里同一段文字会出现好几次（微信搜索候选弹层：
-「搜索网络结果」下面第一条就是你打的字本身，「联系人」/「功能」/「公众号」下面才是真的那个账号，「收藏」
-下面还有「来自：某某」），各节的位置又随结果动态变，`region` 切不动。`below` 列出**算**的小标题、`notBelow`
-列出**不算**的，两份合起来是"哪些字是小标题"的全集；一个候选归离它最近的上方小标题，上方没有已知小标题
-的不算。只对 `text` 目标有意义，给了就跳过 a11y 段（控件树没有"在哪个小标题下面"这一维）。
+**`see.below` / `see.notBelow`: find by section sub-heading.** In a sectioned list the same text appears several times (WeChat's search candidate popup:
+the first entry under "搜索网络结果" ("Search web results") is the very text you typed, the real account is under "联系人" ("Contacts") / "功能" ("Features") / "公众号" ("Official accounts"), and under "收藏" ("Favorites")
+there is also "来自：某某" ("From: someone")), and the position of each section changes dynamically with the results, so `region` cannot cut it. `below` lists the sub-headings that **count**, and `notBelow`
+lists those that **do not count**; the two together are the complete set of "which texts are sub-headings"; a candidate belongs to the nearest sub-heading above it, and one with no known sub-heading above
+does not count. It is only meaningful for `text` targets, and when given it skips the a11y segment (the control tree has no "under which sub-heading" dimension).
 
-**`see.not`：别要那一行。** 候选**所在的那一行**里出现了这些字中的任何一段，整行出局。给
-"看着像目标、其实是另一个入口"的行用：QQ 搜索联系人时，左栏同时出现真正的会话行和最下面那行
-「进入全网搜索<名字>」，两行都写着那个名字。**靠位置分不开**（曾经按 x 切过：真行 x=121、
-兜底行后半段 x=210——名字长一点就错位，那是把语义区别编码成像素阈值，会安静地失效），而
-"那一行里带着『进入全网搜索』"是稳定的、语义上的区别，也正是人一眼分开它们的依据。
+**`see.not`: do not take that row.** If any of these texts appears in the **row the candidate sits in**, the whole row is out. Meant for rows that
+"look like the target but are actually another entry": when QQ searches a contact, the left column shows both the real conversation row and, at the bottom, a row
+"进入全网搜索<名字>" ("Enter web-wide search <name>"), and both rows bear that name. **Position cannot tell them apart** (it was once cut by x: the real row at x=121, the
+fallback row's second half at x=210 — a slightly longer name misaligns it, which encodes a semantic distinction as a pixel threshold and fails silently), whereas
+"that row carries 『进入全网搜索』 ("Enter web-wide search")" is stable and semantic, and is exactly what a human uses to tell them apart at a glance.
 
-**判据落在行上，不落在段上**，这一点是必须的：OCR 每帧的分段不一样，那行兜底入口有时是一整段
-「进入全网搜索我的手机」，有时被切成「进入全网搜索」+「我的手机」——只按段剔，剔掉的是前半段，
-后半段照样是个和目标全等的假候选（本机 2026-09-07 实录）。按行聚合之后怎么切都不影响结论。
+**The criterion falls on the row, not on the segment**, and this is required: OCR segments differently on each frame, and that fallback entry is sometimes one whole segment
+"进入全网搜索我的手机" ("Enter web-wide search my phone") and sometimes cut into "进入全网搜索" ("Enter web-wide search") + "我的手机" ("my phone") — dropping by segment only drops the first half, and
+the second half is still a fake candidate fully equal to the target (recorded on this machine 2026-09-07). After aggregating by row, however it is cut does not affect the conclusion.
 
-**`require`：前置条件。** 任何步骤都可挂 `require: { see | query, timeoutMs }`——动作之前必须成立，等到成立
-（最多 `timeoutMs`）再做；等不到按这一步的 `else` 处理（`abort` = 此后不再发任何输入）。它和 `expect` 相反
-（那个是动作前必须为假、动作后必须为真），补的是**判据落在别的窗口里**那一格：点候选弹层里的一行之后弹层
-就关了，「会话标题是他」这个判据在主窗口里，只能挂到下一步（打正文）的前面。**不做恒真检查**——"此刻必须
-为真"正是它的语义。同一格的另一种形状：**动作在对话框里、送达判据在主窗里、后面没有别的动作步了**
-（`wechat-send-file`：点「打开」就发出去，回主窗只剩"看文件气泡"）——切回主窗之后挂一个 `wait 1ms` 步、把
-判据写成它的 `require`。写成 `expect` 不行：预检"动作前必为假"在切窗之后才做，小文件那时气泡已经在了，一趟
-真发成的会被判成恒真装饰。
+**`require`: a precondition.** Any step can carry `require: { see | query, timeoutMs }` — it must hold before the action; wait until it holds
+(at most `timeoutMs`) and then act; if it never does, handle it per this step's `else` (`abort` = send no more input from then on). It is the opposite of `expect`
+(that one must be false before the action and true after), and fills the cell where **the criterion lives in another window**: after clicking a row in the candidate popup the popup
+closes, and the criterion "the conversation title is him" is in the main window, so it can only be attached in front of the next step (typing the body). **No always-true check** — "must
+be true right now" is exactly its semantics. Another shape of the same cell: **the action is in a dialog, the delivery criterion is in the main window, and no other action step follows**
+(`wechat-send-file`: clicking "打开" ("Open") sends it out, and back in the main window all that is left is "look at the file bubble") — after switching back to the main window attach a `wait 1ms` step and
+write the criterion as its `require`. Writing it as `expect` does not work: the pre-check "must be false before the action" happens after the window switch, by which time a small file's bubble is already there, and a
+genuinely successful send would be judged as an always-true decoration.
 
-**识别层的成本梯子与总开关。** `see` 按成本递增解：固化的句柄（上一趟模型定位过、留下了控件名）
-→ 控件树 → 读屏（PP-OCRv5 跑在 ONNX Runtime 上，模型三件 `ocr-det.onnx` / `ocr-rec.onnx` /
-`ocr-rec-dict.txt` 与运行时库都在 exe 旁；缺任一样两平台都直接报 `ocr-missing` / `ort-missing`，
-不回落）→ 模板（本机缓存）→ 本地检测器给可点框（OmniParser icon_detect，exe 旁的
-`see-detector.onnx`，只在 `icon` 目标和要问模型前才算）→ 视觉模型挑编号（`desktop.see` 调用点）
-→ **grounding 模型报坐标**（`desktop.point` 调用点，最贵、最后）。
+**The cost ladder of the recognition layer and the master switch.** `see` resolves in increasing cost: a pinned handle (a previous run located it with the model and left a control name)
+→ control tree → screen read (PP-OCRv5 running on ONNX Runtime; the three model files `ocr-det.onnx` / `ocr-rec.onnx` /
+`ocr-rec-dict.txt` and the runtime library all sit next to the exe; if any one is missing, both platforms directly report `ocr-missing` / `ort-missing`
+with no fallback) → template (local cache) → a local detector giving clickable boxes (OmniParser icon_detect, `see-detector.onnx` next to the exe,
+computed only for `icon` targets and before asking the model) → vision model picking by number (the `desktop.see` callsite)
+→ **grounding model reporting coordinates** (the `desktop.point` callsite, the most expensive and last).
 
-**最后两档是两个不同的问题，不是一档的两种说法。** `desktop.see` 问「这些候选里哪个是」，而候选
-一律来自元素表——所以**元素表里压根没有的东西它永远指不到**（候选池空了它只能如实说没有）。
-`desktop.point` 问「它在哪」，模型可以报出一个元素表里不存在的位置。因此它们各占一个调用点，
-该绑两种模型：前者是看图挑选，后者要 GUI 专用的定位模型。
+**The last two tiers are two different questions, not two ways of saying one tier.** `desktop.see` asks "which of these candidates is it", and the candidates
+always come from the element table — so **something the element table does not contain at all can never be pointed at** (when the candidate pool is empty it can only honestly say there is none).
+`desktop.point` asks "where is it", and the model can report a position that does not exist in the element table. Hence each has its own callsite,
+to bind two kinds of model: the former picks by looking at the picture, and the latter needs a GUI-specific grounding model.
 
-**只有 `see.point` 目标会走最后一档**，而且**只在动作路**——判据（`expect` / `require` /
-`branch.when`）一行模型都不调，所以一个只写了 `point` 的判据永远不成立。
+**Only `see.point` targets reach the last tier**, and **only on the action path** — criteria (`expect` / `require` /
+`branch.when`) never call a model, so a criterion written with only `point` can never hold.
 
-**点完立刻固化，所以这一档同一格只付一次钱。** 模型报出坐标之后会回读一次元素表，看那个位置上
-有没有一个带名字的控件；有就把名字存进本机的 `handles.json`，下一趟从梯子第一档走完（省掉整窗
-一次 OCR），而且**坐标漂了句柄还在**——桌面上 a11y 查询就是 XPath 的等价物。存下来的句柄一旦
-点了却 `expect` 没兑现，会连同陈旧模板一起被作废（见下面的介入闸）。
+**It is pinned immediately after the click, so this tier is paid for only once per cell.** After the model reports the coordinates, the element table is read back once to see whether that position
+has a named control; if so, the name is stored in the local `handles.json`, and the next run walks the ladder from tier one (saving a whole-window
+OCR), and **when coordinates drift the handle is still there** — on the desktop an a11y query is the equivalent of XPath. Once a stored handle
+has been clicked but `expect` did not come true, it is invalidated together with the stale template (see the intervention gate below).
 
-**读屏的价钱按面积和行数走，所以 `region` 不是优化项、是这条路能用的前提**：整窗 1–3.4 秒
-（det 随像素面积线性，rec 每行一次推理、20~50ms 一行），带 `region` 的一小块约几十毫秒——判据
-几乎都写了 region，常态路径因此是快的。识别结果按框的图像内容缓存，同一屏第二次只认变了的那几行。
+**The price of screen reading goes by area and number of lines, so `region` is not an optimization but a precondition for this path to be usable**: the whole window takes 1–3.4 seconds
+(det is linear in pixel area, rec does one inference per line at 20~50ms a line), and a small block with `region` takes roughly tens of milliseconds — criteria
+almost all carry a region, so the normal path is fast. Recognition results are cached by the image content of the box, and the second time on the same screen only the changed lines are recognized.
 
-**梯子第一段（控件树）现在很便宜**：一次整窗枚举几十到几百毫秒（空树 ~50ms，几百个控件的真树
-~0.6s），"找不到"也是几十毫秒。所以有控件树的应用没有理由绕开它——别因为"a11y 慢"去写像素判据。
+**The first tier of the ladder (the control tree) is now cheap**: one whole-window enumeration takes tens to hundreds of milliseconds (an empty tree ~50ms, a real tree with several hundred controls
+~0.6s), and "not found" also takes tens of milliseconds. So there is no reason for an application that has a control tree to bypass it — do not write pixel criteria because "a11y is slow".
 
-**检测器只回答"哪儿有个能点的东西"，回答不了"哪个是我要的"**：它给的框没有名字，名字是 OCR 从
-框里的文字扒出来的（写着「发送」的按钮因此有名）。
+**The detector only answers "where is something clickable"; it cannot answer "which one is mine"**: the boxes it gives have no names, and names are scraped by OCR from the
+text inside the box (so a button labeled 「发送」 ("Send") has a name).
 
-**比"无名"更糟的一档是"连框都没有"**：大片空白的输入框既没有文字可认，检测器（训练来找图标和
-按钮的）也不给框，那它在三张表里**都不存在**——不是识别得不准，是那儿确实没有可指的东西。
-本机 2026-09-07 的 QQ 消息输入框正是这一档。
+**Worse than "nameless" is "not even a box"**: an input box that is a large blank area has no text to recognize, and the detector (trained to find icons and
+buttons) gives no box either, so it **does not exist in any of the three tables** — it is not that recognition is inaccurate; there is genuinely nothing there to point at.
+The QQ message input box on this machine on 2026-09-07 is exactly this tier.
 
-**这一档正是 `see.point` 存在的理由**：`text` / `icon` 都是在表里挑，表里没有就挑不出来；
-`point` 直接问模型「它在哪」。按顺序试三样：先问控件树有没有它（最便宜）；没有就写 `point`
-（第一次付一次模型钱，之后固化成句柄）；两样都不行，才把**判据**换成"动作的后果"
-（打了字之后正文出现在哪儿）而不是"动作的目标"——注意最后这一条换的是判据，不是靶子。
+**This tier is exactly why `see.point` exists**: `text` / `icon` both pick from a table, and if it is not in the table it cannot be picked;
+`point` directly asks the model "where is it". Try three things in order: first ask whether the control tree has it (cheapest); if not, write `point`
+(paying the model once the first time, then pinned as a handle); only if neither works, change the **criterion** to "the consequence of the action"
+(where the body appears after typing) rather than "the target of the action" — note that the last one changes the criterion, not the target.
 
-后端环境变量 `STREAM_DESKTOP_SEE_MODEL=off` 把最后**两**级整个拿掉，只剩本地能力——`icon` 与
-`point` 目标从此无解，`text` 目标不受影响。**本地能走多远，量过一次**（2026-09-07，QQ 发消息）：
-搜索、消歧、核对身份、送达判据全都走得动，停在"点一个没有文字、也没有稳定名字的东西"上。
+The backend environment variable `STREAM_DESKTOP_SEE_MODEL=off` removes the last **two** tiers entirely, leaving only local capability — `icon` and
+`point` targets then have no solution, while `text` targets are unaffected. **How far local capability goes was measured once** (2026-09-07, QQ send message):
+search, disambiguation, identity verification, and the delivery criterion all work, and it stops at "clicking something that has no text and no stable name".
 
-**介入闸：`expect` 没兑现是叫 AI 的唯一触发口。** 一步彻底放弃时，如果它的靶子是**缓存给的**
-（`template` 的图 / `point` 的坐标 / `pinned` 的控件名），就作废那个靶子并交出一条 **locator
-提议**（`RepairProposal`，走 `src/replay/repair-runner.ts` 那条接缝）。三条边界：
+**The intervention gate: `expect` not coming true is the only trigger that calls the AI.** When a step is finally given up, if its target was **given by the cache**
+(a `template` image / a `point` coordinate / a `pinned` control name), that target is invalidated and a **locator
+proposal** (`RepairProposal`, through the seam at `src/replay/repair-runner.ts`) is handed out. Three boundaries:
 
-- **只作废，不在同一趟里重走。** 这一趟已经点过一次，副作用可能已经发生，重来就是第二次点。
-- **提议不改 recipe。** 静默自愈会把「界面真的改了」和「这次没点中」混成同一件事，而后者
-  自愈"成功"就等于把一个真 bug 每次都自动绕过去，于是永远没人知道。
-- **范围锁死在 locator。** 提议里装的永远是动作那一步的 `see`，判据一格都不许被改写——
-  判据能被模型改，整套东西就退化成「模型自己说自己成了」。
+- **Only invalidate; do not replay within the same run.** This run has already clicked once and the side effect may already have happened; trying again would be a second click.
+- **The proposal does not change the recipe.** Silent self-healing would mix "the UI really changed" and "this time the click missed" into one thing, and if the latter
+  "succeeds" by self-healing, a real bug is automatically bypassed every time, so nobody ever finds out.
+- **The scope is locked to the locator.** What the proposal carries is always the `see` of the action step, and not one cell of the criterion may be rewritten —
+  if the criterion could be rewritten by the model, the whole thing would degrade into "the model says it itself succeeded".
 
-`screen` / `a11y` 那两档不吃这一下：它们是**现读**的，没兑现说明界面上真的没有那个东西，
-不是靶子陈旧。
+The `screen` / `a11y` tiers do not take this hit: they are **read live**, and an unfulfilled result means the thing is truly not on the UI,
+not that the target is stale.
 
-**`branch`：分支。** `{ kind:"branch", when:{ see | query, timeoutMs? }, skip:N }`——`when` 此刻成立就跳过接下来
-N 步，不成立就往下走；只评一次、在当前范围里评、不做恒真检查、不调模型。给"目标状态可能已经在了"的流程用
-（会话已经是他就不搜了）。它不绕过任何闸：被跳过的步骤之后那一步的 `require` / `expect` 照常生效。逐步的
-`skipIf` 不能替代它——几步里若有一步的范围在别的窗口，同一个判据在那里评出来的意思完全不同。
+**`branch`: branching.** `{ kind:"branch", when:{ see | query, timeoutMs? }, skip:N }` — if `when` holds right now, skip the next
+N steps; if not, continue; it is evaluated once, in the current scope, with no always-true check and no model call. For flows where "the target state may already be in place"
+(if the conversation is already his, do not search). It bypasses no gate: the `require` / `expect` of the step after the skipped steps still take effect as usual. A per-step
+`skipIf` cannot replace it — if among several steps one has its scope in another window, the same criterion evaluated there means something entirely different.
 
-`when` 的第二种形状是**按参数分支**：`when:{ param:"send", equals:false }`——不读屏，只看调用方给的参数
-（到 runner 手里已是字符串，`equals` 按 `String()` 比；参数缺席 = 不成立，默认值只在 `params_schema.default`
-一处补）。`param` 必须是 `params_schema` 声明过的键（装载期拒：拼错的分支永远不成立，表现是"开关没生效"）。
-给"同一条流程、最后一发做不做由调用方定"用——`wechat-send` 的 `send:false` 把正文打进输入框、跳过回车、
-run 以 `ok` 收场。**只有参数分支允许跳到 recipe 末尾**（吃掉剩下的全部步骤）；读屏的分支跳到末尾是"什么
-都没做却 ok"，装载期拒。跳过了什么进回执：`DesktopRunOutcome.skipped`（`run_action_recipe` 的 `done`
-也带）每项 `<被跳过的步骤 label> ← <分支的 label>`，一步都没跳就没有这个字段——光看 `done`，「打进去没发」
-和「发出去了」一模一样，这一行才分得开。
+The second shape of `when` is **branching by parameter**: `when:{ param:"send", equals:false }` — it does not read the screen and only looks at the parameter given by the caller
+(which is already a string by the time it reaches the runner, and `equals` compares via `String()`; parameter absent = does not hold, with the default filled in only at
+`params_schema.default`). `param` must be a key declared in `params_schema` (rejected at load time: a misspelled branch never holds, which shows up as "the switch had no effect").
+For "same flow, whether the last shot fires is decided by the caller" — `wechat-send`'s `send:false` types the body into the input box, skips the Enter, and
+the run ends with `ok`. **Only a parameter branch is allowed to jump to the end of the recipe** (swallowing all remaining steps); a screen-reading branch jumping to the end is "did
+nothing yet ok", and is rejected at load time. What was skipped goes into the receipt: `DesktopRunOutcome.skipped` (`run_action_recipe`'s `done`
+carries it too), each item `<label of the skipped step> ← <label of the branch>`, and with no step skipped this field is absent — looking at `done` alone, "typed in but not sent"
+and "sent" look exactly the same, and this line is what tells them apart.
 
-参数分支还能带 **`unverified:"<理由>"`**：这条分支成立 = 跳过了这一趟唯一的判据，runner 把理由记进回执
-`DesktopRunOutcome.unverified[]`（`done` 也带）。给"判据按参数分流、其中一路根本没有判据"的流程用：
-`wechat-send-file` 发图片——微信把图片挂进输入框只画缩略图、没有文件名，文字判据恒不成立，那一路只能跳过判据、
-以「对话框已关」当弱判据，回执标 `unverified:['image-no-caption']`。一趟 `ok` + `unverified` 是"做了"，不是
-"看见做成了"，调用方要能分开。只在参数分支上放行（读屏的分支成立是读到了状态，不叫没验）。
+A parameter branch can also carry **`unverified:"<reason>"`**: this branch holding = the only criterion of this run was skipped, and the runner records the reason in the receipt
+`DesktopRunOutcome.unverified[]` (`done` carries it too). For flows where "the criterion is split by parameter and one route has no criterion at all":
+`wechat-send-file` sending an image — WeChat mounts an image into the input box by drawing only a thumbnail with no file name, so a text criterion never holds, and that route can only skip the criterion
+and use "the dialog is closed" as a weak criterion, with the receipt marked `unverified:['image-no-caption']`. A run of `ok` + `unverified` means "did it", not
+"saw it done", and the caller must be able to tell them apart. It is allowed only on parameter branches (a screen-reading branch holding means a state was read, so it does not count as unverified).
 
-**`params_schema.<k>.format:"path"`：这个参数是目标机器上的文件路径。** 执行前（`materializeParams`，
-`src/mcp/validate-params.ts`，三个入口同一份）：Linux 形状的路径先验存在、后端在 WSL 里就翻成
-`\\wsl.localhost\<distro>\...`（`wslpath -w`，和代装扩展那条路同一份翻译）；已经是 `C:\...` / UNC 形状的
-原样放行（`wslpath` 会把反斜杠吃掉，不能让它碰）；翻不出来 / 文件不存在 / 相对路径都在这里以
-`invalid-params` 拒——一条注定填不进去的路径交给对话框，失败长得像"控件没找到"。顺带派生五个片段
-（`src/replay/path-params.ts`）：`{<k>_name}` 文件名、`{<k>_stem}` 去扩展名的主干、**`{<k>_stem6}` 主干前 6 个字**、
-`{<k>_ext}` 小写扩展名（不带点）、**`{<k>_kind}`** `image`（png/jpg/jpeg/gif/webp）或 `file`。界面上显示的是
-文件名不是路径，而且**长文件名会被截断**（微信：「中基协登记备...2期.pdf」），全名当判据必失败——判据拿 `_stem6`
-做包含匹配（`wechat-send-file` 的挂载 / 送达判据都是它）；图片没有文字可指，`branch` 按 `_kind` 分流。
-派生键不在 schema 里，调用方传它会被未声明键那道闸拒掉；`branch.when.param` 认它们。
+**`params_schema.<k>.format:"path"`: this parameter is a file path on the target machine.** Before execution (`materializeParams`,
+`src/mcp/validate-params.ts`, the same one for all three entry points): a Linux-shaped path is first checked for existence, and if the backend is in WSL it is translated to
+`\\wsl.localhost\<distro>\...` (`wslpath -w`, the same translation as the one used for installing extensions on behalf of the user); a path already in `C:\...` / UNC shape is
+passed through as-is (`wslpath` would eat the backslashes, so it must not touch them); a path that cannot be translated / a file that does not exist / a relative path is rejected here with
+`invalid-params` — handing a path that can never be filled in to the dialog makes the failure look like "control not found". Five fragments are also derived
+(`src/replay/path-params.ts`): `{<k>_name}` the file name, `{<k>_stem}` the stem without extension, **`{<k>_stem6}` the first 6 characters of the stem**,
+`{<k>_ext}` the lowercase extension (without the dot), and **`{<k>_kind}`** `image` (png/jpg/jpeg/gif/webp) or `file`. What the UI shows is the
+file name and not the path, and **long file names get truncated** (WeChat: 「中基协登记备...2期.pdf」 (a long Chinese file name truncated in the middle)), so using the full name as the criterion is bound to fail — the criterion uses `_stem6`
+for a containment match (the mount / delivery criteria of `wechat-send-file` both use it); an image has no text to point at, so `branch` splits by `_kind`.
+Derived keys are not in the schema, so a caller passing one is rejected by the undeclared-key gate; `branch.when.param` recognizes them.
 
-**`clear`：清空此刻有焦点的输入框。** `{ kind:"clear" }`——全选 + 删除，哪个修饰键归平台后端，recipe 不知道
-也不该知道。给"上一轮停在打正文之后、正文成了草稿"这一档用：不清，下一轮的正文接在草稿后面一起发出去。
-**紧跟在拿焦点那一步之后**——它清的是此刻有焦点的东西，焦点在别处就清错地方。它不是"按组合键"的通道
-（`Ctrl+A` 一放行，`Ctrl+W` / `Alt+F4` 就在同一条路上），语义窄到只有这一件事；只走抢屏路，
-`input:"message"` 下 agent 直接拒。
+**`clear`: clear the input box that currently has focus.** `{ kind:"clear" }` — select all + delete; which modifier key to use belongs to the platform backend, and the recipe does not know
+and should not know. For the tier "the last round stopped after typing the body and the body became a draft": without clearing, the next round's body is appended after the draft and sent out together.
+**Right after the step that takes focus** — it clears whatever currently has focus, and if focus is elsewhere it clears the wrong place. It is not a channel for "press a key combination"
+(once `Ctrl+A` is allowed, `Ctrl+W` / `Alt+F4` are on the same road), and its semantics are narrowed to this one thing; it only takes the screen-grabbing route,
+and under `input:"message"` the agent rejects it directly.
 
-**`input`：坐标输入投给谁。** 省略 = 投给屏幕：agent 合成键鼠输入，每个坐标步骤之前先把 `app` 抢到
-前台，抢不到（锁屏、别的窗口压着）就停手、一个输入都不发。`"input": "message"` = 投给窗口本身
-（`PostMessage` 到它的 hwnd）：**不抢前台、锁屏照常跑**，`focus` 步骤只剩限定范围。这是没有控件树的
-应用能"人不在时后台干活"的唯一一条路，微信 4.x 锁着屏全程验过。**它是显式选的，不是自动退路**：
-走自己合成器的应用（Electron 系）多半不理会投进来的消息，而且失败得安静。哪个应用认只能真机量一次
-（`stream-desktop.exe see-probe` 看得见界面、看不见输入进没进去——判据是每一步的 `expect`），量过
-再写；写了 `input:"message"` 的 recipe 尤其不能省 `expect`。收件人是 `app` 匹配到的**顶层**窗口，
-投给自绘子窗口进不去。
+**`input`: whom coordinate input is delivered to.** Omitted = delivered to the screen: the agent synthesizes keyboard and mouse input, and before each coordinate step first brings the `app` to the
+foreground; if it cannot (locked screen, covered by another window) it stops and sends no input at all. `"input": "message"` = delivered to the window itself
+(`PostMessage` to its hwnd): **it does not grab the foreground and runs normally on a locked screen**, and the `focus` step is reduced to limiting scope. This is the only way for an
+application without a control tree to "work in the background while no one is there", verified end to end on WeChat 4.x with the screen locked. **It is chosen explicitly and is not an automatic fallback**:
+applications that run their own compositor (the Electron family) mostly ignore the messages posted in, and fail quietly. Which applications accept it can only be measured once on a real machine
+(`stream-desktop.exe see-probe` can see the UI but cannot see whether input went in — the criterion is each step's `expect`); measure first,
+then write; a recipe that writes `input:"message"` in particular must not omit `expect`. The recipient is the **top-level** window matched by `app`, and
+input posted to a custom-drawn child window does not get in.
 
-**`app.a11y`：这个应用有没有控件树。** 缺省 `true`。`"a11y": false` 是作者的**事实申报**（不是优化开关）：
-动作前的元素表读取（`readElements`）就不再枚举控件树，每步省 80–90ms；判据路（`readText`）不受影响。
-什么时候写：`see-probe` 的 `elements` 里 `kind:"a11y"` 恒为空**且**应用是已知自绘（微信 4.x 整个窗口只有
-一个自绘 Pane）。它和 agent 拒绝的"问一次是空的就永久记黑名单"不是一回事——那是从一次临时状态推永久
-结论，这是作者声明一个不随前后台变的事实。写错的表现：a11y 段永远缺席、点击全走坐标，而每一步照样"成功"，
-只有日志里每次 `elements` 读都是 `a11y=0ms(off)`。非布尔装载期拒。
+**`app.a11y`: whether this application has a control tree.** Defaults to `true`. `"a11y": false` is the author's **declaration of fact** (not an optimization switch):
+the element-table read before an action (`readElements`) no longer enumerates the control tree, saving 80–90ms per step; the criterion path (`readText`) is unaffected.
+When to write it: `kind:"a11y"` in the `elements` of `see-probe` is always empty **and** the application is known to be custom-drawn (the whole WeChat 4.x window has only
+one custom-drawn Pane). It is not the same thing as the "ask once, empty, blacklist permanently" that the agent rejects — that infers a permanent
+conclusion from a temporary state, whereas this is the author declaring a fact that does not change between foreground and background. How a wrong declaration shows up: the a11y segment is always absent, all clicks go by coordinates, and every step still "succeeds",
+with the only trace being that every `elements` read in the log shows `a11y=0ms(off)`. A non-boolean is rejected at load time.
 
-**`expect`：这一步做成了没有，一步一验——动作步骤必写，装载期强制。** `invoke` / `type` /
-`click` / `scroll` / `press` / `clear` / `pickFile` 都能挂 `{ see | query, timeoutMs }`（默认 3000）。**要么给 `expect`，
-要么给 `blind`（一句话说明为什么这一步没有可观测的后果）**，二选一，两个都不给装载就拒。
+**`expect`: whether this step took effect, verified step by step — required for action steps, enforced at load time.** `invoke` / `type` /
+`click` / `scroll` / `press` / `clear` / `pickFile` can all carry `{ see | query, timeoutMs }` (default 3000). **Either give `expect`,
+or give `blind` (a sentence explaining why this step has no observable consequence)**, one of the two; if neither is given, loading rejects it.
 
-> **为什么是强制的**：「我点了一个东西，接下来就该看见某个东西」这条规则一直写在这里，但因为
-> 曾经是可选的，实际上基本没人守——量过一次，桌面 recipe 的 21 个动作步里 **18 个没写**。不守
-> 也没有任何提示，代价是点空了要拖到两三步之后才以别的面目冒出来，那时早已回不到现场。
+> **Why it is mandatory**: the rule "I clicked something, so next I should see something" was always written here, but because it
+> used to be optional, almost nobody followed it — measured once, **18 of the 21 action steps** in desktop recipes had none. Not following it
+> gave no warning either, and the cost was that a missed click surfaced in another guise two or three steps later, by which time the scene was long out of reach.
 >
-> `blind` 不是豁免，是把**"忘了写"和"想过、确实没有"分开**。有些转移在某个后端上真的看不见：
-> "输入框拿到了焦点"在视觉方案里没有任何画面变化。那就写下来，并说清责任转移到哪一步
-> （`qq-send-see` 的「点搜索框」：点没点中由下一步「输入联系人」的 `expect` 兜住，那一步 `abort`）。
+> `blind` is not an exemption; it **separates "forgot to write it" from "thought about it and there truly is none"**. Some transitions are genuinely invisible on certain backends:
+> "the input box got focus" produces no picture change at all in the vision approach. Then write it down and say which step takes over the responsibility
+> (the 「点搜索框」 ("click the search box") step of `qq-send-see`: whether the click landed is covered by the `expect` of the next step, 「输入联系人」 ("type the contact"), which is `abort`).
 >
-> **判据的形态跟着后端走**，但规则是同一条：浏览器上是某个选择器出现/消失，控件树上是某个控件
-> 出现，视觉方案上是某段文字出现在某块区域。
+> **The shape of the criterion follows the backend**, but the rule is the same one: on a browser it is a selector appearing/disappearing, on the control tree a control
+> appearing, and on the vision approach a piece of text appearing in a region.
 >
-> **写不出经过验证的 expect 时，不要编一个。** 没验过的 expect 比没有 expect 更坏——它看起来
-> 严谨，其实是猜的。如实写进 `blind`（`qq-send` / `telegram-search` 那两份就是这么处理的，
-> 用「未补判据」当可 grep 的待办标记）。
+> **When a verified expect cannot be written, do not make one up.** An unverified expect is worse than none — it looks
+> rigorous but is actually a guess. Write it honestly into `blind` (`qq-send` / `telegram-search` are handled this way,
+> using 「未补判据」 ("criterion not yet added") as a greppable to-do marker).
 
-两条纪律照浏览器侧原样搬：**动作前必须为假、动作后必须为真**
-——runner 动作前先即时读一次，此刻就成立的判据会被指名"恒真"当场判 drift，因为恒真的判据是装饰不是监督；
-动作后轮询到成立或超时。不成立时按 `else` 走：`drift`（默认，停下留现场）、`retry`（重做这一步，上限一次）、
-`abort`（干净停下，**此后不再发出任何输入**）。**有副作用的流程必须用 `abort` 把错误路径封死**：
-`wechat-send` 在「名字出现在搜索框里」和「会话标题是他」两处都是 `abort`，没看到就绝不往下打正文——
-发错人这条路从形状上没有了。
+Two disciplines are carried over unchanged from the browser side: **false before the action, true after**
+— before the action the runner first reads once immediately, and a criterion that already holds at that moment is named "always-true" and judged drift on the spot, because an always-true criterion is decoration, not supervision;
+after the action it polls until it holds or times out. When it does not hold, follow `else`: `drift` (the default, stop and leave the scene), `retry` (redo this step, at most once), or
+`abort` (stop cleanly, **sending no more input from then on**). **Flows with side effects must use `abort` to seal off the error path**:
+`wechat-send` uses `abort` at both "the name appears in the search box" and "the conversation title is him", and never types the body without seeing them —
+the route of sending to the wrong person no longer exists by shape.
 
-**`expect.fresh: true`：画不出一块"动作前必不含它"的区域时用。** 它把"动作前必为假"换成"动作后冒出一个
-动作前没有的位置"：runner 动作前把这段字在区域里的全部位置记成一张清单（不做恒真预检），动作后要看到
-一个不在清单里的位置才算兑现（同一行 OCR 框抖几个像素仍算原位）。只配 `see.text`、只在 `expect` 上
-（`require` 只有"此刻"一帧）。典型是聊天输入框：它能被用户拖高拖矮，输入框和气泡之间没有固定的线——
-`wechat-send` 的「打正文」「回车发出去」都用一块「会话区」+ `fresh`：打字 → 输入框里多一处；回车 →
-气泡里多一处，没发出去就只剩输入框原位那一处；连发同一句，上一条的位置已在清单里。代价：区域可以
-放宽但读屏按面积计价，只罩真正需要的那一截。
+**`expect.fresh: true`: use when a region that "definitely does not contain it before the action" cannot be drawn.** It replaces "false before the action" with "after the action, a position appears that
+was not there before the action": before the action the runner records all positions of this text in the region as a list (with no always-true pre-check), and after the action it must see
+a position not on the list to count as fulfilled (an OCR box on the same line that jitters by a few pixels still counts as the original position). Only for `see.text`, and only on `expect`
+(`require` has only the one frame of "right now"). The typical case is a chat input box: the user can drag it taller or shorter, and there is no fixed line between the input box and the bubbles —
+both the "type the body" and "press Enter to send" steps of `wechat-send` use one 「会话区」 ("conversation area") region + `fresh`: typing → one more place in the input box; Enter →
+one more place among the bubbles, and if it was not sent only the original place in the input box remains; sending the same sentence repeatedly is fine, since the previous one's position is already on the list. Cost: the region can
+be widened but screen reading is priced by area, so cover only the stretch that is truly needed.
 
-**`interrupts`：随时可能跳出来、关掉就能继续的东西。** 它是 recipe 级的一张表（更新提示、广告、权限询问），
-每条是 `{ see, dismiss }`，`dismiss` 只认 `invoke`（带 `see`/`query`）或 `press`（`Escape` / `Enter`；
-`press` 在普通步骤里**只放行 `Escape`**，回车照旧写 `type` 的 `\n`——别给同一件事两种写法）。**只在某步 expect 不成立时才查表**，正常路径
-一次多余的读屏都不发；命中就 dismiss、重验一次原 expect，仍不成立才按 `else` 处理。**每步最多消化一次**——
-允许循环的代价是被一个关不掉的弹窗困死。两件东西不进这张表：登录墙（它关不掉，归 `loginCheck` →
-`needsLogin`）和表里没写过的弹窗（那是 drift，留现场给人看，绝不在不认识的界面上乱点）。
+**`interrupts`: things that can pop up at any time and can simply be closed to continue.** A recipe-level table (update prompts, ads, permission asks),
+each entry being `{ see, dismiss }`, where `dismiss` accepts only `invoke` (with `see`/`query`) or `press` (`Escape` / `Enter`;
+in ordinary steps `press` **only allows `Escape`**, and Enter is still written as `type` with `\n` — do not give the same thing two spellings). **The table is consulted only when some step's expect does not hold**, so the normal path
+sends not one extra screen read; on a hit it dismisses, re-verifies the original expect once, and only if it still does not hold handles it per `else`. **At most one dismissal per step** —
+allowing a loop costs getting stuck on a popup that cannot be closed. Two things do not go in this table: login walls (they cannot be closed and belong to `loginCheck` →
+`needsLogin`) and popups never written in the table (that is drift: leave the scene for a human to see, and never click around on an unrecognized UI).
 
-#### `map`：从一坨文本里抽出顶层字段
+#### `map`: extract top-level fields from a lump of text
 
-a11y 树只给得出控件的 `name`——一条 Telegram 消息的 name 就是整段正文挤成的一行字。而 Stream 的
-item 要的是 `title`/`link` 这些**顶层**字段：**前端各处显示的是顶层 `item.title`**，在 normalizer
-里再抽一次是白抽（教训写在 `packages/alist/normalizer.ts`）。所以桌面 recipe 有一层 `map`，
-`目标字段 → { from: 源字段, match: 正则 }`，取第一个捕获组（没有捕获组就取整个匹配）：
+The a11y tree can only give a control's `name` — the name of a Telegram message is the whole body squeezed into one line. But a Stream
+item wants **top-level** fields like `title`/`link`: **the frontend shows the top-level `item.title` everywhere**, and extracting again in the normalizer
+is wasted effort (the lesson is recorded in `packages/alist/normalizer.ts`). So a desktop recipe has a `map` layer,
+`target field → { from: source field, match: regex }`, taking the first capture group (the whole match if there is no capture group):
 
 ```jsonc
 "observer": { "itemQuery": { "role": "ListItem" }, "fields": { "text": { "read": "name" } }, "dedupeBy": "text" },
@@ -1004,74 +1006,76 @@ item 要的是 `title`/`link` 这些**顶层**字段：**前端各处显示的�
 "read": { "dedupeBy": "link", "targetCount": 30 }
 ```
 
-四条规矩：
+(Here `"名称：(.+)"` is the regex literal for the "Name:" label in the page text, so it stays Chinese.)
 
-- **抽出来的字段是叠加**，原始字段照留（追溯要靠它）。
-- **抽不到就不写这个键**，绝不写空串——空串会把"没抽到"伪装成"抽到了一个空标题"，
-  而 `(untitled)` 至少看得出是缺失。
-- **`map` 在 dedupe 之前跑**，所以 `read.dedupeBy` 可以指向抽出来的字段。按整段正文去重是不稳的：
-  正文尾巴上挂着浏览数、「已编辑」这类每次读都在变的东西。反过来，抽不到 dedupe 键的那条会被
-  丢弃——广告条通常没有链接，这正好当过滤用。
-- **正则在装载时就编译**，坏正则当场拒收。留到运行期才炸的表现是"这一轮什么都没抽到"，
-  与"页面变了、规则不匹配了"一模一样，会把一个打字错误伪装成源站漂移。
+Four rules:
 
-#### 落地方式（`groundings`）与贡献
+- **Extracted fields are additive**; the original field stays (tracing relies on it).
+- **If nothing is extracted, do not write the key**, and never write an empty string — an empty string disguises "nothing extracted" as "extracted an empty title",
+  while `(untitled)` at least makes the absence visible.
+- **`map` runs before dedupe**, so `read.dedupeBy` can point at an extracted field. Deduping by the whole body is unstable:
+  the tail of the body carries things like view counts and 「已编辑」 ("edited") that change on every read. Conversely, an entry whose dedupe key cannot be extracted is
+  dropped — ad strips usually have no link, which works as a filter.
+- **The regex is compiled at load time**, and a bad regex is rejected on the spot. Letting it blow up at run time looks like "this round extracted nothing",
+  exactly like "the page changed and the rule no longer matches", and would disguise a typo as source-site drift.
 
-**一步 = 意图 + 判据 + 若干份带标签的落地方式。** 图（有哪些步、从哪到哪）和判据跨平台通用，
-而"怎么认出当前态、点哪里能过去"按（平台，应用版本，界面语言）分叉——两者的稳定性差一个量级，
-写在同一行里就会让一个平台差异看起来像整份 recipe 作废。权威设计见
-`internal design record`。
+#### Grounding (`groundings`) and contributions
+
+**A step = intent + criterion + several labeled groundings.** The graph (which steps there are, from where to where) and the criterion are cross-platform,
+while "how to recognize the current state and where to click to get through" forks by (platform, app version, UI language) — the two differ by an order of magnitude in stability,
+and writing them in the same line would make one platform difference look like the whole recipe being invalidated. For the authoritative design see
+`internal design record`.
 
 ```jsonc
 {
-  "label": "等候选弹层",                       // 必填且全份唯一：它是本机 override 与贡献物的键
-  "intent": "等搜索候选算出来、并把范围切到候选所在的地方",   // 人话意图，给未来的填充者读
-  "kind": "window", "match": { "process": "Weixin.exe", "title": "Weixin" },  // 顶层 body = 通用落地方式
+  "label": "等候选弹层",                       // Required and unique across the whole file: it is the key for local overrides and contributions. ("Wait for the candidate popup")
+  "intent": "Wait until the search candidates are computed, and switch the scope to where the candidates are",   // Plain-language intent, for a future filler to read
+  "kind": "window", "match": { "process": "Weixin.exe", "title": "Weixin" },  // Top-level body = the universal grounding
   "groundings": [
     {
-      "on": { "platform": "darwin" },        // 没写的键 = 不限
+      "on": { "platform": "darwin" },        // A key not written = unrestricted
       "kind": "wait", "ms": 600,
-      "note": "mac 没有这个弹层，候选画在主窗左栏",
+      "note": "mac has no such popup; the candidates are drawn in the main window's left column",
       "verified": { "runs": 3, "first": "2026-09-12", "last": "2026-09-12", "by": "author" }
     }
   ]
 }
 ```
 
-- **顶层 body 就是通用 grounding**：没写 `groundings` 的 recipe 一字不改照跑。
-- **判据只住顶层**：`label` / `intent` / `expect` / `require` / `else` / `optional` / `blind` /
-  `skipIf` / `groundings` 在 grounding 里出现是格式错误，装载即拒。理由是缓存能安全重填的前提——
-  换了办法点进去，检查的还是同一件事；填错了被判据拦住，不会发出去。
-- **grounding 里不许把参数写死**：顶层带 `{param}` 的字段，grounding 的同一路径必须还带着同一个
-  `{param}`（换了写法、没有这个字段则不管）。这既是 recipe 跨调用的正确性，也是贡献链的脱敏闸。
-- **`on` 的键**：`platform`（`win32` | `darwin`）、`app`（版本区间）、`lang`。
-  区间语法只认空格分隔的 `>= > <= < =` 与裸版本号（`>=4.0 <4.1`、`4.0.6`），全部成立才算；
-  `^` / `~` / `||` 装载期当语法错拒掉。
-- **`on.app` 必须和 `on.platform` 一起写**（约定，装载期不拦）：两个平台报的版本格式不是一回事——Windows 报 exe 的
-  文件版本（四段，如 `4.0.6.36`），mac 报 bundle 的 `CFBundleShortVersionString`（如 `4.0.6`）。
-  一个不带 platform 的区间在另一个平台上会落在意料之外的一侧。agent 报不出版本时，带 `app` 的
-  grounding 一律**不匹配**。
-- **事实从 agent 来**（`WindowInfo.platform` / `appVersion`），不看 `process.platform`：后端在 WSL、
-  agent 在 Windows 那种组合下后端自己的平台就是错的答案。老版本 agent 不报平台 → 只剩通用 body。
-- **选择与兜底**：候选 = 包内 `groundings` ∪ 本机 override ∪ 顶层通用 body，按事实过滤后排序
-  **贴合度**（`on` 写了几个键）> **来源**（包 `author` > 包 `contributed` > 本机 `human` > 本机 `ai`）
-  > `verified.runs`，通用 body 永远最后。逐条试：执行 body 再跑顶层 `expect`，过了就用它；
-  `else: "abort"` 那一步不许 fall-through（有副作用的路径不能试第二次）。全试完都没过 → drift 原因带
-  `no-grounding@<label>` 前缀，携带试过的清单与当前事实。`DesktopRunOutcome.groundings` 记下每步
-  用的是哪条（`package:<platform>[@app]` / `local:…` / `universal`）——**退路必须留痕**。
-- **`edges[]`（条件边）只校验形状、不执行**：格式先钉住，免得两个写法各自漂。
-- **步骤 `kind` 有白名单**，grounding 同吃这份名单：拼错的 kind 会被选中然后什么都不做，比没有它更坏。
+- **The top-level body is the universal grounding**: a recipe without `groundings` runs unchanged, not a word altered.
+- **The criterion lives only at the top level**: `label` / `intent` / `expect` / `require` / `else` / `optional` / `blind` /
+  `skipIf` / `groundings` appearing inside a grounding is a format error, rejected at load. The reason is the precondition for the cache to be safely refilled —
+  if a different way of getting in is used, what gets checked is still the same thing; a wrong fill is stopped by the criterion and not sent out.
+- **A grounding must not hard-code parameters**: for a top-level field carrying `{param}`, the same path in the grounding must still carry the same
+  `{param}` (if it is phrased differently or does not have the field, it is not checked). This is both the cross-call correctness of the recipe and the de-identification gate of the contribution chain.
+- **Keys of `on`**: `platform` (`win32` | `darwin`), `app` (version range), `lang`.
+  Range syntax accepts only space-separated `>= > <= < =` and bare version numbers (`>=4.0 <4.1`, `4.0.6`), all of which must hold;
+  `^` / `~` / `||` are rejected at load time as syntax errors.
+- **`on.app` must be written together with `on.platform`** (a convention, not enforced at load time): the version formats reported by the two platforms are not the same thing — Windows reports the exe's
+  file version (four segments, such as `4.0.6.36`), and mac reports the bundle's `CFBundleShortVersionString` (such as `4.0.6`).
+  A range without platform lands on an unexpected side on the other platform. When the agent cannot report a version, any grounding carrying `app`
+  **does not match**.
+- **Facts come from the agent** (`WindowInfo.platform` / `appVersion`), not from `process.platform`: with the backend in WSL and the
+  agent on Windows, the backend's own platform is the wrong answer. An old-version agent that does not report the platform → only the universal body is left.
+- **Selection and fallback**: candidates = in-package `groundings` ∪ local override ∪ top-level universal body; after filtering by facts they are ordered by
+  **fit** (how many `on` keys are written) > **source** (package `author` > package `contributed` > local `human` > local `ai`)
+  > `verified.runs`, with the universal body always last. Try them one by one: execute the body, then run the top-level `expect`, and use it if it passes;
+  the `else: "abort"` step is not allowed to fall through (a path with side effects cannot be tried a second time). If all are tried and none passes → the drift reason carries the
+  `no-grounding@<label>` prefix, with the list of those tried and the current facts. `DesktopRunOutcome.groundings` records which one each step
+  used (`package:<platform>[@app]` / `local:…` / `universal`) — **a fallback must leave a trace**.
+- **`edges[]` (conditional edges) are only shape-validated, not executed**: the format is pinned first so that two spellings do not each drift.
+- **Step `kind` has an allowlist**, and groundings consume the same list: a misspelled kind gets selected and then does nothing, which is worse than not having it.
 
-##### 具名区域：判据的文字通用，判据看的那一块屏按平台落地
+##### Named areas: the criterion's text is universal, while the screen block the criterion looks at is grounded per platform
 
-`expect.see.region` 装了两件事：「正文出现在气泡区」是判据、跨平台通用；「气泡区在这台机器的窗口里占哪一块」
-是落地事实，和「输入框在哪」同类。拆开：顶层 `areas` 声明几块有名字的区域，`see` 用 `area` 引用（与 `region` 互斥）。
+`expect.see.region` carries two things: "the body appears in the bubble area" is the criterion, universal across platforms; "which block of this machine's window the bubble area occupies"
+is a grounding fact, of the same kind as "where the input box is". Split them: top-level `areas` declares several named areas, and `see` references them with `area` (mutually exclusive with `region`).
 
 ```jsonc
 "areas": {
   "气泡区": {
-    "intent": "已发出的消息所在的那一块；下沿必须排掉底部输入框",
-    "region": { "x": 0.34, "y": 0.06, "w": 0.66, "h": 0.72 },     // 通用（可省）
+    "intent": "The block where sent messages sit; the bottom edge must exclude the input box at the bottom",
+    "region": { "x": 0.34, "y": 0.06, "w": 0.66, "h": 0.72 },     // Universal (may be omitted)
     "groundings": [
       { "on": { "platform": "win32" }, "region": { "x": 0.34, "y": 0.40, "w": 0.66, "h": 0.38 }, "verified": { "runs": 1, "first": "2026-09-13", "last": "2026-09-13", "by": "author" } },
       { "on": { "platform": "darwin" }, "region": { "x": 0.34, "y": 0.06, "w": 0.66, "h": 0.52 } }
@@ -1081,18 +1085,20 @@ item 要的是 `title`/`link` 这些**顶层**字段：**前端各处显示的�
 "steps": [{ "label": "回车发出去", "kind": "type", "text": "\n", "expect": { "see": { "text": "{message}", "area": "气泡区" } } }]
 ```
 
-- 区域 grounding 的 body **只有 `region`**（九宫格名 / `not-<边>` / 比例矩形 / dip 矩形）；出现别的键装载即拒。
-- **选法是查表不逐条试**：开跑前按事实（平台、版本）为每块区域取一条（贴合度 > 来源 > runs，通用最后）；
-  一块都选不中就整趟以 `no-grounding@area:<名字>` 停在发出任何输入之前——区域没有自己的 expect 兜底，
-  逐条试等于拿别的区域把一个真失败洗成功。
-- 记账、本机 override（文件里的 `areas` 段）、贡献（`stream recipe contribute <id> --area <名字>`）、吸收
-  （`pnpm recipe:absorb`）全走 steps 那一套；只有**肯定**结论才记（动作前"此刻必须不成立"那次不算）。
-- **什么时候用**：同一块屏被多条判据引用（标题栏）、或两平台位置不同（输入区、气泡区）。一处只用一次、
-  两平台一样的矩形照旧内联 `region`。声明了没人引用的区域装载即拒。
+(Here `气泡区` means "bubble area" and `回车发出去` means "press Enter to send"; both are names used as data.)
 
-**本机 override**：`<dataDir>/recipe-overrides/<sourceId>.json`——**不在包目录**，装的包住
-`<dataDir>/recipes/<包名>/`、升级整目录覆盖。形状与包内 `groundings[]` 一致，只多一段来源，
-所以每条都是能合回包里的块，不是私有魔改。包内 grounding 的次数记账也落在这里（包文件只读）。
+- The body of an area grounding **has only `region`** (nine-grid name / `not-<edge>` / proportional rectangle / dip rectangle); any other key is rejected at load.
+- **Selection is a table lookup, not trying one by one**: before the run, one is taken for each area by facts (platform, version) (fit > source > runs, universal last);
+  if not a single one can be selected, the whole run stops with `no-grounding@area:<name>` before any input is sent — an area has no expect of its own as a fallback,
+  and trying one by one would wash a real failure into success using other areas.
+- Bookkeeping, local overrides (the `areas` section in the file), contributions (`stream recipe contribute <id> --area <name>`), and absorption
+  (`pnpm recipe:absorb`) all go through the same machinery as steps; only a **positive** conclusion is recorded (the "must not hold right now" check before the action does not count).
+- **When to use**: the same block of screen is referenced by several criteria (the title bar), or the position differs between the two platforms (input area, bubble area). A rectangle used in only one place and
+  identical on both platforms stays inline as `region`. An area that is declared but referenced by no one is rejected at load.
+
+**Local override**: `<dataDir>/recipe-overrides/<sourceId>.json` — **not in the package directory**, since an installed package lives in
+`<dataDir>/recipes/<package name>/` and an upgrade overwrites the whole directory. Its shape is the same as the in-package `groundings[]`, with just an extra source section,
+so every entry is a block that can be merged back into the package, not a private hack. The count bookkeeping for in-package groundings is also kept here (package files are read-only).
 
 ```jsonc
 {
@@ -1112,266 +1118,267 @@ item 要的是 `title`/`link` 这些**顶层**字段：**前端各处显示的�
 }
 ```
 
-**本机 override 条目今天只有两种来源**（没有自动填充者——AI/人机填充是后话）：运行时给**包内**
-落地方式记账（`by: "author"` / `"contributed"`，来源是包自己，因此永远不可贡献），以及**人手写进**
-`<dataDir>/recipe-overrides/<id>.json`（`by: "human"`，过了门槛才可贡献）。所以 `stream recipe
-contribute` 在没人手写过的机器上只会说「没有可贡献的落地方式」——那是对的，不是坏了。
+(Here the step label `点进消息输入框拿焦点` means "click into the message input box to take focus".)
 
-一趟 recipe 走到 `done` 之后记一笔：`verified.runs += 1`、`last` 更新、`>=a <=b` 形状的 `on.app`
-按本次版本扩边。对账发生在**每趟运行的开头**（runner 在第一次挑落地方式之前调
-`overrides.reconcile`），不在装载期——包热更之后那一趟立刻吃到新的对账结果，而不是读着上一版的
-本机落地方式跑完。对账做两件事：本机学到的那条已经进了包（同 label 同 `on` 同 body）→ 删掉；
-`on` 被包内某条覆盖但 body 不同 → 标 `shadowed`（运行时不参与，UI 上可见、可删）。没变化就一声不吭。
+**Local override entries have only two sources today** (there is no automatic filler — AI/human-machine filling comes later): the runtime bookkeeping of **in-package**
+groundings (`by: "author"` / `"contributed"`, whose source is the package itself and which therefore can never be contributed), and entries **hand-written into**
+`<dataDir>/recipe-overrides/<id>.json` (`by: "human"`, which become contributable once past the threshold). So `stream recipe
+contribute` on a machine where nobody has hand-written anything only says 「没有可贡献的落地方式」 ("there are no groundings to contribute") — that is correct, not broken.
 
-**贡献回包**。去向由包自己说，我们不维护任何收集服务；两格缺一格就是「此包未开放贡献」，不猜、
-也不往 Stream 仓库兜底：
+After a recipe run reaches `done`, one record is made: `verified.runs += 1`, `last` is updated, and an `on.app` of the `>=a <=b` shape
+is widened to the version of this run. Reconciliation happens **at the start of each run** (the runner calls
+`overrides.reconcile` before picking a grounding the first time), not at load time — after a package hot update that run immediately gets the new reconciliation result, rather than running to the end with the previous version's
+local groundings. Reconciliation does two things: if the one learned locally has already entered the package (same label, same `on`, same body) → delete it;
+if its `on` is covered by an in-package entry but the body differs → mark it `shadowed` (it does not participate at run time, and is visible and deletable in the UI). With no change it stays silent.
+
+**Contributing back to the package.** The destination is stated by the package itself, and we maintain no collection service; if either of the two cells is missing it is "this package does not accept contributions", with no guessing
+and no fallback to the Stream repository:
 
 ```json
 "repository": "github:JaggerH/stream",
 "stream": { "contribute": { "path": "packages/wechat/wechat-send.recipe.json" } }
 ```
 
-- 门槛：一条本机 grounding 要 `verified.runs >= 3`、`last - first >= 2 天`、`by ∈ {ai, human}`、
-  没被 shadowed，才算可贡献。闸必须有——它过滤一次性蒙对。
-- 用户侧一个动作：`stream recipe contribute <sourceId> [--step <label> | --area <名字>]`（`--step` 筛某一步的、
-  `--area` 筛某块具名区域的，两个只能给一个）。本机 `gh` 登录着 → fork +
-  分支 `contrib/<recipe>/<platform>-<hash8>` + 文件 `contributions/<recipe>/<platform>-<hash8>.json` + PR；
-  否则打开预填好的 issue 链接（标签 `recipe-contribution`）；正文超过地址栏能吃的长度 → 写到
-  `<dataDir>/recipe-overrides/<recipe>.<hash8>.contribution.md` 并打印路径。
-- 贡献物带：平台、版本区间、Stream 版本、grounding 本身、次数与首末日期、填充者类型。
-  **不带**截图、控件树、`origin`、任何参数字面量。证据只用「在多少次真实运行里通过了判据」。
-- **去模板化那道闸在送出去之前再跑一次**：本机 override 那份文件不过装载闸（只 `JSON.parse`），
-  而它是允许人手写的——所以把顶层 `{contact}` 写死成真实联系人名的那条，闸开在装载期是拦不住的。
-  `stream recipe contribute` 以包里那份 recipe 为基准逐条核，不过的跳过并打印是哪一步。
-- 作者侧：`pnpm recipe:absorb <issue 或 PR 号>`。四种情形——同 `on` 同 body → 只合并 `verified`；
-  同 `on` 异 body → **并列**为第二条，不替换（运行时逐条试，判据兜底）；没有 → 插入；
-  找不到那个 label → 拒。插入的那条 `verified.by = "contributed"` 并附 `ref`。
-  脚本只写文件，**不 commit**：作者跑一遍守卫测试再自己提交。
+- Threshold: a local grounding needs `verified.runs >= 3`, `last - first >= 2 days`, `by ∈ {ai, human}`, and
+  not shadowed to count as contributable. The gate is necessary — it filters out one-off lucky guesses.
+- One action on the user side: `stream recipe contribute <sourceId> [--step <label> | --area <name>]` (`--step` filters to one step,
+  `--area` filters to one named area; only one of the two may be given). If the local `gh` is logged in → fork +
+  branch `contrib/<recipe>/<platform>-<hash8>` + file `contributions/<recipe>/<platform>-<hash8>.json` + PR;
+  otherwise open a prefilled issue link (label `recipe-contribution`); if the body exceeds what the address bar can hold → write it to
+  `<dataDir>/recipe-overrides/<recipe>.<hash8>.contribution.md` and print the path.
+- A contribution carries: platform, version range, Stream version, the grounding itself, count and first/last dates, and the filler type.
+  It **does not carry** screenshots, control trees, `origin`, or any parameter literal. The only evidence is "in how many real runs it passed the criterion".
+- **The de-templating gate runs once more before sending out**: the local override file does not pass the load gate (only `JSON.parse`),
+  and it is allowed to be hand-written — so an entry that hard-codes the top-level `{contact}` as a real contact name cannot be stopped by a gate placed at load time.
+  `stream recipe contribute` checks each entry against the recipe in the package as the baseline, and skips those that fail, printing which step.
+- Author side: `pnpm recipe:absorb <issue or PR number>`. Four cases — same `on` and same body → only merge `verified`;
+  same `on` different body → place it **alongside** as a second entry without replacing (tried one by one at run time, with the criterion as the fallback); none → insert;
+  the label cannot be found → reject. The inserted entry gets `verified.by = "contributed"` plus a `ref`.
+  The script only writes files and **does not commit**: the author runs the guard tests and commits themselves.
 
-### 2.5 静默 shadow session 数据流
+### 2.5 Silent shadow session data flow
 
-> **本节只是概念契约。** 这条链路的运行模型（账本从哪来、locate 定位的三档降级、
-> tab 独占与抢占探测、观察者挂载时序）以及全部故障查表，见
-> **`.claude/skills/write-recipe/SKILL.md`（唯一真相源）**。动手改 `src/replay/` 之前先读它。
+> **This section is only the conceptual contract.** The runtime model of this pipeline (where the ledger comes from, the three-tier degradation of `locate`,
+> exclusive tab ownership and preemption detection, observer attach timing) and the full fault lookup table are in
+> **`.claude/skills/write-recipe/SKILL.md` (the single source of truth)**. Read it before touching `src/replay/`.
 
-Search 是 T2 Provider invocation：按调用执行，结果返回调用者，从不写入 feed ItemStore。
-底层 session 可以长期存在，但这不改变业务数据的临时性质。（**Home/推荐流不做**——刷别人的推荐流
-不是 Stream 该干的事，理由见 spec `2026-07-28-xhs-harvest-on-user-chrome-design.md`。）
+Search is a T2 Provider invocation: it executes per call, the result returns to the caller, and it is never written to the feed ItemStore.
+The underlying session may live for a long time, but that does not change the transient nature of the business data. (**Home / recommendation feeds are not supported** — scraping someone else's recommendation feed
+is not what Stream is for; see spec `2026-07-28-xhs-harvest-on-user-chrome-design.md` for the reasoning.)
 
 ```text
-命令方向：frontend -> backend -> /api/ext WS -> extension/CDP -> site
-事件方向：site -> extension/CDP -> /api/ext WS -> backend -> /ws -> frontend
+Command direction: frontend -> backend -> /api/ext WS -> extension/CDP -> site
+Event direction:   site -> extension/CDP -> /api/ext WS -> backend -> /ws -> frontend
 ```
 
-一次用户点击详情的推荐流程（宿主这一侧对任何站都一样，站名只住在包里）：
+The recommended flow when a user clicks into a detail (the host side is the same for every site; site names live only in the package):
 
-1. frontend 从这条 item 的 `content.enrich`（包的 normalizer 写的 `{ source, params }`，§3.2）拿到去哪现取，
-   发 WS 命令 `enrich.open { correlationId, source, params }`（协议见 `docs/API.md`）。
-2. backend 派发给包交出的同名 enricher；enricher 经 `ctx.readSource` 跑本包的 detail recipe。
-3. recipe 的 `locate` 步在 facility 的 shadow session 里按 feed 账本定位目标卡片（账本由运行时填，
-   §2.2 Ledger），必要时滚动寻找；CDP trusted input 点击；network/state/DOM observers 同时开启限定观察窗口。
-4. backend 按 correlationId 分片推回 `enrich.article` / `enrich.comments` / `enrich.completed`。
-5. session 返回原 Search 上下文并待命。
-6. 目标卡片已被虚拟列表回收且无法恢复时，允许降级为详情 URL 导航，但必须记录 degraded path。
+1. The frontend takes where to fetch on demand from the item's `content.enrich` (`{ source, params }` written by the package's normalizer, §3.2) and
+   sends the WS command `enrich.open { correlationId, source, params }` (protocol in `docs/API.md`).
+2. The backend dispatches to the same-named enricher handed over by the package; the enricher runs the package's detail recipe via `ctx.readSource`.
+3. The recipe's `locate` step finds the target card in the facility's shadow session according to the feed ledger (the ledger is filled by the runtime,
+   §2.2 Ledger), scrolling to look for it if necessary; a CDP trusted input click is issued; network/state/DOM observers are opened at the same time for a bounded observation window.
+4. The backend pushes back `enrich.article` / `enrich.comments` / `enrich.completed` in chunks keyed by correlationId.
+5. The session returns to the original Search context and stands by.
+6. When the target card has been recycled by the virtual list and cannot be restored, degrading to detail-URL navigation is allowed, but the degraded path must be recorded.
 
-带 `content.enrich` 的卡片接近 viewport 不得自动触发 detail recipe（前端 `allowsAutomaticEnrichment` 对它恒假）；
-只有用户真实点击或显式调用才触发详情。
+A card carrying `content.enrich` must not trigger the detail recipe automatically when it approaches the viewport (the frontend's `allowsAutomaticEnrichment` is always false for it);
+the detail is triggered only by a real user click or an explicit call.
 
 ### 2.6 Record -> Translate -> Validate -> Replay
 
-四阶段必须使用同一份 Recipe schema 和同一个正式 runner：
+The four phases must use the same Recipe schema and the same official runner:
 
-1. **Record**：在 debug-visible session 中捕获动作、Network 样本和 DOM/state 线索。
-2. **Translate**：生成 `steps + observers + output` 的 Recipe 草稿；不保存坐标宏或 AgentHistory。
-3. **Validate**：使用正式 runner 真机回放，验证 capability、登录、输出与漂移语义。
-4. **Replay**：换成生产 session policy（`unattended`），零 token 确定性执行。
+1. **Record**: capture actions, Network samples and DOM/state clues in a debug-visible session.
+2. **Translate**: produce a Recipe draft of `steps + observers + output`; do not save coordinate macros or AgentHistory.
+3. **Validate**: replay on a real machine with the official runner, verifying capability, login, output and drift semantics.
+4. **Replay**: switch to the production session policy (`unattended`) and execute deterministically with zero tokens.
 
-修复账本应以 `{facility, recipeId, version}` 识别失败单元，并记录受影响 Source。共享 detail
-recipe 漂移时应产生一条 repair state，而不是给 Home/Search 各记一份互不相关的故障。
+The repair ledger should identify a failure unit by `{facility, recipeId, version}` and record the affected Sources. When a shared detail
+recipe drifts, it should produce a single repair state, rather than separate unrelated faults for Home and Search.
 
-### 2.7 "验证"四格术语
+### 2.7 The four-cell "validation" terminology
 
-| # | 名称 | 含义 | PASS 判据 | 代码锚点 |
+| # | Name | Meaning | PASS criterion | Code anchor |
 |---|---|---|---|---|
-| ① | 登录态检测 | 运行时 `LOGGED_IN / WALLED / UNKNOWN` 分类，wall 优先 | WALLED -> needsLogin；UNKNOWN 不伪装成 wall/drift | `src/replay/actions.ts` |
-| ② | 登录流程 / 建号 | 人工登录：用户在**自己的 Chrome 里**照常登录（Stream 没有自己的 profile 要喂）。要 Stream 出面替他登时，`meta.auth` 声明 `login: 'qr'`（扫码面板）或 `login: 'oauth'`（替他点掉"用 Google 继续"，骑浏览器里已有的第三方登录态） | 登录成功；正/负 selector 可识别。声明了 `login` 的那两支还要能在重登面板里露面（`PANEL_LOGIN_KINDS`） | 站点自身的登录流程；`src/auth/browser-{qr,oauth}-login-provider.ts` |
-| ③ | Recipe schema 校验 | load 时零浏览器静态检查 | schema、引用、capability 合法 | `src/replay/recipe-store.ts` |
-| ④ | Recipe 端到端验收 | 真 session 执行完整 recipe | outcome=ok、无 drift、满足 output target | `src/replay/author/validate.ts` |
+| ① | Login-state detection | Runtime `LOGGED_IN / WALLED / UNKNOWN` classification, wall takes priority | WALLED -> needsLogin; UNKNOWN is not disguised as wall/drift | `src/replay/actions.ts` |
+| ② | Login flow / account creation | Manual login: the user logs in as usual **in their own Chrome** (Stream has no profile of its own to feed). When Stream needs to log in on the user's behalf, `meta.auth` declares `login: 'qr'` (QR-code panel) or `login: 'oauth'` (clicks through "Continue with Google" for the user, riding the third-party login state already present in the browser) | Login succeeds; positive/negative selectors can recognize it. The two branches that declare `login` must also be able to appear in the re-login panel (`PANEL_LOGIN_KINDS`) | The site's own login flow; `src/auth/browser-{qr,oauth}-login-provider.ts` |
+| ③ | Recipe schema validation | Static check with zero browser at load time | Schema, references and capabilities are valid | `src/replay/recipe-store.ts` |
+| ④ | Recipe end-to-end acceptance | A real session executes the complete recipe | outcome=ok, no drift, output target satisfied | `src/replay/author/validate.ts` |
 
-说"验证"时必须带对象、阶段和可观察判据，例如：
+When saying "validate", always name the object, the phase and an observable criterion, for example:
 
-> 验证 xhs-detail 的④端到端回放：debug session 中由 Home card trusted click 触发，收到匹配
-> detail response/state，输出 media + comments，`outcome=ok` 且 `driftReason=null`。
+> Validate the ④ end-to-end replay of xhs-detail: in a debug session, triggered by a trusted click on a Home card, a matching
+> detail response/state is received, media + comments are output, `outcome=ok` and `driftReason=null`.
 
-#### Record 与 Replay 的登录墙策略
+#### Login-wall policy for Record and Replay
 
-- record / `interactive`：墙出现 -> 暂停、提示人工处理、一次 resume。
-- replay / `unattended`：墙出现 -> abort、`needsLogin`、通知用户；不是 drift，不 quarantine。
+- record / `interactive`: wall appears -> pause, prompt for manual handling, one resume.
+- replay / `unattended`: wall appears -> abort, `needsLogin`, notify the user; this is not drift and does not quarantine.
 
-### 2.7.1 三个版本字段，各答各的问题——没有一个是「字段语义版本」
+### 2.7.1 Three version fields, each answering its own question — none of them is a "field-semantics version"
 
-三个名字长得像，问的是三件事。混用会做出反效果的动作，所以照这张表用：
+The three names look alike but ask three different things. Mixing them up leads to counterproductive actions, so use them according to this table:
 
-| 字段 | 住在哪 | 回答什么 | 谁读它 |
+| Field | Where it lives | What it answers | Who reads it |
 |---|---|---|---|
-| `version` | recipe 文件 | 「这份 recipe 我动过了，之前那些失败不算数」 | `RepairLedger`：drift 三次隔离，**版本变高才解除** |
-| `schemaVersion` | 包描述符（旧形） | 「这个包按哪版包格式写的」 | 装载时的**上界**：app 太老就拒装 |
-| `hostVersion` | 包描述符 | 「我要求宿主至少多新」 | 装载时的**下界** |
+| `version` | recipe file | "I have touched this recipe, so the earlier failures no longer count" | `RepairLedger`: three drifts trigger quarantine, which is **lifted only when the version goes up** |
+| `schemaVersion` | package descriptor (old shape) | "Which package format version this package was written against" | The **upper bound** at load time: an app that is too old refuses to install it |
+| `hostVersion` | package descriptor | "How new a host I require at minimum" | The **lower bound** at load time |
 
-两条由此而来的纪律：
+Two disciplines follow from this:
 
-- **`version` 必填，且不许当格式版本用。** 缺了它，`shouldRun` 的 `recipeVersion > s.recipeVersion`
-  恒为 false —— 那个源一旦被隔离就**永久隔离**，改多少次都放不出来，而且安静（隔离期直接
-  DECLINED，"本轮未采集"，不报错也不记失败）。反过来，把它当格式版本使，等于每次修好一份坏
-  recipe 都在宣称格式变了。
-- **recipe 的新旧形状不看版本号，看结构**：`isCanonicalBrowserRecipe`（有没有
-  `steps`/`observers`/`output`）分流，旧形翻新形是 `canonicalizeBrowserRecipe` 的活。
-  要加一档形状迁移，加在那条路上，别去给 `version` 划区间。
+- **`version` is required, and must not be used as a format version.** Without it, `shouldRun`'s `recipeVersion > s.recipeVersion`
+  is always false — once a source is quarantined it is **quarantined forever**, no matter how many times it is changed, and it happens quietly (during quarantine it is simply
+  DECLINED, "本轮未采集" ("not harvested this round"), with no error and no failure recorded). Conversely, using it as a format version amounts to declaring that the format changed every time a broken
+  recipe is fixed.
+- **A recipe's old/new shape is decided by structure, not by version number**: `isCanonicalBrowserRecipe` (whether it has
+  `steps`/`observers`/`output`) does the branching, and converting the old shape to the new shape is the job of `canonicalizeBrowserRecipe`.
+  To add another level of shape migration, add it on that path; do not carve ranges out of `version`.
 
-### 2.7.2 `pick_in`：这个源在哪个**选择面**能被挑到
+### 2.7.2 `pick_in`: on which **picking surface** this source can be picked
 
-界面上有两个挑源的地方，它们要的是两种不同的东西：
+The UI has two places for picking a source, and they want two different things:
 
-| 面 | 用户在干什么 | 谁属于这里 |
+| Surface | What the user is doing | Who belongs here |
 |---|---|---|
-| `stream` | 给频道加一条**会持续来内容的流** | 各站时间线、关键词搜索流、RSSHub 路由 |
-| `provider` | 给 Provider 行挑一个**干活的成员** | 搜索腿（google/brave/telegram/baidu）、网盘验活（quark/baidu-share）、组合体里 expand 的那一档 |
+| `stream` | Adding to a Channel a **Stream that keeps delivering content** | Per-site timelines, keyword search streams, RSSHub routes |
+| `provider` | Picking a **working member** for a Provider row | Search legs (google/brave/telegram/baidu), netdisk liveness checks (quark/baidu-share), the expand tier inside a composite |
 
-在 recipe 的 `meta` 里申报（手写 manifest 同名字段）：
+Declare it in the recipe's `meta` (the same-named field in a hand-written manifest):
 
 ```jsonc
-"pick_in": ["provider"]   // 只在成员面挑得到
-"pick_in": []             // 两个面都不出现：后端代码/配置流程按名字直调
-// 不写                    // = 两个面都能挑到（绝大多数源）
+"pick_in": ["provider"]   // can be picked only on the member surface
+"pick_in": []             // appears on neither surface: called directly by name from backend code / config flows
+// (omitted)              // = can be picked on both surfaces (the vast majority of sources)
 ```
 
-**缺省宽松是刻意的**：3000+ 条 RSSHub 路由本来就两边都成立，让它们保持沉默；要收窄的自己申报。
-反过来（默认谁都挑不到）会让忘了申报的新源从两个入口一起静默消失——"少了一个源"没有任何人
-会收到通知。代价是漏写不会报错，所以名单由 `src/manifest/pick.real.test.ts` 逐个钉住：新增一份
-该收窄的 recipe 忘了申报，那条用例当场变红。
+**The permissive default is deliberate**: 3000+ RSSHub routes are valid on both sides anyway, so they stay silent; a source that needs narrowing declares it itself.
+The reverse (nobody can pick by default) would make a new source whose author forgot to declare silently disappear from both entry points — nobody
+would be notified that "a source is missing". The cost is that a missing declaration does not raise an error, so the list is pinned one by one by `src/manifest/pick.real.test.ts`: if a new
+recipe that should be narrowed forgets to declare, that case turns red on the spot.
 
-**别拿 `discoverable` 当它使**。那个字段只管两处（首页精选列表、按意图搜源的排序），说的是
-"别在推荐里出现"。两者混用过，而且是反着错的两个方向：该藏的没藏住——通用选择器不看
-`discoverable`，于是"给笔记点赞"这个写操作能被当成来源挑中；该露的藏过头——网盘那个源因为
-`discoverable:false` 在通用入口里挑不到，逼得面板里复制了一份成员编辑器。
+**Do not use `discoverable` as a substitute for it.** That field governs only two places (the home page's featured list, and the ranking of intent-based source search) and says
+"do not show up in recommendations". The two have been mixed up, and wrongly in both directions: what should be hidden was not hidden — the generic picker does not look at
+`discoverable`, so the write operation "给笔记点赞" ("like a note") could be picked as a source; what should be shown was hidden too far — the netdisk source could not be picked in the generic entry because of
+`discoverable:false`, which forced the panel to duplicate a member editor.
 
-**判据是具名函数** `pickableIn` / `pickableAnywhere`（`src/manifest/pick.ts`），端点按
-`?surface=` 过滤，拼错的面名一律 400（不静默当成"没传"去发一份更宽的列表）。加第三个选择面时
-改 `PICK_SURFACES` 一处，两个消费端（列表 + 跨插件搜）自动跟上。
+**The criterion is a named function**, `pickableIn` / `pickableAnywhere` (`src/manifest/pick.ts`); the endpoint filters by
+`?surface=`, and a misspelled surface name always returns 400 (it is never silently treated as "not passed", which would send a wider list). When adding a third picking surface,
+change `PICK_SURFACES` in one place, and both consumers (the list + cross-plugin search) follow automatically.
 
-### 2.8 工程边界
+### 2.8 Engineering boundaries
 
-目标控制点：
+Target control points:
 
-- `recipe.ts`：Recipe schema，只定义数据契约。
-- `session-manager.ts`：facility session 生命周期、unattended/interactive、恢复与并发。
-- `recipe-runner.ts`：steps 与 observers 编排、取消、correlation。
-- `actions.ts`：通用 trusted browser actions。
-- `observer-pipeline.ts`：Network/state/DOM observer 与输出合并。
-- `browser-ext*.ts`：backend CDP driver/transport adapter。
-- `extension/src/lib/driver.ts`：owned tabs、原始 CDP RPC/event transport；无 Recipe 业务逻辑。
-- `repair-ledger.ts`：Recipe 级 drift/quarantine/repair 状态。
+- `recipe.ts`: the Recipe schema, defining only the data contract.
+- `session-manager.ts`: facility session lifecycle, unattended/interactive, recovery and concurrency.
+- `recipe-runner.ts`: orchestration of steps and observers, cancellation, correlation.
+- `actions.ts`: generic trusted browser actions.
+- `observer-pipeline.ts`: Network/state/DOM observers and output merging.
+- `browser-ext*.ts`: the backend CDP driver / transport adapter.
+- `extension/src/lib/driver.ts`: owned tabs, raw CDP RPC/event transport; no Recipe business logic.
+- `repair-ledger.ts`: Recipe-level drift/quarantine/repair state.
 
-`harvest` schema 与一次性 `ReplayLauncher` 只作兼容读取——**新 Recipe 一律不写旧式互斥 harvest
-mode**。删这层兼容之前，必须先迁移 builtin/user package 或给出明确的版本错误。
+The `harvest` schema and the one-shot `ReplayLauncher` are kept only for compatibility reads — **new Recipes never write the old mutually exclusive harvest
+mode**. Before removing this compatibility layer, the builtin/user packages must be migrated first, or a clear version error must be provided.
 
-三条契约层的纪律：
+Three disciplines for the contract layer:
 
-- selector 漂移时更新 Recipe；**禁止把站点 selector 硬编码进通用 runner**。
-- 传给页面的 evaluate 表达式必须自包含，并受 Recipe schema/runner 能力约束。
-- `data/`、真实 profile、cookie、`config.yaml` 永不进入 Stream 包或 git。
+- When a selector drifts, update the Recipe; **never hard-code site selectors into the generic runner**.
+- Evaluate expressions passed to the page must be self-contained and bounded by the Recipe schema/runner capabilities.
+- `data/`, real profiles, cookies and `config.yaml` never enter a Stream package or git.
 
-### 2.9 `kind:'html'` 的每行 hop 链（`hops`）
+### 2.9 The per-row hop chain (`hops`) of `kind:'html'`
 
-`kind:'html'` recipe（宿主裸 fetch + linkedom，无浏览器）在 `list` / `detail` 之外还可以给**每一行**
-声明一串额外的跳（`hops`）：一跳 = 再发一个请求，URL 由这一行已攒到的字段拼出（`{field}` 模板，
-词汇与 `RecipeRequest.url` 的 `{param}` 相同；或 `urlFrom` 直接取某个字段当 URL，二选一），
-响应按 `parse` 读——`'html'`（默认，字段用 CSS selector 抽）或 `'json'`（字段用 dot-path 取，
-路径语义同 http 引擎的 `itemsAt`）。抽出的字段合并进这一行，后一跳因此能用前面跳的产物（链式）。
+A `kind:'html'` recipe (host bare fetch + linkedom, no browser) can, besides `list` / `detail`, declare a series of extra hops (`hops`) for **each row**:
+one hop = one more request whose URL is assembled from the fields this row has accumulated so far (a `{field}` template with the same
+vocabulary as `{param}` in `RecipeRequest.url`; or `urlFrom` takes some field directly as the URL, one of the two), and the
+response is read according to `parse` — `'html'` (the default; fields extracted with CSS selectors) or `'json'` (fields taken by dot-path, with the path semantics the same as the http engine's `itemsAt`). The extracted fields are merged into this row, so a later hop can use the products of earlier hops (chaining).
 
-- **容错是契约**：一跳失败（网络错、非 2xx、URL 模板的洞没值、JSON 解析不了）只让那几个字段留空，
-  **绝不让整行、更不让整轮采集失败**——hop 是补充证据。相对地，`detail` 的失败语义不变（仍然中断），
-  老 recipe 一个不用改。
-- 每一跳都走同一个受护栏的 `fetchHtml`（SSRF 公网校验 + `cookieDomain` 覆盖校验），hop 之间串行发。
-- 字段级还有一个通用件：`HtmlField.extract` / json 字段的 `extract`——一个正则，捕获组 1（或全匹配）
-  替换值、不匹配就丢弃字段。既是切片器（从 wikidata href 里剥 `Q\d+`），也是形状闸（`^tt\d+$`
-  之类，垃圾值进不了 item）。
-- 站点知识（哪个 API、哪个属性号、值长什么样）留在 recipe；引擎只提供「再跳一次、能拼 URL、能解
-  JSON、能验形状」这四样通用能力——§2.1 的边界原话。
-- 实例：`packages/wikipedia/wikipedia-award-list.recipe.json`——detail 从条目页抠出 Wikidata 实体
-  链接（`extract` 剥出 Q 号），三个 json hop 拿 Q 号问 Wikidata 的 `wbgetclaims`（P4947/P4983/P345），
-  换来的 TMDb/IMDb 编号落成 `tmdb_movie_id` / `tmdb_tv_id` / `imdb_id`，影视 canonical 阶梯直接吃
-  现成 id（不再在兑换阶段访问 Wikidata）。
+- **Fault tolerance is the contract**: when a hop fails (network error, non-2xx, a hole in the URL template with no value, unparseable JSON), only those fields are left empty,
+  and it **never fails the whole row, let alone the whole harvest round** — a hop is supplementary evidence. By contrast, the failure semantics of `detail` are unchanged (it still aborts),
+  and not a single old recipe needs to change.
+- Every hop goes through the same guarded `fetchHtml` (SSRF public-network check + `cookieDomain` coverage check), and hops are sent serially.
+- There is also a generic piece at the field level: `HtmlField.extract` / the `extract` of a json field — a regex whose capture group 1 (or the full match)
+  replaces the value, and a non-match drops the field. It is both a slicer (stripping `Q\d+` from a wikidata href) and a shape gate (`^tt\d+$`
+  and the like, so garbage values cannot get into an item).
+- Site knowledge (which API, which property number, what the value looks like) stays in the recipe; the engine provides only four generic capabilities: "hop once more, assemble a URL, parse
+  JSON, verify a shape" — the boundary stated verbatim in §2.1.
+- Example: `packages/wikipedia/wikipedia-award-list.recipe.json` — detail extracts the Wikidata entity
+  link from the entry page (`extract` strips out the Q number), three json hops take the Q number and query Wikidata's `wbgetclaims` (P4947/P4983/P345),
+  and the TMDb/IMDb ids obtained are stored as `tmdb_movie_id` / `tmdb_tv_id` / `imdb_id`; the film-and-TV canonical ladder consumes
+  these ready-made ids directly (Wikidata is no longer accessed during the exchange stage).
 
-### 2.10 状态图：`states.json`
+### 2.10 State graph: `states.json`
 
-包可以自带一张**状态图**，回答「动完发现不对，那是什么」——未登录 / 登录墙 / 人机验证 /
-版式 A / 空结果，这些同一个 URL 后面藏着的东西。文件是 `packages/<id>/states.json`（npm 包同样，
-放包根），由包扫描器读进 `RecipePackage.states`。
+A package can bring its own **state graph**, which answers "I acted and something looks wrong — what is this?" — not logged in / login wall / human verification /
+layout A / empty results, the things that hide behind the same URL. The file is `packages/<id>/states.json` (the same for npm packages,
+placed at the package root), and the package scanner reads it into `RecipePackage.states`.
 
-**形状**就是 `StateGraph` 的 JSON（`src/replay/state-graph.ts`）：
+The **shape** is simply the JSON of `StateGraph` (`src/replay/state-graph.ts`):
 
 ```jsonc
 {
   "states": [
     {
-      "id": "xhs/results",                    // 必须 `<facility>/<状态>`
+      "id": "xhs/results",                    // must be `<facility>/<state>`
       "features": [{ "kind": "url", "pattern": "/search_result" },
                    { "kind": "dom", "selector": ".note-item" }],
-      "group": "xhs/page",                    // 同组互斥，跨组可以同时成立
-      "note": "搜索结果页"                     // 只进轨迹和提议，不参与匹配
+      "group": "xhs/page",                    // states in the same group are mutually exclusive; across groups they can hold at the same time
+      "note": "搜索结果页"                     // goes only into traces and proposals, not used for matching ("search results page")
     },
-    { "id": "xhs/banned", "features": [...], "deadEnd": "账号被限制" }
+    { "id": "xhs/banned", "features": [...], "deadEnd": "账号被限制" }   // deadEnd value: "account restricted"
   ],
   "transitions": [
-    { "from": "xhs/login-wall", "steps": [ /* 复用 recipe 的步骤类型，不新造 */ ] }
+    { "from": "xhs/login-wall", "steps": [ /* reuse the recipe's step types, no new ones */ ] }
   ],
-  "anchor": "xhs/home"                        // 可选，预留
+  "anchor": "xhs/home"                        // optional, reserved
 }
 ```
 
-**状态 id 必须带 `<facility>/` 前缀**（`assertStateIdPrefix`）。前缀不是装饰：**进哪张图由它说了算**。
-写错前缀的状态不会在运行时报错，它只是谁也认不出——所以扫描器在装载时就拦。
+**A state id must carry the `<facility>/` prefix** (`assertStateIdPrefix`). The prefix is not decoration: **it decides which graph the state goes into**.
+A state with a wrong prefix raises no runtime error, it is simply recognized by no one — so the scanner blocks it at load time.
 
-**特征词汇只有五种**（`Feature`），全部命中才算认出（AND）：
+**There are only five kinds of feature vocabulary** (`Feature`), and a state is recognized only when all of them match (AND):
 
-| `kind` | 问什么 | 备注 |
+| `kind` | What it asks | Notes |
 |---|---|---|
-| `url` | URL 匹不匹配这个模式 | 网页侧最便宜的一条 |
-| `dom` | 这个选择器选不选得到 | 支持 `absent` |
-| `a11y` | 控件树里有没有这个查询命中的东西 | 支持 `absent` |
-| `text` | 屏上有没有这串字 | 支持 `absent`、`region`、`where` |
-| `image` | 屏上有没有一小块长成这样 | base64 参考图，NCC 模板匹配；支持 `absent` |
+| `url` | Whether the URL matches this pattern | The cheapest one on the web side |
+| `dom` | Whether this selector selects anything | Supports `absent` |
+| `a11y` | Whether the control tree contains anything hit by this query | Supports `absent` |
+| `text` | Whether this string of text is on screen | Supports `absent`, `region`, `where` |
+| `image` | Whether a small patch looking like this is on screen | A base64 reference image, NCC template matching; supports `absent` |
 
-`absent: true` 是必需的一档，不是补充：「已登录」最可靠的判据往往就是「登录按钮不在了」，
-互斥也靠它撑开。**背景色不作为特征**（跟随系统主题，跨机器不可移植）。
+`absent: true` is a required tier, not a supplement: the most reliable check for "logged in" is often "the login button is gone",
+and mutual exclusion also relies on it to pull states apart. **Background color is not used as a feature** (it follows the system theme and is not portable across machines).
 
-**整包拒载的判据**（`validateStateGraph` + 扫描器；`states.json` 坏掉时整个包不装载，而不是
-悄悄少一张图——少一张图的症状是「这个源永远认不出自己在哪」，没有一处会喊）：
+**Checks for rejecting the whole package** (`validateStateGraph` + the scanner; when `states.json` is broken the whole package is not loaded, instead of
+quietly missing one graph — the symptom of a missing graph is "this source can never recognize where it is", and nothing shouts about it):
 
-- 顶层不是 `{ states: [], transitions: [] }`（JSON 解析不了也算）。
-- 某个状态 `features` 为空——它会匹配一切，等于把 `identify` 关掉。
-- 状态 id 重复，或缺 `<facility>/` 前缀。
-- 转移的 `from` / `to` 指向不存在的状态。
-- 已声明 `deadEnd` 的状态又有出口——两者矛盾，留着的话读图的人和引擎会各信一半。
+- The top level is not `{ states: [], transitions: [] }` (unparseable JSON counts too).
+- A state has empty `features` — it would match everything, which is equivalent to switching `identify` off.
+- Duplicate state ids, or a missing `<facility>/` prefix.
+- A transition's `from` / `to` points to a nonexistent state.
+- A state that declares `deadEnd` also has an exit — the two contradict each other, and if kept, the person reading the graph and the engine would each believe half of it.
 
-**这是三层里的一层**：内置全局（`states-builtin.ts`，Cloudflare 三档）∪ 包自带这张 ∪ 本机学到的
-（`<dataDir>/state-graphs/<facility>.json`，接受 AI 介入的提议时写）。键是 **facility** 不是
-sourceId——状态是站点级的事（`xhs/results` 对 xhs-search、xhs-home、xhs-detail 都成立）。
-任意两层 id 撞车一律报错。三层的分工与理由见 spec
-`internal design record` §9.1，装配与运行时行为见
-`docs/ENGINE.md` §6。
+**This is one of three layers**: the built-in global one (`states-builtin.ts`, three Cloudflare tiers) ∪ the one the package brings ∪ the one learned on this machine
+(`<dataDir>/state-graphs/<facility>.json`, written when an AI-intervention proposal is accepted). The key is the **facility**, not the
+sourceId — states are a site-level matter (`xhs/results` holds for xhs-search, xhs-home and xhs-detail alike).
+An id collision between any two layers is always an error. The division of labor among the three layers and the reasons are in spec
+`internal design record` §9.1; assembly and runtime behavior are in
+`docs/ENGINE.md` §6.
 
-**怎么挑特征、怎么验、学到的状态怎么升格进包**，见 `write-recipe` skill
-（`references/authoring.md` 的「给包写 `states.json`」一节）。
+**How to pick features, how to verify, and how a learned state is promoted into the package**: see the `write-recipe` skill
+(the section "Writing `states.json` for a package" in `references/authoring.md`).
 
 ---
 
-## 3. 槽位：代码（`stream.code` + `activate(ctx)`）
+## 3. Slot: code (`stream.code` + `activate(ctx)`)
 
-带代码的包**自己声明它贡献什么**，宿主只负责递上下文、收下结果。宿主不认识任何一个包的构造函数。
+A package with code **declares for itself what it contributes**; the host only hands over the context and receives the result. The host does not know the constructor of any package.
 
-### 3.1 声明：`stream.code`
+### 3.1 Declaration: `stream.code`
 
 ```json
 "stream": {
@@ -1384,25 +1391,25 @@ sourceId——状态是站点级的事（`xhs/results` 对 xhs-search、xhs-home
 }
 ```
 
-- `entry` —— 导出 `activate` 的模块（相对包根）。用户层只认字面量 `dist/index.js`（§6.4）；内置包也这么写
-  （npm 上那份要它），但内置层装载不读它——`packages/index.ts` 的静态表直接指 `./<pkg>/activate.ts`（§3.3）。
-- `adapters` / `normalizers` —— 这个包会注册的**名字全集**。
-- `enrichers?: string[]` —— `GET /api/enrich?source=<名字>` 的名字全集；撞别的包、或撞宿主自己的
-  `/api/enrich` 分支名都拒。
-- `connect?: string[]` —— `POST /api/credentials/<域名>/connect` 的域名全集（大小写不敏感）；每个域**必须**
-  同时出现在这个包的 `credentials` 里，两个包声明同一个域 → 装载期抛（同 §3.4 撞名规则）。
+- `entry` — the module that exports `activate` (relative to the package root). The user layer accepts only the literal `dist/index.js` (§6.4); builtin packages write it the same way
+  (the copy on npm needs it), but the builtin layer's loading does not read it — the static table in `packages/index.ts` points directly at `./<pkg>/activate.ts` (§3.3).
+- `adapters` / `normalizers` — the **complete set of names** this package registers.
+- `enrichers?: string[]` — the complete set of names for `GET /api/enrich?source=<name>`; a name that collides with another package's, or with the host's own
+  `/api/enrich` branch names, is rejected.
+- `connect?: string[]` — the complete set of domains for `POST /api/credentials/<domain>/connect` (case-insensitive); every domain **must**
+  also appear in this package's `credentials`, and if two packages declare the same domain, loading throws (same as the §3.4 name-collision rule).
 
-**名单为什么必须显式列出**：撞名要在**执行任何包代码之前**拒掉。`import` 一发生、`activate` 一被调用，包的代码就已经在本进程里跑了——那时再发现「这名字被别人占了」已经晚了，坏事已经做完。所以「谁能注册什么名」只能靠 `package.json` 里的**静态**名单判，不能靠「先跑一遍看它返回了什么」。名单与 `activate` 实际返回的键**必须一字不差**：两边的差集（多返回的、声明了却没返回的）都会抛错，declared-but-missing 同样是错——否则一个悄悄不再注册的名字会表现成「某个 source 突然解析不到 adapter」。
+**Why the lists must be explicit**: name collisions must be rejected **before any package code is executed**. Once `import` happens and `activate` is called, the package's code is already running in this process — discovering then that "this name is taken by someone else" is too late; the damage is done. So "who may register which name" can only be decided by the **static** list in `package.json`, not by "run it first and see what it returns". The list and the keys `activate` actually returns **must match character for character**: the difference between the two sets (returned but not declared, declared but not returned) throws an error, and declared-but-missing is likewise an error — otherwise a name that quietly stops being registered shows up as "some source suddenly cannot resolve its adapter".
 
-**包可以交出一个替代 builtin fn 的 Adapter。** 宿主的 `builtin` adapter 是一堆进程内函数的注册表
-（`BuiltinFn(input, params, context)`）；一个包要把其中一格搬进自己家，交的是一个 **`Adapter`**
-（`src/adapters/types.ts`：`id` / `init` / `fetch(params, manifest, context)`），manifest 的 `adapter`
-写这个 adapter 名、不再写 `builtin`。**入参形状变了**：走 `resolveEngine.fetchSource` 这条路时，
-订阅键由 `buildParams` 灌进 `manifest.key_param` 指定的那个参数，所以 adapter 读的是
-`params[key_param]`（例：`key_param: input` ⇒ `params.input`），不是第一个位置参数。
-范例：`packages/netease/lyrics.ts` + `packages/netease/manifests.yaml`。
+**A package can hand over an Adapter that replaces a builtin fn.** The host's `builtin` adapter is a registry of in-process functions
+(`BuiltinFn(input, params, context)`); for a package to move one of those entries into its own home, it hands over an **`Adapter`**
+(`src/adapters/types.ts`: `id` / `init` / `fetch(params, manifest, context)`), and the manifest's `adapter`
+names this adapter instead of `builtin`. **The input shape changes**: on the `resolveEngine.fetchSource` path,
+the subscription key is poured by `buildParams` into the parameter named by `manifest.key_param`, so the adapter reads
+`params[key_param]` (e.g. `key_param: input` ⇒ `params.input`), not the first positional argument.
+Example: `packages/netease/lyrics.ts` + `packages/netease/manifests.yaml`.
 
-### 3.2 契约：`activate(ctx)`
+### 3.2 Contract: `activate(ctx)`
 
 ```ts
 export const activate: ActivateFn = (ctx) => ({
@@ -1411,45 +1418,45 @@ export const activate: ActivateFn = (ctx) => ({
 })
 ```
 
-同步函数，返回 `{ adapters?, normalizers?, actions?, enrichers?, connect? }`，键就是注册名。normalizer 由装载器就地注册进全局 registry；adapter 实例**交还调用方**（bootstrap 拿它填 adapters Map，源按 manifest 的 `adapter` 字段路由到它——包的 resolve / fetch-url / 评论成员都骑同一个实例打容器，宿主不按名单取任何一个 adapter 自用）。`actions` 见 §3.4.5，`enrichers` / `connect` 见下。
+A synchronous function that returns `{ adapters?, normalizers?, actions?, enrichers?, connect? }`; the keys are the registration names. Normalizers are registered in place by the loader into the global registry; adapter instances are **handed back to the caller** (bootstrap uses them to fill the adapters Map, and a source is routed to one by the manifest's `adapter` field — the package's resolve / fetch-url / comment members all ride the same instance to hit the container, and the host never takes any adapter from a list for its own use). For `actions` see §3.4.5; for `enrichers` / `connect` see below.
 
 #### `enrichers` / `connect`
 
-- `enrichers: Record<name, (query, signal?) => Promise<unknown>>`——宿主把它露在**两个面**上：HTTP `GET /api/enrich?source=<name>&…` 命中时把整袋 query 交过来，返回值原样 JSON；WS 命令 `enrich.open { source, params }` 命中时把 `params` 交过来、结果拆成 `enrich.article / comments / completed` 分片推回（协议见 `docs/API.md`「包交出来的处理器」）。参数校验归包：不合法抛 `ValidationError`（`shared/package-sdk/errors.ts`，宿主按鸭子标记 `validation: true` 判，不 `instanceof`——见 §3.7）→ HTTP 400 / WS `enrich.failed`；`RecipeBlockedError`（限速 / 登录墙）→ WS `enrich.blocked`；其余异常 → 502 / `enrich.failed`。第二参 `signal` 是调用方放弃这次结果的取消信号（WS 面同 source 被新点击顶掉时触发；HTTP 面不带），不读它的 enricher 照样兼容。
-- **`Content.enrich`——normalizer 告诉前端「这条打开时去哪现取剩下的」。** `Content` 上的可选字段 `enrich?: { source, params }`（`src/content/types.ts`）由包的 normalizer 在采集期写下；`source` 必须是本包 `code.enrichers` 里申报的名字（装载期不校验——normalizer 是纯函数，写错的表现是前端打开时 400 / `enrich.failed`，响亮不静默），`params` 全是字符串。前端 `enrichParamsFor(item)` **先看它**，有就原样拿去调；没有才走宿主自己那几条判据。带 `enrich` 的 item 缺省不会被自动预取（它多半要骑浏览器 tab 跑一次 recipe），只在用户真点开时经 WS `enrich.open` 现取；包可以在上面加 `prefetch: true` 自报「这次现取便宜：站外裸 HTTP、不骑标签页、不扣 facility 预算」（论坛回复那一类），前端据此放行滚动预取并走 HTTP 一问一答——这一格只有写 enricher 的包说得清，所以由它申报，前端不按站名猜。**包交出的 enricher 结果由宿主在装载处统一消毒**（`sanitizeEnricher`：`article.html` 与每条 `comments[].html`，含嵌套回复），HTTP 与 WS 两个出口吃同一份——前端对这两格是原样 `innerHTML`，它信的是宿主，不是包。范例：`packages/xhs/normalizer.ts` 写 `{ source: 'xhs-detail', params: { noteId, xsec_token } }`，`detail.ts` 的 enricher 经 `ctx.readSource` 跑同名 recipe。**同名不同物**：这里的 `Content.enrich` 是写在条目上的「打开时去哪现取」；Provider 调用点 id `content.enrich`（§0.5 `providers` 行的 `callsites`，贴链接抓媒体的派发点 `stream_fetch_url` / `GET /api/media/from-url`）是另一回事，两者只是拼法撞了。
-- `connect: Record<domain, () => Promise<{ stream, extra? }>>`——`POST /api/credentials/<domain>/connect` 命中时调一次，宿主 `subscribe(stream)`，回 `{ ok:true, id, ...extra }`。键必须出现在 `credentials` 里。
+- `enrichers: Record<name, (query, signal?) => Promise<unknown>>` — the host exposes it on **two surfaces**: when HTTP `GET /api/enrich?source=<name>&…` hits, the whole query bag is handed over and the return value is sent as JSON as-is; when the WS command `enrich.open { source, params }` hits, `params` is handed over and the result is split into `enrich.article / comments / completed` chunks pushed back (protocol in `docs/API.md`, "Handlers handed over by packages"). Parameter validation belongs to the package: an invalid parameter throws `ValidationError` (`shared/package-sdk/errors.ts`; the host identifies it by the duck-typed marker `validation: true`, not `instanceof` — see §3.7) → HTTP 400 / WS `enrich.failed`; `RecipeBlockedError` (rate limit / login wall) → WS `enrich.blocked`; any other exception → 502 / `enrich.failed`. The second parameter `signal` is the cancellation signal for when the caller abandons this result (fired on the WS surface when a new click replaces the same source; not passed on the HTTP surface); an enricher that does not read it stays compatible.
+- **`Content.enrich` — the normalizer tells the frontend "where to fetch the rest on demand when this is opened".** The optional field `enrich?: { source, params }` on `Content` (`src/content/types.ts`) is written by the package's normalizer at harvest time; `source` must be a name declared in this package's `code.enrichers` (not validated at load time — a normalizer is a pure function, and a wrong value shows up as a 400 / `enrich.failed` when the frontend opens it: loud, not silent), and `params` are all strings. The frontend's `enrichParamsFor(item)` **looks at it first** and, if present, uses it as-is for the call; only otherwise does it fall through to the host's own few checks. An item carrying `enrich` is not auto-prefetched by default (it mostly needs to ride a browser tab to run a recipe once), and is fetched on demand through WS `enrich.open` only when the user really opens it; a package can add `prefetch: true` on it to self-report "this on-demand fetch is cheap: bare off-site HTTP, no tab ridden, no facility budget spent" (the forum-reply kind), and the frontend lets scroll prefetch through on that basis and goes over HTTP request/response — only the package that writes the enricher can say this, so it is the one that declares it, and the frontend does not guess by site name. **The enricher results a package hands over are sanitized uniformly by the host at the load point** (`sanitizeEnricher`: `article.html` and every `comments[].html`, including nested replies), and both the HTTP and WS exits consume the same copy — the frontend does a raw `innerHTML` on these two fields; it trusts the host, not the package. Example: `packages/xhs/normalizer.ts` writes `{ source: 'xhs-detail', params: { noteId, xsec_token } }`, and the enricher in `detail.ts` runs the same-named recipe via `ctx.readSource`. **Same name, different things**: the `Content.enrich` here is the "where to fetch on demand when opened" written on an item; the Provider callsite id `content.enrich` (the `callsites` of the `providers` row in §0.5, the dispatch points `stream_fetch_url` / `GET /api/media/from-url` that paste a link to fetch media) is a different matter, and the two merely collide in spelling.
+- `connect: Record<domain, () => Promise<{ stream, extra? }>>` — called once when `POST /api/credentials/<domain>/connect` hits; the host runs `subscribe(stream)` and replies `{ ok:true, id, ...extra }`. The key must appear in `credentials`.
 
-**评论 enricher 有一份前端合同，其余名字自由。** 前端对带 `(provider, vid)` 的视频一律请求
-`source=<facility>-comments&vid=…`（`app/src/lib/enrich.ts` 的 `enrichParamsFor`），翻页时把上一页回的
-`cursor` 当 `page` 再发（`app/src/lib/preload.ts`）。所以一个视频平台包的评论 enricher**必须**叫
-`<facility>-comments`，收 `vid`（+ 可选 `page`），返回 `Enrichment` 形状的
-`{ comments: Comment[], total, cursor?: string | null }`（`src/content/types.ts`；`cursor` 是下一页的游标串——
-页码或站方的数字 cursor 都行，前端只原样递回——**`null` 或缺省 = 没有下一页**，两种写法前端同等看待
-（`packages/bilibili/` 给 `null`，`packages/Douyin_TikTok_Download_API/` 末页直接不带这个键），详情面板靠它决定
-「加载更多」显不显示）。名字写错的表现不是报错而是**前端找不到**：
-请求落进宿主自己的分支、回 `400 bad enrich request`。其他 enricher（UP 主、用户资料…）名字随意，
-收的是整袋原始 query，返回值也原样发。
+**The comment enricher has a frontend contract; other names are free.** For any video carrying `(provider, vid)`, the frontend always requests
+`source=<facility>-comments&vid=…` (`enrichParamsFor` in `app/src/lib/enrich.ts`), and when paging it sends the `cursor` returned by the previous page
+back as `page` (`app/src/lib/preload.ts`). So the comment enricher of a video-platform package **must** be named
+`<facility>-comments`, accept `vid` (+ optional `page`), and return the `Enrichment`-shaped
+`{ comments: Comment[], total, cursor?: string | null }` (`src/content/types.ts`; `cursor` is the cursor string for the next page —
+a page number or the site's numeric cursor both work, and the frontend only passes it back as-is — **`null` or absent = there is no next page**, and the frontend treats the two spellings identically
+(`packages/bilibili/` gives `null`, `packages/Douyin_TikTok_Download_API/` simply omits the key on the last page); the detail panel relies on it to decide
+whether "load more" is shown). A misspelled name does not show up as an error but as the **frontend failing to find it**:
+the request falls into the host's own branch and returns `400 bad enrich request`. Other enrichers (uploader, user profile…) can be named freely,
+receive the whole raw query bag, and have their return values sent as-is as well.
 
-两样都在 `stream.code` 里申报（§3.1），名单与返回的键一字不差，撞名装载期硬拒（§3.4）。范例：`packages/bilibili/`。
+Both are declared in `stream.code` (§3.1), the lists match the returned keys character for character, and name collisions are hard-rejected at load time (§3.4). Example: `packages/bilibili/`.
 
-`ctx`（`PluginContext`，`src/packages/activate.ts`）就七样，**这是包够到宿主的唯一的门**：
+`ctx` (`PluginContext`, `src/packages/activate.ts`) has exactly seven members, and **this is the only door through which a package reaches the host**:
 
-| 成员 | 是什么 |
+| Member | What it is |
 |---|---|
-| `backendUrl(service?)` | 这个包声明的 backend service 的可达地址。compose 档是容器 DNS、host 档是 loopback 随机口——两档差异归宿主的 resolver 管，包不该知道。没有 backend 的包拿到 `undefined`。 |
-| `withAwake(service, fn)` | standby 唤醒：容器睡着了先叫醒再打。 |
-| `cookieFor(domain)` | 该域的 Cookie 头。**只放行这个包 `credentials` 里申报过的域**，其余**抛错**（不是返回 `undefined`）——静默返回空会让包以为「这个域没登录态」而走降级路径，最终表现成一次莫名其妙的采集失败，真因（少写一行申报）离现场十万八千里。 |
-| `login(facility)` | **把这个 facility 登回来**：宿主找到它那条 `meta.login` 的 recipe、在用户自己的 Chrome 里跑掉、跑完**去浏览器取一份新 cookie 再顶掉内存缓存**（两层，见 §3.4.6）。成功即返回，任何一档失败都抛（包括「这个 facility 没有登录 recipe」）。**调用点是「建立会话」那一步，不是整个动作外面**——宿主刻意不替包做「失败了整个重跑」，因为一个动作重跑一次安不安全只有包知道，而重跑一个已经下过一半单的动作就是重复下单。见 §3.4.6。 |
-| `readSource(sourceId, params, { signal? })` | **运行这个包自己声明的一条源**（recipe / manifest），拿回归一化前的原始条目。裸名按包的 npm 名限定（`'x-detail'` → `<npm 名>/x-detail`，与 recipe `meta.uses` 同一条规矩，判据在 `src/packages/read-source.ts`）；带 `/` 的全名必须以本包前缀开头，否则**抛**——一个包不许借 `ctx` 去跑别人的 recipe，那等于绕开别家的 rateLimit 与账本。**不带 `userInitiated`**：包代码不是用户当场的点击，动作 recipe（`meta.action:true`）经这条路照常被闸住；用户点击触发的动作走 `POST /api/recipes/action`。有 `locate` 步的 recipe 不用传 `ordered`，运行时按 facility 从 feed 账本填（§2 Ledger）。 |
-| `log(msg)` | 带包 id 前缀的日志。 |
-| `readArticle(url)` | 一个公开网页的正文（宿主那一份 Defuddle 抽取，与 `/api/enrich?source=link` 同一个实现、同一份缓存），抽不出回 `null`。不带登录态，谁都可以用——**包里别再带第二份正文抽取器**。返回的 html 未必干净：包交出的 enricher 结果由宿主统一消毒（§3.2）。SDK 镜像 `ArticleContent`，双向守卫 `plugin-sdk-compat.test.ts`。 |
-| `config` | 宿主解析好后按包分发的部署配置。**包不自己读 config.yaml / env / settings**——配置从哪来、怎么解析是宿主的事。 |
+| `backendUrl(service?)` | The reachable address of the backend service this package declares. In the compose tier it is container DNS, in the host tier a random loopback port — the difference between the two tiers is managed by the host's resolver, and the package should not know about it. A package without a backend gets `undefined`. |
+| `withAwake(service, fn)` | Standby wake-up: if the container is asleep, wake it first, then call. |
+| `cookieFor(domain)` | The Cookie header for that domain. **Only domains declared in this package's `credentials` are allowed**; any other **throws** (it does not return `undefined`) — silently returning empty would make the package think "this domain has no login state" and take the degraded path, ending up as an inexplicable harvest failure whose real cause (one missing declaration line) is nowhere near the scene. |
+| `login(facility)` | **Log this facility back in**: the host finds the recipe with `meta.login` for it, runs it in the user's own Chrome, and after it finishes **fetches a fresh cookie from the browser and then overwrites the in-memory cache** (two layers, see §3.4.6). It returns on success and throws on a failure at any tier (including "this facility has no login recipe"). **The callsite is the "establish the session" step, not around the whole action** — the host deliberately does not do "rerun the whole thing on failure" for the package, because whether rerunning an action is safe is known only to the package, and rerunning an action that has already half-placed an order means placing the order twice. See §3.4.6. |
+| `readSource(sourceId, params, { signal? })` | **Run one source this package itself declares** (recipe / manifest) and get back the raw items before normalization. A bare name is qualified by the package's npm name (`'x-detail'` → `<npm name>/x-detail`, the same rule as recipe `meta.uses`; the check is in `src/packages/read-source.ts`); a full name containing `/` must start with this package's prefix, otherwise it **throws** — a package must not use `ctx` to run someone else's recipe, as that would bypass that package's rateLimit and ledger. **It carries no `userInitiated`**: package code is not a user's on-the-spot click, so action recipes (`meta.action:true`) are still gated on this path as usual; actions triggered by a user click go through `POST /api/recipes/action`. A recipe with a `locate` step does not need `ordered` passed in; at run time it is filled from the feed ledger by facility (§2 Ledger). |
+| `log(msg)` | Logging prefixed with the package id. |
+| `readArticle(url)` | The body text of a public web page (the host's Defuddle extraction, the same implementation and the same cache as `/api/enrich?source=link`); returns `null` if nothing can be extracted. It carries no login state and anyone can use it — **do not bring a second body-text extractor into a package**. The returned html is not necessarily clean: the enricher results a package hands over are sanitized uniformly by the host (§3.2). The SDK mirrors `ArticleContent`, with the two-way guard `plugin-sdk-compat.test.ts`. |
+| `config` | Deployment config resolved by the host and distributed per package. **A package does not read config.yaml / env / settings itself** — where config comes from and how it is resolved is the host's business. |
 
-往 `ctx` 加一个字段 = 往「所有包能做什么」里加一条，加之前先问这条该不该给所有包。
+Adding a field to `ctx` = adding an entry to "what all packages can do"; before adding, ask whether this should be given to all packages.
 
-### 3.3 内置包怎么被装载
+### 3.3 How builtin packages are loaded
 
-`packages/index.ts` 里一张**静态 import 表**：
+`packages/index.ts` holds a **static import table**:
 
 ```ts
 import { activate as alist } from './alist/activate.ts'
@@ -1459,152 +1466,152 @@ export const BUILTIN_ACTIVATIONS = new Map<string, ActivateFn>([
 ])
 ```
 
-字面量 `import`——这样 esbuild 能把它们打进发行 bundle、tsc 也全覆盖。**加一个带 code 的内置包 = 这里加一行。** 声明了 `code` 却不在这张表里是**抛错**而不是跳过：漏进 import 表会表现成「某个 source 突然解析不到 adapter」，静默极难查。
+Literal `import`s — so esbuild can bundle them into the release bundle and tsc covers them all. **Adding a builtin package with code = adding one line here.** Declaring `code` but not being in this table **throws** rather than being skipped: missing the import table shows up as "some source suddenly cannot resolve its adapter", which is silent and extremely hard to trace.
 
-装载分两段（`activatePackages`）：先把所有带 code 的包的名单**全量核对一遍**（撞名、已被占用的 normalizer 名、漏进 import 表），全过了才开始逐个调 `activate`。
+Loading has two stages (`activatePackages`): first the lists of all packages with code are **checked in full** (name collisions, already-occupied normalizer names, missing import-table entries), and only when everything passes does it call `activate` one by one.
 
-### 3.4 撞名一律硬拒，不覆盖
+### 3.4 Name collisions are always hard-rejected, never overridden
 
-adapter 名与 normalizer 名撞了——不管是两个包互撞，还是一个包撞上已注册的名字——**两个都不激活，直接抛错**。允许覆盖就等于让一个包静默换掉另一个包的实现，那是供应链攻击面。（同 npm 名的两层——代码、recipe、manifests、声明——整包按 `version` 高者只装一层，那是"同一个包的两个版本"，与两个不同的包撞名不是一回事，见 §0.5。）
+When an adapter name or a normalizer name collides — whether two packages collide with each other, or one package collides with an already registered name — **neither is activated, and an error is thrown directly**. Allowing override would let one package silently replace another package's implementation, which is a supply-chain attack surface. (Two layers with the same npm name — code, recipe, manifests, declarations — are handled by installing only the layer with the higher `version`, as a whole package; that is "two versions of the same package" and is a different matter from two different packages colliding on a name, see §0.5.)
 
-### 3.4.5 动作：`activate()` 交出来的第三样东西
+### 3.4.5 Actions: the third thing `activate()` hands over
 
 ```ts
 export const activate: ActivateFn = (ctx) => ({
   actions: {
-    // 全局名 = `<包 id>:<键>`，如 `eastmoney:repo`
+    // global name = `<package id>:<key>`, e.g. `eastmoney:repo`
     repo: async (params) => await doIt(ctx, { live: params.trading === true }),
   },
 })
 ```
 
-一条**用户定时任务**可以把执行体指到这个名字上（`UserTaskRow.action`，与 `command` 二选一）。
-契约在 `src/tasks/package-actions.ts`，权威设计见
-`internal design record`。四条要点：
+A **user scheduled task** can point its executable at this name (`UserTaskRow.action`, mutually exclusive with `command`).
+The contract is in `src/tasks/package-actions.ts`, and the authoritative design is in
+`internal design record`. Four key points:
 
-- **包提供动作，不提供排期。** 什么时候跑、跑不跑、用哪一格账号，全是用户任务行的事
-  （住 db，界面上改，不用重启）。判据是 `src/tasks/task-store.ts` 的头注：运维任务留代码、
-  **业务任务入库**。一个设施要宿主替它在 `configForPackage` 里写一行 `case`，就说明槽位
-  没设计对。
-- **参数来自那条任务绑的配置 row**（`configRef`），不来自 argv / env——`GET /api/tasks` 会把
-  整行回显，值进了 argv 就是明文进任务列表和 `ps`。而且是**调用时才取**：用户改完那格，
-  下一轮就该按新的来，存快照的表现是"改了没反应"且不报错。
-- **动作够不到宿主内脏。** 签名里只有参数袋；其余靠 `activate(ctx)` 闭包的那个 `ctx`。
-  要加新能力，往 `PluginContext` 加一格（并回答"该不该给所有包"），不是往签名里塞。
-- **不用申报。** adapter / normalizer 要在 `stream.code` 里申报，是因为它们注册进全局命名空间，
-  撞名必须早于执行就确认。动作名前缀是包 id，而带 code 槽位的包 id 全局独占——撞不了名。
-  名字打错由写路由当场拒（`GET /api/tasks` 顺带回可选动作名）；运行时找不到则**抛**，
-  不静默跳过。
+- **A package provides actions, not scheduling.** When to run, whether to run, and which account to use are all matters of the user's task row
+  (it lives in the db, is edited in the UI, and needs no restart). The check is the header comment of `src/tasks/task-store.ts`: operations tasks stay in code,
+  **business tasks go into the database**. If a facility needs the host to write a `case` for it in `configForPackage`, the slot
+  was not designed right.
+- **Parameters come from the config row bound to that task** (`configRef`), not from argv / env — `GET /api/tasks` echoes
+  the whole row, and a value that went into argv enters the task list and `ps` in plaintext. And they are fetched **at call time**: once the user edits that cell,
+  the next round should use the new value; a stored snapshot shows up as "I changed it and nothing happened", with no error.
+- **An action cannot reach the host's internals.** The signature has only the parameter bag; everything else relies on the `ctx` closed over by `activate(ctx)`.
+  To add a new capability, add a member to `PluginContext` (and answer "should this be given to all packages"), rather than stuffing it into the signature.
+- **No declaration needed.** Adapters / normalizers must be declared in `stream.code` because they are registered into a global namespace,
+  and a name collision must be confirmed before execution. An action name is prefixed with the package id, and the id of a package with a code slot is globally exclusive — collisions are impossible.
+  A mistyped name is rejected on the spot by the write route (`GET /api/tasks` also returns the selectable action names); if it is not found at run time it **throws**
+  rather than being silently skipped.
 
-**不要给任务加「危险 / 会花钱」这类申报。** `ScheduledTask` 上曾经有过一格 `effect`，已经删掉，
-因为没有任何后端消费它——写错不报错，读的人却以为它管着什么。真金白银的护栏钉在动作自己的
-实现里，而且要可执行：时间窗 cutoff、空跑一档、任何一笔失败就整条标红。"要不要真下单"
-也不是标签，它是那条任务配置 row 里的一个字段（缺省 false——"忘了配"必须等于"不下单"）。
+**Do not add a "dangerous / costs money" declaration to tasks.** `ScheduledTask` once had a field `effect`, which has been removed,
+because no backend consumed it — a wrong value raised no error, yet readers assumed it governed something. Guardrails for real money are pinned in the action's own
+implementation, and must be executable: a time-window cutoff, a dry-run tier, and the whole task marked red if any single order fails. "Whether to really place orders"
+is likewise not a label; it is a field in that task's config row (default false — "forgot to configure" must equal "do not place orders").
 
-### 3.4.6 登录态掉了：包开口，宿主去登
+### 3.4.6 Login state lost: the package speaks up, the host logs in
 
-需要登录态的包（走 `cookieFor`）迟早会撞上「会话过期」。**宿主提供机制，包决定在哪儿用它。**
+A package that needs login state (one that goes through `cookieFor`) will sooner or later hit "session expired". **The host provides the mechanism; the package decides where to use it.**
 
-一条 recipe 声明自己是某个 facility 的登录入口：
+A recipe declares itself as the login entry of some facility:
 
 ```jsonc
 "meta": {
-  "action": true,          // login 蕴含 action：登录会建会话、踢掉同账号在别处的登录
-  "login": true            // ← 这一格
+  "action": true,          // login implies action: logging in creates a session and kicks out logins on the same account elsewhere
+  "login": true            // ← this field
 },
-"session": { "facility": "eastmoney", … }   // ← 宿主按它索引
+"session": { "facility": "eastmoney", … }   // ← the host indexes by this
 ```
 
-包在**建立会话**那一步接住过期，调 `ctx.login(facility)`，然后只重做建会话那一段：
+At the **establish-the-session** step the package catches the expiry, calls `ctx.login(facility)`, and then redoes only the session-establishing segment:
 
 ```ts
 const open = async () => await openSession(await ctx.cookieFor(DOMAIN))
 try { return await open() }
 catch (e) {
   if (!(e instanceof SessionExpired)) throw e
-  await ctx.login('eastmoney')   // 宿主：找 recipe → 跑 → 刷新 cookie 快照
-  return await open()            // 建会话没有副作用，重做是安全的
+  await ctx.login('eastmoney')   // host: find the recipe → run it → refresh the cookie snapshot
+  return await open()            // establishing a session has no side effects, so redoing it is safe
 }
 ```
 
-三条边界，各堵一个具体的洞：
+Three boundaries, each plugging a concrete hole:
 
-- **重试只圈住没有副作用的那一段。** 宿主不替包做「动作失败了整个重跑」——那件事安不安全只有
-  包知道。自动重跑一个已经下过一半单的动作，就是重复下单。
-- **只重来一次。** 登回来了还是过期，说明问题不在会话（风控、站点维护），再登只是多敲一次
-  登录接口，而「连续失败登录」在有些站那边是有后果的。
-- **按 `meta.login` 找，不按「这个 facility 恰好只有一条动作 recipe」猜。** 判据要有名字：
-  猜法在包多一条动作 recipe 的那天会静默改指向去登另一个账号，没有一处会报错。命中多条 →
-  宿主抛，不挑一个。
+- **The retry wraps only the segment without side effects.** The host does not do "the action failed, rerun the whole thing" for the package — whether that is safe is known only to
+  the package. Automatically rerunning an action that has already half-placed an order means placing the order twice.
+- **Retry only once.** If it is still expired after logging back in, the problem is not the session (risk control, site maintenance); logging in again only hits the
+  login endpoint one more time, and "consecutive failed logins" has consequences on some sites.
+- **Look up by `meta.login`, do not guess "this facility happens to have only one action recipe".** The check must have a name:
+  the guessing approach silently changes its target the day the package gets one more action recipe, logging into a different account, with no error anywhere. If more than one
+  matches → the host throws instead of picking one.
 
-宿主那一半在 `src/credentials/facility-login.ts`，接线在 `auth` 域（它 owns facility 登录态，
-而且 packages 域 inject 不了 `sources`——`sources` 自己 inject 了 `packages`，是环）。
+The host half is in `src/credentials/facility-login.ts`, and the wiring is in the `auth` domain (it owns facility login state,
+and the packages domain cannot inject `sources` — `sources` itself injects `packages`, which would be a cycle).
 
-**跑完取 cookie 有两层，缺哪层都表现成「登录成功了但还是没登录」**，两层都真栽过：
+**Fetching the cookie after the run has two layers, and missing either one shows up as "login succeeded but still not logged in"**; both layers have really bitten:
 
-1. **先去浏览器要一份**（`cookiePuller.pull`）。登录 recipe 跑完那一刻新 cookie 还只在浏览器里，
-   本地快照要等扩展推过来才更新——只重读本地就是**自己读自己**。实测：任务 03:44:17 开始，
-   cookie 文件 03:45:01 才落盘，中间那次重试拿到的是登录之前那一份。
-2. **再顶掉内存缓存**（`cookieProvider.refresh`）。`CookieProvider` 另有 60 秒 TTL，
-   盘上新了、内存里还是旧的。实测表现是「一分钟后自己好了」。
+1. **First ask the browser for one** (`cookiePuller.pull`). At the moment the login recipe finishes, the fresh cookie exists only in the browser,
+   and the local snapshot is not updated until the extension pushes it over — rereading only the local copy is **reading oneself**. Measured: the task started at 03:44:17,
+   the cookie file was written to disk only at 03:45:01, and the retry in between got the copy from before the login.
+2. **Then overwrite the in-memory cache** (`cookieProvider.refresh`). `CookieProvider` has a separate 60-second TTL,
+   so the disk is new while memory is still old. The measured symptom is "it fixes itself after a minute".
 
-### 3.5 宿主四件为什么不走这条路
+### 3.5 Why the four host pieces do not take this path
 
-`src/bootstrap.ts` 的 adapters Map 里只剩 `builtin` / `rsshub` / `replay` / `browser`。它们的构造依赖 transport / ledger / sessionFetch / `ensureHarvestBrowser` 这些**宿主基础设施**——是宿主自己的东西，不是某个设施的适配器。它们继续手工织，**永不进公开面**（`ctx` 里也不会有这些句柄）。判据一句话：一个件如果需要 `ctx` 七样之外的东西才能造出来，它就不是包。
+The adapters Map in `src/bootstrap.ts` holds only `builtin` / `rsshub` / `replay` / `browser`. Their construction depends on **host infrastructure** such as transport / ledger / sessionFetch / `ensureHarvestBrowser` — they are the host's own things, not some facility's adapters. They continue to be wired by hand and **never enter the public surface** (`ctx` will not have these handles either). The check in one sentence: if a piece needs anything beyond the seven `ctx` members to be built, it is not a package.
 
-### 3.6 关掉包，它提供的实现一起消失
+### 3.6 Turn a package off, and the implementations it provides disappear together
 
-用户在「包」页**关掉一个视频平台的包**之后，它的 `*-resolve` source、`providers[]` 里那条 `<平台>-video` 行的成员、评论 enricher、connect 一并消失——manifest、实现、行声明全住在包里，宿主没有任何一处替它兜着。此时 `GET /api/media/play?platform=<平台>` 响亮回 `502 { error: 'unresolved' }`（没有行 serve 这个键，`detail` 不带），`/api/enrich?source=<平台>-comments` 回 `400 bad enrich request`。这是刻意的（"我把这个平台关了"），不是 bug；响亮报错也是刻意的——静默传一个 undefined 实现会让它在某次播放时才崩，离现场十万八千里。
+After the user **turns off a video-platform package** on the "Packages" page, its `*-resolve` source, the member of the `<platform>-video` row in `providers[]`, the comment enricher and connect all disappear together — the manifest, implementation and row declaration all live in the package, and the host has nothing that covers for it. From then on `GET /api/media/play?platform=<platform>` loudly returns `502 { error: 'unresolved' }` (no row serves this key, and `detail` is not carried), and `/api/enrich?source=<platform>-comments` returns `400 bad enrich request`. This is deliberate ("I turned this platform off"), not a bug; the loud error is deliberate too — silently passing an undefined implementation would make it crash only at some later playback, far from the scene.
 
-### 3.7 包能 import 什么：类型、`shared/package-sdk`、`ctx`——就这三样
+### 3.7 What a package may import: types, `shared/package-sdk`, `ctx` — only these three
 
-带代码的包会被 tsdown 打成一份**自包含**的 `dist/index.js`（§3.8），`activate.ts` 可达图里的每一条运行时 import
-都会被**复制**进那份产物。复制纯函数无害；复制别的东西是静默故障，所以规则只有三条：
+A package with code is bundled by tsdown into one **self-contained** `dist/index.js` (§3.8), and every runtime import in the reachability graph of `activate.ts`
+is **copied** into that artifact. Copying pure functions is harmless; copying anything else is a silent fault, so there are only three rules:
 
-| 你要的 | 从哪拿 | 为什么 |
+| What you need | Where to get it | Why |
 |---|---|---|
-| **类型**（`Adapter` / `Normalizer` / `SourceManifest` / `Enricher` / `ConnectFn` / `Content` / `Media` / `VideoResolved`…） | `import type` 宿主 `src/`（`import type { Adapter } from '../../src/adapters/types.ts'`） | 编译期抹掉，dist 里没有它。**必须**是 `import type` 或花括号里每一项都带 `type`——混合写法 `{ ValidationError, type Enricher }` 算运行时 import |
-| **纯函数 / 常量 / 错误类**：`ValidationError` / `ContentUnavailableError`、`mediaPlayUrl`、`toText` / `extractImages` / `stripImages` / `firstLink` / `extractLinks`、`BROWSER_UA`、`compareVersions` | `shared/package-sdk/`（`import { ValidationError } from '../../shared/package-sdk/index.ts'`；第三方作者从 `@streamapp/plugin-sdk` 拿同一批） | 宿主与包**同吃一份源码**，被 inline 进包的 bundle 无害。错误类带鸭子标记（`validation: true` / `unavailable: true`），宿主只看标记（`isValidationError` / `isUnavailable`）、从不 `instanceof`——所以 bundle 里那份副本抛出来照样被认成 400 / 404 |
-| **宿主单例 / 有状态的东西**：容器地址、standby 唤醒、cookie、登录、跑本包的 recipe、日志、配置 | `ctx`（§3.2 那七样） | 单例复制一份就是第二张表：包登记进副本、宿主查的是原件，永远为空。分片信任表就是这一类——包**不**登记，只在 `DashResult` 上把 `headers` 交出来，`/api/media/dash` 路由拿到结果后自己 `rememberSegHosts`（见下） |
+| **Types** (`Adapter` / `Normalizer` / `SourceManifest` / `Enricher` / `ConnectFn` / `Content` / `Media` / `VideoResolved`…) | `import type` from the host `src/` (`import type { Adapter } from '../../src/adapters/types.ts'`) | Erased at compile time, so it is not in dist. It **must** be `import type`, or every item inside the braces must carry `type` — the mixed form `{ ValidationError, type Enricher }` counts as a runtime import |
+| **Pure functions / constants / error classes**: `ValidationError` / `ContentUnavailableError`, `mediaPlayUrl`, `toText` / `extractImages` / `stripImages` / `firstLink` / `extractLinks`, `BROWSER_UA`, `compareVersions` | `shared/package-sdk/` (`import { ValidationError } from '../../shared/package-sdk/index.ts'`; third-party authors get the same set from `@streamapp/plugin-sdk`) | The host and the package **consume the same source**, so inlining it into the package's bundle is harmless. Error classes carry duck-typed markers (`validation: true` / `unavailable: true`), and the host looks only at the marker (`isValidationError` / `isUnavailable`), never `instanceof` — so a copy thrown from inside the bundle is still recognized as 400 / 404 |
+| **Host singletons / stateful things**: container address, standby wake-up, cookie, login, running this package's recipe, logging, config | `ctx` (the seven members in §3.2) | Copying a singleton creates a second table: the package registers into the copy while the host looks at the original, which stays empty forever. The segment trust table is this kind — the package does **not** register; it only hands over `headers` on the `DashResult`, and the `/api/media/dash` route calls `rememberSegHosts` itself once it has the result (see below) |
 
-**除此之外的 `src/` 运行时 import 一律禁止**，守卫 `src/packages/self-contained.guard.test.ts` 从每个带 code 的包的
-`activate.ts` 起沿相对 import 走一遍（`shared/` 也跟进去看），命中即红。要用宿主的某个函数：纯的就搬进 `shared/package-sdk/`
-（宿主改成 import 那里），有状态的就往 `ctx` 加一格（先回答「该不该给所有包」）。
+**Any other runtime import from `src/` is forbidden.** The guard `src/packages/self-contained.guard.test.ts` starts from the `activate.ts` of every package with code and
+walks along relative imports (following into `shared/` as well); a hit turns it red. To use some host function: if it is pure, move it into `shared/package-sdk/`
+(and have the host import it from there); if it is stateful, add a member to `ctx` (first answer "should this be given to all packages").
 
-**`DashResult.headers`**（`src/video/dash.ts`）：包解析出 dash 流之后，取分片时要带的请求头（B 站是 `Referer` + `Cookie`）
-写在这一格；**缺省 = 不带头**。路由把全部流 URL 连同这份 headers 登进分片信任表，分片代理按主机取头。CDN 按 Referer / Cookie
-放行的站不填它，表现是 MPD 解析成功、每个分片 403——播放器一直转圈，日志里只有 CDN 的 403。
+**`DashResult.headers`** (`src/video/dash.ts`): after a package resolves a dash stream, the request headers to carry when fetching segments (for Bilibili, `Referer` + `Cookie`)
+go in this field; **default = carry no headers**. The route registers all stream URLs together with this headers into the segment trust table, and the segment proxy takes headers by host. A site whose CDN lets requests through by Referer / Cookie
+and that leaves this unfilled shows up as the MPD parsing successfully while every segment returns 403 — the player keeps spinning, and the log shows only the CDN's 403.
 
-### 3.8 构建与发布
+### 3.8 Build and release
 
-内置层**以源码装载**（§3.3 的静态表），npm 上那份是**预编译产物**——同一个包两种装载形态，包代码不感知。
+The builtin layer **loads from source** (the static table in §3.3), while the copy on npm is the **precompiled artifact** — the same package in two loading forms, which the package code does not perceive.
 
-**构建**：每个带 code 的包一份 `tsdown.config.ts`（裸对象，不 `import 'tsdown'`——包目录没有 node_modules，
-这份文件又在根 tsconfig 的 include 里）：
+**Build**: each package with code has one `tsdown.config.ts` (a bare object, no `import 'tsdown'` — the package directory has no node_modules,
+and this file is in the root tsconfig's include):
 
 ```ts
 export default {
-  entry: { index: 'activate.ts' },   // 键名就是产物名；写成数组会出 dist/activate.js，装载器找不到
+  entry: { index: 'activate.ts' },   // the key name is the artifact name; written as an array it would emit dist/activate.js, which the loader cannot find
   format: 'esm',
   outDir: 'dist',
-  dts: false,                         // 没有消费者：产物只被后端运行时动态 import
-  noExternal: [/.*/],                 // shared/** 全部 inline；切了 chunk 让它在构建期就失败
-  clean: true,                        // 上一代产物会随 files: ["dist"] 进 tarball
+  dts: false,                         // no consumer: the artifact is only dynamically imported by the backend at runtime
+  noExternal: [/.*/],                 // shared/** is all inlined; if chunks get split, let it fail at build time
+  clean: true,                        // the previous generation's artifacts would enter the tarball via files: ["dist"]
 }
 ```
 
-- **`pnpm packages:bundle`**（根脚本 `scripts/bundle-code-packages.mjs`）：对 `packages/*` 里每个填了 `stream.code` 的包，
-  以包目录为 cwd 调根 `node_modules/.bin/tsdown -c tsdown.config.ts`，任一包非 0 或 `dist/index.js` 不在 / 为空就整体失败。
-  传目录参数只构建那几个（包自己的 `pnpm bundle` 就是传 `.`）。判据是 `stream.code` 在不在，不是手写清单——
-  漏一个的表现是那个包发上 npm 后 `code.entry` 指着一个不存在的文件。
-- **`STREAM_TSDOWN_BIN=<路径>`**：借一份别处的 tsdown（worktree 里根依赖没刷新时借主检出的）。两处都没有就带着安装提示
-  退出 1，不静默跳过。
-- `dist/` 在 `.gitignore`；`packages/index.ts` 不读它。
+- **`pnpm packages:bundle`** (the root script `scripts/bundle-code-packages.mjs`): for every package in `packages/*` that fills `stream.code`,
+  it runs the root `node_modules/.bin/tsdown -c tsdown.config.ts` with the package directory as cwd, and the whole run fails if any package exits non-zero or `dist/index.js` is missing / empty.
+  Passing directory arguments builds only those (a package's own `pnpm bundle` passes `.`). The check is whether `stream.code` is present, not a hand-written list —
+  missing one shows up as the package, once published to npm, having `code.entry` pointing at a file that does not exist.
+- **`STREAM_TSDOWN_BIN=<path>`**: borrow a tsdown from elsewhere (in a worktree, borrow the main checkout's when the root dependencies have not been refreshed). If neither place has one, it exits 1 with an install hint,
+  and does not silently skip.
+- `dist/` is in `.gitignore`; `packages/index.ts` does not read it.
 
-带容器的内置包（alist / pansou / 抖音解析）今天不发 npm：第三方容器钳制（service 由宿主指派、必须写 mem、id 文法）
-与「用户层同名容器包该顶掉还是并存」都还没有设计，它们保持 `private`，构建链照样出 dist 备着。
+Builtin packages with containers (alist / pansou / Douyin parser) are not published to npm today: third-party container clamping (the service is assigned by the host, `mem` must be written, id grammar)
+and "should a user-layer container package with the same name replace or coexist" have not been designed yet, so they stay `private`, and the build chain still emits dist for them to have ready.
 
-**`package.json` 的出货形状**（4 个可发包同一份）：
+**The shipping shape of `package.json`** (the same for all 4 publishable packages):
 
 ```json
 "files": ["dist", "*.recipe.json", "manifests.yaml", "README.md"],
@@ -1615,537 +1622,536 @@ export default {
 "stream": { "code": { "entry": "dist/index.js", … } }
 ```
 
-不写 `private`（要发 npm）；不写 `repository` / `homepage`（仓库私有，对外是死链，闸会拒）；README 里不许有指向仓库
-`docs/` 的相对路径（同理）。`manifests.yaml` / `README.md` 缺席不算错——只做动作的包本来没有 Source 清单。
+Do not write `private` (it is to be published to npm); do not write `repository` / `homepage` (the repository is private, so they are dead links externally, and the gate rejects them); the README must not contain relative paths pointing into the repository's
+`docs/` (same reason). The absence of `manifests.yaml` / `README.md` is not an error — a package that only does actions naturally has no Source manifest.
 
-**`prepack` 闸**（`scripts/assert-npm-artifact.mjs`，`npm publish` / `npm pack` 必跑）：`stream.code.entry` 在盘上且非空；
-`dist/` 里**只有**它（切出的 chunk、sourcemap、上一代残留都拒——用户层安装门只认 `dist/index.js` 一个文件，多一个就整包拒装）；
-`npm pack --dry-run` 清单逐条过安装门白名单（借 `scripts/recipe-release-plan.ts --check`，判据就是安装门那一个函数
-`isAllowedPackageFile`，不另抄）。挂在 `prepack` 而不是只写在 workflow 里，是让绕过 workflow 手发的人也被拦。
+**The `prepack` gate** (`scripts/assert-npm-artifact.mjs`, which `npm publish` / `npm pack` must run): `stream.code.entry` exists on disk and is non-empty;
+`dist/` contains **only** it (split-out chunks, sourcemaps and leftovers from the previous generation are all rejected — the user-layer install gate recognizes only the single file `dist/index.js`, and one more file gets the whole package rejected);
+every entry of the `npm pack --dry-run` listing passes the install gate's whitelist (borrowing `scripts/recipe-release-plan.ts --check`; the check is that one install-gate function
+`isAllowedPackageFile`, not copied separately). Hanging it on `prepack` rather than only writing it in a workflow ensures that people who bypass the workflow and publish by hand are blocked too.
 
-**发布**（CI `release-recipes.yml`，`scripts/recipe-release-plan.ts --publish`）：可发 = 有 `name`、不 `private`、
-填了 recipe 槽位**或**代码槽位。对每个可发的包查 `npm view <name> versions`：**npm 上已有该名**（任意版本；只有明确
-E404 才算没有，断网 / 限流 / 鉴权错让流水线红）**且本版本未发** → 带 code 的先 bundle 再过 `assert-npm-artifact.mjs`，
-然后核白名单、`npm publish --access public`。**不在 npm 上的包 CI 不代劳**——首发是人为动作（哪些包公开是生意上的
-决定），判定时打一行「首发请人工：`cd packages/<x> && pnpm bundle && npm publish --access public`」。首发一次之后 CI
-接手后续版本：改了代码或 recipe → bump `version` → 合 `main` → 发。
+**Release** (CI `release-recipes.yml`, `scripts/recipe-release-plan.ts --publish`): publishable = has a `name`, is not `private`, and
+fills the recipe slot **or** the code slot. For each publishable package it queries `npm view <name> versions`: **the name already exists on npm** (any version; only an explicit
+E404 counts as absent, while being offline / rate limited / an auth error turns the pipeline red) **and this version is not yet published** → for packages with code, bundle first and then pass `assert-npm-artifact.mjs`,
+then check the whitelist and run `npm publish --access public`. **CI does not act for packages not on npm** — the first publication is a human action (which packages go public is a business
+decision), and at decision time it prints one line "first publication needs a human: `cd packages/<x> && pnpm bundle && npm publish --access public`". After the first publication, CI
+takes over subsequent versions: change the code or recipe → bump `version` → merge into `main` → publish.
 
-**同名两层**：用户 `stream add @streamapp/<x>` 装到比内置更高的版本 → 用户层整包为准（代码 / manifests / recipe /
-声明），内置那份整包跳过（日志 `supersedes builtin`）；相等或更低 → 内置为准、用户层整包跳过。尺子与日志见 §0.5。
-
----
-
-## 4. 槽位：容器（`stream.backend`）
-
-一个声明了 `backend` 的包，它的后端容器由 Stream **托管**：用设施**自己发布的镜像**（Stream **永不**重新打包）。例：Douyin_TikTok_Download_API → `douyin-tiktok-download-api`。所有容器都在共享网络 `stream` 上，通过**同网络 DNS** 互相访问（`http://<service>:<port>`），无需向宿主机发布端口。
-
-`PluginBackend` 的字段全貌见「附：当前形状速查」；怎么把容器**起来**见 §7。
-
-> ⚠️ **后端容器只能通过生成的 compose 或宿主接管拉起**（§7）。**禁止**为插件后端手写 `docker run` / `docker build`——后端在 `packages/<id>/package.json` 的 `stream.backend` 里**声明**，由生成的 compose 统一接 `stream` 网络 + healthcheck + 卷与内存上限。手搓 docker 命令绕过这一切，是错的。
-
-**只声明容器、不带 Source 也不带凭证的包不住内置层**（§5.9.6）：它们是可选包，源码与清单在
-`github.com/JaggerH/stream-packages`（一目录 = 一个 Dockerfile + 一份 `package.json#stream.backend`，
-tag `<name>-v<版本>` 同时锁定 ghcr 镜像与 npm 清单）。今天有四个：`@streamapp/ddddocr`（验证码识别，给
-recipe 的 `call` 步骤用）、`@streamapp/dewatermark`（生图去水印）、`@streamapp/mineru`（文档解析，GPU）、
-`@streamapp/voiceprint`（说话人分离，仅 GPU）。用户
-`stream add @streamapp/<x>`，容器只在 `manage_containers: true` 时由宿主接管建出来（§7.2），GPU 包要
-nvidia container toolkit。stream 侧只留消费方，且每个消费方都得有包缺席时的具名退路：`ocr-mineru`
-梯子成员不亮、声纹归名退匿名段（`identify_speakers` 不注册）、生图带水印且解不出 dewatermark 地址
-→ 请求 503 并提示 `stream add @streamapp/dewatermark`（不静默返回带水印的图——那会被当成品用掉）、
-recipe `call` 步骤点名的 `service` 解析不到 → 该步硬失败（`call-service.ts`，本来就是这条语义）。
-
-### 4.1 不变量：容器是一次性的，要保的状态必须声明成 `volumes`
-
-**声明了 `backend` 的包，凡是要跨重启保留的东西都必须写进 `backend.volumes`（`name:/容器内绝对路径`）。宿主在镜像与声明不一致时会直接删掉容器按新声明重建，容器可写层里的一切都会没。** 卷不受影响——删容器走的是不带 `v` 的 remove，命名卷原样留在宿主上，重建后按同名挂回去。
-
-判断标准是"这份数据在容器里活了多久"，不是"它看起来重不重要"：设施自己写在镜像默认路径下的配置库、下载好的模型权重、生成的索引缓存——只要不想让用户在一次包升级后重新配一遍、重新下一遍，就得有一个卷。只读的仓库文件用宿主 bind 挂载（内置包才可以；第三方包的宿主 bind 会被安装期钳制拒掉，见 §6）。
-
-内置包的现状可以照抄：alist 的配置在 `alist-data:/opt/openlist/data`，douyin / pansou 无状态；可选包里 ddddocr / dewatermark 无状态，mineru / voiceprint 的模型缓存各有自己的卷（用户层的卷名带包前缀，如 `mineru_mineru-cache`，见 §6.2）。
-
-**新建的命名卷是 root 属主。** 镜像若以非 root 跑、入口只查数据目录能不能写而不 chown（OpenList 以 UID 1001 跑就是这样），在全新的卷上容器会秒退，日志只有一行 `does not have write ... permissions for the ./data directory`。这类镜像在 `backend` 里声明 `user: "0:0"`（`uid` 或 `uid:gid` 数字形），compose 生成器与宿主接管两条路同样透传，容器以 root 起。这一格**只给内置包**，第三方声明一律拒（§6.2）。
-
-### 4.2 能力型后端（capability backend）与分片 Job 骨架
-
-一部分插件后端不是内容源，而是 **Provider 能力**——ASR / diarization（说话人分离）/ embedding /
-docparse 这类模型服务（如 `voiceprint`=sherpa-onnx）。这类后端有一条
-额外的**硬不变量**：
-
-> **容器端点必须秒级、无状态、可重放**——单次请求的计算量以秒计（不长算）；响应体是结果的**唯一**
-> 出口，容器自己不落盘、不存中间结果（不存结果）；同一输入可以放心重发（可重放）。
-
-**为什么**：undici 的默认 `headersTimeout` 是 300s 天花板，而容器必须算完才发响应头，长计算会撞穿它；
-容器又不该有持久状态——standby 随手停一个空闲容器是这套系统的前提，容器一旦有状态，停掉就等于
-丢结果，"随手停"就不再安全。所以一次请求的结果只活在这一次 TCP 响应的瞬间，容器本身必须是可以
-随时重启、随时重放的纯计算单元。
-
-**长活谁来切、装配谁来做**——分工在**后端（Stream 侧）**，不在容器：
-
-- **planner**：把一份长输入切成若干可在秒级内算完的片（时间窗、页码、重叠量按能力自定）。
-  例：`src/media/audio-windows.ts` 的 `planAudioWindows`，把音频抽轨切成 120s 窗（10s 重叠）。
-  同文件的 `planSttChunks` 是它的姊妹 planner，服务云端 STT 成员（Groq/OpenAI Whisper，走 API 非容器）：
-  压成 32kbps m4a，≤24MB 单块直传、否则切 600s **无重叠**块（重叠会在接缝处重复转写文本），
-  装配即按 `startS` 平移时间轴拼接（见 `internal design record`）。
-- **逐片短调用**：对每一片各打一次容器端点（如 `/diarize`），容器只看见这一片。
-- **assembler**：把各片的结果装配回一份整体结果（跨片去重/合并/拼接，语义由能力自定）。
-  例：`src/voiceprint/windowed.ts` 的 `mergeWindows`，把各窗独立识别出的局部说话人用全局
-  平均连接凝聚（无窗序，锚点参与聚类、碎片就近归附）并成全局说话人、按重叠区中点去重。
-- **账本**：`CapabilityJobStore`（`src/jobs/store.ts`）挂在 `ConversionRunner`
-  （`src/conversions/runner.ts`）上——转换类能力（OCR/转写/补说话人/摘要）共用它这一份，
-  管排队/断点续跑（重启后从已完成片继续，不是找回结果——容器无状态，恢复形态只能是"重跑"）/
-  回收（done 即删、error 行留 7 天、启动时**超过 24h** 的孤儿标 error，24h 内的孤儿走断点续跑
-  而不是直接标 error）。每次转换的片文件写在 runner 供出的 `ctx.jobDir` 下。
-
-**worked example：voiceprint**（可选包，容器源码在 `stream-packages/voiceprint/app.py`）——它的 `/diarize` 是单窗纯函数，
-一次只诊断一段音频；超过 `VOICEPRINT_MAX_SINGLE_S`（默认 300s）直接拒绝（413），把"这段太长"的
-判断权交还调用方，而不是在容器里硬扛到 OOM。跨窗切分（planner）与跨窗说话人合并（assembler）都
-在 TS 侧，容器本身不知道、也不需要知道自己是不是被分窗调用的一部分。设计全文见
-`internal design record`。
+**Same name in two layers**: if the user's `stream add @streamapp/<x>` installs a version higher than the builtin one → the user layer wins as a whole package (code / manifests / recipe /
+declarations) and the builtin copy is skipped as a whole (log `supersedes builtin`); equal or lower → the builtin wins and the user layer is skipped as a whole. The rule and the log are in §0.5.
 
 ---
 
-## 5. 槽位：凭证域（`stream.credentials`）
+## 4. Slot: container (`stream.backend`)
 
-### 5.1 方向只有一个：宿主派发，包不索取
+For a package that declares a `backend`, its backend container is **hosted** by Stream, using the **image the facility publishes itself** (Stream **never** repackages it). Example: Douyin_TikTok_Download_API → `douyin-tiktok-download-api`. All containers sit on the shared `stream` network and reach each other through **same-network DNS** (`http://<service>:<port>`); no ports need to be published to the host machine.
 
-**宿主是唯一调度方。** 包不发起调用——是宿主在处理一次请求时决定去问谁要什么，然后把**这一次
-需要的那一份**递给包。adapter 就是那层兼容：它跑在宿主进程里，凭证由宿主注入，它再随请求把
-必要的部分递给自己的容器。
+For the full set of `PluginBackend` fields see "Appendix: current shape cheat sheet"; for how to bring the container **up** see §7.
+
+> ⚠️ **A backend container can only be brought up through the generated compose or host takeover** (§7). **Do not** hand-write `docker run` / `docker build` for a plugin backend — the backend is **declared** in `stream.backend` of `packages/<id>/package.json`, and the generated compose attaches the `stream` network, healthcheck, volumes and memory limits uniformly. Hand-rolled docker commands bypass all of that and are wrong.
+
+**A package that only declares a container, with no Source and no credentials, does not live in the built-in layer** (§5.9.6): these are optional packages, with source and manifests in
+`github.com/JaggerH/stream-packages` (one directory = one Dockerfile + one `package.json#stream.backend`;
+the tag `<name>-v<version>` pins both the ghcr image and the npm manifest). There are four today: `@streamapp/ddddocr` (captcha recognition, used by the
+`call` step of a recipe), `@streamapp/dewatermark` (watermark removal for generated images), `@streamapp/mineru` (document parsing, GPU), and
+`@streamapp/voiceprint` (speaker diarization, GPU only). The user runs
+`stream add @streamapp/<x>`; the container is only built by host takeover when `manage_containers: true` (§7.2), and GPU packages need the
+nvidia container toolkit. On the stream side only consumers remain, and every consumer must have a named fallback for when the package is absent: the `ocr-mineru`
+ladder member does not light up; speaker naming falls back to anonymous segments (`identify_speakers` is not registered); image generation comes back watermarked and, if the dewatermark address cannot be resolved,
+the request returns 503 with a hint to run `stream add @streamapp/dewatermark` (it never silently returns the watermarked image — that would be used as a finished product);
+if the `service` named by a recipe `call` step cannot be resolved, that step fails hard (`call-service.ts`, which has always had this semantics).
+
+### 4.1 Invariant: containers are disposable; state worth keeping must be declared as `volumes`
+
+**For a package that declares `backend`, everything that must survive a restart has to be written into `backend.volumes` (`name:/absolute-path-in-container`). When the image and the declaration disagree, the host deletes the container and rebuilds it from the new declaration, and everything in the container's writable layer is lost.** Volumes are unaffected — the container is removed with a remove that does not carry `v`, so the named volume stays on the host as it was and is mounted back under the same name after the rebuild.
+
+The criterion is "how long does this data live inside the container", not "does it look important": a config database the facility writes under the image's default path, downloaded model weights, a generated index cache — as long as you do not want users to reconfigure or redownload it after a package upgrade, it needs a volume. Read-only repository files use a host bind mount (only built-in packages may; a host bind from a third-party package is clamped and rejected at install time, see §6).
+
+The built-in packages show the current practice: alist's config lives at `alist-data:/opt/openlist/data`, and douyin / pansou are stateless; among the optional packages, ddddocr / dewatermark are stateless, and mineru / voiceprint each have their own volume for the model cache (volume names at the user layer carry a package prefix, such as `mineru_mineru-cache`, see §6.2).
+
+**A newly created named volume is owned by root.** If the image runs as non-root and its entrypoint only checks whether the data directory is writable without chown-ing it (OpenList running as UID 1001 is exactly this case), the container exits immediately on a brand-new volume, with a single log line `does not have write ... permissions for the ./data directory`. Such images declare `user: "0:0"` (numeric `uid` or `uid:gid` form) in `backend`; both the compose generator and host takeover pass it through identically, and the container starts as root. This field is **for built-in packages only**; third-party declarations are always rejected (§6.2).
+
+### 4.2 Capability backends and the sharded Job skeleton
+
+Some plugin backends are not content sources but **Provider capabilities** — model services such as ASR / diarization (speaker separation) / embedding /
+docparse (for example `voiceprint`=sherpa-onnx). This kind of backend has one
+extra **hard invariant**:
+
+> **A container endpoint must be second-scale, stateless, and replayable** — the compute of a single request is measured in seconds (no long computations); the response body is the **only**
+> exit for the result, and the container itself writes nothing to disk and keeps no intermediate results (no result storage); the same input can safely be resent (replayable).
+
+**Why**: undici's default `headersTimeout` is a 300s ceiling, and the container must finish computing before it sends response headers, so a long computation blows through it;
+and a container should not hold persistent state — the premise of this system is that standby can casually stop an idle container, and once a container has state, stopping it means
+losing results, so "casually stopping" is no longer safe. So the result of one request lives only for the instant of that one TCP response, and the container itself must be a pure compute unit that can be
+restarted and replayed at any time.
+
+**Who slices the long work and who assembles it** — the division of labor sits in the **backend (the Stream side)**, not in the container:
+
+- **planner**: cuts one long input into pieces that can each be computed within seconds (time windows, page numbers, overlap sizes are defined per capability).
+  Example: `planAudioWindows` in `src/media/audio-windows.ts` cuts the extracted audio track into 120s windows (10s overlap).
+  `planSttChunks` in the same file is its sister planner, serving the cloud STT members (Groq/OpenAI Whisper, which go through an API, not a container):
+  it compresses to 32kbps m4a; a single chunk of ≤24MB is uploaded directly, otherwise it is cut into 600s chunks with **no overlap** (overlap would duplicate transcribed text at the seams),
+  and assembly shifts the time axis by `startS` and concatenates (see `internal design record`).
+- **per-piece short calls**: hit the container endpoint (such as `/diarize`) once for each piece, and the container only sees that piece.
+- **assembler**: assembles the per-piece results back into one overall result (cross-piece dedup / merge / concatenation, with semantics defined per capability).
+  Example: `mergeWindows` in `src/voiceprint/windowed.ts` merges the local speakers identified independently in each window into global speakers using global
+  average-linkage agglomeration (no window order; anchors take part in clustering, fragments attach to the nearest cluster), and dedups by the midpoint of the overlap region.
+- **ledger**: `CapabilityJobStore` (`src/jobs/store.ts`) hangs off `ConversionRunner`
+  (`src/conversions/runner.ts`) — the conversion-type capabilities (OCR / transcription / filling in speakers / summarization) share this one ledger,
+  which handles queuing / checkpoint resume (after a restart it continues from the completed pieces; it does not retrieve results — the container is stateless, so the only recovery form is "rerun") /
+  reclamation (done rows are deleted immediately, error rows are kept for 7 days, and on startup orphans **older than 24h** are marked error, while orphans within 24h go through checkpoint resume
+  rather than being marked error directly). The piece files of each conversion are written under the `ctx.jobDir` that the runner supplies.
+
+**Worked example: voiceprint** (an optional package; container source in `stream-packages/voiceprint/app.py`) — its `/diarize` is a single-window pure function that
+analyzes only one audio segment at a time; anything longer than `VOICEPRINT_MAX_SINGLE_S` (default 300s) is rejected outright (413), handing the judgment of "this segment is too long"
+back to the caller instead of toughing it out inside the container until OOM. Cross-window slicing (planner) and cross-window speaker merging (assembler) both live
+on the TS side; the container itself does not know, and does not need to know, whether it is part of a windowed call. For the full design see
+`internal design record`.
+
+---
+
+## 5. Slot: credential domains (`stream.credentials`)
+
+### 5.1 There is only one direction: the host dispatches, the package does not ask
+
+**The host is the only scheduler.** A package does not initiate calls — when handling a request, the host decides whom to ask for what, and then hands the package **the one piece
+needed for this call**. The adapter is that compatibility layer: it runs inside the host process, the credentials are injected by the host, and it passes the
+necessary part along with the request to its own container.
 
 ```
-用户/调度器 → 宿主 → (取 cookie) → adapter(进程内) → 插件容器
-                                      ↑ 宿主注入          ↑ 随请求递下去
+user/scheduler → host → (fetch cookie) → adapter (in-process) → plugin container
+                                      ↑ host injects          ↑ passed down with the request
 ```
 
-**申报（`stream.credentials`）是一张许可名单，不是一条取数路径。** 它回答的是「宿主可以把哪些
-域的登录态交给这个包」，闸门在 `src/packages/activate.ts` 的 `makeCookieFor`——`ctx.cookieFor`
-只放行申报过的域，其余当场抛错（静默返 undefined 会让包去走降级路径，最终表现成一次莫名其妙的
-采集失败，而真正的原因离现场十万八千里）。域名比较大小写不敏感。
+**The declaration (`stream.credentials`) is an allowlist, not a data-fetching path.** It answers "which domains' login state the host may hand to this package", and the gate is `makeCookieFor` in `src/packages/activate.ts` — `ctx.cookieFor`
+only lets through the domains that were declared and throws on the spot for everything else (returning undefined silently would make the package take a degraded path, which ultimately shows up as an inexplicable
+harvest failure, with the real cause a long way from the scene). Domain comparison is case-insensitive.
 
-**许可名单不是需求名单——两处都要写。** `credentials` 只说「宿主**可以**把这个域给我」；
-「**去用户浏览器把这个域取回来**」是另一格：**manifest / recipe 的 `auth`**（`requiredCookieDomains`
-只从它和 `config.session_exports` 两处推那份下发给扩展的同步域名单，见 §5.2）。只写
-`credentials` 的包，`ctx.cookieFor` 的闸会放行，但快照里根本没有那个域的 cookie——**表现和
-"用户没登录"一字不差，没有一处会喊**。东财栽过这一刀（2026-09-03，`3efad7a1`）：登录域全靠
-`config.yaml` 里一块给别的东西用的旧配置意外顶着。recipe 那侧怎么写见
-`.claude/skills/write-recipe/references/recipe-template.md` §「`auth` 不是装饰」。
+**An allowlist is not a needs list — both must be written.** `credentials` only says "the host **may** give me this domain";
+"**go and fetch this domain from the user's browser**" is another field: **`auth` in the manifest / recipe** (`requiredCookieDomains`
+derives the sync-domain list pushed down to the extension only from it and `config.session_exports`, see §5.2). A package that only writes
+`credentials` passes the `ctx.cookieFor` gate, but the snapshot contains no cookie for that domain at all — **it looks exactly like
+"the user is not logged in", and nothing anywhere complains**. Eastmoney (东财) tripped on this (2026-09-03, `3efad7a1`): its login domains were only held up by accident by an old block in
+`config.yaml` that was configured for something else. For how to write it on the recipe side see
+`.claude/skills/write-recipe/references/recipe-template.md` section 「`auth` 不是装饰」 ("`auth` is not decoration").
 
-`auth: cookie` 是**硬**的：解析不到就抛可执行错误（响亮、按 stream 隔离），不静默降级成空 feed；
-没有"可选 cookie"类型——静默返空正是它最坑的失败模式。
+`auth: cookie` is **hard**: if it cannot be resolved it throws an actionable error (loud, isolated per stream), and does not silently degrade into an empty feed;
+there is no "optional cookie" type — silently returning empty is exactly its nastiest failure mode.
 
-> **别引入「包向宿主要凭证」的路**——形状是一个 credential broker：`GET /api/credential`，
-> 容器带着自己那份 `STREAM_CREDENTIAL_TOKEN` 反过来敲门。
+> **Do not introduce a path where "the package asks the host for credentials"** — the shape is a credential broker: `GET /api/credential`,
+> with the container knocking on the door in reverse carrying its own `STREAM_CREDENTIAL_TOKEN`.
 >
-> **方向反了**：它凭空造出一个常驻在容器环境变量里的长期密钥，而它换不来任何宿主本来做不到的
-> 事——宿主本来就知道这次调用需要哪个域的登录态。代价则是实打实的：那把密钥要写进生成的
-> `docker-compose.yml`，而那个文件会被人 `cat`、会被误提交（那份 compose 真被 git 跟踪过）。
+> **The direction is backwards**: it conjures a long-lived secret that sits permanently in the container's environment variables, and it buys nothing the host could not already do —
+> the host already knows which domain's login state this call needs. The cost is real: that secret has to be written into the generated
+> `docker-compose.yml`, and that file gets `cat`-ed and accidentally committed (that compose was in fact once tracked by git).
 >
-> 唯一看起来需要它的场景是「只有容器、不带代码的第三方包」——宿主泛化转发时不知道它的 API 形状，
-> 塞不进 cookie。**这个场景按产品口径不存在**：接进来的东西一律配一层 adapter，那正是 adapter
-> 存在的意义。
+> The only scenario that seems to need it is "a third-party package that is only a container, with no code" — when the host forwards generically, it does not know that package's API shape,
+> so it cannot stuff the cookie in. **This scenario does not exist under the product's stance**: anything brought in is always given an adapter layer, which is precisely why the adapter
+> exists.
 
-**`credentials` 只能写具体站点域名**（`douyin.com`、`pan.quark.cn`）。单标签（`cn`）和公共后缀
-（`com.cn`、`co.uk`）会被描述符校验拒掉、包直接装不上——因为 cookie 是**后缀匹配**取的，申报一个
-后缀 = 申报它下面所有站点的登录态，等于把申报名单这道边界掏空。
+**`credentials` may only contain concrete site domains** (`douyin.com`, `pan.quark.cn`). Single labels (`cn`) and public suffixes
+(`com.cn`, `co.uk`) are rejected by the descriptor validation, and the package cannot be installed at all — because cookies are fetched by **suffix match**, so declaring one
+suffix = declaring the login state of every site under it, which hollows out the allowlist boundary.
 
-**生成的 compose 里一个凭证都没有**（`src/plugins/cli.test.ts` 与 `src/plugins/compose.test.ts`
-各有一条守卫钉着）。容器 env 只放非 secret 配置。
+**The generated compose contains no credentials at all** (a guard in `src/plugins/cli.test.ts` and one in `src/plugins/compose.test.ts`
+each pin this). Container env holds only non-secret configuration.
 
-cookie 本身由 `CookieProvider.cookieString(domain)` 取（按域后缀匹配拼 `name=value` header），
-只在宿主进程内被调用。**它背后是谁由 §5.2 决定，取的人不需要知道。**
+The cookie itself is fetched by `CookieProvider.cookieString(domain)` (it assembles a `name=value` header by domain-suffix match),
+and is only called inside the host process. **What sits behind it is decided by §5.2; the caller does not need to know.**
 
-### 5.2 登录态从哪儿来
+### 5.2 Where login state comes from
 
-**默认：后端自己去用户的 Chrome 里取，零容器。** 后端在中继上发 `op:'cookiePull'`，扩展把
-那些域的 cookie 回过来，后端整份写进 `data/cookies.json`（0600）。这条路上没有任何第三方进程
-——扩展和后端本来就在直接说话（ext-relay 有 token、拟人采集全程走它），cookie 没有理由绕路。
+**Default: the backend fetches it from the user's Chrome itself, with zero containers.** The backend sends `op:'cookiePull'` over the relay, the extension returns the
+cookies for those domains, and the backend writes the whole set into `data/cookies.json` (0600). There is no third-party process anywhere on this path
+— the extension and the backend already talk to each other directly (ext-relay has a token, and human-like harvest goes through it the whole time), so the cookies have no reason to take a detour.
 
-**为什么是后端去取，而不是扩展定时推**：只有后端知道什么时候要用登录态——这一轮要采集了、
-手里那份多旧、刚刚是不是吃了个 401。扩展一样都不知道，所以它只能按时间猜，而猜的代价是
-**cookie 轮换之后干等一整个周期**（夸克 `__puus` 过期 → 期间每次取流都 412）。取数的调度权
-必须在知道"什么时候要用"的那一端。
+**Why the backend pulls, instead of the extension pushing on a timer**: only the backend knows when login state is needed — this round is about to harvest, how old
+the copy in hand is, whether it just got a 401. The extension knows none of these, so it can only guess by time, and the cost of guessing is
+**waiting out a whole cycle after cookie rotation** (Quark `__puus` expires → every stream fetch during that time returns 412). The scheduling authority for fetching
+must sit on the end that knows "when it is needed".
 
-- **三个取的时机**（接线在 `bootstrap.ts`，实现是 `src/credentials/cookie-puller.ts`）：
-  中继一连上（Chrome 刚起来，快照最旧）／每轮采集动手前发现快照超过 5 分钟／扩展报
-  「同步域里的 cookie 变了」。**没有周期闹钟**——别加一个，理由见上。
-- **范围闸在扩展那边，不在后端**：扩展只应答它自己申报过的同步域（用户填的 ∪ 后端下发的
-  `requiredDomains`），范围外的原样退回 `refused`。请求方自己定范围等于没有范围。
-  拿到 `refused` 非空要当配置问题喊出来——它的表现和"用户没登录"一模一样。
-- **永远取全量，不取"变了的那几个"**：因为写入口是**整份替换**。只写变的那几个就得改成按域
-  合并，而合并会让用户退登过的域以僵尸形式永远留在快照里。
-- **不加密**。后端就是消费端、采集时本来就拿明文 cookie 发请求，自己解自己的密只是把密钥和
-  密文放进同一个目录。用文件权限管（0600）。**别把加密加回来。**
-- **快照必须存着**：Chrome 关着的时候取不到（读它的 cookie 文件是死路——App-Bound Encryption
-  加独占锁），而采集是定时跑的，半夜那一轮多半没有浏览器。所以拉失败**绝不清空快照**：
-  旧的登录态再旧也比没有强，清空会把一次抖动放大成全站游客态。
-- 扩展该同步哪些域，由后端下发（`GET /api/ext/sync-config` 的 `requiredDomains`，从**装着的
-  东西**推，见 §5.1）。这一口**不下发任何密钥**，也不许有——它一旦带上钥匙，任何拿得到这个
-  地址的人就拿到了整个 cookie 库。
+- **Three pull moments** (wired in `bootstrap.ts`, implemented in `src/credentials/cookie-puller.ts`):
+  as soon as the relay connects (Chrome has just started and the snapshot is oldest) / before each harvest round starts if the snapshot is older than 5 minutes / when the extension reports
+  "a cookie in the sync domains has changed". **There is no periodic timer** — do not add one, for the reason above.
+- **The scope gate is on the extension side, not in the backend**: the extension only answers the sync domains it has itself declared (user-entered ∪ the backend-pushed
+  `requiredDomains`), and returns anything outside that scope as `refused`. If the requester sets the scope itself, there is no scope.
+  A non-empty `refused` must be raised loudly as a configuration problem — it looks exactly the same as "the user is not logged in".
+- **Always pull the full set, never "just the ones that changed"**: because the write entry is a **whole-set replacement**. Writing only the changed ones would require switching to per-domain
+  merging, and merging would let domains the user has logged out of linger in the snapshot forever as zombies.
+- **No encryption.** The backend is the consuming end and already holds plaintext cookies when it harvests and sends requests; decrypting its own encryption would just put the key and
+  the ciphertext in the same directory. Manage it with file permissions (0600). **Do not add encryption back.**
+- **The snapshot must be kept**: when Chrome is closed nothing can be fetched (reading its cookie file is a dead end — App-Bound Encryption
+  plus an exclusive lock), and harvest runs on a schedule, so the round in the middle of the night mostly has no browser. So a failed pull **never clears the snapshot**:
+  stale login state, however old, beats none; clearing it would amplify a blip into guest state across the whole site.
+- Which domains the extension should sync is pushed down by the backend (`requiredDomains` of `GET /api/ext/sync-config`, derived from **what is installed**,
+  see §5.1). This endpoint **pushes down no secrets**, and must never do so — the moment it carries a key, anyone who can reach this
+  address obtains the entire cookie store.
 
-**登录态只有这一个来源。** 消费侧永远是同一个接缝 `CookieProvider.cookieString(domain)`，
-所以真要换来源，对消费侧无感。
+**There is only this one source of login state.** The consuming side always uses the same seam, `CookieProvider.cookieString(domain)`,
+so if the source ever has to change, the consuming side does not notice.
 
-> **别引入「指一台第三方服务器去拉 cookie」那种形状**（更别把它做成生成 compose 里的容器）。
-> 那台机器会成为采集链路上唯一"没它就全站游客态"的依赖——而插件容器（pansou / mineru / 声纹）
-> 都只是可选能力，没有只是少几个源。它不通的表现是最坏的那种：取 cookie 静默失败、全程游客态、
-> 一切看着正常。
+> **Do not introduce a shape of "point a third-party server at it to pull cookies"** (much less make it a container in the generated compose).
+> That machine would become the one dependency on the harvest chain without which the whole site falls into guest state — whereas the plugin containers (pansou / mineru / voiceprint)
+> are all optional capabilities, and without them you merely have a few fewer sources. When it is unreachable it fails in the worst way: the cookie fetch fails silently, everything runs in guest state,
+> and everything looks normal.
 
-### 5.3 打包出去的 facility 能力：可选能力包，网盘是范例
+### 5.3 Packaged-out facility capabilities: optional capability packages, with the netdisk as the example
 
-**能力包也是 Stream 包**——它填的是能力槽位（`package.json#stream.capability`）。区别只在
-「这件能力是随发行版出货，还是用户按需装」：
+**A capability package is also a Stream package** — it fills the capability slot (`package.json#stream.capability`). The only difference is
+whether the capability ships with the distribution or is installed by the user on demand:
 
-| | 内置能力 | 可选能力包 |
+| | Built-in capability | Optional capability package |
 |---|---|---|
-| 住哪 | `capabilities/desktop/`（Stream Desktop，`private: true`，随后端 bundle 出货） | 本仓库 `capabilities/netdisk/`（npm `@streamapp/netdisk`）或独立发布的兼容能力包；装到 `<dataDir>/recipes/<@scope__name>/` |
-| 谁装载 | 后端静态 import，`src/host-agent/mount.ts` 交给宿主 | 后端扫 `<dataDir>/recipes/`、动态 import `dist/index.js`（`src/capabilities/load.ts`） |
-| 装法 | 装 `@streamapp/stream` 就有 | `stream add @streamapp/<x>`，或组件页里点装；`stream remove` 卸载 |
-| 工具从哪出 | 都是 8900 的 `/api/mcp`——宿主那一行（`stream mcp`）永远不用改 | 同左 |
-| 何时生效 | 随后端起来 | **后端重载后**（安装那一刻只落盘） |
+| Lives in | `capabilities/desktop/` (Stream Desktop, `private: true`, shipped inside the backend bundle) | `capabilities/netdisk/` in this repository (npm `@streamapp/netdisk`) or an independently published compatible capability package; installed to `<dataDir>/recipes/<@scope__name>/` |
+| Who loads it | The backend statically imports it, and `src/host-agent/mount.ts` hands it to the host | The backend scans `<dataDir>/recipes/` and dynamically imports `dist/index.js` (`src/capabilities/load.ts`) |
+| How to install | Comes with installing `@streamapp/stream` | `stream add @streamapp/<x>`, or click install on the components page; `stream remove` uninstalls |
+| Where tools come out | All through 8900's `/api/mcp` — the host's line (`stream mcp`) never needs to change | Same as left |
+| When it takes effect | With the backend start | **After the backend reloads** (at install time it is only written to disk) |
 
-**能力槽位本身的契约在 §5.9**（声明形状、自包含要求、宿主七格、撞名硬拒、挂载顺序、
-内置/可选的判据）。本节只讲**一件 facility 能力要打包出去时的四条边界**。
+**The contract of the capability slot itself is in §5.9** (declaration shape, self-containment requirement, the host's seven fields, hard rejection on name collision, mount order,
+and the built-in/optional criterion). This section only covers **the four boundaries to follow when a facility capability is packaged out**.
 
-认盘（验分享 / 转存 / 取直链 / 跳转网盘）是能力包的范例（`capabilities/netdisk/`，spec
-`internal design record`）。要把别的 facility 能力
-也打出去，照它的四条边界：
+The netdisk (verifying shares / saving / fetching direct links / jumping to the netdisk) is the example capability package (`capabilities/netdisk/`, spec
+`internal design record`). To package out another facility capability,
+follow its four boundaries:
 
-| 边界 | 网盘包的做法 |
+| Boundary | How the netdisk package does it |
 |---|---|
-| **逻辑只有一份** | 判决与取数住 `shared/netdisk/`；Stream 编排层与能力包都 import 同一份，包构建时全部 inline 进 `dist/index.js`（装到的目录里没有 node_modules，任何外部 import 都解不开）。别在包里复刻一份，会静默漂移。 |
-| **凭证仍是宿主派发**（§5.1 不变） | 在 `package.json#stream.credentials` 申报要借哪几个域（过安装门校验、确认页逐域点名），取数时 `ctx.require('streamBrowserCookies')` **每次现取**——后端在同一个进程里挂着那份服务，cookie 不落盘、不出进程。服务不在时要登录态的动词回「失败 + 指路」，不是静默空结果。 |
-| **两档由配置决定，不由运行时猜** | 给 `openlistUrl` + 永久 `openlistToken` = external 档（Stream 在场：用户从 `GET /api/netdisk/openlist-access` 拿到 `<origin>/_p/alist` 与永久 token，写进自己的配置），只读 / 转存 / 播放，不碰 storage admin；没给 = managed 档（包经 `shared/docker/engine-api.ts` 自己拉容器、接管 admin、挂载、空闲回收）。48h JWT 形状的 token 直接拒——包没有 401 重登通道。 |
-| **同机撞上宿主时让位，判据是证据** | managed 档每次调用都先看本机有没有 `com.docker.compose.service=alist` 的容器（Stream 在管），有就不建第二份、理由点名那个容器并指路 external 档。自己的容器另打标签 `netdisk-openlist`、另起卷——standby 会 adopt 任何 `alist` 标签的容器，撞了标签就是两个大脑抢一个容器。 |
-| **写操作是审过的代码** | 转存（写用户的盘）是 `shared/netdisk/quark/save.ts`，随版本发布；recipe 那两条验活在包里是同判决的 TS 版（recipe 运行时依赖 isolated-vm，打不进能力包）。 |
+| **There is only one copy of the logic** | Verdicts and data fetching live in `shared/netdisk/`; the Stream orchestration layer and the capability package import the same copy, and at package build time everything is inlined into `dist/index.js` (the installed directory has no node_modules, so any external import cannot be resolved). Do not duplicate it inside the package — it silently drifts. |
+| **Credentials are still dispatched by the host** (§5.1 unchanged) | Declare which domains to borrow in `package.json#stream.credentials` (validated by the install gate, named domain by domain on the confirmation page), and at fetch time `ctx.require('streamBrowserCookies')` **fetches on demand every time** — the backend mounts that service in the same process, and cookies are not written to disk and do not leave the process. When the service is absent, verbs that need login state return "failure + pointer to what to do", not a silent empty result. |
+| **The two tiers are decided by configuration, not guessed at runtime** | Given `openlistUrl` + a permanent `openlistToken` = external tier (Stream is present: the user gets `<origin>/_p/alist` and the permanent token from `GET /api/netdisk/openlist-access` and writes them into their own configuration), read-only / save / playback, and it does not touch storage admin; when not given = managed tier (the package pulls the container itself through `shared/docker/engine-api.ts`, takes over admin, mounts, and reclaims it when idle). A 48h-JWT-shaped token is rejected outright — the package has no 401 re-login channel. |
+| **On the same machine, yield to the host; the criterion is evidence** | On every call the managed tier first checks whether the machine has a container labeled `com.docker.compose.service=alist` (Stream is managing it); if so it does not create a second one, and the reason names that container and points to the external tier. Its own container is labeled `netdisk-openlist` and gets its own volume — standby adopts any container with the `alist` label, and a label collision means two brains fighting over one container. |
+| **Write operations are reviewed code** | Saving (writing to the user's drive) is `shared/netdisk/quark/save.ts`, released with the version; the two recipe liveness checks are, in the package, the TS version of the same verdict (the recipe runtime depends on isolated-vm, which cannot be bundled into a capability package). |
 
-「让模型直接翻盘」不由能力包写工具：OpenList 自带只读 MCP（`/mcp`，`fs.list/get/link`），一行
-`dsh-mcp-client` 指过去即可（握手要三步：`initialize` → `notifications/initialized` → `tools/list`，漏了中间那条
-`tools/list` 静默回 `null`；`Authorization` 裸放永久 token，无 `Bearer`）。
+"Let the model flip through the drive directly" is not a tool the capability package writes: OpenList ships a read-only MCP (`/mcp`, `fs.list/get/link`), and one line of
+`dsh-mcp-client` pointing at it is enough (the handshake takes three steps: `initialize` → `notifications/initialized` → `tools/list`; skip the middle
+one and `tools/list` silently returns `null`; `Authorization` carries the permanent token bare, with no `Bearer`).
 
 ---
 
-## 5.9 槽位：能力（`stream.capability`）
+## 5.9 Slot: capability (`stream.capability`)
 
-一格能力 = **一件手上的能力**（电脑操作、认盘等）：它给模型交出几个动词，而不是给
-Stream 交出一个数据源。填了这一格的包由后端在**自己的进程里**挂上，它注册的工具从 8900 的
-`/api/mcp` 出去，和后端自己的工具走同一个口。
+One capability slot = **one capability at hand** (computer operation, the netdisk, etc.): it hands the model a few verbs, rather than handing
+Stream a data source. A package that fills this slot is mounted by the backend **inside its own process**, and the tools it registers go out through 8900's
+`/api/mcp`, through the same door as the backend's own tools.
 
-### 5.9.1 声明
+### 5.9.1 Declaration
 
 ```jsonc
 // package.json
 {
   "name": "@streamapp/netdisk",
   "stream": {
-    "id": "netdisk",                    // 必填：包 id，两层命名空间里唯一
-    "capability": "dist/index.js",      // 导出 `capability: Capability`
-    "credentials": ["quark.cn"]         // 要借哪几个域的登录态（可选，§5.1）
+    "id": "netdisk",                    // required: package id, unique within the two-layer namespace
+    "capability": "dist/index.js",      // exports `capability: Capability`
+    "credentials": ["quark.cn"]         // which domains' login state to borrow (optional, §5.1)
   }
 }
 ```
 
-- **值只认字面量 `dist/index.js`**（`src/packages/code-entry.ts` 的 `PACKAGE_CODE_ENTRY`，与
-  `stream.code` 同一个常量，schema 是 `z.literal`）。`./dist/index.js` 这类别名写法一律拒——
-  放行别名等于放行一族路径。
-- **`stream.id` 必填**，与别的包一样。只写 `capability` 不写 `id` 的包**永远装不进去**：
-  安装门解析描述符时就抛 `stream.id — required`，而包自己的测试、`npm pack`、产物断言三处
-  全绿——它们只问"文件在不在"，没有一处去解那份清单（真栽过，2026-09-06）。仓库里那两个包的
-  `package.json` 由 `src/capabilities/optional-package.e2e.test.ts` 直接过一遍
-  `parseStreamDescriptor` 钉着。
-- **凭证域只在 `stream.credentials` 申报**，不在模块上。那一格过安装门（schema 校验 + 确认页
-  **逐域点名**让用户批准），模块级属性是装完之后才读得到的——放模块上等于「用户批准的名单」
-  和「实际拿去同步的名单」分成两份，而两份漂移了没有任何一处会喊。已挂能力申报的域经
-  `host.credentialDomains()` 并进 `requiredCookieDomains`（第三个来源），扩展才会去读它。
+- **The value only accepts the literal `dist/index.js`** (`PACKAGE_CODE_ENTRY` in `src/packages/code-entry.ts`, the same constant as
+  `stream.code`; the schema is `z.literal`). Aliased spellings like `./dist/index.js` are always rejected —
+  letting aliases through means letting a whole family of paths through.
+- **`stream.id` is required**, as with every other package. A package that writes `capability` but not `id` **can never be installed**:
+  the install gate throws `stream.id — required` as soon as it parses the descriptor, while the package's own tests, `npm pack`, and the artifact assertions are
+  all green — they only ask "is the file there" and none of them parses that manifest (this has really bitten us, 2026-09-06). The
+  `package.json` of the two packages in the repository is pinned by `src/capabilities/optional-package.e2e.test.ts` running it straight through
+  `parseStreamDescriptor`.
+- **Credential domains are declared only in `stream.credentials`**, not on the module. That field goes through the install gate (schema validation + the confirmation page
+  **naming each domain** for the user to approve), while module-level properties are only readable after installation — putting it on the module splits "the list the user approved"
+  from "the list actually used for syncing" into two copies, and when two copies drift nothing anywhere complains. The domains declared by mounted capabilities are merged into `requiredCookieDomains`
+  via `host.credentialDomains()` (the third source), so the extension will go read them.
 
-### 5.9.2 必须自包含
+### 5.9.2 Must be self-contained
 
-装到 `<dataDir>/recipes/<@scope__name>/` 的目录里**没有 `node_modules`**，安装门的 tarball
-白名单只受理 `package.json`、`README`/`LICENSE`/`NOTICE`/`CHANGELOG`、`manifests.yaml`、
-`*.recipe.json`，外加 `dist/index.js` 这**一个**含 `/` 的路径；其余一律拒。所以依赖必须全部
-打进那个文件（tsdown `noExternal: [/.*/]`），只留 `node:` 内置。
+The directory installed to `<dataDir>/recipes/<@scope__name>/` **has no `node_modules`**, and the install gate's tarball
+allowlist accepts only `package.json`, `README`/`LICENSE`/`NOTICE`/`CHANGELOG`, `manifests.yaml`,
+`*.recipe.json`, plus `dist/index.js` as the **one** path containing a `/`; everything else is rejected. So all dependencies must be
+bundled into that one file (tsdown `noExternal: [/.*/]`), leaving only `node:` built-ins.
 
-`import` 一个没被打进来的库 = 装载期 `ERR_MODULE_NOT_FOUND`，这个包**这次就是不生效**，而
-Stream 其余部分照常起来。**冒烟要跑产物不跑源码**（`capabilities/netdisk/scripts/smoke-managed.mjs`
-就是这么写的）：跑源码验不到"打漏了一个相对 import"，而那正是这条约束最该抓的。
+`import`-ing a library that was not bundled in = `ERR_MODULE_NOT_FOUND` at load time, and this package **simply does not take effect this time**, while
+the rest of Stream starts normally. **The smoke test must run the artifact, not the source** (`capabilities/netdisk/scripts/smoke-managed.mjs`
+is written that way): running the source cannot catch "a relative import was missed in the bundle", and that is exactly what this constraint is most meant to catch.
 
-### 5.9.3 宿主七格：后端怎么实现它们
+### 5.9.3 The host's seven fields: how the backend implements them
 
-契约是 `shared/capability/types.ts` 的 `CapabilityContext`；**唯一那份宿主实现**是
-`src/capabilities/host.ts` 的 `createCapabilityHost`。内置的 Stream Desktop 与用户装进来的可选
-包走的是**同一个** `mount()`——区别只在「模块怎么到场」。
+The contract is `CapabilityContext` in `shared/capability/types.ts`; **the one and only host implementation** is
+`createCapabilityHost` in `src/capabilities/host.ts`. The built-in Stream Desktop and the optional packages the user installs
+go through the **same** `mount()` — the difference is only in "how the module gets there".
 
-| 格 | 后端实现 |
+| Field | Backend implementation |
 |---|---|
-| `dataDir` | `<dataDir>/capabilities/<能力名>/`，**读到才 `mkdir`**（惰性 getter）。多数能力从不落盘，而 `mkdir` 会因为权限/只读挂载失败——急着建目录就是让一个用不到的副作用去否决整个能力的挂载 |
-| `log` | `info` / `warn` 两条，前缀 `[stream-<能力名>]`（内置那件是 `[stream-desktop]`）。日志出口缺省是后端的 stdout |
-| `require(service)` | 进程内一张 `Map`，取不到给 `undefined`（包自己降级并 `log.warn`，不是抛） |
-| `provide(service, value)` | 同一张 `Map`，**同名硬拒**。服务总线上一个名字只能有一个主人；静默覆盖会让先到那个包的消费者拿到一份它不认识的东西，两边单看都正常。今天唯一的一对：后端 `provide('streamBrowserCookies')`、netdisk `require` 它 |
-| `registerTools(defs)` | 进 host 的工具表，`toolDefs()` 每次现取地喂给每一个 `createMcpServer()`（`/api/mcp` 是**每请求一个 server**，所以挂载一次、注册每次）。**撞名硬拒**，见下 |
-| `destructiveGate` | 恒为 `'host'`：`annotations.destructiveHint` 原样透给 MCP，由宿主（Claude Code / Codex / DSH）自己弹确认。包读到 `'none'` 时要 fail closed，别自己放行 |
-| `onDispose(fn)` | 收进一张表，后端关停时**逆 mount 顺序**执行，逐个吞错记一行；整份 host 收摊时服务总线一并 `clear()` |
+| `dataDir` | `<dataDir>/capabilities/<capability name>/`, **`mkdir` only when read** (lazy getter). Most capabilities never write to disk, and `mkdir` can fail because of permissions / read-only mounts — creating the directory eagerly lets a side effect nobody uses veto the mount of the whole capability |
+| `log` | Two methods, `info` / `warn`, with prefix `[stream-<capability name>]` (the built-in one uses `[stream-desktop]`). The log sink defaults to the backend's stdout |
+| `require(service)` | An in-process `Map`; if it cannot be found it gives `undefined` (the package degrades on its own and calls `log.warn`; it does not throw) |
+| `provide(service, value)` | The same `Map`, **hard rejection on the same name**. A name on the service bus can have only one owner; silently overwriting would hand the consumers of the package that arrived first something they do not recognize, and each side looks fine on its own. The only pair today: the backend does `provide('streamBrowserCookies')` and netdisk does `require` on it |
+| `registerTools(defs)` | Goes into the host's tool table; `toolDefs()` feeds it fresh each time to every `createMcpServer()` (`/api/mcp` is **one server per request**, so it is mounted once and registered every time). **Hard rejection on name collision**, see below |
+| `destructiveGate` | Always `'host'`: `annotations.destructiveHint` is passed through to MCP as is, and the host (Claude Code / Codex / DSH) itself pops up the confirmation. When a package reads `'none'` it must fail closed and not let things through on its own |
+| `onDispose(fn)` | Collected into a list, executed in **reverse mount order** when the backend shuts down, with errors swallowed one by one and logged as one line; when the whole host closes up, the service bus is `clear()`-ed too |
 
-### 5.9.4 撞名硬拒、挂载顺序、失败语义
+### 5.9.4 Hard rejection on name collision, mount order, failure semantics
 
-- **工具名撞名硬拒**，在进表**之前**查两张名单（已收的 defs + 后端自己的工具名，后者是
-  thunk 不是快照——工具面按域的可用性现算）。不是"覆盖 + 记一行"：用户能 `stream add` 任意包，
-  一个第三方包起个 `extract` 就能把后端的动词顶掉，而模型只会觉得这个工具忽然变笨了。
-- **挂载顺序：内置的 Stream Desktop 先、可选包后。** 硬拒之下**顺序直接决定谁被拒**——反过来的话，
-  用户装一个起名 `desktop` 的包就能把机器上的 Stream Desktop 顶掉。
-- **一个包 mount 抛错只记一行、接着装下一个**，不拖死别的包、不拖死后端；它抛错前已经注册的
-  工具 / 服务 / 收摊函数**一并回滚**（否则工具面上挂着一个没装成的包的动词，调用必然炸，而
-  没有一处会说这个包没装上）。兜底在装载器（`src/capabilities/load.ts`）那一层，不在 host 里
-  ——host 照常把错抛出来，好让"装上了"和"装的时候炸了"分得开。
-- **`import` 与 `mount` 各有一道 30s 超时**。到点只保证"装载器不再等它"（ESM import 和包自己
-  的 mount 都停不掉），走同一条逐包 try/catch。
+- **Tool-name collisions are hard-rejected**, checking two lists **before** entering the table (the defs already collected + the backend's own tool names, the latter being a
+  thunk and not a snapshot — the tool surface is computed live by domain availability). It is not "overwrite + log a line": a user can `stream add` any package,
+  and a third-party package that names a tool `extract` could displace the backend's verb, with the model only feeling that this tool has suddenly become dumber.
+- **Mount order: the built-in Stream Desktop first, optional packages after.** Under hard rejection **the order directly decides who gets rejected** — in the reverse order,
+  a user installing a package named `desktop` could displace the Stream Desktop on the machine.
+- **When one package's mount throws, log one line and go on to install the next**, without dragging down other packages or the backend; the tools / services / dispose functions it had already
+  registered before throwing are **rolled back together** (otherwise the tool surface carries the verbs of a package that was never installed, calls to them are bound to blow up, and
+  nothing anywhere says that the package was not installed). The fallback sits at the loader level (`src/capabilities/load.ts`), not in the host
+  — the host throws the error as usual, so that "installed" and "blew up while installing" can be told apart.
+- **`import` and `mount` each have a 30s timeout.** On expiry the only guarantee is "the loader stops waiting for it" (neither an ESM import nor the package's own
+  mount can be stopped), and it goes through the same per-package try/catch.
 
-### 5.9.5 装法与生效时机
+### 5.9.5 How to install, and when it takes effect
 
 ```bash
-stream add @streamapp/netdisk        # = preview + install，走安装门；组件页里点装是同一条路
+stream add @streamapp/netdisk        # = preview + install, through the install gate; clicking install on the components page is the same path
 stream remove @streamapp/netdisk
 ```
 
-**装完不热装，重启后端才生效**——安装那一刻只落盘。`loadOptionalCapabilities` 只在启动路径上
-跑一次，而已经 `import` 进来的 ESM 模块运行中也卸不掉。安装/卸载的回执把这句话说出来，
-**不许静默不生效**——装是「源立刻生效；能力包（工具）要等后端重载后才出现」，卸是「重启后端后
-才真正卸掉——已装载的工具与凭证域申报在重启前仍在」。两句都由 `src/install/add-command.test.ts`
-钉着文案；改一句就得改另一处，别只改一边。
+**After installation there is no hot loading; it only takes effect after the backend restarts** — at install time it is only written to disk. `loadOptionalCapabilities` runs
+only once on the startup path, and an ESM module that has already been `import`-ed cannot be unloaded at runtime. The install/uninstall receipts say this out loud,
+and **it must not silently fail to take effect** — install reads "the source takes effect immediately; the capability package (tools) only appears after the backend reloads", and uninstall reads "it is only
+really unloaded after the backend restarts — already-loaded tools and credential-domain declarations remain until the restart". The wording of both sentences is
+pinned by `src/install/add-command.test.ts`; change one and you must change the other place, not just one side.
 
-装载结果在**组件页**看得见：`GET /api/packages` 每一行多两格——`slots.capability`（入口路径，
-包目录就有答案）与 `slots.tools`（这个包此刻注册了哪些动词，运行期现取）。声明了能力却
-`tools: []` 是一句真话，意思是装载没成或它没注册工具。
+The load result is visible on the **components page**: each row of `GET /api/packages` has two extra fields — `slots.capability` (the entry path;
+the package directory alone has the answer) and `slots.tools` (which verbs this package has registered right now, fetched live at runtime). A package that declares a capability but has
+`tools: []` is telling the truth: either loading did not succeed or it registered no tools.
 
-### 5.9.6 什么内置、什么可选
+### 5.9.6 What is built-in and what is optional
 
-**判据一句话：这件能力是不是「装了 Stream 的人默认就该有」。**
+**The criterion in one sentence: is this capability something "a person who installed Stream should have by default".**
 
-- **内置**（随 `@streamapp/stream` 出货）：纯 recipe 数据包（几 KB 的 JSON，不订阅零代价）+
-  核心壳（builtin / replay / rsshub）+ **Stream Desktop**（电脑操作，今天唯一那件内置能力）。
-- **可选**（`stream add`，独立发 npm）：凡**带代码、带容器、绑第三方服务、或收费**的。
+- **Built-in** (shipped with `@streamapp/stream`): pure recipe data packages (a few KB of JSON, zero cost if not subscribed) +
+  the core shell (builtin / replay / rsshub) + **Stream Desktop** (computer operation, the only built-in capability today).
+- **Optional** (`stream add`, published independently on npm): anything that **carries code, carries a container, binds a third-party service, or charges money**.
 
-**东方财富属于收费的 VIP 系列，绝不进内置包。** 它是第一个必须搬出去的：搬的时候注意开发机上
-8900 挂着它的申购 / 逆回购定时任务，**先在用户层装上、再从内置层摘**。收费分发的机制见
-`project planning record`。
+**Eastmoney (东方财富) belongs to the paid VIP series and must never go into a built-in package.** It is the first that has to be moved out: when moving it, note that on the dev machine
+8900 has its subscription / reverse-repo scheduled tasks hanging on it, so **install it at the user layer first, then remove it from the built-in layer**. For the paid-distribution mechanism see
+`project planning record`.
 
-**只声明容器的包（ddddocr / dewatermark / mineru / voiceprint）已经在可选层**：
-住 `github.com/JaggerH/stream-packages`，`stream add @streamapp/<x>` 装（§4 开头）。安装门不钳 `gpu` 与 `mem`
-的大小（§6.2），GPU 容器包装得进来。
+**Packages that only declare a container (ddddocr / dewatermark / mineru / voiceprint) are already in the optional layer**:
+they live in `github.com/JaggerH/stream-packages`, installed with `stream add @streamapp/<x>` (start of §4). The install gate does not clamp the sizes of `gpu` and `mem`
+(§6.2), so GPU container packages can be installed.
 
-按这条规则今天还该搬出去的是 3 个容器包（alist / 抖音解析 / pansou）与东方财富——它们
-带 Source 清单或代码，不是纯容器声明；**等第一个真要拆的时候一起搬**（容器包不起就不占资源）。
-迁入 stream-packages 的触发条件见 `project planning record`。
+By this rule, what still should be moved out today is the 3 container packages (alist / Douyin parsing / pansou) and Eastmoney — they
+carry a Source manifest or code and are not pure container declarations; **move them together when the first one really has to be split out** (container packages take no resources if not started).
+For the trigger conditions for moving into stream-packages see `project planning record`.
 
 ---
 
-## 6. 分发与装载：内置包 vs 从 npm 装进来的第三方包
+## 6. Distribution and loading: built-in packages vs third-party packages installed from npm
 
-内置包（仓库 `packages/`、随应用一起发布）与第三方包（用户在 UI 里从 npm 装进来、落在 `<dataDir>/recipes/<包名>/`）**是同一种包、同一份 `package.json#stream` 文法**。差别只在两处：**能填哪几格**，以及**安装期要过哪几道闸门**。
+Built-in packages (in the repository's `packages/`, released together with the app) and third-party packages (installed by the user from npm in the UI and placed in `<dataDir>/recipes/<package name>/`) **are the same kind of package with the same `package.json#stream` grammar**. They differ in only two places: **which fields they may fill**, and **which gates they must pass at install time**.
 
-**装一个带代码的包 = 信任作者**：代码在后端进程内跑（与 Stream 同权限），同 npm 名的更高版本会**替换内置那份的代码**——这与装一个纯 recipe 包不是同一档权限，安装页按 §6.6 把它评成最高档 `code`。
+**Installing a package that carries code = trusting its author**: the code runs inside the backend process (with the same privileges as Stream), and a higher version with the same npm name **replaces the code of the built-in one** — this is not the same privilege tier as installing a pure recipe package, and the install page rates it at the highest tier `code` per §6.6.
 
-### 6.1 能填哪几格
+### 6.1 Which fields can be filled
 
-| 格 | 内置包 | 第三方包 |
+| Field | Built-in package | Third-party package |
 |---|---|---|
-| 清单（`manifests.yaml` / `stream.sources`） | ✅ | ✅ |
-| recipe 数据（`*.recipe.json`） | ✅ | ✅ |
-| 代码（`stream.code`） | ✅ | ✅，但入口路径被钉死（见 §6.4） |
-| 能力（`stream.capability`） | ✅（今天只有 `capabilities/desktop/`，静态编进 bundle） | ✅，同一个被钉死的入口路径（见 §5.9） |
-| 容器后端（`stream.backend`） | ✅ 原样声明 | ✅，但整份声明先过钳制（见 §6.2） |
+| Manifest (`manifests.yaml` / `stream.sources`) | ✅ | ✅ |
+| Recipe data (`*.recipe.json`) | ✅ | ✅ |
+| Code (`stream.code`) | ✅ | ✅, but the entry path is pinned (see §6.4) |
+| Capability (`stream.capability`) | ✅ (today only `capabilities/desktop/`, statically compiled into the bundle) | ✅, the same pinned entry path (see §5.9) |
+| Container backend (`stream.backend`) | ✅ declared as is | ✅, but the whole declaration is clamped first (see §6.2) |
 
-### 6.2 容器格：第三方能声明什么、会被钳成什么
+### 6.2 The container field: what a third party may declare and what it gets clamped to
 
-第三方的 `backend` 一律先过 `src/packages/container-policy.ts`（`clampThirdPartyBackend`）：不合规**安装期抛错**（不留到运行时），合规的**改写成安全形态**再落盘。**落盘的 `package.json` 存的是钳制后的声明**——用户在确认页看到的、provisioner 建容器时读到的、盘上躺着的，是同一份字节。内置包不走这条（我们自己写的，原样声明）。
+A third party's `backend` always goes through `src/packages/container-policy.ts` (`clampThirdPartyBackend`) first: anything non-compliant **throws at install time** (it is not left to runtime), and anything compliant is **rewritten into a safe form** before it is written to disk. **The `package.json` written to disk holds the clamped declaration** — what the user sees on the confirmation page, what the provisioner reads when it creates the container, and what lies on disk are the same bytes. Built-in packages do not go through this (we wrote them ourselves; they are declared as is).
 
-**`gpu` 与 `mem` 的大小不钳、不按作者分档**：装一个包本来就是信任作者（同 dsh 插件的立场），要显卡、
-要 10G 内存是包对自己镜像的诚实声明，钳它们挡不住任何人，只会把正经的 GPU 包挡在门外。`mem` 仍**必须
-写**（不写 = 不限制，那是漏写不是选择）。确认页把 `gpu` 亮出来（`summarizeBackend`），"没装 nvidia toolkit
-就起不来"是包 README 该写的前提。钳的只剩宿主命名空间与文件系统边界：拒 `service` / `dev` / `user` /
-`publish`，env 与 volumes 上限，standby 兜底，卷名加前缀。
+**The sizes of `gpu` and `mem` are not clamped and not tiered by author**: installing a package is already trusting its author (the same stance as dsh plugins); asking for a GPU or
+10G of memory is the package's honest declaration about its own image, and clamping them stops nobody and only keeps legitimate GPU packages out. `mem` still **must
+be written** (not writing it = no limit, which is an omission, not a choice). The confirmation page surfaces `gpu` (`summarizeBackend`); "it will not start
+without the nvidia toolkit" is a prerequisite the package README should state. What remains clamped is only the host namespace and the filesystem boundary: `service` / `dev` / `user` /
+`publish` are rejected, env and volumes have upper limits, standby has a fallback, and volume names get a prefix.
 
-**`image` 必须钉版本（tag 或 digest，不收 `:latest` / 无 tag）**——这是更新机制的前提，不是信任问题：
-宿主接管只比容器的 `Config.Image` 字符串，`stream update` 换清单 = 换 tag → 判成不一致 → 下次启动删了重建
-（`provisioner.ts` `recreateOnImageMismatch`）。浮动 tag 的清单更新后字符串没变，容器永远跑装机那天拉到的
-那一层。所以**镜像版本随包版本一起发**：stream-packages 打 tag `<dir>-v1.2.0` 同时出镜像 `:1.2.0` 与
-`image: …:1.2.0` 的清单。`stream update` 装完会提示「重启后端后按新镜像重建」。
+**`image` must be pinned to a version (a tag or a digest; `:latest` / no tag is not accepted)** — this is a precondition of the update mechanism, not a trust question:
+host takeover only compares the container's `Config.Image` string, and `stream update` swapping the manifest = swapping the tag → judged inconsistent → deleted and rebuilt at the next start
+(`provisioner.ts` `recreateOnImageMismatch`). With a floating tag the string does not change after a manifest update, and the container forever runs the
+layer it pulled on the day of installation. So **the image version ships together with the package version**: stream-packages pushes the tag `<dir>-v1.2.0`, which simultaneously produces the image `:1.2.0` and a manifest with
+`image: …:1.2.0`. After `stream update` finishes it prompts "the container will be rebuilt on the new image after the backend restarts".
 
-**宿主替包决定的三格**：
+**Three fields the host decides on the package's behalf**:
 
-- **`service` 名由宿主指派，恒等于包 id**（包自己写 `service` = 拒；包 id 另有文法约束，见下表）。service 名是全局单一命名空间，三处共用——`/_p/<service>` 网关路由、standby 名册、compose service key；包 id 在安装期已保证不撞，所以 id 唯一 ⇒ service 名唯一 ⇒ 三处天然无冲突。**对外形状**：容器就在 `/_p/<service>/`。名册重名在构造期抛，但 `serve.ts` 的 `buildStandbyOrDegrade` 把它降级成一行日志——后果不是开不了机，是**全体 standby 失效**（所有插件容器不回收、不唤醒，界面上一个字不提），所以承重的是安装期那道撞名闸门。
-- **命名卷加包前缀**：包写 `data:/var/lib/x`，实际挂 `<包 id>_data`。不加前缀的话两个包各自写 `data:` 就是同一个 docker 卷，A 能读写 B 的数据。
-- **`standby` 缺省兜 30 分钟闲置回收**（`DEFAULT_STANDBY_IDLE_MINUTES`）。兜底而不是拒：常驻是资源治理问题、不是安全边界，而 standby 唤醒对调用方透明。补出来的值进钳制后的声明，所以确认页上用户看得到「闲置 30 分钟后回收」。
+- **The `service` name is assigned by the host and always equals the package id** (a package writing `service` itself = rejected; the package id has its own grammar constraint, see the table below). The service name is a single global namespace shared in three places — the `/_p/<service>` gateway route, the standby roster, and the compose service key; package ids are already guaranteed not to collide at install time, so id unique ⇒ service name unique ⇒ no conflict among the three places by construction. **External shape**: the container is at `/_p/<service>/`. A duplicate name in the roster throws at construction time, but `buildStandbyOrDegrade` in `serve.ts` degrades that into one log line — the consequence is not a failure to boot but **standby failing for everyone** (no plugin container is reclaimed or woken, and the UI says nothing at all), so the load-bearing part is the name-collision gate at install time.
+- **Named volumes get a package prefix**: a package writes `data:/var/lib/x`, and the actual mount is `<package id>_data`. Without the prefix, two packages each writing `data:` would share the same docker volume, and A could read and write B's data.
+- **`standby` defaults to a 30-minute idle reclaim as a fallback** (`DEFAULT_STANDBY_IDLE_MINUTES`). A fallback rather than a rejection: staying resident is a resource-governance matter, not a security boundary, and waking from standby is transparent to callers. The filled-in value goes into the clamped declaration, so on the confirmation page the user can see "reclaimed after 30 minutes idle".
 
-**一律拒（错误消息说清哪一条、为什么、该怎么改）**：
+**Always rejected (the error message says which rule, why, and how to fix it)**:
 
-| 拒绝理由 | 触发条件 |
+| Reason for rejection | Trigger |
 |---|---|
-| service 名不许自选 | 声明了 `backend.service` |
-| 不许多开宿主端口 | 声明了 `backend.publish` |
-| dev 覆盖会把宿主源码 bind 进容器 | 声明了 `backend.dev` |
-| 容器内跑成谁由镜像自己的 USER 定；这一格能把按非 root 设计的镜像抬成 root，而宿主对第三方镜像里跑的是什么一无所知 | 声明了 `backend.user` |
-| 不声明内存上限 = 不限制 = 可以吃满宿主内存 | 缺 `backend.mem`，或 `mem` 解析不了（多大都行，但必须是个数） |
-| 镜像没钉版本：`stream update` 靠换 tag 触发容器重建（宿主接管只比 `Config.Image` 字符串），浮动 tag 永远重建不了、用户一直跑装机那天的镜像而没有一处会喊 | `backend.image` 没有 tag，或 tag 是 `latest`（钉版本 tag 或 `@sha256:` digest 才过；`floatingImageTag`） |
-| 包 id 不合文法 | `stream.id` 不匹配 `^[a-z0-9][a-z0-9_-]*$`。id 被指派成 service 名，于是同时是容器名 `stream-<id>`、卷名前缀、URL 路径段；而撞名闸门是精确比较，`Alist` 挡不住内置的 `alist` |
-| health 会把探活打去别人家 | `backend.health` 不是以单个 `/` 开头的本机路径（`@evil.com/`、`//evil.com/`、`healthz`、含空白或反斜杠）。探活 URL 是宿主后端拼出来的，`http://127.0.0.1:<口>@evil.com/` 的 host 是 `evil.com` |
-| 时间格超上界 | `standby.startTimeoutSeconds` > 300（容器备齐是启动时 await 的串行循环，这个数就是"一个永不健康的容器能把开机卡多久"）、`standby.idleMinutes` > 1440（等于声明常驻） |
-| 把宿主文件系统交给容器 | `volumes` 里有宿主路径 bind（判据复用运行时同一个 `isHostBindMount`），或不是 `name:/绝对路径` 形状，或包 id 本身不能当卷名前缀 |
-| 每个卷都是宿主上长期占地的存储 | `volumes` > 4 个 |
-| env 原样进容器，无界就是无界注入面 | `env` > 32 条，或某个值 > 4096 字符 |
-| 顶掉宿主注入的 env | `env` 名以 `STREAM_` 开头（宿主命名空间） |
-| service 名（= 包 id）已被占用 | 撞了就是两边抢同一条 `/_p/` 路由 + 同一个 standby 名册位。**这道闸门查的是 `occupied.services` 不是 `occupied.ids`**——内置包的 service 名不一定等于它的 id（`Douyin_TikTok_Download_API` 的 service 是 `douyin-tiktok-download-api`），只查 id 看不见它 |
+| The service name may not be chosen by the package | `backend.service` is declared |
+| No extra host ports | `backend.publish` is declared |
+| A dev override would bind host source into the container | `backend.dev` is declared |
+| Who runs inside the container is decided by the image's own USER; this field could lift an image designed for non-root up to root, and the host knows nothing about what runs inside a third-party image | `backend.user` is declared |
+| No declared memory limit = no limit = can eat all host memory | `backend.mem` is missing, or `mem` cannot be parsed (any size is fine, but it must be a number) |
+| The image is not pinned to a version: `stream update` triggers a container rebuild by swapping the tag (host takeover only compares the `Config.Image` string), a floating tag can never trigger a rebuild, and the user keeps running the image from the day of installation with nothing anywhere complaining | `backend.image` has no tag, or the tag is `latest` (only a pinned version tag or an `@sha256:` digest passes; `floatingImageTag`) |
+| The package id does not fit the grammar | `stream.id` does not match `^[a-z0-9][a-z0-9_-]*$`. The id is assigned as the service name, and so is at once the container name `stream-<id>`, the volume-name prefix, and a URL path segment; and the name-collision gate is an exact comparison, so `Alist` does not get blocked by the built-in `alist` |
+| The health check would send the probe to someone else's host | `backend.health` is not a local path starting with a single `/` (`@evil.com/`, `//evil.com/`, `healthz`, containing whitespace or a backslash). The probe URL is assembled by the host backend, and the host of `http://127.0.0.1:<port>@evil.com/` is `evil.com` |
+| A time field exceeds its upper bound | `standby.startTimeoutSeconds` > 300 (preparing containers is a serial loop awaited at startup, and this number is "how long a container that never becomes healthy can stall boot"), `standby.idleMinutes` > 1440 (equivalent to declaring it resident) |
+| Hands the host filesystem to the container | `volumes` contains a host path bind (the check reuses the same `isHostBindMount` as at runtime), or is not of the shape `name:/absolute-path`, or the package id itself cannot serve as a volume-name prefix |
+| Every volume is long-lived storage taking up space on the host | more than 4 `volumes` |
+| env goes into the container as is, and unbounded means an unbounded injection surface | more than 32 `env` entries, or some value longer than 4096 characters |
+| Overrides an env var the host injects | an `env` name starts with `STREAM_` (the host namespace) |
+| The service name (= package id) is already taken | A collision means two sides fighting for the same `/_p/` route + the same standby roster slot. **This gate checks `occupied.services`, not `occupied.ids`** — a built-in package's service name is not necessarily equal to its id (the service of `Douyin_TikTok_Download_API` is `douyin-tiktok-download-api`), and checking only ids would not see it |
 
-**凭证由宿主派发**：包用 `stream.credentials: [域]` 申报它可以拿到哪些域的登录态，宿主在调用时注入（见 §5.1）。secret 不进镜像、不进 `backend.env`、不进生成的 compose。
+**Credentials are dispatched by the host**: a package uses `stream.credentials: [domain]` to declare which domains' login state it may obtain, and the host injects it at call time (see §5.1). Secrets do not go into the image, into `backend.env`, or into the generated compose.
 
-**装上不等于跑起来**：第三方容器和内置容器走同一条线（§7.2），要真被建出来得用户开 `manage_containers`（**默认关闭**）。关着的时候宿主一个 docker 写操作都不发。容器是**启动时**备齐的，所以刚装完那一刻它还不存在——重启后端才有。
+**Installed does not mean running**: third-party containers and built-in containers go through the same line (§7.2), and for one to actually be created the user must turn on `manage_containers` (**off by default**). While it is off, the host issues no docker write operation at all. Containers are prepared **at startup**, so right after installation it does not exist yet — it appears after the backend restarts.
 
-**卸载收容器、但不收卷**：卸载一个带容器的包会先 `docker rm -f` 它的容器再删包目录（不看 `manage_containers`——那个开关管"要不要替你建"，收自己建的东西不受它管）。**命名卷原地留着**：那里面是数据，删掉不可逆。留了就必须说——卸载成功时通知中心会点名留下了哪几个卷、以及 `docker volume rm` 怎么敲。别把这条通知和"容器没能清掉"那条共用一个 `dedupeKey`：事件层对同一个 key 的未读事件只刷时间戳、**丢掉新正文**，轻的那条会把重的那条吃掉。
+**Uninstall removes the container but not the volumes**: uninstalling a package that has a container first runs `docker rm -f` on its container and then deletes the package directory (without looking at `manage_containers` — that switch governs "whether to create things for you", and cleaning up what it created is not under its control). **Named volumes are left in place**: they hold data, and deleting is irreversible. Since they are left, this must be said — when the uninstall succeeds, the notification center names which volumes were left and how to type `docker volume rm`. Do not let this notification share a `dedupeKey` with the "container could not be cleaned up" one: for an unread event with the same key the event layer only refreshes the timestamp and **drops the new body**, so the lighter notification would swallow the heavier one.
 
 ### 6.3 `hostVersion`
 
-`stream.hostVersion` 只支持 **`>=X.Y.Z`** 一种写法，`^`/`~`/x-range/`latest` 一律当场拒绝——装作看懂了比拒绝更危险。宿主自己的版本走构建期注入（`scripts/build-server.mjs` 的 `--define`），源码路回落读仓库根 `package.json`。**读不到时 fail-closed**：声明了 `hostVersion` 的包一律拒装（一道失效的闸门比拒装危险得多）。不声明 `hostVersion` 的包不受影响。
+`stream.hostVersion` supports only the **`>=X.Y.Z`** form; `^`/`~`/x-range/`latest` are all rejected on the spot — pretending to understand them is more dangerous than rejecting them. The host's own version is injected at build time (`--define` in `scripts/build-server.mjs`), and the source path falls back to reading the repository root `package.json`. **It fails closed when it cannot be read**: any package that declares `hostVersion` is refused installation (a gate that has silently stopped working is far more dangerous than refusing the install). Packages that do not declare `hostVersion` are unaffected.
 
-**宿主版本 = 仓库根 `package.json` 的 `version`，它是「包能依赖哪些声明位」的契约版本。** 宿主加了包会
-依赖的新声明位 / 新语义（例如 `links`、`item`），就 bump 它的 minor；用到这些声明位的包在同一轮写
-`hostVersion: ">=<那个版本>"`。**两件事必须一起做**：只 bump 宿主不写下界，旧宿主装上新包会把不认识的键
-**静默丢掉**（schema 不是 strict），能力无声消失；只写下界不 bump 宿主，下界永远比不出新旧。当前契约版本
-`0.1.0` 引入了 `links` 与 `item`。
+**The host version = the `version` of the repository root `package.json`, and it is the contract version for "which declaration slots a package may depend on".** When the host adds new declaration slots / new semantics that packages will
+depend on (for example `links`, `item`), bump its minor; packages that use those slots write
+`hostVersion: ">=<that version>"` in the same round. **Both must be done together**: bumping the host without writing a lower bound means an old host installing a new package
+**silently drops** the keys it does not recognize (the schema is not strict), and the capability vanishes without a sound; writing a lower bound without bumping the host means the lower bound can never tell new from old. The current contract version
+`0.1.0` introduced `links` and `item`.
 
-### 6.4 代码包怎么打
+### 6.4 How to package a code package
 
-- **入口必须正好是 `dist/index.js`**——一个字面路径，不是 pattern、不是目录。`./dist/index.js`、`dist//index.js`、`DIST/INDEX.JS` 这些别名写法全都进不来（放行别名等于放行一族路径）。
-- **预打包成单文件 ESM，依赖全部打进去**：宿主装完不跑 `npm install`，`node_modules` 不会出现在包目录里。`import` 一个没被打进来的第三方库 = 装载期 `ERR_MODULE_NOT_FOUND`，这个包**这次就是不生效**（Stream 其余部分照常起来，通知中心会有一条"扩展包未生效"）。用 esbuild/rollup 之类 bundle 到一个文件。
-- **只能有这一个代码文件**。tarball 白名单只受理 `package.json`、`*.recipe.json`、`manifests.yaml`、README/LICENSE/NOTICE/CHANGELOG，加上 `dist/index.js` 这一个例外；其余带 `/` 或 `\` 的路径一律拒。
-- **申报与实物必须一字不差对上**：声明了 `stream.code` 却没有那个文件 → 拒；有那个文件却没声明 → **夹带代码**，也拒。
-- 类型从 `@streamapp/plugin-sdk` 取（`ActivateFn` / `PluginContext`…），运行时工具也从它取（`ValidationError` /
-  `ContentUnavailableError` / html 工具 / `mediaPlayUrl` / `BROWSER_UA`——就是 `shared/package-sdk/` 那一批，bundle 进你自己的
-  dist，宿主按鸭子标记认）；`activate(ctx)` 的契约与内置包完全一样（§3）。内置那 7 个带 code 的包走的就是这条路
-  （§3.7 / §3.8），形状由它们钉着。
+- **The entry must be exactly `dist/index.js`** — a literal path, not a pattern, not a directory. Aliased spellings such as `./dist/index.js`, `dist//index.js`, `DIST/INDEX.JS` are all rejected (letting aliases through means letting a whole family of paths through).
+- **Pre-bundle into a single-file ESM with all dependencies bundled in**: the host does not run `npm install` after installing, and `node_modules` does not appear in the package directory. `import`-ing a third-party library that was not bundled in = `ERR_MODULE_NOT_FOUND` at load time, and this package **simply does not take effect this time** (the rest of Stream starts normally, and the notification center gets a `扩展包未生效` ("extension package not in effect") entry). Bundle into one file with something like esbuild/rollup.
+- **There may be only this one code file**. The tarball allowlist accepts only `package.json`, `*.recipe.json`, `manifests.yaml`, README/LICENSE/NOTICE/CHANGELOG, plus the single exception of `dist/index.js`; every other path containing `/` or `\` is rejected.
+- **The declaration and the actual files must match character for character**: declaring `stream.code` without that file → rejected; having that file without declaring it → **smuggled code**, also rejected.
+- Types come from `@streamapp/plugin-sdk` (`ActivateFn` / `PluginContext`…), and runtime utilities come from it too (`ValidationError` /
+  `ContentUnavailableError` / html utilities / `mediaPlayUrl` / `BROWSER_UA` — that is the `shared/package-sdk/` batch, bundled into your own
+  dist, and the host recognizes them by duck-typing markers); the contract of `activate(ctx)` is exactly the same as for built-in packages (§3). The 7 built-in packages that carry code take exactly this path
+  (§3.7 / §3.8), and their shape is pinned by them.
 
-### 6.5 装完什么时候生效
+### 6.5 When an installation takes effect
 
-| 装进来的东西 | 生效时机 |
+| What was installed | When it takes effect |
 |---|---|
-| recipe 数据 / 清单 | **热重载**，装完即生效（watcher 重挂 recipe 包） |
-| 代码（`stream.code`） | **重启 Stream 之后**——包代码只在启动时 `import()` 一次 |
-| 能力（`stream.capability`） | **重启 Stream 之后**——同上，装载器只在启动路径上跑一次（§5.9.5） |
-| 容器（`stream.backend`） | **重启 Stream 之后**——`image` 换了 tag 只是落盘，宿主要在重启时的备齐路径上比对镜像声明才会拿新 tag 重建容器（§4.1、`recreateOnImageMismatch`） |
+| Recipe data / manifests | **Hot reload**, effective as soon as installed (the watcher remounts the recipe package) |
+| Code (`stream.code`) | **After Stream restarts** — package code is `import()`-ed only once at startup |
+| Capability (`stream.capability`) | **After Stream restarts** — same as above, the loader runs only once on the startup path (§5.9.5) |
+| Container (`stream.backend`) | **After Stream restarts** — changing the `image` tag only writes to disk; the host rebuilds the container with the new tag only when it compares the image declaration on the prepare path at restart (§4.1, `recreateOnImageMismatch`) |
 
-同理**卸载和升级**：文件立刻删/换，但已经 `import` 进来的那份 ESM 模块运行中卸不掉，重启前它还在跑。安装页和卸载确认页都会把这句话说出来。
+The same goes for **uninstall and upgrade**: files are deleted/replaced immediately, but the ESM module that has already been `import`-ed cannot be unloaded at runtime, and it keeps running until the restart. Both the install page and the uninstall confirmation page say this out loud.
 
-**待生效清单是算出来的，不是记出来的**：启动那一刻装载的用户层被冻成一份快照，`GET /api/packages/pending`
-每次请求现扫盘上的用户层目录、拿去跟快照对账，回一份 `PendingChange[]`（`{ name, kind:
-'installed'|'updated'|'removed', from?, to?, needsRestart, why }`）；判据只看槽位——只有 recipe 数据的
-新装/更新/卸载不用重启，带 `code` / `capability` / `backend` 的都要。同一份计数进
-`GET /api/health.pending_restart`（只给个数，health 保持轻），`GET /api/packages` 每项也带一格 `pending?`
-按包名对上。后端没接这条查询就 `503` / health 里干脆没有这一格——不装账本，所以也没有「账本坏了」这回事。
-凭证域**不单独算**判据：它是给代码 / 容器用的许可名单，那三格已经把重启判出来了；装 / 换 / 卸三条路同一把尺。
+**The pending-effect list is computed, not recorded**: the user layer loaded at startup is frozen into a snapshot, and `GET /api/packages/pending`
+scans the user-layer directory on disk on every request, reconciles it against the snapshot, and returns a `PendingChange[]` (`{ name, kind:
+'installed'|'updated'|'removed', from?, to?, needsRestart, why }`); the check looks only at slots — a new install / update / uninstall of recipe data alone
+needs no restart, while anything carrying `code` / `capability` / `backend` does. The same count goes into
+`GET /api/health.pending_restart` (just a number, keeping health light), and each entry of `GET /api/packages` also carries a `pending?` field
+matched by package name. If the backend does not wire this query it returns `503` / health simply has no such field — there is no ledger kept, so there is also no such thing as "the ledger is broken".
+Credential domains are **not counted separately** in the check: they are an allowlist for code / containers, and those three slots have already determined the restart; install / replace / uninstall all use the same yardstick.
 
-**怎么重启**：`POST /api/restart`（契约见 `docs/API.md`）把进程优雅关掉再重新起——**不是热重载**，
-代码 / 能力 / 容器 / 凭证域申报全部按正常启动路径重来。三个入口都打这一个端点：
-`stream add` / `stream update` / `stream remove` 装完直接问「现在重启后端？[y/N]」（`--restart` /
-`--no-restart` 跳过那一问，脚本用）；命令行单独的 `stream restart [--force]`；包页面顶部的横幅
-「N 项变更等待重启生效」。有正在跑的任务（8900 上的定时采集/交易任务）会拦下 `409`，除非带
-`?force=1`——重启时机归人，一次包更新不该打断正在跑的任务。
+**How to restart**: `POST /api/restart` (contract in `docs/API.md`) gracefully shuts the process down and starts it again — **it is not a hot reload**;
+code / capabilities / containers / credential-domain declarations all start over along the normal startup path. Three entry points all hit this one endpoint:
+`stream add` / `stream update` / `stream remove` ask right after installing `现在重启后端？[y/N]` ("Restart the backend now? [y/N]") (`--restart` /
+`--no-restart` skip that question, for scripts); the standalone command `stream restart [--force]`; and the banner at the top of the packages page,
+`N 项变更等待重启生效` ("N changes waiting for a restart to take effect"). If tasks are running (scheduled harvest/trading tasks on 8900) it is blocked with `409`, unless `?force=1` is passed
+— the restart moment belongs to the human, and a package update should not interrupt running tasks.
 
-**谁拉起我，决定怎么活回来**（`src/restart/policy.ts`，回执里的 `mode` 就是这一格）：
+**Who launched me decides how I come back** (`src/restart/policy.ts`; the `mode` in the receipt is this field):
 
-| 拉起方式 | 判据 | 收尾 |
+| How launched | Check | Wrap-up |
 |---|---|---|
-| 有监护（systemd 服务、`stream mcp` 壳、别的 supervisor） | env `INVOCATION_ID` 或 `STREAM_SUPERVISED=1` → `supervised` | 优雅关后以 75 退出，监护者拉起 |
-| 用户前台跑的 `stream` | 两者都不在 → `reexec` | 优雅关后自己再起一份、退出。**新的一份已脱离终端**：Ctrl-C 够不着它，要停它按端口找 pid |
-| `scripts/dev.sh`（`tsx watch` 养着） | 脚本 `export STREAM_RESTART_MODE=watch` | 不自己关，碰仓库根的 `restart-sentinel`，监视器 SIGTERM + 拉起 |
+| Supervised (a systemd service, the `stream mcp` shell, another supervisor) | env `INVOCATION_ID` or `STREAM_SUPERVISED=1` → `supervised` | Shut down gracefully and exit with 75; the supervisor relaunches |
+| `stream` run in the foreground by the user | neither is present → `reexec` | Shut down gracefully, start another copy of itself, and exit. **The new copy has detached from the terminal**: Ctrl-C cannot reach it; to stop it, find the pid by port |
+| `scripts/dev.sh` (kept alive by `tsx watch`) | the script does `export STREAM_RESTART_MODE=watch` | Does not shut itself down; touches `restart-sentinel` in the repository root, and the watcher sends SIGTERM + relaunches |
 
-`STREAM_RESTART_MODE=supervised|reexec|watch` 显式设了就压过自动判。**要设它的场景**：`INVOCATION_ID`
-会被 systemd 用户服务拉起的 scope / 终端继承，在那种终端里前台跑 `stream` 会被误判成有监护、退 75
-之后没人拉起——那里要 `export STREAM_RESTART_MODE=reexec`。
+An explicitly set `STREAM_RESTART_MODE=supervised|reexec|watch` overrides the auto-detection. **When you need to set it**: `INVOCATION_ID`
+is inherited by scopes / terminals launched by systemd user services, and running `stream` in the foreground in such a terminal is misjudged as supervised, so after exiting with 75
+nobody relaunches it — there you need `export STREAM_RESTART_MODE=reexec`.
 
-**`stream mcp` 拉起的后端重启后照常服务，但宿主那侧的 `tools/list` 快照不会跟着刷**——新装的能力包
-的工具要重开一次对话才看得到。
+**A backend launched by `stream mcp` keeps serving after a restart, but the `tools/list` snapshot on the host side does not refresh with it** — the tools of a newly installed capability package
+only show up after reopening the conversation.
 
-### 6.6 安装页会亮什么
+### 6.6 What the install page surfaces
 
-preview 把包的申报摆出来，`app/src/components/recipes/risk.ts` 把它评成四档，**严格升序 `plain < elevated < container < code`**：
+preview lays out the package's declarations, and `app/src/components/recipes/risk.ts` rates them into four tiers, **in strictly ascending order `plain < elevated < container < code`**:
 
-- **`code`（最高）**——preview 里有 `code` **或 `capability`**。文案说清「这个包的代码和 Stream 同权限：能读全部 cookie 和 token、能以你的身份向任意地址发请求」，并**摆出它会占用的 adapter / normalizer 注册名**与代码入口路径，外加那句"重启后才生效"。**官方 `@streamapp/` scope 不豁免这一档**——前缀能说明的只有"覆盖内置源是升级而不是李代桃僵"，说明不了这份字节里的代码要干什么。
-- **`container`**——preview 里有 `backend`。页面摆出**镜像全名、内存上限、卷、env 键名、能取到的登录态域、闲置多久回收**（env 只给键名，值不外泄——值可能是包作者塞的 token，而确认页是会被截图分享的）。夹在 `elevated` 与 `code` 之间的理由是能力面：比 elevated 重（在用户机器上长期跑一个任意镜像、有网、能经 broker 取申报过那些域的登录态），比 code 轻（另一个进程、另一个文件系统命名空间，宿主 bind 被拒、卷加了包前缀、内存有上限、GPU 被拒、不额外开宿主口，凭证只到申报过的域为止）。容器与代码同在时 level 取 `code`，但**两条理由都摆出来**——容器那条带着镜像全名，是用户唯一能核实的具体物。
-  **能力包（`capability`）另摆一条理由**（两格都填就两条都摆——同一个文件，注册的东西不同）：
-  能力入口路径、**申报的凭证域逐个点名**、「它在后端进程内运行、与 Stream 同权限、能取浏览器
-  登录态」、以及「重启后端才生效」。**它会注册哪些工具通常摆不出来**——工具名要 import + mount
-  之后才知道，而确认发生在那之前。所以那句话说的是**权限本身**，不是数动词：用一个数不出来的
-  数字当风险量纲，会让人误以为 0 个工具就是安全的。
-- **不分档、但每档都摆的一行：`proxies`**——包有 `serving` 声明时，页面列出后端会替它去连的主机
-  （`match` 与 `hosts` 的并集）。这是「后端替第三方出站」的事实，和限流、登录域同级；没有声明就不占行。
-- **`elevated`**——包内有 recipe 声明 `effects: write`（会写用户账户），或非官方 scope 的包覆盖了内置源。
-- **`plain`**——纯数据包，档位不变（不因为代码格的加入而被连坐）。
+- **`code` (highest)** — the preview contains `code` **or `capability`**. The copy states plainly "this package's code has the same privileges as Stream: it can read all cookies and tokens, and send requests to any address as you", and **lays out the adapter / normalizer registration names it will occupy** and the code entry path, plus the line "takes effect only after a restart". **The official `@streamapp/` scope is not exempt from this tier** — what the prefix can tell you is only that "overriding a built-in source is an upgrade rather than a substitution in disguise"; it cannot tell you what the code in these bytes intends to do.
+- **`container`** — the preview contains `backend`. The page lays out **the full image name, the memory limit, the volumes, the env key names, the login-state domains it can obtain, and how long idle before reclaim** (env shows key names only, never the values — a value may be a token the package author stuffed in, and the confirmation page gets screenshotted and shared). The reason it sits between `elevated` and `code` is the capability surface: heavier than elevated (it runs an arbitrary image on the user's machine long-term, with network access, and can obtain the login state of the declared domains via the broker), lighter than code (a separate process and a separate filesystem namespace: host binds are rejected, volumes get a package prefix, memory has a limit, GPU is rejected, no extra host port is opened, and credentials reach only the declared domains). When a container and code coexist the level is `code`, but **both reasons are shown** — the container one carries the full image name, the only concrete thing the user can verify.
+  **A capability package (`capability`) gets its own reason** (if both fields are filled, both are shown — the same file, different things registered):
+  the capability entry path, **each declared credential domain named individually**, "it runs inside the backend process, with the same privileges as Stream, and can obtain the browser
+  login state", and `重启后端才生效` ("takes effect only after the backend restarts"). **Which tools it will register usually cannot be shown** — tool names are known only after import + mount,
+  and confirmation happens before that. So that sentence speaks about the **privilege itself**, not about counting verbs: using a number that cannot be counted
+  as the risk measure would make people think 0 tools is safe.
+- **Not a tier, but a row shown at every tier: `proxies`** — when a package has a `serving` declaration, the page lists the hosts the backend will connect to on its behalf
+  (the union of `match` and `hosts`). This is the fact that "the backend makes outbound requests on behalf of a third party", on the same level as rate limiting and login domains; with no declaration it takes no row.
+- **`elevated`** — a recipe in the package declares `effects: write` (it writes to the user's account), or a package from a non-official scope overrides a built-in source.
+- **`plain`** — a pure data package; its tier is unchanged (it is not implicated by the addition of the code field).
 
-`plain` 之外全部触发**慢速确认门**（二次确认控件）。
+Everything above `plain` triggers the **slow confirmation gate** (the second-confirmation control).
 
-**`overrides` 的语义：「你正在把内置的这个包换成 npm 上的这一版，被换掉的全名有这些」。**
-判据是**包名**，不是 sourceId：装 `@streamapp/xhs` → 与内置层那个包同名 → 全名逐条相同 →
-用户层整包盖住内置层。所以覆盖**永远是一次自我升级**，第三方包盖不到官方源（全名以包名打头，
-两个包的名字空间天然分开）。`risk.ts` 里「非官方 scope 覆盖内置源 → elevated」那条因此
-永不触发——它没被删掉，而是改写成断言 `assertOverridesAreSelfUpgrade`：真触发了说明前缀合成
-或 preview 出了问题，要大声报，不是静默走进一档更严的确认框就算了。
+**Semantics of `overrides`: "you are replacing this built-in package with this version from npm; these are the full names being replaced".**
+The criterion is the **package name**, not the sourceId: installing `@streamapp/xhs` → same name as that package in the built-in layer → full names identical one by one →
+the user layer covers the built-in layer wholesale. So an override is **always a self-upgrade**, and a third-party package cannot cover an official source (full names start with the package name,
+so the namespaces of two packages are naturally separate). The rule "non-official scope overriding a built-in source → elevated" in `risk.ts` therefore
+never fires — it was not deleted but rewritten as the assertion `assertOverridesAreSelfUpgrade`: if it does fire, something is wrong with prefix composition
+or preview, and it must be reported loudly rather than silently walking into a stricter confirmation box and calling it done.
 
-### 6.7 安装期会拒掉什么（对包作者最有用的一张表）
+### 6.7 What is rejected at install time (the most useful table for package authors)
 
-同一把尺同时管 npm tarball 与本地 zip 导入（`assertInstallable`），换个入口绕不过去：
+The same yardstick governs both npm tarballs and local zip import (`assertInstallable`); switching the entry point does not get around it:
 
-| 拒绝理由 | 触发条件 |
+| Reason for rejection | Trigger |
 |---|---|
-| schemaVersion 过高 | 旧形 `stream.schemaVersion` 超过本应用支持的上界 |
-| hostVersion 不满足 / 写法不支持 / 宿主版本读不到 | 见 §6.3 |
-| 容器声明不合规 | `backend` 里写了 `service`/`publish`/`dev`/`user`、缺 `mem` 或 `mem` 解析不了、`image` 没钉版本（无 tag / `:latest`）、卷是宿主 bind 或超量、env 超量或用了 `STREAM_` 前缀名（整张表见 §6.2；`gpu` 与 `mem` 大小不钳） |
-| 撞容器 service 名 | `stream.id` 指派出的 service 名已被内置包或另一个已装第三方包占着 |
-| 撞内置**插件**包 id | `stream.id` 与一个**填了插件槽位**的内置包（有 `backend` / `code` / `normalizer` / `sources` / `sourceGrouping` / `credentials` 任一格，见 `fillsPluginSlot`）同名。撞上内置**纯 recipe 包**的 id **不拒**——那是受支持的覆盖（见 §6.6 的 `overrides`）。**同 npm 名的内置包不算撞**：装 `@streamapp/xhs` 的新版就是装内置 xhs 那同一个包，占用表按正在装的 npm 名把那一个内置包剔掉（`occupiedByBuiltins(packages, selfPkgName)`），启动时按 §0.5 的尺子只装载版本高的一层 |
-| 撞 adapter 名 | 申报的 adapter 名已被**内置包**（同 npm 名的那个除外，同上）、**另一个已装的第三方包**或宿主四件（`builtin`/`rsshub`/`replay`/`browser`）占用 |
-| 撞 normalizer 名 | 申报的 normalizer 名已被内置包（同 npm 名的那个除外）或另一个已装的第三方包占用 |
-| 撞 enricher 名 | 申报的 `code.enrichers` 名已被内置包（同 npm 名的那个除外）、另一个已装的第三方包，或宿主自己的 `/api/enrich` 源（`HOST_ENRICH_SOURCES`）占用。启动期撞上是「两边都不激活」→ packages 域起不来，所以装之前拒 |
-| 撞 connect 域名 | 申报的 `code.connect` 域名（按小写比）已被内置包（同 npm 名的那个除外）或另一个已装的第三方包占用——同一个站点只能有一个包提供一键订阅 |
-| **tarball 里有重复路径** | 同一个路径出现多次（校验读第一份、落盘留最后一份 = 用户批准的和装上的不是同一份字节） |
-| 代码入口路径不对 | `stream.code.entry` 不是 `dist/index.js`；`stream.capability` 不是同一个字面量 |
-| 申报了代码但没有文件 | 声明 `stream.code` **或 `stream.capability`**，包里没有 `dist/index.js` |
-| **夹带代码** | 包里有 `dist/index.js`，却两格都没声明 |
-| 白名单外的文件 | 任何其他含 `/` 或 `\` 的路径，或不在受理扩展名清单里的顶层文件 |
-| sourceId 撞车 | **同一包内** sourceId 重复（两份会合成同一个全名，后一份静默盖掉前一份）。跨包同名不是冲突——全名带包名前缀，两个包产不出同一个 id（§1.1） |
-| 局部名文法不合 | `manifests.yaml` 的 `id` 或 recipe 的 `sourceId` 含 `/` 或 `:`（§1.1） |
-| 体积 / 数量超限 | tarball > 2MB、解包 > 20MB、条目 > 200 |
-| 包名文法不合 / 名字对不上 | 包名不符 npm 文法，或 tarball 里的 `package.json#name` 与请求的名字不一致 |
-| tarball 完整性对不上 | integrity 与 registry 给的不符，或 preview 之后包被换过（confirm token 不匹配） |
+| schemaVersion too high | the old-form `stream.schemaVersion` exceeds the upper bound this app supports |
+| hostVersion not satisfied / spelling unsupported / host version unreadable | see §6.3 |
+| Container declaration non-compliant | `backend` writes `service`/`publish`/`dev`/`user`, lacks `mem` or `mem` cannot be parsed, `image` is not pinned (no tag / `:latest`), a volume is a host bind or over the limit, env is over the limit or uses a `STREAM_`-prefixed name (the whole table is in §6.2; the sizes of `gpu` and `mem` are not clamped) |
+| Container service name collision | the service name assigned from `stream.id` is already held by a built-in package or another installed third-party package |
+| Collision with a built-in **plugin** package id | `stream.id` has the same name as a built-in package that **fills a plugin slot** (any of `backend` / `code` / `normalizer` / `sources` / `sourceGrouping` / `credentials`, see `fillsPluginSlot`). Colliding with the id of a built-in **pure recipe package** is **not rejected** — that is a supported override (see `overrides` in §6.6). **A built-in package with the same npm name does not count as a collision**: installing a new version of `@streamapp/xhs` is installing that same package as the built-in xhs, and the occupancy table removes that one built-in package by the npm name being installed (`occupiedByBuiltins(packages, selfPkgName)`); at startup, per the yardstick in §0.5, only the layer with the higher version is loaded |
+| Adapter name collision | the declared adapter name is already taken by a **built-in package** (except the one with the same npm name, as above), **another installed third-party package**, or the host's four (`builtin`/`rsshub`/`replay`/`browser`) |
+| Normalizer name collision | the declared normalizer name is already taken by a built-in package (except the one with the same npm name) or another installed third-party package |
+| Enricher name collision | the declared `code.enrichers` name is already taken by a built-in package (except the one with the same npm name), another installed third-party package, or the host's own `/api/enrich` sources (`HOST_ENRICH_SOURCES`). A collision at startup means "neither side is activated" → the packages domain cannot start, so it is rejected before installation |
+| Connect domain collision | the declared `code.connect` domain (compared in lowercase) is already taken by a built-in package (except the one with the same npm name) or another installed third-party package — one site can have only one package providing one-click subscribe |
+| **Duplicate paths in the tarball** | the same path appears more than once (validation reads the first copy and the disk keeps the last = what the user approved and what was installed are not the same bytes) |
+| Wrong code entry path | `stream.code.entry` is not `dist/index.js`; `stream.capability` is not the same literal |
+| Code declared but no file | `stream.code` **or `stream.capability`** is declared and the package has no `dist/index.js` |
+| **Smuggled code** | the package has `dist/index.js` but neither field declares it |
+| Files outside the allowlist | any other path containing `/` or `\`, or a top-level file not in the accepted-extension list |
+| sourceId clash | a sourceId is duplicated **within the same package** (two would be composed into the same full name, and the latter silently overwrites the former). The same name across packages is not a conflict — full names carry the package-name prefix, and two packages cannot produce the same id (§1.1) |
+| Local-name grammar violation | the `id` in `manifests.yaml` or the `sourceId` of a recipe contains `/` or `:` (§1.1) |
+| Size / count over the limit | tarball > 2MB, unpacked > 20MB, entries > 200 |
+| Package-name grammar violation / name mismatch | the package name does not fit npm grammar, or `package.json#name` in the tarball differs from the requested name |
+| Tarball integrity mismatch | the integrity does not match what the registry gave, or the package was swapped after preview (the confirm token does not match) |
 
-### 6.8 装载时的两条来路
+### 6.8 The two routes at load time
 
-启动时 `activatePackages` 取模块有两条路：内置包走 `packages/index.ts` 的**静态 import 表**，用户目录里带 `code` 的第三方包走运行时 **`import(file://…/dist/index.js)`**。
+At startup `activatePackages` obtains modules by two routes: built-in packages go through the **static import table** in `packages/index.ts`, and third-party packages in the user directory that carry `code` go through the runtime **`import(file://…/dist/index.js)`**.
 
-**路由按包对象身份，不按 id**——包对象是宿主扫出来的，包里写什么都伪造不了；按 id 建集合的话，第三方把 `stream.id` 写成 `alist` 就会把**内置** alist 也判成动态、去 import 它的 `.ts` 源码（发行 bundle 里不出货）→ 后端起不来。同理别把它换成写在包对象上的 `layer` 字段。
+**Routing is by package object identity, not by id** — the package object is scanned by the host, and nothing written inside a package can forge it; if a set were built by id, a third party writing `stream.id` as `alist` would get the **built-in** alist judged as dynamic too and the host would try to import its `.ts` source (not shipped in the release bundle) → the backend would not start. For the same reason, do not swap this for a `layer` field written on the package object.
 
-`code.entry` 还要 resolve 后确认收在包目录内（`../../…`、绝对路径一律拒）。
+`code.entry` is also resolved and confirmed to stay inside the package directory (`../../…` and absolute paths are always rejected).
 
-**检查同步、执行异步**：`activatePackages` 本体**不是 `async function`**，第一段（撞名、保留名、包目录边界、漏进 import 表）在返回那个 Promise 之前就同步抛。这不是花招——`import()` 本身就会执行模块顶层代码，`activate` 都不用被调，所以"这个名字能不能注册"的确认必须早于任何 import，而"同步抛出的一定发生在 import 之前"是控制流保证的，测试能直接用 `expect(() => …).toThrow()` 钉住。
+**Check synchronously, execute asynchronously**: `activatePackages` itself is **not an `async function`**, and its first phase (name collisions, reserved names, package-directory boundary, leaking into the import table) throws synchronously before the Promise is returned. This is not a trick — `import()` itself executes the module's top-level code, with no need for `activate` to be called, so the confirmation of "can this name be registered" must come before any import, and "a synchronous throw necessarily happens before import" is guaranteed by control flow, so tests can pin it directly with `expect(() => …).toThrow()`.
 
-**失败分两档，差别是"这是谁的代码"**：
+**Failure comes in two tiers; the difference is "whose code is it"**:
 
-| 什么时候 | 内置包（静态表） | 第三方包（动态 import） |
+| When | Built-in package (static table) | Third-party package (dynamic import) |
 |---|---|---|
-| **名字检查**（撞名 / 保留名 / entry 路径越界，第一段，执行之前） | 致命，后端不启动 | 致命，后端不启动 |
-| **执行期**（`import()` 抛错、模块顶层炸、没导出 `activate`、交出来的名单与申报对不上） | 致命，后端不启动 | **只这个包不生效**：记一条日志 + 发一条通知（`package.activate-failed`），bootstrap 照常走完 |
+| **Name checks** (name collision / reserved name / entry path out of bounds; first phase, before execution) | Fatal, the backend does not start | Fatal, the backend does not start |
+| **Execution time** (`import()` throws, module top level blows up, no `activate` exported, the list handed back does not match the declaration) | Fatal, the backend does not start | **Only that package does not take effect**: one log line + one notification (`package.activate-failed`), and bootstrap runs to completion as usual |
 
-名字检查发生在任何包代码跑起来之前，是信任边界的一部分，**不许降级**。执行期就不同了：第三方包漏打一个依赖不该让整个 Stream 起不来——起不来的话用户在 UI 里根本恢复不了，只能去翻文件系统删包。内置包反过来，那是我们自己的代码，坏了就该起不来。
+Name checks happen before any package code runs and are part of the trust boundary; **they must not be downgraded**. Execution time is different: a third-party package forgetting to bundle one dependency should not stop the whole of Stream from starting — if it did, the user could not recover from the UI at all and would have to dig through the filesystem to delete the package. Built-in packages are the reverse: that is our own code, and if it is broken it should fail to start.
 
 ---
 
-## 7. 起容器
+## 7. Bringing up containers
 
-### 7.1 生成 compose
+### 7.1 Generating the compose
 
-compose **不是手写的静态文件**——它从**当前激活的插件集**生成（`generateCompose`，`src/plugins/compose.ts`，纯函数、键排序、确定性可 diff）。
+The compose is **not a hand-written static file** — it is generated from the **currently active plugin set** (`generateCompose`, `src/plugins/compose.ts`, a pure function with sorted keys, deterministic and diffable).
 
-打印生成的 compose：
+Print the generated compose:
 
 ```bash
 pnpm plugins compose            # = tsx src/plugins/cli.ts compose
 ```
 
-输出（当前激活集为 douyin，**下例只截取插件后端部分**）：
+Output (the currently active set is douyin; **the example below shows only the plugin-backend part**):
 
 ```yaml
 networks:
@@ -2167,133 +2173,132 @@ services:
       - stream
 ```
 
-> **注意**：默认输出里**只有插件容器**——Stream 自己的后端跑在宿主上、自己就是那扇门，没有 `serve-backend`/`gateway`，也不写 `./Caddyfile`。要整套容器（NAS/VPS 自托管）用 `pnpm plugins compose --selfhost`：那一档才注入那两件 + 顶层 `volumes: { stream-data }`，并副写 `./Caddyfile`（stderr 打 `[plugins] wrote ./Caddyfile`）。上例为聚焦插件而截取，完整产物以实跑为准。
+> **Note**: the default output contains **only plugin containers** — Stream's own backend runs on the host and is itself the front door; there is no `serve-backend`/`gateway`, and no `./Caddyfile` is written. For the whole set of containers (NAS/VPS self-hosting) use `pnpm plugins compose --selfhost`: only that tier injects those two plus a top-level `volumes: { stream-data }`, and also writes `./Caddyfile` on the side (stderr prints `[plugins] wrote ./Caddyfile`). The example above is excerpted to focus on plugins; the actual run is authoritative for the full output.
 
-起停（幂等——`up -d` 会 reconcile 到当前激活集）：
+Start and stop (idempotent — `up -d` reconciles to the currently active set):
 
 ```bash
 pnpm plugins compose > docker-compose.yml
 docker compose up -d
 ```
 
-> ⚠️ **别用 `docker compose down` 收摊插件层。** 它把容器**删掉**，而 standby 只会启停、不会创建
-> ——之后任何 `/_p/<plugin>` 都秒回 502（inspect 找不到容器，不是"睡着了"）。要停就 `stop`；已经
-> `down` 过就 `docker compose create` 把它们建回来（不启动，standby 照旧按需唤醒）。
+> ⚠️ **Do not use `docker compose down` to shut down the plugin layer.** It **deletes** the containers, while standby can only start and stop, never create
+> — afterwards any `/_p/<plugin>` returns 502 immediately (inspect cannot find the container; it is not "asleep"). To stop, use `stop`; if you have already
+> run `down`, run `docker compose create` to build them back (without starting them; standby wakes them on demand as before).
 
-> ⚠️ **改了生成器就得重新生成，并且 `--force-recreate` 那个容器。** `docker-compose.yml` 是**产物**，
-> 不跟着 `src/plugins/compose.ts` 走；容器的 healthcheck、卷、内存上限在**创建那一刻**就烤进去了，
-> 后来改生成器一概不影响已存在的容器，而 `docker compose up -d` 只在 compose 文件**本身**变了时
-> 才重建。
+> ⚠️ **After changing the generator you must regenerate, and `--force-recreate` that container.** `docker-compose.yml` is a **product**
+> and does not follow `src/plugins/compose.ts`; a container's healthcheck, volumes and memory limit are baked in **at the moment it is created**,
+> so later changes to the generator do not affect existing containers at all, and `docker compose up -d` recreates only when the compose file **itself** has changed.
 >
-> 这条失败得极安静，实测撞过：探针曾经写死一条 `wget`，抖音那个镜像里根本没有 wget，于是容器
-> **Up 着、永远 unhealthy**（连败 128 次），服务本身好好的（直连 `/docs` 返回 200），只是宿主拿不到
-> 它的基址——报出来是 `Failed to parse URL from /api/hybrid/video_data?…`，**看着像代码 bug，
-> 其实是基础设施状态**。生成器早就修成了 `wget || curl || python3` 三选一、还有测试钉着，而盘上那份
-> compose 停在三周前，所有容器都建在坏探针上。判法：
+> This failure is extremely quiet, and has been hit in practice: the probe once hard-coded a `wget`, the Douyin image has no wget at all, so the container was
+> **Up and forever unhealthy** (128 consecutive failures) while the service itself was fine (a direct `/docs` returned 200), and only the host could not get
+> its base address — reported as `Failed to parse URL from /api/hybrid/video_data?…`, which **looks like a code bug but
+> is actually infrastructure state**. The generator had long been fixed to pick one of `wget || curl || python3`, with a test pinning it, but the compose on disk
+> was stuck at three weeks earlier, and all containers were built on the broken probe. How to tell:
 >
 > ```bash
-> docker inspect <容器> --format '{{json .State.Health}}'   # 看 FailingStreak 和探针原始输出
+> docker inspect <container> --format '{{json .State.Health}}'   # look at FailingStreak and the probe's raw output
 > ```
 
-**开发（base 镜像 + 挂源码 + reload，零 rebuild）**：descriptor 的 `backend.dev` 声明 base 镜像 + 挂载路径 + reload 命令；`--dev` 输出**只含 dev delta** 的 override，compose **自动合并** `docker-compose.yml` + `docker-compose.override.yml`：
+**Development (base image + mounted source + reload, zero rebuild)**: the descriptor's `backend.dev` declares a base image + mount path + reload command; `--dev` outputs an override containing **only the dev delta**, and compose **automatically merges** `docker-compose.yml` + `docker-compose.override.yml`:
 
 ```bash
-pnpm plugins compose       > docker-compose.yml            # baked 镜像（分发默认）
-pnpm plugins compose --dev > docker-compose.override.yml   # 仅开发：被 dev 的服务换成 base+挂载+reload
-docker compose up -d                                        # 两个文件自动合并
+pnpm plugins compose       > docker-compose.yml            # baked image (distribution default)
+pnpm plugins compose --dev > docker-compose.override.yml   # development only: services under dev switch to base + mount + reload
+docker compose up -d                                        # the two files merge automatically
 ```
 
-无 `backend.dev` 的插件不出现在 override 里 → 保持各自 baked 镜像。改源码即生效——**没有 rebuild、没有「重新部署」**。`backend.dev` = `{ image, mount, workdir?, command }`（见 §10 douyin 范例）。
+Plugins without `backend.dev` do not appear in the override → they keep their respective baked images. Changing source takes effect immediately — **no rebuild, no "redeploy"**. `backend.dev` = `{ image, mount, workdir?, command }` (see the douyin example in §10).
 
-网关端口/路由规则、`expose` vs `publish` 的区别、排错顺序 → **专题见 `docs/GATEWAY.md`**（后端连不上/端口对不上先读它）。
+For gateway ports/routing rules, the difference between `expose` and `publish`, and the troubleshooting order → **see the dedicated topic `docs/GATEWAY.md`** (read it first when the backend cannot connect or ports do not line up).
 
-### 7.2 后端自己接管容器（`manage_containers`，默认关）
+### 7.2 The backend takes over containers itself (`manage_containers`, off by default)
 
-发行版用户没有仓库、也没有 compose CLI。`config.yaml` 写 `manage_containers: true`（或 `STREAM_MANAGE_CONTAINERS=1`）后，后端启动时按各插件的 `stream.backend` 声明**自己**把容器备齐：没有就 `pull` + `create` + `start`，已经在跑就一次 `list`+`inspect` 什么都不做。建出来的容器带 standby 认得的 label，两条路（compose / 后端接管）产出的容器长得一模一样。
+Users of the released distribution have no repository and no compose CLI. After `config.yaml` sets `manage_containers: true` (or `STREAM_MANAGE_CONTAINERS=1`), at startup the backend prepares the containers **itself** according to each plugin's `stream.backend` declaration: if one is missing it does `pull` + `create` + `start`, and if it is already running it does one `list`+`inspect` and nothing else. The containers it creates carry the labels standby recognizes, so the containers produced by the two routes (compose / backend takeover) look exactly the same.
 
-**备齐管「有没有」，standby 管「转不转」。** 容器已存在但**停着**时，备齐**不动它**（`'asleep'`，零写操作）——那个"停着"是 standby 的闲置回收刚做出的正确决定，起了就是两个主人抢同一件事，而后端每重启一次就把睡着的容器全叫醒一遍（开发期每存一次文件就重启一次），standby 省内存那件事整个作废。唯一会被备齐起来的是**没声明 `backend.standby` 的常驻容器**——没人负责唤醒它。
+**Preparation governs "does it exist", standby governs "is it running".** When a container exists but is **stopped**, preparation **leaves it alone** (`'asleep'`, zero write operations) — that "stopped" is a correct decision standby's idle reclaim has just made, and starting it would put two owners fighting over the same thing, and every backend restart would wake all the sleeping containers (during development, a restart on every file save), voiding standby's memory saving altogether. The only ones preparation will start are **resident containers that did not declare `backend.standby`** — nobody is responsible for waking them.
 
-**默认关闭，关着时一个 docker 写操作都不发**——容器照旧归上面的 compose 管。
+**Off by default, and while off not a single docker write operation is issued** — containers are still governed by compose above.
 
-内置包（`packages/`）和用户装的第三方包（`<dataDir>/recipes/`）走的是**同一条线**：都会被接管建容器、
-都进 standby 名册（所以第三方那份兜底的 `standby: { idleMinutes: 30 }` 真的有 reaper 收）、
-申报了 `credentials` 就都由宿主在调用时派发登录态。第三方多两道运行时闸门：
-缺 `mem` 拒绝创建、卷里的宿主路径 bind 拒绝（盘上的 `package.json` 装完之后被手改那条路）。
+Built-in packages (`packages/`) and third-party packages installed by the user (`<dataDir>/recipes/`) go through **the same line**: both are taken over and have containers created,
+both enter the standby roster (so the fallback `standby: { idleMinutes: 30 }` of third parties really has a reaper collecting it),
+and if `credentials` is declared both get login state dispatched by the host at call time. Third parties have two extra runtime gates:
+creation is refused when `mem` is missing, and a host-path bind in volumes is refused (the route where the `package.json` on disk is hand-edited after installation).
 
-两条守则（`src/plugins/provision-wire.ts`）：
+Two rules (`src/plugins/provision-wire.ts`):
 
-- **镜像与声明对不上就删了重建**（包升级换了 image tag 的那一刻），不问、不给按钮，重建完在通知中心发一条 info 通报。前提是 §4.1 那条不变量：容器层不许住状态。
-- **docker 够不着不掀翻启动**：一条日志 + 一条 error 通知，Stream 其余部分照跑。
+- **When the image and the declaration disagree, delete and rebuild** (the moment a package upgrade changes the image tag), without asking and without a button, and after the rebuild send an info notice in the notification center. The premise is the invariant in §4.1: the container layer must not hold state.
+- **An unreachable docker does not topple startup**: one log line + one error notification, and the rest of Stream runs as usual.
 
-`backend.publish`（自带管理 UI 的固定宿主口，如 AList）这条路它还不支持——声明了就发一条通知说明该端口不会被发布，那个容器仍需走 compose。
+`backend.publish` (a fixed host port for a self-contained management UI, such as AList) is not yet supported on this route — declaring it sends a notification explaining that the port will not be published, and that container still has to go through compose.
 
 ---
 
-## 8. Plugin / Source catalog（`/channels` 的读模型）
+## 8. Plugin / Source catalog (the read model of `/channels`)
 
-前端 `/channels` 看到的不是「manifest 列表」，而是一个 **server-owned 的两层目录**：
+What the frontend `/channels` sees is not a "manifest list" but a **server-owned two-layer catalog**:
 
 ```text
-Plugin              能力包边界：存在什么、怎么启动、健康/配置状态、广义能力
-  owns Source[]     可绑定进 Stream / Provider 的具体入口（每个 source manifest = 一个 Source；订阅本身指向 Channel）
+Plugin              capability-package boundary: what exists, how it starts, health/config status, broad capabilities
+  owns Source[]     concrete entry points that can be bound into a Stream / Provider (each source manifest = one Source; a subscription itself points to a Channel)
 Source
-  categories[]      只是 Plugin 内的分面（filter/tab）——不决定归属
-  facility?         该 Source 所属的外部设施（{key,label}），可作为 manifest.facility 分组 resolver 的输入
-  capabilities[]    该 Source 的最小可执行契约（驱动 UI 控件与执行校验）
-  detail 按需加载    docs / params schema / examples / credentials 只在打开 Source 时取
+  categories[]      merely facets inside a Plugin (filter/tab) — they do not decide ownership
+  facility?         the external facility this Source belongs to ({key,label}), usable as input to the manifest.facility grouping resolver
+  capabilities[]    the minimal executable contract of this Source (drives UI controls and execution validation)
+  detail loaded on demand    docs / params schema / examples / credentials are fetched only when a Source is opened
 ```
 
-四条不变量（`openspec/specs/plugin-source-catalog/`）：
+Four invariants (`openspec/specs/plugin-source-catalog/`):
 
-1. **Plugin 是唯一归属边**。`Source.pluginId` 由后端给定，前端**不许**靠 `id.startsWith('rsshub:')` 或 adapter 前缀去猜归属。
-2. **category 是分面不是归属**。换 category 分组不会把 Source 移出它所属的 Plugin。
-3. **list 轻、detail 重**。列表只回 summary（id/title/categories/capabilities/auth/badges/param 计数），**不带** docs markdown 和完整 params schema；那些留给 detail。
-4. **source grouping 只能由 Plugin descriptor 显式开启**。`packages/<id>/package.json` 里 `stream.sourceGrouping` 决定 Plugin 是否显示一级分组页，以及后端调用哪个 resolver：`manifest.facility` 读取 Source 的 `facility` 字段，`adapter.<function>` 调用当前 Plugin runtime 的 adapter 分组函数，`plugin.<function>` 调用当前 Plugin runtime 的 plugin 分组函数。`facility` 本身只是分面/元数据，不能让前端推断分组；没解析出 group 的 Source 落进显式的「未分类」（`key: ''`）组。
+1. **The Plugin is the only ownership boundary**. `Source.pluginId` is supplied by the backend, and the frontend **must not** guess ownership via `id.startsWith('rsshub:')` or an adapter prefix.
+2. **A category is a facet, not ownership**. Changing how categories are grouped never moves a Source out of the Plugin it belongs to.
+3. **The list is light, the detail is heavy**. The list returns only a summary (id/title/categories/capabilities/auth/badges/param counts), **without** docs markdown or the full params schema; those are left to the detail.
+4. **Source grouping can be enabled only explicitly by the Plugin descriptor**. `stream.sourceGrouping` in `packages/<id>/package.json` decides whether the Plugin shows a first-level grouping page and which resolver the backend calls: `manifest.facility` reads the Source's `facility` field, `adapter.<function>` calls the adapter grouping function of the current Plugin runtime, and `plugin.<function>` calls the plugin grouping function of the current Plugin runtime. `facility` by itself is only a facet/metadata and must not let the frontend infer a grouping; a Source for which no group is resolved falls into the explicit 「未分类」 ("Uncategorized", `key: ''`) group.
 
-四个端点（`src/http/app.ts`，读模型在 `src/mcp/tools.ts` 的 `StreamService`）：
+Four endpoints (`src/http/app.ts`; the read model is `StreamService` in `src/mcp/tools.ts`):
 
 ```text
 GET /api/plugins                                  → PluginSummary[]
-GET /api/plugins/sources                          → { sources, plugins, facets, nextCursor?, total? }   (跨插件源搜索，按 plugin 分组)
+GET /api/plugins/sources                          → { sources, plugins, facets, nextCursor?, total? }   (cross-plugin Source search, grouped by plugin)
 GET /api/plugins/:pluginId/sources                → { plugin, sources: SourceSummary[], groups, facets, nextCursor?, total? }
-GET /api/plugins/:pluginId/sources/:sourceId      → SourceDetail   (sourceId URL-encoded：RSSHub id 含 : 和 /)
+GET /api/plugins/:pluginId/sources/:sourceId      → SourceDetail   (sourceId URL-encoded: RSSHub ids contain : and /)
 ```
 
-> 跨插件源搜索的 MCP 对应工具是 `stream_sources`（faceted，按 plugin 分组）；`stream_search` 仍是意图排序的发现工具，二者职责不同。
+> The MCP counterpart of cross-plugin Source search is `stream_sources` (faceted, grouped by plugin); `stream_search` remains the intent-ranked discovery tool, and the two have different responsibilities.
 
-**Plugin 展示元数据只来自 descriptor**（`packages/<id>/package.json` 里 `stream.name/tagline/description/homepage/repository/docsUrl`）——`plugins()` 里 `pluginMetadata(descriptors, id)` 是唯一来源，无 descriptor 的插件回落到裸 `id`。**不要**在 `tools.ts` 里再写一份硬编码文案。
+**Plugin display metadata comes only from the descriptor** (`stream.name/tagline/description/homepage/repository/docsUrl` in `packages/<id>/package.json`) — `pluginMetadata(descriptors, id)` inside `plugins()` is the only source, and a plugin without a descriptor falls back to the bare `id`. **Do not** write a second hard-coded copy of the text in `tools.ts`.
 
-> 当前债（design Risks 已记）：`status`/`launch.health` 除了 `mergePluginStatus` 接入的运行态外仍多为占位。归属边（`src/registry/seal.ts` 的 `pluginIdForDescriptor` / `pluginIdOf`）只认 `package.json#stream.id` 与 manifest 自己写的 `adapter`，宿主不替任何包维护别名。重点边界已达成：**前端不猜归属**。
+> Current debt (recorded in the design Risks): apart from the runtime state wired in by `mergePluginStatus`, `status`/`launch.health` are still mostly placeholders. The ownership boundary (`pluginIdForDescriptor` / `pluginIdOf` in `src/registry/seal.ts`) recognizes only `package.json#stream.id` and the `adapter` the manifest itself writes; the host maintains no aliases for any package. The key boundary has been achieved: **the frontend does not guess ownership**.
 
 ---
 
-## 9. 来源 failover + 健康台账 + doctor
+## 9. Source failover + health ledger + doctor
 
-一个 Stream（代码类型 `StreamRecord`，`src/store/types.ts`）的多个 `members` 默认是 **fan-out**（每周期全拉 + DedupStore 去重）。声明 `strategy: exclusive` 后，`members` 变成**有序阶梯**：调度器只拉**第一个 healthy 的源**，命中即停；硬错误时在同一 tick 内顺延到下一档。
+The multiple `members` of one Stream (code type `StreamRecord`, `src/store/types.ts`) are **fan-out** by default (pull everything every cycle + DedupStore deduplication). After declaring `strategy: exclusive`, `members` becomes an **ordered ladder**: the scheduler pulls only **the first healthy Source** and stops at the first hit; on a hard error it moves on to the next rung within the same tick.
 
-> 词汇对照（[ARCHITECTURE.md](ARCHITECTURE.md)）：这就是 Stream 的两种 `strategy`——fan-out ≡ `fanout`，容灾阶梯 ≡ `exclusive`。散文里的 "failover" 说的就是它，但**配置里只能写 `exclusive`**，写 `failover` 会被 user store 拒。
+> Vocabulary mapping ([ARCHITECTURE.md](ARCHITECTURE.md)): these are the two `strategy` values of a Stream — fan-out ≡ `fanout`, the disaster-recovery ladder ≡ `exclusive`. The "failover" in prose means exactly this, but **only `exclusive` may be written in configuration**; writing `failover` is rejected by the user store.
 
-**健康台账**（`src/source-health-store.ts`，JSON，keyed by `source_id`）记录每次**真实**拉取（缓存命中不记，design D3）：
-- 硬失败（`adapter.fetch` 抛错）→ 连续 2 次判 `dead`（1 次 `degraded`）。
-- 软失败（返回 `[]`）→ 仅当该源历史产出过（`lifetimeItemCount > 0`）且**连续空 ≥ K（默认 4）**才 `degraded`；安静源不误伤。
-- **re-probe**：每 M（默认 6）个 cadence 重探最高档非 healthy 源，成功则升回 `healthy`，选择自动回到它。
+The **health ledger** (`src/source-health-store.ts`, JSON, keyed by `source_id`) records every **real** pull (cache hits are not recorded, design D3):
+- Hard failure (`adapter.fetch` throws) → 2 consecutive failures mark it `dead` (1 marks it `degraded`).
+- Soft failure (returns `[]`) → marked `degraded` only if the Source has produced output historically (`lifetimeItemCount > 0`) **and has been empty ≥ K times in a row (default 4)**; quiet Sources are not wrongly penalized.
+- **re-probe**: every M (default 6) cadences the highest-ranked non-healthy Source is probed again; on success it is promoted back to `healthy`, and selection automatically returns to it.
 
-> 健康是 **Source 的全局属性**（keyed by `source_id`，跨流共享）；优先级是 **每个流 `members` 的顺序**（边属性）。台账是 failover 与 doctor 的**唯一共享真相**。
+> Health is a **global property of the Source** (keyed by `source_id`, shared across Streams); priority is **the order of each Stream's `members`** (an edge property). The ledger is the **only shared source of truth** for failover and doctor.
 
-**浏览器末档**：`adapter: browser` 的源渲染一个 URL 作为通用最后一档。渲染发生在**用户自己的 Chrome**（经扩展 relay，renderer 由 bootstrap 注入，adapter 自己没有默认实现——Stream 不带浏览器，这一档尤其不许偷偷再起一个）。放在 `members` 末尾，只有上面的源都 degraded/dead 时才触达。见 `packages/browser/manifests.yaml`（`browser-page`）。
+**Browser as the last rung**: a Source with `adapter: browser` renders a URL as the generic last rung. Rendering happens in **the user's own Chrome** (through the extension relay; the renderer is injected by bootstrap, and the adapter itself has no default implementation — Stream ships no browser, and this rung in particular must not quietly start another one). Put it at the end of `members`; it is reached only when all the Sources above are degraded/dead. See `packages/browser/manifests.yaml` (`browser-page`).
 
-**`pnpm doctor`**：读同一台账，逐源打印 active state / 退化原因（如 `empty ×6`）/ 缺凭证处方（`auth: cookie` 域在登录态快照里解析不到 → 提示去浏览器登录）。`pnpm doctor --reprobe <source>` 立即重探一个源。
+**`pnpm doctor`**: reads the same ledger and prints, per Source, the active state / degradation reason (such as `empty ×6`) / a prescription for missing credentials (the `auth: cookie` domain cannot be resolved in the login-state snapshot → prompts you to log in in the browser). `pnpm doctor --reprobe <source>` re-probes one Source immediately.
 
 ```jsonc
-// POST /api/streams —— 主源挂了自动退到备用源，最后兜底到浏览器
+// POST /api/streams — if the primary Source dies it automatically falls back to the backup Source, and finally falls back to the browser
 {
   "id": "my-music",
-  "label": "我的音乐收藏",
+  "label": "我的音乐收藏",   // "My music collection"
   "strategy": "exclusive",
-  "members": [                                                                    // 顺序 = 阶梯
-    { "plugin": "replay",  "source": "zuna-playlist", "params": { "id": "…" } },  // 主
-    { "plugin": "rsshub",  "source": "rsshub-raw",    "params": { "route": "…" } },  // 备
-    { "plugin": "browser", "source": "browser-page",  "params": { "url": "https://…" } }  // 末档兜底
+  "members": [                                                                    // order = ladder
+    { "plugin": "replay",  "source": "zuna-playlist", "params": { "id": "…" } },  // primary
+    { "plugin": "rsshub",  "source": "rsshub-raw",    "params": { "route": "…" } },  // backup
+    { "plugin": "browser", "source": "browser-page",  "params": { "url": "https://…" } }  // last-rung fallback
   ],
   "cadence_seconds": 1800,
   "options": { "vault_subdir": "music" }
@@ -2302,33 +2307,33 @@ GET /api/plugins/:pluginId/sources/:sourceId      → SourceDetail   (sourceId U
 
 ---
 
-## 10. 范例与模板
+## 10. Examples and templates
 
-一个完整插件最多 6 件：
+A complete plugin has at most 6 pieces:
 
-| # | 件 | 位置 | 必需？ |
+| # | Piece | Location | Required? |
 |---|----|------|--------|
-| a | adapter 类（mode → backend endpoint） | `packages/<id>/adapter.ts`（独占归属，默认）；仅被多插件共享/属应用核心时才放 `src/adapters/` | 是 |
-| b | plugin descriptor（catalog 展示字段 + backend 镜像 + credentials + normalizer） | `packages/<id>/package.json`（`stream` 字段） | 是 |
-| c | source manifest(s)（每个调用模式一个） | `packages/<id>/manifests.yaml`（顶层列表） | 是 |
-| d | normalizer（原始 item → 展示模型） | `packages/<id>/<facility>.ts`，由 `activate` 交出（§3） | 是 |
-| e | 声明凭证域（broker 服务） | descriptor 的 `credentials: [...]` | 仅当需要登录态 |
-| f | code 槽位：`activate(ctx)` + `stream.code` 名单（把 a/d 交给宿主注册） | `packages/<id>/activate.ts` + descriptor 的 `stream.code`（§3） | 有代码就必需 |
+| a | adapter class (mode → backend endpoint) | `packages/<id>/adapter.ts` (exclusively owned, the default); placed in `src/adapters/` only when shared by several plugins or part of the application core | Yes |
+| b | plugin descriptor (catalog display fields + backend mirror + credentials + normalizer) | `packages/<id>/package.json` (the `stream` field) | Yes |
+| c | source manifest(s) (one per call mode) | `packages/<id>/manifests.yaml` (top-level list) | Yes |
+| d | normalizer (raw item → display model) | `packages/<id>/<facility>.ts`, handed over by `activate` (§3) | Yes |
+| e | declared credential domains (broker service) | the descriptor's `credentials: [...]` | Only when a login state is needed |
+| f | code slot: `activate(ctx)` + the `stream.code` lists (hand a/d to the host to register) | `packages/<id>/activate.ts` + the descriptor's `stream.code` (§3) | Required whenever there is code |
 
-### 10.1 范例（完整）：douyin
+### 10.1 Example (complete): douyin
 
-**(a) adapter** —— `packages/Douyin_TikTok_Download_API/adapter/adapter.ts`（`DouyinTiktokDownloadApiAdapter`；同目录还有 executor / normalize / danmaku / play-addr 等实现件与 `__fixtures__/`）。一个对**外部已运行的 Douyin_TikTok_Download_API 容器**的薄 HTTP 客户端：整个包**一个 adapter**，按每个 source manifest 的声明式 `api.endpoint/query/unwrap` 路由到后端端点（见 `onboard-source` skill 的 references/via-external-backend.md），返回原始列表；`api.handler` 是逃生口，resolve / fetch-url 这类不是「列表」形状的成员走它。容器地址：
+**(a) adapter** — `packages/Douyin_TikTok_Download_API/adapter/adapter.ts` (`DouyinTiktokDownloadApiAdapter`; the same directory also holds the executor / normalize / danmaku / play-addr implementation pieces and `__fixtures__/`). A thin HTTP client for the **externally running Douyin_TikTok_Download_API container**: the whole package has **one adapter**, which routes to backend endpoints according to the declarative `api.endpoint/query/unwrap` of each source manifest (see references/via-external-backend.md in the `onboard-source` skill) and returns the raw list; `api.handler` is the escape hatch, used by members such as resolve / fetch-url whose shape is not a "list". The container address:
 
 ```
-env DOUYIN_API_URL（显式覆盖，比如用户自己跑的一份 http://10.0.0.21:3007）
-  →  ctx.backendUrl()（缺省：本包自己的 backend service，compose 档是容器 DNS、host 档是醒着的容器的 loopback 口）
+env DOUYIN_API_URL (explicit override, e.g. a copy the user runs themselves at http://10.0.0.21:3007)
+  →  ctx.backendUrl() (default: this package's own backend service; in the compose tier it is the container DNS name, in the host tier it is the loopback port of the awake container)
 ```
 
-`ctx.backendUrl` **递 thunk 不递值**（`() => ctx.backendUrl()`）：host 档下 loopback origin 只在容器醒着时存在，构造期快照必得空串。每次打容器都套 `ctx.withAwake`，睡着的容器先叫醒。宿主的 `config.yaml` 里**没有**这个容器的地址项——地址归包，宿主只管 resolver。
+`ctx.backendUrl` is **passed as a thunk, not as a value** (`() => ctx.backendUrl()`): in the host tier the loopback origin exists only while the container is awake, so a snapshot taken at construction time is always an empty string. Every call to the container is wrapped in `ctx.withAwake`, which wakes a sleeping container first. The host's `config.yaml` has **no** entry for this container's address — the address belongs to the package, and the host only manages the resolver.
 
-（登录态 mode（collection / follow / search）的 cookie 走 **adapter 路**：宿主经 manifest `auth: { type: cookie, domain: douyin.com }` 解析后注入 `init`/`sidecar.start`，adapter 把它当 query 参数传给容器 —— adapter 自己**不去要凭证**。user mode 是公开主页，`auth: none` 无需 cookie。）
+(The cookie for login-state modes (collection / follow / search) goes through the **adapter path**: the host resolves it via the manifest's `auth: { type: cookie, domain: douyin.com }` and injects it into `init`/`sidecar.start`, and the adapter passes it to the container as a query parameter — the adapter itself **does not ask for credentials**. The user mode is a public profile page, with `auth: none` and no cookie needed.)
 
-**(b) descriptor** —— `packages/Douyin_TikTok_Download_API/package.json`：
+**(b) descriptor** — `packages/Douyin_TikTok_Download_API/package.json`:
 
 ```json
 {
@@ -2388,58 +2393,60 @@ env DOUYIN_API_URL（显式覆盖，比如用户自己跑的一份 http://10.0.0
 }
 ```
 
-> `providers[]` 四行是这个包对外的**能力面**（§0.5）：`resolve` 行按 `<平台>-video` 被 `GET /api/media/play|dash`
-> 与转写 / 抽帧取字节派发到，`transform` 行按 `<平台>-link` 被 `stream_fetch_url` / `GET /api/media/from-url` 派发到
-> （认领函数按 `links.hosts` 的后缀匹配认平台，`douyin.com` 一条盖住 `www.` / `v.`；一包两平台，所以每个 host 显式写 `platform`）。**每行都写了 `callsites`**——
-> 不写就没有任何调用点会问它。成员合同：`*-resolve` 收 `{ vid, format }` 回 `VideoResolved[]`（`[]` = decline，
-> `dash` 如实回空；作品被删 / 私密**抛** `ContentUnavailableError`，播放路由据此回 404 而不是 502）；`*-fetch-url`
-> 收 `{ url }`、manifest `output: object`，回 `[FetchUrlResult]`。`vid` 的形状归包：抖音是 `aweme_id`、TikTok 是
-> 作品 `id`（都是数字串），解析器按 id 拼一条主站链接交容器；**不用分享链接当 vid**——它是派发键与进度键的一半，
-> 一条带签名参数的分享链接每次都不同。
+> The Chinese strings in this descriptor are literal catalog / UI strings and stay Chinese: `name` "抖音 / TikTok" (Douyin / TikTok), `tagline` "视频平台搜索与解析服务" ("video platform search and resolve service"), `description` "抖音搜索、用户作品、关注流、合集与视频媒体解析。" ("Douyin search, user works, follow streams, collections and video media resolution."), and the provider `label`s "douyin 视频解析" ("douyin video resolve"), "tiktok 视频解析" ("tiktok video resolve"), "抖音链接抓媒体" ("Douyin link media fetch"), "TikTok 链接抓媒体" ("TikTok link media fetch"). The provider `description`s read: "work id → play_addr direct CDN (with Referer, range streaming)"; "links on douyin.com / iesdouyin.com / v.douyin.com → title, author and playable address"; "links on tiktok.com → title, author and playable address".
 
-> 顶层 `name`/`version`/`files`/`scripts` 是 npm 壳（带 code 的包发 npm，所以不写 `private`；`bundle` / `prepack` /
-> `files` 那三格是 §3.8 的出货形状）；领域字段一律在 `stream` 里。
-> **`"type": "module"` 必写**（`src/plugins/loader.real.test.ts` 守着）：Node 认**最近的**
-> package.json，`packages/<id>/package.json` 一存在，仓库根那句 `"type": "module"` 就管不到这棵
-> 子树了。漏写 = 整个 `packages/<id>/**` 按 CommonJS 解析，它 `import` 的每个 `src/**` 模块都会在
-> CJS 缓存里**多出一份副本**——bootstrap 在 ESM 那份上接的线（`setPluginTargetResolver` /
-> `setStandbyManager`）插件永远看不到：host 档下 `pluginTarget()` 恒 null（base 空串 → fetch 一个
-> 相对 URL → `Failed to parse URL`）、`withAwake()` 变 no-op、`standbyOrigin()` 恒 null。
-> 不报错、单测也照绿（测试进程里两份副本都没接线），只有活体 host 档才炸。
-> **撞到 `Failed to parse URL` 先看 DebugBox 的 `plugin-target` 频道**：`pluginTarget()` 每次答空
-> 都会记一条现场（reason、容器在不在、standby 认为它是什么状态、现场 inspect 出来的宿主口 vs
-> 缓存的 origin），够直接分清是「没醒」「名单漏了它」还是「缓存陈旧」。事后翻旧账读落盘那份
-> （环只有 200 条、重启即清空）：`grep '"plugin-target"' data/debug-failures.jsonl`。
-> **`reason: not-awake` 绝大多数是常态噪音，不是现场**：能力探测每分钟问一遍地址，容器被 standby
-> 睡着就如实答空（实测 21 小时 1184 条，内容一字不差）。落盘会把它们折叠，**带 `_repeated` 的行
-> 就是这类**。要找的现场长成另一个样子：没有 `_repeated`，且 standby 说 `awake`（那就是没醒之外
-> 的毛病）或缓存 origin 与现场 inspect 出的宿主口对不上（那就是 Cell 缓存陈旧）。
-> `name/tagline/description` 是 catalog 展示字段（§8），Plugin 元数据的唯一来源。
-> `image` 用设施自己发布的镜像；`service` 是 compose 服务名（缺省 = `id`），gateway 走 `/_p/<service>`；
-> `health` 返 2xx 即 ready（缺省 `/`）——**挑设施自己那个专门的健康端点，别拿首页或文档页顶替**：
-> 探针每 10 秒打一次、只要容器活着就一直打，抖音那个设施 `/health` 是 65 字节 2.6ms，
-> `/docs`（Swagger 页）958 字节、`/` 首页 7.6KB。选之前 `curl -w '%{size_download} %{time_total}'`
-> 挨个量一遍，几秒钟的事；声明了 `backend.dev` 的包在 `compose --dev` 时挂源码热跑（这个包跑 baked 镜像，没声明）；
-> `credentials` 里的域是宿主**可以**把登录态交给这个包的许可名单（方向见 §5.1，包不索取）。
+> The four `providers[]` rows are this package's outward **capability surface** (§0.5): `resolve` rows are dispatched to by `<platform>-video`, from `GET /api/media/play|dash`
+> and from transcription / frame extraction fetching bytes; `transform` rows are dispatched to by `<platform>-link`, from `stream_fetch_url` / `GET /api/media/from-url`
+> (the claim function recognizes the platform by suffix-matching `links.hosts`, so the single `douyin.com` entry covers `www.` / `v.`; one package serves two platforms, so every host spells out `platform` explicitly). **Every row declares `callsites`** —
+> without them no callsite ever asks for it. Member contract: `*-resolve` takes `{ vid, format }` and returns `VideoResolved[]` (`[]` = decline,
+> `dash` honestly returns empty; a deleted / private work **throws** `ContentUnavailableError`, which the play route turns into a 404 rather than a 502); `*-fetch-url`
+> takes `{ url }`, has manifest `output: object`, and returns `[FetchUrlResult]`. The shape of `vid` belongs to the package: for Douyin it is the `aweme_id`, for TikTok the
+> work `id` (both numeric strings), and the resolver builds a main-site link from the id to hand to the container; **do not use a share link as the `vid`** — it is half of the dispatch key and the progress key,
+> and a share link carrying signed parameters differs on every call.
 
-**(c) source manifests** —— `packages/Douyin_TikTok_Download_API/manifests.yaml`（顶层列表，一项一个 Source；完整以仓内真实文件为准）：
+> The top-level `name`/`version`/`files`/`scripts` are the npm shell (a package with code is published to npm, so it does not write `private`; `bundle` / `prepack` /
+> `files` are the shipping shape of §3.8); domain fields always live inside `stream`.
+> **`"type": "module"` is mandatory** (guarded by `src/plugins/loader.real.test.ts`): Node honors the **nearest**
+> package.json, so once `packages/<id>/package.json` exists, the `"type": "module"` at the repository root no longer governs
+> that subtree. Omitting it = the whole `packages/<id>/**` is parsed as CommonJS, and every `src/**` module it `import`s gets
+> **an extra copy** in the CJS cache — the wiring bootstrap does on the ESM copy (`setPluginTargetResolver` /
+> `setStandbyManager`) is never seen by the plugin: in the host tier `pluginTarget()` is always null (base empty string → fetch a
+> relative URL → `Failed to parse URL`), `withAwake()` becomes a no-op, and `standbyOrigin()` is always null.
+> No error is raised and unit tests still pass green (in the test process neither copy is wired); only the live host tier blows up.
+> **When you hit `Failed to parse URL`, look at the DebugBox `plugin-target` channel first**: every time `pluginTarget()` answers empty
+> it records a snapshot of the scene (reason, whether the container exists, what state standby thinks it is in, the host port found by inspecting the live container vs
+> the cached origin), enough to tell directly whether it is "not awake", "the allow list missed it", or "the cache is stale". To dig through old records afterwards, read the copy written to disk
+> (the ring holds only 200 entries and is cleared on restart): `grep '"plugin-target"' data/debug-failures.jsonl`.
+> **`reason: not-awake` is mostly routine noise, not a scene worth inspecting**: the capability probe asks for the address every minute, and a container
+> put to sleep by standby honestly answers empty (measured: 1184 entries in 21 hours, content identical down to the character). The disk write folds them, and **rows carrying `_repeated`
+> are this kind**. The scene to look for looks different: no `_repeated`, and standby says `awake` (then the problem is something other than not being awake), or the cached origin does not match the host port found by live inspection
+> (then the Cell cache is stale).
+> `name/tagline/description` are catalog display fields (§8), the sole source of Plugin metadata.
+> `image` uses the image the facility publishes itself; `service` is the compose service name (default = `id`), and the gateway goes through `/_p/<service>`;
+> `health` is ready when it returns 2xx (default `/`) — **pick the facility's own dedicated health endpoint; do not substitute the home page or a docs page**:
+> the probe fires every 10 seconds and keeps firing as long as the container is alive; for the Douyin facility `/health` is 65 bytes at 2.6ms,
+> `/docs` (the Swagger page) is 958 bytes, and the `/` home page is 7.6KB. Before choosing, measure each with `curl -w '%{size_download} %{time_total}'`,
+> a matter of seconds; a package that declares `backend.dev` mounts its source and runs hot under `compose --dev` (this package runs the baked image and does not declare it);
+> the domains in `credentials` are an allow list of the login states the host **may** hand to this package (direction in §5.1; the package does not ask for them).
+
+**(c) source manifests** — `packages/Douyin_TikTok_Download_API/manifests.yaml` (a top-level list, one entry per Source; the real file in the repository is authoritative):
 
 ```yaml
 - id: douyin-user
-  adapter: Douyin_TikTok_Download_API                          # 路由到包内 adapter
+  adapter: Douyin_TikTok_Download_API                          # routes to the in-package adapter
   normalizer: douyin
-  description: 抖音 — 指定用户的作品（按主页链接或 sec_user_id）。   # ← 发现/搜索匹配此字段
-  topics: [douyin, 抖音, 用户, 作品, video, social-media]         # ← 发现 facet
+  description: 抖音 — 指定用户的作品（按主页链接或 sec_user_id）。   # ← discovery/search match against this field (Douyin — works of a given user, by profile link or sec_user_id)
+  topics: [douyin, 抖音, 用户, 作品, video, social-media]         # ← discovery facet (抖音 = Douyin, 用户 = user, 作品 = works)
   categories: [social-media, video]
-  example_queries: [某个抖音博主的最新视频, douyin user videos]     # ← 意图检索样例
+  example_queries: [某个抖音博主的最新视频, douyin user videos]     # ← intent-retrieval samples ("the latest videos of some Douyin creator")
   capabilities: [timeline]
-  auth: { type: none }                                         # user=公开主页，无需登录；登录态 mode 用 auth: { type: cookie, domain: douyin.com }（host 注入 adapter）
+  auth: { type: none }                                         # user = public profile, no login needed; login-state modes use auth: { type: cookie, domain: douyin.com } (host injects into the adapter)
   cadence_hint_seconds: 3600
   params_schema:
     url:  { type: string, required: false }
     sec_user_id: { type: string, required: false }
     count: { type: number, required: false }
-# Provider 行的成员也是一条 source：不可发现、走 handler 逃生口、params 就是调用点递来的对象整个展开
+# A Provider row's member is also a source: not discoverable, goes through the handler escape hatch, and params is the object passed by the callsite, spread in full
 - id: douyin-resolve
   adapter: Douyin_TikTok_Download_API
   title: 抖音视频解析
@@ -2447,49 +2454,51 @@ env DOUYIN_API_URL（显式覆盖，比如用户自己跑的一份 http://10.0.0
   facility: { key: douyin, label: 抖音 }
   auth: { type: none }
   discoverable: false
-  api: { handler: douyin-resolve }                             # vid → 主站链接 → 容器 /api/hybrid/video_data
+  api: { handler: douyin-resolve }                             # vid → main-site link → container /api/hybrid/video_data
   params_schema:
     vid: { type: string, required: true, description: "作品 id（aweme_id）" }
     format: { type: string, required: false, description: "progressive | dash | audio（dash 如实回空）" }
 ```
 
-> `schema_version` / `type` / `discoverable` 可省（loader 给默认）；但 `description` / `topics` / `example_queries` 是发现与搜索的依据，**别省**。
-> 同一份文件里还有 `tiktok-resolve` / `douyin-fetch-url` / `tiktok-fetch-url`（后两条 `output: object`），形状同上。
+> The Chinese values in the second entry are literal strings: `title` 抖音视频解析 ("Douyin video resolve"); `description` "Douyin work playback resolution (work id → play_addr direct CDN, with Referer, range streaming); a member of the video-douyin Provider row."; `facility.label` 抖音 (Douyin); `vid` description "work id (aweme_id)"; `format` description "progressive | dash | audio (dash honestly returns empty)".
 
-**(d) normalizer** —— `packages/Douyin_TikTok_Download_API/douyin.ts`（`douyinNormalizer`；同目录的 `tiktok.ts` 是同一容器另一家的）。它由包自己在 `activate` 里交出来（见下面 (f)），装载器负责往 `src/content/normalize.ts` 的 registry 注册。视频 media 只带 `(provider, vid)` 身份（`vid` = `aweme_id`），播放地址由包的 resolve 成员在播放时现解，normalizer 里不烘路由字符串、不烘 embed；`page_url` 保留（前端「打开原页」与去重都用）。
+> `schema_version` / `type` / `discoverable` may be omitted (the loader supplies defaults); but `description` / `topics` / `example_queries` are the basis for discovery and search — **do not omit them**.
+> The same file also holds `tiktok-resolve` / `douyin-fetch-url` / `tiktok-fetch-url` (the latter two with `output: object`), with the same shape.
 
-**(f) code 槽位** —— `packages/Douyin_TikTok_Download_API/activate.ts` 导出 `activate(ctx)`，descriptor 里 `stream.code` 申报的四份名单（`adapters` / `normalizers` / `enrichers` / `connect`）与返回的键一字不差：
+**(d) normalizer** — `packages/Douyin_TikTok_Download_API/douyin.ts` (`douyinNormalizer`; `tiktok.ts` in the same directory is the other platform on the same container). The package hands it over itself in `activate` (see (f) below), and the loader registers it in the registry of `src/content/normalize.ts`. Video media carries only the `(provider, vid)` identity (`vid` = `aweme_id`); the playback address is resolved on the spot by the package's resolve member at play time, so the normalizer bakes in no route string and no embed; `page_url` is kept (the frontend's "open original page" and dedup both use it).
+
+**(f) code slot** — `packages/Douyin_TikTok_Download_API/activate.ts` exports `activate(ctx)`; the four lists declared by `stream.code` in the descriptor (`adapters` / `normalizers` / `enrichers` / `connect`) match the returned keys character for character:
 
 ```ts
 export const activate: ActivateFn = (ctx) => {
-  // 容器地址递 thunk 不递值：host 档下 loopback origin 只在容器醒着时存在，构造期快照必得空。
-  // 不传参的 ctx.backendUrl() = 本包自己的 backend service。显式覆盖由包自己读 DOUYIN_API_URL，不经 ctx.config。
+  // Pass the container address as a thunk, not a value: in the host tier the loopback origin exists only while the container is awake, so a snapshot at construction time is always empty.
+  // ctx.backendUrl() with no argument = this package's own backend service. An explicit override is read by the package itself from DOUYIN_API_URL, not through ctx.config.
   const adapter = new DouyinTiktokDownloadApiAdapter({ backendUrl: () => ctx.backendUrl(), withAwake: ctx.withAwake })
   return {
     adapters: { Douyin_TikTok_Download_API: adapter },
     normalizers: { douyin: douyinNormalizer, tiktok: tiktokNormalizer, 'bilibili-web': bilibiliWebNormalizer },
     enrichers: makeEnrichers(adapter),   // { 'douyin-comments': ({ vid, cursor|page }) => { comments, total, cursor? } }
-    connect: makeConnect(),              // { 'douyin.com': () => ({ stream: 「我的抖音关注」 }) }
+    connect: makeConnect(),              // { 'douyin.com': () => ({ stream: 「我的抖音关注」 }) }   (「我的抖音关注」 = "My Douyin follows", a literal stream name)
   }
 }
 ```
 
-- **enricher** `douyin-comments`（`enrich.ts`）骑同一个 adapter 打容器的评论接口：收 `vid`（缺 → `ValidationError` → 400），
-  翻页游标首选 `cursor`、也认前端通用翻页递回的 `page`；末页**不带** `cursor`（§3.2 的合同：`null` 或缺省都是「没有下一页」）。
-- **connect** `douyin.com`（`connect.ts`）零输入、不经容器：建一条 `douyin-follow` 流（source `douyin-follow` + `{ mode: 'follow' }`），
-  登录态在采集时才用得到。键必须出现在 `credentials` 里。
+- **enricher** `douyin-comments` (`enrich.ts`) rides the same adapter to hit the container's comments endpoint: it takes `vid` (missing → `ValidationError` → 400),
+  and for the paging cursor prefers `cursor` while also accepting the `page` that the frontend's generic paging passes back; the last page **carries no** `cursor` (the contract of §3.2: `null` or absent both mean "no next page").
+- **connect** `douyin.com` (`connect.ts`) takes zero input and does not go through the container: it builds one `douyin-follow` Stream (source `douyin-follow` + `{ mode: 'follow' }`),
+  and the login state is needed only at harvest time. The key must appear in `credentials`.
 
-契约与 ctx 的七样见 **§3.2**。
+For the contract and the seven things in ctx, see **§3.2**.
 
-**(e) 凭证域** —— descriptor 的 `credentials: [douyin.com, tiktok.com]`：一张**许可名单**，说明宿主可以把哪些域的登录态交给这个包。取数由宿主发起（adapter 在宿主进程里拿到注入的 cookie，再随请求递给容器），包不反向索取——见 §5.1 的方向说明。secret 不进镜像、不进 `backend.env`、不进生成的 compose。
+**(e) credential domains** — the descriptor's `credentials: [douyin.com, tiktok.com]`: an **allow list** stating which domains' login states the host may hand to this package. Data fetching is initiated by the host (the adapter obtains the injected cookie inside the host process and passes it along with the request to the container), and the package never asks for it in reverse — see the direction explanation in §5.1. Secrets do not go into the image, into `backend.env`, or into the generated compose.
 
-加进激活集后，`pnpm plugins compose` 自动把 `douyin-tiktok-download-api` 后端加进生成的 compose。
+Once added to the activation set, `pnpm plugins compose` automatically adds the `douyin-tiktok-download-api` backend to the generated compose.
 
-### 10.2 模板（search-only 外部服务，无凭证）：pansou
+### 10.2 Template (search-only external service, no credentials): pansou
 
-pansou 是一个网盘资源搜索服务——**只搜索、无登录态**。这是最简插件形态：一个后端容器 + adapter + manifest + normalizer，**没有 `credentials`**。
+pansou is a netdisk resource search service — **search only, no login state**. This is the simplest plugin shape: one backend container + adapter + manifest + normalizer, **with no `credentials`**.
 
-**(b) descriptor** —— `packages/pansou/package.json`：
+**(b) descriptor** — `packages/pansou/package.json`:
 
 ```json
 {
@@ -2513,24 +2522,24 @@ pansou 是一个网盘资源搜索服务——**只搜索、无登录态**。这
 }
 ```
 
-> `image`/`health` 换成 pansou 真实发布的镜像与健康探针路径。没有 `credentials`：搜索无需登录态。
+> Replace `image`/`health` with the image and health-probe path that pansou actually publishes. There are no `credentials`: search needs no login state.
 
-**(a) adapter** 骨架 —— `packages/pansou/adapter.ts`。指回 `src/` 的只许是 `import type`（走 `../../src/...`）；
-容器地址与唤醒**经 `ctx` 递进来**，包不 import 宿主的 `pluginTarget` / `withAwake` 单例（守卫
-`src/packages/self-contained.guard.test.ts` 会判红——那两份单例被 inline 进包的 bundle 后是第二张永远为空的表）：
+**(a) adapter** skeleton — `packages/pansou/adapter.ts`. Anything pointing back into `src/` may only be `import type` (via `../../src/...`);
+the container address and wake-up are **passed in through `ctx`**, and the package does not import the host's `pluginTarget` / `withAwake` singletons (the guard
+`src/packages/self-contained.guard.test.ts` turns red — once inlined into the package's bundle, those two singletons become a second table that is always empty):
 
 ```ts
 import type { Adapter } from '../../src/adapters/types.ts'
 import type { SourceManifest } from '../../src/manifest/types.ts'
 
-export const PANSOU_SERVICE = 'pansou'   // withAwake 的唤醒键 = compose service 名
+export const PANSOU_SERVICE = 'pansou'   // the wake key of withAwake = the compose service name
 
 export interface PansouAdapterDeps {
-  backendUrl: () => string | undefined   // thunk 不是值：host 档 loopback origin 只在容器醒着时存在
+  backendUrl: () => string | undefined   // a thunk, not a value: the host-tier loopback origin exists only while the container is awake
   withAwake: <T>(service: string, fn: () => Promise<T>) => Promise<T>
 }
 
-/** 显式覆盖（ctx.config.url）→ PANSOU_URL env → 宿主此刻给的容器地址（none 档 → ''）。 */
+/** Explicit override (ctx.config.url) → PANSOU_URL env → the container address the host gives right now (none tier → ''). */
 export function resolvePansouUrl(explicit: string | undefined, backendUrl: () => string | undefined): string {
   return explicit ?? process.env.PANSOU_URL ?? backendUrl() ?? ''
 }
@@ -2538,11 +2547,11 @@ export function resolvePansouUrl(explicit: string | undefined, backendUrl: () =>
 export class PansouAdapter implements Adapter {
   readonly id = 'pansou'
   constructor(private readonly deps: PansouAdapterDeps, private readonly explicitUrl?: string) {}
-  /** 每次求值现解析；fetch 都在 withAwake 回调里，求值时容器已醒。 */
+  /** Resolved afresh on every evaluation; fetch always runs inside the withAwake callback, so the container is awake at evaluation time. */
   private get baseUrl(): string {
     return resolvePansouUrl(this.explicitUrl, this.deps.backendUrl).replace(/\/$/, '')
   }
-  async init(_env: Record<string, string>): Promise<void> {}   // 无凭证
+  async init(_env: Record<string, string>): Promise<void> {}   // no credentials
 
   async fetch(params: Record<string, unknown>, _m: SourceManifest): Promise<unknown[]> {
     const kw = String(params.keyword ?? '')
@@ -2551,21 +2560,21 @@ export class PansouAdapter implements Adapter {
       fetch(`${this.baseUrl}/api/search?kw=${encodeURIComponent(kw)}`))
     if (!r.ok) throw new Error(`[pansou] HTTP ${r.status}`)
     const data = await r.json()
-    return /* TODO: 从 pansou 返回结构里取出结果数组 */ []
+    return /* TODO: extract the result array from pansou's response structure */ []
   }
 }
 ```
 
-**(c) manifest** 骨架 —— `packages/pansou/manifests.yaml`（顶层列表的一项）：
+**(c) manifest** skeleton — `packages/pansou/manifests.yaml` (one entry of the top-level list):
 
 ```yaml
 - id: pansou-search
   adapter: pansou
   normalizer: pansou
-  description: 网盘资源搜索 — 按关键词搜全网网盘（百度/阿里/夸克…）资源链接。   # 发现/搜索依据
-  topics: [pansou, 网盘, 资源, 搜索, 百度网盘, 阿里云盘, netdisk, search]
+  description: 网盘资源搜索 — 按关键词搜全网网盘（百度/阿里/夸克…）资源链接。   # basis for discovery/search (Netdisk resource search — search netdisk resource links across the web by keyword (Baidu/Aliyun/Quark…))
+  topics: [pansou, 网盘, 资源, 搜索, 百度网盘, 阿里云盘, netdisk, search]   # (网盘 = netdisk, 资源 = resource, 搜索 = search, 百度网盘 = Baidu Netdisk, 阿里云盘 = Aliyun Drive)
   categories: [search, resource]
-  example_queries: [搜网盘资源, 某电影 网盘资源]
+  example_queries: [搜网盘资源, 某电影 网盘资源]   # ("search netdisk resources", "some movie netdisk resources")
   capabilities: [search]
   auth: { type: none }
   cadence_hint_seconds: 3600
@@ -2573,18 +2582,18 @@ export class PansouAdapter implements Adapter {
     keyword: { type: string, required: true, description: search keyword }
 ```
 
-**(d) normalizer** 骨架 —— `packages/pansou/normalizer.ts`（`pansouNormalizer`，住包里；只 `import type` 宿主的
-`Normalizer` / `Media`），由包在 `activate` 里交出，宿主 `src/content/normalize.ts` 的注册表不加行。
+**(d) normalizer** skeleton — `packages/pansou/normalizer.ts` (`pansouNormalizer`, living in the package; it only `import type`s the host's
+`Normalizer` / `Media`), handed over by the package in `activate`; no row is added to the registry in the host's `src/content/normalize.ts`.
 
-**(e) 凭证**：无（搜索无需登录）。
+**(e) credentials**: none (search needs no login).
 
-**(f) code 槽位** —— `packages/pansou/activate.ts` 导出 `activate(ctx)`，descriptor 加 `"code": { "entry": "dist/index.js", "adapters": ["pansou"], "normalizers": ["pansou"] }`（`entry` 指的是 npm 上那份预编译产物，§3.8；内置层照 §3.3 的静态表直接 import `activate.ts`）：
+**(f) code slot** — `packages/pansou/activate.ts` exports `activate(ctx)`, and the descriptor adds `"code": { "entry": "dist/index.js", "adapters": ["pansou"], "normalizers": ["pansou"] }` (`entry` points to the precompiled artifact on npm, §3.8; the built-in tier imports `activate.ts` directly per the static table in §3.3):
 
 ```ts
 export const activate: ActivateFn = (ctx) => ({
   adapters: {
     pansou: new PansouAdapter(
-      { backendUrl: () => ctx.backendUrl(), withAwake: ctx.withAwake },   // 递 thunk 不递值
+      { backendUrl: () => ctx.backendUrl(), withAwake: ctx.withAwake },   // pass a thunk, not a value
       ctx.config.url as string | undefined,
     ),
   },
@@ -2592,15 +2601,15 @@ export const activate: ActivateFn = (ctx) => ({
 })
 ```
 
-内置包还要在 `packages/index.ts` 的静态 import 表里加一行（见 §3.3）。**`src/bootstrap.ts` 的 adapters Map 不加行**——那张表只放宿主四件。
+A built-in package also needs one row added to the static import table in `packages/index.ts` (see §3.3). **Do not add a row to the adapters Map in `src/bootstrap.ts`** — that table holds only the host's four.
 
-加进激活集后，`pnpm plugins compose` 自动把 `pansou` 后端加进生成的 compose。
+Once added to the activation set, `pnpm plugins compose` automatically adds the `pansou` backend to the generated compose.
 
 ---
 
-## 附：当前形状速查
+## Appendix: Quick reference of the current shapes
 
-- **PluginDescriptor**：`{ id, name?, tagline?, description?, homepage?, repository?, docsUrl?, required?, backend?, sourceGrouping?, credentials?: string[], normalizer?, code?, capability?, sources? }`（`code?: { entry, adapters?: string[], normalizers?: string[], enrichers?: string[], connect?: string[] }` 见 §3；`capability?: 'dist/index.js'` 见 §5.9）（`src/packages/descriptor.ts` `parseStreamDescriptor` / `src/plugins/types.ts`；`presenter?` is kept as a deprecated alias for `normalizer`）。`name/tagline/description/homepage/repository/docsUrl` 是 **catalog 展示字段**（§8），是 Plugin 元数据的唯一来源。`required?: boolean` 标记基座插件（`rsshub`/`builtin` 用 `required: true`）。`sources` 由扫描器从 `manifests.yaml` 并入（`stream.sources` 内联与 `manifests.yaml` 二选一，同时给会报错）。
-- **PluginBackend**：`{ image, service?, port, health?, env?, gpu?, volumes?, mem?, user?, publish?, dev?, standby? }`（`src/packages/descriptor.ts` `backendSchema`）——`image` 是设施自己的镜像；`service` 缺省 = `id`；同网络 DNS 走 `http://<service>:<port>`；**secret 永不进 `env`**——要登录态就申报 `credentials`，由宿主随请求派发（§5.1）。`gpu`（nvidia 预留，可选包 `voiceprint`/`mineru` 用；第三方声明被钳制拒，官方包放行，§6.2）、`volumes`/`mem`（资源，多设施用）、`user`（容器内跑成谁，`alist` 用，见 §4.1）、`publish`（额外发布宿主端口，schema 有、当前无插件用）。`dev = { image, mount, workdir?, command }` 仅 `compose --dev` 输出（base+挂载+reload）。
-- **生成 compose 结构**：`{ networks: { stream }, services: {…} }`，键排序、确定性。默认只有插件容器。`--selfhost` 才追加 Stream 自身的两件：`serve-backend`（`build: .`，`STREAM_PLUGIN_NETWORK: compose` + 显式 `STREAM_PORT: 4555`，即 `/_p` 的 owner，界面也由它发）、`gateway`（`caddy:2-alpine`，那一档**唯一对宿主发布的端口** `127.0.0.1:8900:80`）+ 顶层 `volumes: { stream-data }`，并副写 `./Caddyfile`。单个 `ComposeService` 可含 `image/build/command/env_file/expose/ports/volumes/deploy(GPU)/mem_limit/depends_on/networks/healthcheck/environment`。真实产物以 `pnpm plugins compose` 输出为准。
-- **BrowserRecipe**：`{ version, kind, sourceId, session{facility,lifecycle,visibility}, loginCheck, steps[], observers[], output, ledger?, policy?, extract? }`（§2.2）。另有 `kind:'http'` 探针原型（§2.3）与 `kind:'desktop'` 桌面原型（§2.4）。
+- **PluginDescriptor**: `{ id, name?, tagline?, description?, homepage?, repository?, docsUrl?, required?, backend?, sourceGrouping?, credentials?: string[], normalizer?, code?, capability?, sources? }` (`code?: { entry, adapters?: string[], normalizers?: string[], enrichers?: string[], connect?: string[] }` see §3; `capability?: 'dist/index.js'` see §5.9) (`src/packages/descriptor.ts` `parseStreamDescriptor` / `src/plugins/types.ts`; `presenter?` is kept as a deprecated alias for `normalizer`). `name/tagline/description/homepage/repository/docsUrl` are **catalog display fields** (§8) and the sole source of Plugin metadata. `required?: boolean` marks base plugins (`rsshub`/`builtin` use `required: true`). `sources` is merged in by the scanner from `manifests.yaml` (`stream.sources` inline and `manifests.yaml` are mutually exclusive; giving both is an error).
+- **PluginBackend**: `{ image, service?, port, health?, env?, gpu?, volumes?, mem?, user?, publish?, dev?, standby? }` (`src/packages/descriptor.ts` `backendSchema`) — `image` is the facility's own image; `service` defaults to `id`; same-network DNS goes through `http://<service>:<port>`; **secrets never go into `env`** — to get a login state, declare `credentials`, and the host dispatches it with the request (§5.1). `gpu` (nvidia reservation, optional; used by the `voiceprint`/`mineru` packages; a third-party declaration is clamped and rejected, official packages pass, §6.2), `volumes`/`mem` (resources, used by many facilities), `user` (who to run as inside the container, used by `alist`, see §4.1), `publish` (extra published host ports; present in the schema, no plugin currently uses it). `dev = { image, mount, workdir?, command }` is emitted only by `compose --dev` (base + mount + reload).
+- **Generated compose structure**: `{ networks: { stream }, services: {…} }`, keys sorted, deterministic. By default it holds only plugin containers. Only `--selfhost` appends Stream's own two pieces: `serve-backend` (`build: .`, `STREAM_PLUGIN_NETWORK: compose` + an explicit `STREAM_PORT: 4555`, i.e. the owner of `/_p`, which also serves the UI) and `gateway` (`caddy:2-alpine`, the **only port published to the host** in that tier, `127.0.0.1:8900:80`) + a top-level `volumes: { stream-data }`, and it also writes `./Caddyfile`. A single `ComposeService` may contain `image/build/command/env_file/expose/ports/volumes/deploy(GPU)/mem_limit/depends_on/networks/healthcheck/environment`. The real output is whatever `pnpm plugins compose` prints.
+- **BrowserRecipe**: `{ version, kind, sourceId, session{facility,lifecycle,visibility}, loginCheck, steps[], observers[], output, ledger?, policy?, extract? }` (§2.2). There is also the `kind:'http'` probe prototype (§2.3) and the `kind:'desktop'` desktop prototype (§2.4).

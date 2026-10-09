@@ -751,7 +751,7 @@ describe('duration stage（时长为主锚，文件名/编号降为二次确认�
     expect(r.assignments.get('a')?.rightFile).toBe('某一集【水印】.mp3') // 20s 在 30s 容差内
   })
 
-  // 真实失配（怡乐播客，2026-07-25，docs/MATCHING.md「三个真实案例」第三行）：
+  // 真实失配（怡乐播客，2026-07-25，docs/MATCHING.md "Three real cases"第三行）：
   // 源站 53、网盘 52，标题一模一样。编号错位 1，任何 titleStrip 都救不了 —— 这一档存在的理由。
   it('回归·编号错位 1、标题相同：53 靠时长唯一命中认领文件 52', () => {
     const r = matchByEvidenceResult(DEFAULT_MATCH_SPEC,

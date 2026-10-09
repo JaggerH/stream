@@ -95,7 +95,7 @@ deleteRedundant + replace` / 从执行回执里拿 `renamed` / `pending`。
 **这些卡会被裁决器先裁一遍**：`evidence-conflict`/`duration-collision`/`no-duration` 三档（追更那
 一路还有 `follow-candidate`）在归档之后、或手动调 `reconcile_adjudicate`，会先被问一次模型、
 过代码闸后自动落决定——等你看到卡片时，那批已经答得出来的多半已经被裁掉了，手里剩的是模型
-拿不准（`unsure`）或被闸拒收的那部分。判据与代码闸细节见 `docs/MATCHING.md`「轮末裁决」一节，
+拿不准（`unsure`）或被闸拒收的那部分。判据与代码闸细节见 `docs/MATCHING.md` "End-of-round adjudication" 一节，
 这里讲的仍是**人**接手之后该怎么分档处理。
 
 **先看 `pendingKind`，别一律当成"要我裁的卡"**——有的什么都不用做。分布随节目千差万别，

@@ -13,7 +13,7 @@
  * **AI 那半截有两个生产写入方**：对话裁决（模型自己用 `netdisk_transcribe` 听、自己判、经决定
  * 端点落账，`record` 由调用方顺手写一行）；以及轮末裁决器（`adjudicate/service.ts` 的
  * `AdjudicationService`，每条模型结论——含被拒收的、`unsure` 的——都写一行，见
- * `docs/MATCHING.md` 「轮末裁决」一节）。人那半截（`answer`）照旧有活的调用方，存量里还没答的
+ * `docs/MATCHING.md` "End-of-round adjudication" 一节）。人那半截（`answer`）照旧有活的调用方，存量里还没答的
  * 行仍答得上。
  *
  * **只存原始事实，一致与否读时算**（`agreementOf`）。判据将来会调（比如 `none-of-these` 要不要

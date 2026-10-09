@@ -8,7 +8,7 @@ import type { IndexRow } from './inbox.ts'
  * 归堆的账本：**一张指纹索引 + 一张归属表**。
  *
  * 两张表都是**纯附加**——删光它们，系统回到没有归堆的样子，一条内容都不丢
- * （不变量见 `docs/ARCHITECTURE.md`「归堆永不阻止入库」）。所以它落在 `cache.db`
+ * （不变量见 `docs/ARCHITECTURE.md` Invariants 第 5 条 "Folding never prevents insertion into storage"）。所以它落在 `cache.db`
  * 那一侧：可重建的东西，不进需要备份的那份。
  *
  * **为什么要自己的索引表**：找近邻要按「时长 + 时间窗」查。不抠成列，每来一条新 item

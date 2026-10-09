@@ -6,7 +6,7 @@ You have an intent or a capability gap; produce a **stable, contract-verified So
 之后长期供数）。要找的若是**一批具体的东西**（符合某组约束的商品型号、某个品类下有哪些
 选项），那是发现循环的商品档 `enumerate_candidates`——一次性枚举、当场用完，不进 registry、
 不建 Stream。两者共用同一条 `runSearch` 骨架（找聚集地 → 进窝抽 → 验），只是域不同，机制见
-`docs/ARCHITECTURE.md` 「发现循环是一条，域有两个」。**判据一句话：产出的是"以后一直从这儿
+`docs/ARCHITECTURE.md` "There is one discovery loop and two domains"。**判据一句话：产出的是"以后一直从这儿
 取数"还是"这一次要的那几条"？** 前者才走下面这条阶梯。
 
 ## What counts as a capability (read first)

@@ -103,7 +103,7 @@ async function startBackend(prefix, port, dataDir, logFile) {
 
 /**
  * 验收后端会加载全部内置包，它的 standby 管家会 `adopt()` 机器上**正在跑**的同名插件容器、退出时 stop
- * 掉——那台机器自己那份 Stream 的容器就这样静默死了（docs/DEVELOPMENT.md「另起一份后端做冒烟」）。
+ * 掉——那台机器自己那份 Stream 的容器就这样静默死了（docs/DEVELOPMENT.md "Start a Separate Backend for Smoke Tests/Verification"）。
  * 冒烟那条路的解法是把 packages_dir 指空，这里不行：验的正是内置包。所以有 `stream-*` 容器在跑就不开跑。
  * docker 不在 / 没起 → 没有可被 adopt 的东西，放行。
  */

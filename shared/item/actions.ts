@@ -4,7 +4,7 @@
  * 住 `shared/`：图标词表是**宿主定的封闭词表**，后端装载期拿它拒掉不认识的图标，前端拿它挑组件。
  * 两份各写一张的话，后端放行了一个前端画不出来的图标，表现是按钮静默消失，两边单看都正常。
  *
- * 声明方是包（`package.json#stream.item`，契约见 docs/PACKAGE.md §0.5 与「宿主与包的边界」一节）。
+ * 声明方是包（`package.json#stream.item`，契约见 docs/PACKAGE.md §0.5 与 "The host/package boundary" 一节）。
  */
 
 /** 条目动作按钮能用的图标。加一个 = 两侧同时多认一个（前端 `ItemActionButtons` 的映射表由类型逼着补）。 */

@@ -919,7 +919,7 @@ LLM calls are a **Provider capability** configured once and usable everywhere; a
 ## End-of-Round Adjudicator (spec `2026-09-03-netdisk-llm-adjudicator`)
 
 Package archive pending cards and follow-loop pending candidates and ask the model once; after the conclusion passes the code gate, write it to the decision ledger. See
-the "end-of-round adjudication" section in `docs/MATCHING.md` for details. **The model does not delete files** — it only writes `is-episode`/`not-episode`.
+the "End-of-round adjudication" section in `docs/MATCHING.md` for details. **The model does not delete files** — it only writes `is-episode`/`not-episode`.
 
 * **POST `/api/netdisk/reconcile/bindings/:bindingId/adjudicate`** — body `{ losers?: boolean }`
   (default `false`). Returns `AdjudicationRun`: `{ runId, skipped?, asked, applied, rejected, unsure,
