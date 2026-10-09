@@ -553,8 +553,8 @@ if not → `unattended`. Wanting to watch it run during development is **not** a
 travels with git means having to remember to change it back) — use `RECIPE_PROBE`'s staged ledger and the failure scenes in `data/failures` instead.
 
 **Visible ≠ stealing focus.** The harvest tab is always in the tab bar, and the user can switch to it at any time; `interactive` only decides whether the tab opens in the
-foreground or background, and the runner never touches focus at any layer. Bringing the window to the front happens only when the user **explicitly asks** (clicking "Finish
-login in the browser" → `RecipeSessionManager.focusFacilityTab`).
+foreground or background, and the runner never touches focus at any layer. Bringing the window to the front happens only when the user **explicitly asks** (clicking `在浏览器里完成登录`
+("Finish login in the browser") → `RecipeSessionManager.focusFacilityTab`).
 
 Why the background tier can still click: as soon as a lane is built it sends one `Emulation.setFocusEmulationEnabled`, so trusted input to a hidden tab
 lands as usual; combined with "mouse events do not wait for Chrome's receipt" (`FIRE_AND_FORGET` in `extension/src/lib/driver.ts`),
@@ -690,7 +690,7 @@ Because what it writes is the credential store, the boundary is written into the
 An `extract` Recipe can produce no items at all (`observers: []` + `allowEmpty`); its output is that key.
 
 **Declaring it amounts to signing up as the self-service application entry for that slot.** The host looks up "ref → who can produce it" by the named criterion `provisionedConfigSlot`
-(`src/replay/recipe-provisioner.ts`), and the "Do it for me" button
+(`src/replay/recipe-provisioner.ts`), and the `一键帮我完成` ("Do it for me") button
 on the config card is a projection of this index (mechanism in `docs/ARCHITECTURE.md`, "Self-Service Provisioning"). Two boundaries to know:
 **only built-in packages** enter this index (a third-party package declaring the same ref does not make the built-in card grow a button); when the same ref has multiple
 candidates, the first by Source full name is taken — today `firecrawl` has two (`-create-key` / `-read-key`),
