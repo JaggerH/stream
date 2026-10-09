@@ -34,105 +34,107 @@ indexes into; see Channel below.)
   │ optional managed backend container   declared credential domains         │
   └──────────────────────────────────────────────────────────────────────────┘
 
-  Provider  (global stateless capability: 身份归代码（系统件）或行上（用户自建）,编排 members/options 归行;
-             调用点 = category + 键提取 + invoke()；分发 = ProviderDirectory.match — never scheduled, owned by no Channel;
-             频道可经 options.slots 按调用点覆盖路由,但 Provider 行本身永远全局、被引用而非被持有)
+  Provider  (global stateless capability: identity belongs in code (system component) or in rows (user-created);
+             orchestration members/options belong in rows;
+             callsite = category + key extraction + invoke(); dispatch = ProviderDirectory.match — never scheduled, owned by no Channel;
+             Channels may override routing per Callsite via options.slots, but the Provider row itself is always global, referenced rather than owned)
 ```
 
 | Concept | Definition | Lives in (target state — see [Data & File Structures](#data--file-structures-target-state)) |
 |---|---|---|
 | **Channel** | The only subscribe/invoke entry point. A **view**: references ≥1 Streams by id; one `present` per Channel (an id into the official Present registry) decides the full consumption mode (acquisition + rendering + attachable capabilities); `options.slots` optionally overrides which Provider fills a Callsite for this Channel. | user store (`channels` table) |
 | **Stream** | A scheduled feed unit with **global identity**, reusable across Channels; aggregates ≥1 Sources with a `strategy`; its `mode` (`feed`\|`collection`) is the storage-shape authority | user store (`streams` table) |
-| **Provider** | A global, stateless, on-demand capability. 身份（category/serves 键/fallback/strategy/contract）：系统件归代码（`src/providers/system/`），用户自建归行；编排（members/options）一律归行。分发经 `ProviderDirectory.match` | identity: code + user store; orchestration: user store (`providers` table) |
+| **Provider** | A global, stateless, on-demand capability. Identity (category/serves keys/fallback/strategy/contract): system components belong in code (`src/providers/system/`), user-created ones belong in rows; orchestration (members/options) always belongs in rows. Dispatch goes through `ProviderDirectory.match` | identity: code + user store; orchestration: user store (`providers` table) |
 | **Source** | One concrete callable entry declared by a manifest, or derived from a recipe's `meta`; carries its owning `pluginId` | its Stream package (`packages/<id>/manifests.yaml`, or a `*.recipe.json`) |
 | **Plugin** | A Stream package that fills ≥1 **plugin slot** (manifest(s) / adapter code / normalizer / managed backend container / credential domains / source grouping) | `packages/<id>/` (builtin) or `<dataDir>/recipes/<@scope__name>/` (user-installed) |
 
-## 能力归一化：三根轴，各画各的线
+## Capability Normalization: Three Axes, Each Draws Its Own Line
 
-「builtin vs recipe」是个假二分法——它把三根独立的轴糊成一个词，让「引擎凑巧支不支持」替
-设计画线。任何一个 facility 能力（验活、转存、resolve、搜索……）都独立回答三个问题
-（权威定义与拍板记录：`internal design record`）：
+"builtin vs recipe" is a false dichotomy: it smears three independent axes into one word, letting
+"what the engine happens to support" draw design boundaries. Any facility capability (live check,
+save to the netdisk, resolve, search, and so on) independently answers three questions
+(authoritative definition and decision record: `internal design record`):
 
-| 轴 | 问题 | 取值 | 谁关心 |
+| Axis | Question | Values | Who cares |
 |---|---|---|---|
-| **表达** | TS 代码还是声明式数据？ | code / data | 没人——Source 的实现私事，上层不可见 |
-| **分发** | 烤进镜像还是热插？ | image / hot-drop | 产品：付费触点要求「加 facility＝加数据，不发版」 |
-| **效应** | 只读，还是改变外部世界？ | read / write | 安全：引擎门禁兜得住读的最坏情况，兜不住写 |
+| **Expression** | TS code or declarative data? | code / data | Nobody: the Source implementation is private, invisible to upper layers |
+| **Distribution** | Baked into the image or hot-dropped? | image / hot-drop | Product: paid touchpoints require "adding a facility = adding data, no release" |
+| **Effect** | Read-only, or changes the outside world? | read / write | Security: engine gates can structurally contain the worst case for reads, but not for writes |
 
-**画线结果**：读能力 → 数据、热插
-（SSRF 公网门 + cookieDomain 绑定 + jar 域名分桶在结构上兜住最坏情况）；**写能力也可以是 recipe**
-——`xhs-like`（点赞/收藏写用户账户）就是一份 recipe，recipe 可以写用户账户。
-门禁看不懂一个 POST 会干什么，但**不用「写留在代码里」去堵**：第三方内容审不了，
-装不装是用户自己的取舍，不做信任分级、不做出身审定。分享/加载第三方 recipe 只做**统一免责声明**
-（①安全性不做保障 ②第三方内容需用户自行确认是否可信），**不做逐项授权、不做包来源签名**。
-范例：夸克/百度**验活**都是 recipe（热插数据），夸克**转存**目前是代码（`shared/netdisk/quark/save.ts`，
-跟着 facility 走）——实现选择，非禁令。
+**Boundary result**: read capabilities → data, hot-drop
+(the SSRF public-network gate + cookieDomain binding + jar domain bucketing structurally contain the worst case); **write capabilities can also be recipes**
+— `xhs-like` (liking/favoriting writes to the user's account) is a recipe, and recipes may write to user accounts.
+The gate cannot understand what a POST does, but **do not block it by saying "writes stay in code"**: third-party content cannot be audited,
+installing it or not is the user's own tradeoff, with no trust tiers and no origin adjudication. Sharing/loading third-party recipes only shows a **unified disclaimer**
+(1. no security guarantee 2. users must confirm for themselves whether third-party content is trustworthy), with **no per-item authorization and no package-origin signature**.
+Example: Quark/Baidu **live checks** are both recipes (hot-drop data), while Quark **save to the netdisk** is currently code (`shared/netdisk/quark/save.ts`,
+following the facility): an implementation choice, not a prohibition.
 
-**网盘这一块按「认盘 / 配号」二分**（spec `internal design record`）：
+**The netdisk area is split by "recognize disk / assign show"** (spec `internal design record`):
 
-- **认盘**——对一个网盘做的事：验一条分享存不存活、列它的文件、把内容转存进用户自己的盘、取可播放的
-  直链、跳转网盘 web 页、往盘里传文件（OpenList `fs/put`，流式）、给盘上的目录建分享链接（夸克
-  `share` → `task` → `share/password` 三步，`shared/netdisk/quark/share-api.ts`；路径→fid 与「跳转夸克」
-  同一条 `browse.ts`）、列自己建出去的分享（夸克 `share/mypage/detail`，分页）、按 shareId 删分享
-  （夸克 `share/delete`，**删链接不删文件、不可逆**，逐条发以拿到逐条结果）。这三件事编排都在
-  `src/netdisk/share-create.ts`（列/删不看挂载表：「我的分享」是账号级的表），HTTP 面
+- **Recognize disk**: things done to a netdisk: check whether a share is alive, list its files, save content into the user's own disk, get a playable
+  direct link, jump to the netdisk web page, upload files into the disk (OpenList `fs/put`, streaming), create share links for directories on the disk (Quark
+  `share` → `task` → `share/password` in three steps, `shared/netdisk/quark/share-api.ts`; path→fid uses the same `browse.ts` as "jump to Quark"),
+  list shares the user created (Quark `share/mypage/detail`, paginated), and delete shares by shareId
+  (Quark `share/delete`, **deletes the link, not the file, and is irreversible**; sends one by one to get per-item results). The orchestration for these three operations is all in
+  `src/netdisk/share-create.ts` (listing/deleting does not look at the mount table: "My shares" is an account-level table), and the HTTP surface
   `POST /api/netdisk/{fs/put,share/create,share/delete}` + `GET /api/netdisk/share/list`
-  给本机导出脚本用，见 `docs/API.md`。全是 cookie 鉴权、无签名的公开接口，facility 级、可打包。实现住 `shared/netdisk/`
-  （OpenList client、夸克 save / play / browse / verify / share 建列删、百度 verify、判决词汇），**两个宿主同吃一份**：
-  Stream 编排层（`src/netdisk/`、`src/kernel/plugins/provider.ts`）和网盘能力包
-  `@streamapp/netdisk`（`capabilities/netdisk/`，可选能力包；登录态**同进程**向后端挂出来的
-  `streamBrowserCookies` 服务现取）。装法一条：`stream add @streamapp/netdisk`，后端重载后
-  由 `src/capabilities/load.ts` 挂上（见下面「能力包」一节），模型因此多四个 `netdisk_*` 动词。
-  配置在 `config.yaml` 的 `capabilities.netdisk` 那一格：给了 `openlistUrl` + 永久 token =
-  **external 档**（从 `GET /api/netdisk/openlist-access` 拿 `<origin>/_p/alist` 与那个 token，
-  包不碰 storage admin）；留空 = **managed 档**，包经 `shared/docker/engine-api.ts`（与 standby
-  同一份 Docker Engine API 客户端）自己拉容器、接管 admin、挂载、空闲回收；同机发现 Stream 的
-  `alist` 容器就让位。
-- **配号**——把网盘上的文件对上节目单：绑定、匹配（`src/netdisk/match-engine/`，纯函数）、归档。能同时看见
-  节目单和网盘目录的只有编排层，所以它留在 Stream，不进插件。
+  is for local export scripts; see `docs/API.md`. They are all cookie-authenticated, unsigned public APIs, at facility level, and packageable. The implementation lives in `shared/netdisk/`
+  (OpenList client, Quark save / play / browse / verify / share create/list/delete, Baidu verify, adjudication vocabulary), and **both hosts consume the same copy**:
+  the Stream orchestration layer (`src/netdisk/`, `src/kernel/plugins/provider.ts`) and the netdisk capability package
+  `@streamapp/netdisk` (`capabilities/netdisk/`, optional capability package; login state is fetched on demand from the
+  `streamBrowserCookies` service exposed to the backend **in the same process**). There is one install path: `stream add @streamapp/netdisk`; after the backend reloads,
+  `src/capabilities/load.ts` mounts it (see the "Capability Packages" section below), so the model gains four `netdisk_*` verbs.
+  Configuration is the `capabilities.netdisk` slot in `config.yaml`: providing `openlistUrl` + a permanent token =
+  **external tier** (get `<origin>/_p/alist` and that token from `GET /api/netdisk/openlist-access`;
+  the package does not touch storage admin); leaving it empty = **managed tier**, where the package uses `shared/docker/engine-api.ts` (the same Docker Engine API client as standby)
+  to pull the container itself, take over admin, mount, and reclaim when idle; if it discovers Stream's
+  `alist` container on the same machine, it yields.
+- **Assign show**: align files on the netdisk with the program guide: binding, matching (`src/netdisk/match-engine/`, pure functions), and archive. Only the orchestration layer can see
+  both the program guide and the netdisk directory, so this stays in Stream and does not enter plugins.
 
-### 能力包：Stream 后端是唯一宿主，能力是 Stream 包的一格槽位
+### Capability Packages: The Stream Backend Is the Only Host, and a Capability Is One Slot in a Stream Package
 
-**能力包**是「一件手上的能力」的分发单位，源码住 `capabilities/<x>/`，契约是
-`shared/capability/types.ts`：`export const capability`，`mount(ctx, config)` 从
-`CapabilityContext` 拿到 `dataDir` / `log` / `require` / `provide` / `registerTools` /
-`destructiveGate` / `onDispose` 七格。**唯一那份宿主实现在后端**：`src/capabilities/host.ts`。
+**Capability package** is the distribution unit for "one capability in hand". Source code lives in `capabilities/<x>/`, and the contract is
+`shared/capability/types.ts`: `export const capability`; `mount(ctx, config)` gets the seven slots
+`dataDir` / `log` / `require` / `provide` / `registerTools` /
+`destructiveGate` / `onDispose` from `CapabilityContext`. **The only host implementation is in the backend**: `src/capabilities/host.ts`.
 
-| | 内置 | 可选 |
+| | Built-in | Optional |
 |---|---|---|
-| 谁 | **Stream Desktop**（能力名 `desktop`，电脑操作：中继 + 四个 `cdp_*` + cookie 服务 + `stream-desktop` 那条命） | `@streamapp/netdisk`（认盘四个动词）与用户按需安装的兼容能力包 |
-| 怎么进来 | `private: true`，随后端 bundle 出货；`src/host-agent/mount.ts` 交给宿主挂 | `stream add @streamapp/<x>` → `<dataDir>/recipes/<@scope__name>/`；后端重载后 `src/capabilities/load.ts` 扫出 `stream.capability` 非空的包、动态 import `dist/index.js` |
-| 工具从哪出 | 8900 的 `/api/mcp` | 同左——宿主那一行（`claude mcp add stream -- stream mcp`）永远不用改 |
+| Who | **Stream Desktop** (capability name `desktop`, computer operation: relay + four `cdp_*` tools + cookie service + the `stream-desktop` command) | `@streamapp/netdisk` (four recognize-disk verbs) and compatible capability packages installed by the user as needed |
+| How it enters | `private: true`, shipped with the backend bundle; `src/host-agent/mount.ts` hands it to the host to mount | `stream add @streamapp/<x>` → `<dataDir>/recipes/<@scope__name>/`; after the backend reloads, `src/capabilities/load.ts` scans packages with non-empty `stream.capability` and dynamically imports `dist/index.js` |
+| Where tools come from | `/api/mcp` on 8900 | Same as left: the host line (`claude mcp add stream -- stream mcp`) never needs to change |
 
-**挂载顺序：内置先、可选后**，因为撞名是**硬拒**（`registerTools` 与 `provide` 都查两张名单：
-已注册的能力工具、后端自己的工具名）——顺序直接决定谁被拒。反过来的话，用户装一个起名
-`desktop` 的包就能把机器上的 Stream Desktop 顶掉。
+**Mount order: built-ins first, optionals later**, because name collisions are **hard rejects** (`registerTools` and `provide` both check two lists:
+registered capability tools and the backend's own tool names), so order directly decides who gets rejected. If reversed, a user could install a package named
+`desktop` and override the Stream Desktop on the machine.
 
-**一个包 mount 抛错只记一行、继续装下一个**，不拖死别的包、不拖死后端；它已注册的工具 / 服务 /
-收摊函数一并回滚。`import` 与 `mount` 各有一道超时（默认 30s）。
+**If one package's mount throws, record one line and continue installing the next one**. It does not kill other packages or the backend; tools / services /
+dispose functions it already registered are rolled back together. `import` and `mount` each have a timeout (default 30s).
 
-**登录态递送只在进程内**。这是约束不是实现选择：网盘要用浏览器握着的登录态，cookie 一旦跨进程
-就是一个不可逆的安全面（spec `2026-09-02-netdisk-capability-plugin-design.md` §4.1）。所以只有
-一对——后端 `provide(BROWSER_COOKIE_SERVICE)`、netdisk `require(BROWSER_COOKIE_SERVICE)`。
-包能拿到哪几个域由它自己在 `package.json#stream.credentials` 申报，宿主据此去扩展要，
-**方向永远是宿主派发、包不索取**。
+**Login state delivery is process-local only**. This is a constraint, not an implementation choice: netdisk needs the login state held by the browser, and once cookies cross processes
+they become an irreversible security surface (spec `2026-09-02-netdisk-capability-plugin-design.md` §4.1). Therefore there is only
+one pair: backend `provide(BROWSER_COOKIE_SERVICE)`, netdisk `require(BROWSER_COOKIE_SERVICE)`.
+Which domains a package can access is declared by the package itself in `package.json#stream.credentials`; the host asks the extension for them accordingly.
+**The direction is always host dispatches, package does not request**.
 
-**`stream mcp` 不是编排层。** recipe 怎么跑、桌面动作怎么串、网盘文件怎么对节目单，全在 8900
-那个后端。这个子命令（`src/install/mcp-command.ts`）只做两件杂活：**探一次**本机
-`/api/health`（2s 超时），在场就整面转发到 `/api/mcp`；不在场就先把后端拉起来再转发。
-探测只做一次，后端中途起停都不切换——切换意味着工具面在会话中间变，宿主的工具快照跟不上。
+**`stream mcp` is not the orchestration layer.** How recipes run, how desktop actions are chained, and how netdisk files align with the program guide all live in the backend
+on 8900. This subcommand (`src/install/mcp-command.ts`) only does two chores: **probe once** against local
+`/api/health` (2s timeout); if present, forward the whole surface to `/api/mcp`; if absent, start the backend first and then forward.
+The probe runs only once, and the command does not switch if the backend starts or stops midway: switching means the tool surface changes in the middle of a session, and the host's tool snapshot cannot keep up.
 
-**匹配是通用能力，网盘只是它的一种货架。** 引擎吃的是抽象文件条目（路径、大小、时长），动文件走的是
-一个五动作接口（列 / 建目录 / 搬 / 删 / 给直链）。货架之间的差异——大小写敏感、删能不能撤、列举是不是
-现状、能不能报「还在写」——由货架**自己申报**一张自述表（`shared/netdisk/shelf.ts` 的 `ShelfTraits`），
-规划器按申报降级，不认来源类型。加一种货架（本地目录）= 实现五个动作 + 填这张表，规划器一行不改；
-漏填是编译期缺字段。一条守卫测试钉着「引擎不认识 I/O」（`reconcile/engine-boundary.test.ts`），
-一套契约测试（`reconcile/shelf-contract.ts`）让每个实现跑同一份用例。今天唯一的实现是 `AlistClient`
-（`id === 'openlist'`），决定账本的键因此带着货架 id。各条判据和阈值见 `docs/MATCHING.md`
-「输入失真时归档器怎么降级」。
+**Matching is a general capability; netdisk is only one shelf for it.** The engine consumes abstract file entries (path, size, duration), and file operations go through
+a five-action interface (list / mkdir / move / delete / direct link). Differences between shelves, such as case sensitivity, whether deletes can be undone, whether listing reflects
+current state, and whether it can report "still writing", are declared by the shelf **itself** in a self-description table (`ShelfTraits` in `shared/netdisk/shelf.ts`).
+The planner degrades according to that declaration and does not recognize source types. Adding a shelf (local directory) = implement five actions + fill this table, with no planner changes;
+an omitted field is a compile-time missing field. One guard test pins "the engine does not know I/O" (`reconcile/engine-boundary.test.ts`), and
+a contract test suite (`reconcile/shelf-contract.ts`) makes each implementation run the same cases. The only implementation today is `AlistClient`
+(`id === 'openlist'`), so the key that determines the ledger includes the shelf id. For each check and threshold, see `docs/MATCHING.md`
+"How the archiver degrades when input is distorted".
 
-**一条绑定的三个货架必须在同一个货架上**这条约束还没有落成检查：跨货架的「搬」要变成「拷贝 + 删」，
-五动作接口里没有这一档，而今天只有一种货架，没有可比对象。等第二种货架落地时和它一起做。
+**The three shelves in one binding must be on the same shelf** is not yet enforced by a check: cross-shelf "move" must become "copy + delete",
+and the five-action interface has no such tier, while today there is only one shelf and nothing to compare against. Do this together when the second shelf lands.
 
 ## Two configuration layers
 
@@ -162,57 +164,57 @@ never its value. Before execution, an adapter resolves the Source ref into a pri
 context. That context never enters Stream/Provider member params, cache keys, diagnostics, or item
 storage. Login cookies remain separate: `auth.cookie` dynamically resolves browser cookies by domain.
 
-### 自助申请：谁能替用户把一格配置填满
+### Self-Service Provisioning: Who Can Fill One Config Slot for the User
 
-一格配置有两个方向的声明，本来只有一个方向走得通：**需要**（一个 Source 的 manifest 说
-「我要 ref X」）和**产出**（一条 recipe 声明 `extract` + 自己的 `runtime_config`，跑一趟就把
-只显示一次的明文写进 X）。产出那一侧从前没有任何索引，配置界面手里只有「我要 X」，查不到
-「谁能给我 X」——一条跑得通的自助申请在界面上等于不存在。
+A config slot has declarations in two directions, and originally only one direction was usable: **needs** (a Source manifest says
+"I need ref X") and **produces** (a recipe declares `extract` + its own `runtime_config`; after one run it writes the
+one-time-display plaintext into X). The producing side used to have no index at all. The config UI only held "I need X" and could not look up
+"who can give me X", so a self-service request that could run was effectively nonexistent in the UI.
 
-判据是具名函数 **`provisionedConfigSlot`**（`src/replay/recipe-provisioner.ts`）：canonical
-browser recipe + `extract` + 目标字段已在**自己的** `runtime_config` 里声明为 `secret`。它同时
-是抽取 sink 的绑定判据（`SessionRecipeExecutor.sinkFor`）——一份判据两个方向，不许各写一份。
-数字由 `src/replay/recipe-provisioner.test.ts` 钉着（今天恰好 4 条内置 recipe 产出 3 个 ref）。
+The check is the named function **`provisionedConfigSlot`** (`src/replay/recipe-provisioner.ts`): canonical
+browser recipe + `extract` + the target field is declared as `secret` in **its own** `runtime_config`. It is also
+the binding check for the extraction sink (`SessionRecipeExecutor.sinkFor`): one check for both directions; do not write separate ones.
+The numbers are pinned by `src/replay/recipe-provisioner.test.ts` (today exactly 4 built-in recipes produce 3 refs).
 
-反查索引住在 Source 域：**`SourcesService.configProvisionerFor(ref)`**（`src/kernel/plugins/sources.ts`）。
-它**只认内置层 recipe**，与 `secret_params` 闸 3 同一条理由的镜像——否则第三方包只要声明
-`runtime_config.ref: 'groq'`，内置 groq 那张配置卡上就会长出一颗跑它代码、写用户真钥匙的按钮。
+The reverse lookup index lives in the Source domain: **`SourcesService.configProvisionerFor(ref)`** (`src/kernel/plugins/sources.ts`).
+It **only recognizes built-in-layer recipes**, mirroring the same reason as `secret_params` gate 3: otherwise a third-party package could merely declare
+`runtime_config.ref: 'groq'`, and the built-in groq config card would grow a button that runs that package's code and writes the user's real key.
 
-HTTP 面两格，都挂在既有那对端点上（不新开只读端点）：
-`POST /api/source-runtime-config/status` 的回执多一格 `provisioner`（`null` = 没人能帮），
-`POST /api/source-runtime-config/provision` 真去跑那条 recipe（`userInitiated: true`，
-第一方 UI 路径，同 `xhs-like`）。**成功的判据不是请求 2xx**：这类 recipe `allowEmpty`、不产
-item，成功和白跑在 runner 的回执里一字不差，所以端点跑完回头问一次 `secrets[field].configured`，
-不为真就报 502 并指向 `failures/`。UI 在 Source Config Sheet：撞上「要这把 key 但还没有」
-那一刻弹一次引导（两个按钮：自己去注册 = `helpUrl` 外链 / 一键帮我完成 = 跑 recipe），
-之后靠字段旁那颗按钮回来。
+The HTTP surface has two slots, both mounted on that existing endpoint pair (no new read-only endpoint):
+the receipt from `POST /api/source-runtime-config/status` gains a `provisioner` slot (`null` = nobody can help),
+and `POST /api/source-runtime-config/provision` actually runs that recipe (`userInitiated: true`,
+first-party UI path, same as `xhs-like`). **The success check is not request 2xx**: this kind of recipe is `allowEmpty` and produces no
+item, so success and a no-op run look identical in the runner's receipt. Therefore, after the endpoint finishes running, it asks `secrets[field].configured` once;
+if not true, it reports 502 and points to `failures/`. The UI is in the Source Config Sheet: when it hits "this key is required but missing",
+it shows guidance once (two buttons: register myself = `helpUrl` external link / complete it for me in one click = run recipe),
+and later returns via the button beside the field.
 
-**manifest 那一侧读不到 recipe 体**，所以 `recipeToManifest` 把这条判据的结论投影成
-`runtime_config.provisions`（`src/manifest/types.ts`）——**推出来的，不是包作者手写的**，
-`meta` 里抄一份会被剥掉。`selfProvisionRecipesFor`（`src/auth/self-provision.ts`）只认这一格。
-别拿「声明了同一个 `ref`」当判据：那只说明这份 Source 和那格配置有关系，方向可以是反的
-（`eastmoney-login` 声明 `ref: eastmoney` 是为了**读**用户手填的资金账号/交易密码）。
+**The manifest side cannot read the recipe body**, so `recipeToManifest` projects the conclusion of this check into
+`runtime_config.provisions` (`src/manifest/types.ts`): **derived, not handwritten by the package author**;
+copying one into `meta` is stripped. `selfProvisionRecipesFor` (`src/auth/self-provision.ts`) only recognizes this slot.
+Do not use "declared the same `ref`" as the check: that only means this Source is related to that config slot, and the direction may be opposite
+(`eastmoney-login` declares `ref: eastmoney` in order to **read** the fund account / trading password entered manually by the user).
 
-**跑 + 回头核对只有一份实现**：`provisionConfigSlot`（`src/credentials/provision-slot.ts`）。
-上面那个端点和对话里模型手上那个工具吃的是同一个函数——两边各写一遍的漂移是静音的：
-一边核对、另一边把一次白跑说成「我已经帮你申请好了」。
+**There is only one implementation for run + verify afterward**: `provisionConfigSlot` (`src/credentials/provision-slot.ts`).
+The endpoint above and the tool held by the model in chat both use the same function. Drift from writing the two sides separately is silent:
+one side verifies, while the other describes a no-op run as "I have already applied for it for you".
 
-**对话面两个工具**（`src/mcp/tool-catalog.ts`，判据在 `src/mcp/capability-gaps.ts`）：
+**Two tools on the chat surface** (`src/mcp/tool-catalog.ts`, checks in `src/mcp/capability-gaps.ts`):
 
-* **`capability_status`（读）** —— 「这件事为什么做不了、谁能修」。可用性的真相源是
-  `conversions.kinds()` 里 extract 那一行的 `branches`（后端选分支吃的就是它），**不另造嗅探**；
-  「谁能修」从这条能力骑的那一行 Provider 的成员反查——声明的成本阶梯
-  （`SYSTEM_IDENTITIES` 的 `defaultMembers`）∪ 用户库里现有的成员，逐个问 manifest 要哪一格
-  `runtime_config`。声明那一半不能省：`transcribe` 行是「哪些 key 在就写哪几档」建出来的，
-  一把 key 都没有时**那一行压根不存在**，只读库会答出「没有成员」这个既真又没用的答案。
-  回执 `state` 有四档，各对一个不同的下一步：`ready` / `needs-key-self-serve`（缺 key 且有
-  recipe 能产出 → 引导二选一）/ `needs-key-manual`（缺 key 且没人能产出 → 只给 `helpUrl`）/
-  `blocked-other`（**不是缺 key**：机器上没 ffmpeg、梯子空、或 key 已配好但后端没重启）。
-  第四档单列是硬要求——对它说「我帮你申请一把 key」是指错路，而指错路没有一处会报错。
-* **`provision_capability_key`（写）** —— 包住 `provisionConfigSlot`，**显式二次确认**
-  （不带 `confirmed` 一步都不执行，形状同 `run_action_recipe`）。确认回执要把账户级副作用讲清：
-  在用户自己的 Chrome 里、用他的账号建一把真 key，建 key 不幂等。
-  活体验收步骤在 `docs/AGENT-TOOLING.md` §5.1。
+* **`capability_status` (read)**: "why this cannot be done, and who can fix it". The source of truth for availability is
+  the `branches` on the extract row in `conversions.kinds()` (the backend uses exactly that to choose branches); **do not create another sniffer**.
+  "Who can fix it" is found by reverse-looking up from the members of the Provider row that this capability rides: the declared cost ladder
+  (`defaultMembers` in `SYSTEM_IDENTITIES`) ∪ existing members in the user's store, asking each manifest which
+  `runtime_config` slot it needs. The declared half cannot be omitted: the `transcribe` row is built as "write whichever tiers have keys",
+  and when there is no key at all, **that row does not exist at all**. A read-only store would answer "no members", which is true and useless.
+  The receipt `state` has four tiers, each corresponding to a different next step: `ready` / `needs-key-self-serve` (missing key and a
+  recipe can produce it → guide the user to choose one of two options) / `needs-key-manual` (missing key and nobody can produce it → only provide `helpUrl`) /
+  `blocked-other` (**not missing a key**: ffmpeg is absent on the machine, proxy is empty, or the key is configured but the backend has not restarted).
+  Listing the fourth tier separately is a hard requirement: telling it "I will apply for a key for you" points down the wrong path, and nowhere on that wrong path reports an error.
+* **`provision_capability_key` (write)**: wraps `provisionConfigSlot` and **requires explicit second confirmation**
+  (without `confirmed`, not a single step executes; same shape as `run_action_recipe`). The confirmation receipt must spell out the account-level side effect:
+  in the user's own Chrome, using that user's account, create a real key; key creation is not idempotent.
+  Live verification steps are in `docs/AGENT-TOOLING.md` §5.1.
 
 ## Ad filtering (fold, don't delete)
 
@@ -223,12 +225,12 @@ ad_filter:
   domains:  [taobao.com, jd.com]            # vs item urls; also matches subdomains
 ```
 Keywords also match the source's own `category` tags (RSSHub `item.category`) — the
-high-precision signal: v2ex's 推广 node flags promos there even when the title looks
+high-precision signal: v2ex's 推广 ("promotion") node flags promos there even when the title looks
 innocent. Caveat: broad topic words (`广告`) substring-match *news about* advertising
 on news feeds — prefer ad-specific phrases and lean on category.
 On ingest each item is checked; a match sets `muted: { reason: 'ad', rule }` on the
 `StreamItem` (the matched rule is kept so the routing is explainable). Muted items are
-**folded into a dedicated 广告 channel** in the sidebar (below the channel list) —
+**folded into a dedicated 广告 ("Ads") channel** in the sidebar (below the channel list) —
 they still land in the read model and are kept out of All Latest and every stream view,
 but one click on 广告 shows them. Nothing is dropped, so a false positive is fully
 recoverable. A canonical default rule set ships built-in (`src/content/ad-rules.default.ts`);
@@ -237,7 +239,7 @@ client-side virtual view (`app/src/lib/items.ts`, `ADS_CHANNEL`).
 
 ## Channel
 
-A Channel (UI 里就叫「频道」) is what a user (or agent)
+A Channel (called `频道` ("Channel") in the UI) is what a user (or agent)
 subscribes to and what every ref names. It is a **view**: it references its member Streams by id
 (never owns them) and materializes on read — the referenced Streams' stored items are merged,
 ad-filtered, and deduped on each item's cross-source ref. Items belong to Streams, not Channels:
@@ -249,15 +251,15 @@ Channel.
 (`src/providers/presents.ts`) — selects the full consumption mode: how data is acquired, how it
 is rendered, and which capabilities attach. Every descriptor answers two orthogonal questions:
 
-| 轴 | 问题 | 取值 |
+| Axis | Question | Values |
 |---|---|---|
-| `needsStreams` | 这个 Present 绑不绑 Stream？ | true / false |
-| `data` | 数据怎么取到？ | `collected`（源→采集→item 库→读库）/ `live`（请求到来时现执行，不落库） |
+| `needsStreams` | Does this Present bind Streams? | true / false |
+| `data` | How is the data acquired? | `collected` (Source -> harvest -> item store -> read store) / `live` (execute on demand when the request arrives, without writing to disk) |
 
 |  | `needsStreams: true` | `needsStreams: false` |
 |---|---|---|
-| **`data: 'collected'`** | timeline / audio / video — 按 cadence 定期采集入库，读的是库 | — |
-| **`data: 'live'`** | research — 绑 Stream，但每次请求现读 Stream 成员的源，不落库 | search — 什么都不绑，查询现场分发给 search Provider；tasks — 调度引擎的执行台账；embed — 一张外部网页 |
+| **`data: 'collected'`** | timeline / audio / video — regularly harvest into storage by cadence, and read from the store | — |
+| **`data: 'live'`** | research — binds Streams, but each request reads the Source of the Stream member on demand, without writing to disk | search — binds nothing, dispatches the query to search Providers at call time; tasks — the execution ledger for the scheduling engine; embed — an external web page |
 
 - **Timeline** — members are harvested on schedule and shown as a merged feed.
 - **Search** — no standing harvest; a query dispatches to search **Providers** at call time.
@@ -275,7 +277,7 @@ is rendered, and which capabilities attach. Every descriptor answers two orthogo
   generalized at all: research gets its own two routes
   (`GET /api/research/streams/:streamId/runs/:runId[/artifacts/:name]`,
   `src/http/research-routes.ts`) that mirror Cockpit's own `/api/runs/{id}` shape verbatim.
-- **Embed（外接面板）** — one Channel = one external web page: `options.url` (an absolute
+- **Embed (external panel)** — one Channel = one external web page: `options.url` (an absolute
   http(s) URL, validated on write) is rendered as a full-pane `<iframe>` (`embedMode` in
   `app/src/panel/StreamPanel.tsx`; sandbox allows scripts/same-origin/forms/popups since the
   page is a user-configured trusted dashboard). No Streams, no slots, no local data; a missing
@@ -358,18 +360,18 @@ it derives from any member Source's manifest declaring `mode:'collection'`, else
   upstream order, not gated by dedup — and the Stream is excluded from the all-latest timeline.
   Replacement is **per member source's shard**, and it is **not unconditional** — see below.
 
-**collection 的替换有两道闸门**（`src/collection-replace-guard.ts`，2026-07-30 spec）。一个空快照
-有两种截然不同的来源，而替换层看到的形状一模一样：上游真的空了（该替换）vs 上游抽风/本轮根本
-没采到（替换 = 数据丢失，2026-07-24 怡乐 1015 条）。所以：
+**Collection replacement has two gates** (`src/collection-replace-guard.ts`, 2026-07-30 spec). An empty snapshot
+has two completely different possible sources, but the replacement layer sees exactly the same shape: upstream is truly empty (should replace) vs upstream glitched / this round
+harvested nothing at all (replacement = data loss, 2026-07-24 Yile 1015 items). Therefore:
 
-1. **采集侧给成功指针** — `AdapterFetchResult.authoritative`（缺省 true）。错误路径继续抛错；
-   decline 路径（环境缺席 / Browser-Fallback 关 / 隔离中）返回 `authoritative:false`。非权威结果
-   **不替换分片、不进请求缓存、不记 health**，只走 `onHarvestSkipped` 出声。
-2. **替换侧兜"近乎全空"** — 权威但新快照 0 条而旧分片有货时，第一轮只保住不替换，**连续两轮**
-   都这么说才真替换。真清空只晚一轮生效。刻意**不按缩水百分比拦**（会误伤真实的大幅删减）。
-   armed 位 per (stream, source)，持久化在 `stream.db` 的 `collection_guard` 表。
+1. **The harvest side provides a success pointer** — `AdapterFetchResult.authoritative` (defaults to true). Error paths keep throwing;
+   decline paths (environment absent / Browser-Fallback off / isolated) return `authoritative:false`. Non-authoritative results
+   **do not replace shards, do not enter the request cache, and do not record health**; they only make noise through `onHarvestSkipped`.
+2. **The replacement side catches "nearly all empty"** — when the result is authoritative but the new snapshot has 0 items while the old shard has data, the first round only holds the shard without replacing it, and it only truly replaces after **two consecutive rounds**
+   say the same thing. A real clear only takes effect one round later. It deliberately **does not block by shrinkage percentage** (that would wrongly catch real large deletions).
+   The armed bit is per (stream, source), persisted in the `collection_guard` table in `stream.db`.
 
-两层都经通用事件层出声（`harvest.snapshot-held`），`dedupeKey` 里编进 reason 这个终态。
+Both layers make noise through the general event layer (`harvest.snapshot-held`), and the terminal `reason` is encoded into `dedupeKey`.
 
 `strategy` (how members combine) and `mode` (how the result is stored) are orthogonal — a
 `collection` Stream can still be `fanout` or `exclusive`. **There is no `Stream.kind`**, and
@@ -381,117 +383,117 @@ routing — which view a Stream's items render in (timeline feed vs audio player
 
 ## Provider
 
-Provider 的实现选择不由调用方硬编码的 Provider id 决定。代码声明稳定的 **Callsite** 合同（输入/输出、variant、固定或按 key 分发），`stream.db.provider_bindings` 保存 Callsite 到 Provider 的用户可编辑引用；调用方先解析 binding，再复用同一 `ProviderExecutor.invoke()` / `collect()` 执行。这样 Provider 行内的 Source 顺序与 dispatch Callsite 的 Provider 路由顺序保持两层独立，且可从任一端反查引用。被 binding 引用的 Provider 不可删除；内置默认 Provider/binding 可恢复，但不是永久锁定行。
+Provider implementation selection is not determined by a Provider id hard-coded by the caller. Code declares a stable **Callsite** contract (input/output, variant, fixed or key-based dispatch); `stream.db.provider_bindings` stores user-editable references from Callsites to Providers. The caller resolves the binding first, then reuses the same `ProviderExecutor.invoke()` / `collect()` for execution. This keeps the Source order inside a Provider row and the Provider routing order of a dispatch Callsite independent at two layers, while references can be looked up from either end. A Provider referenced by a binding cannot be deleted; built-in default Providers/bindings can be restored, but they are not permanently locked rows.
 
-**频道级槽位覆盖全局 binding（2026-07-24）**：`ProviderBindings.fixed()`/`.dispatch()` 都接受可选
-`{ channelId }`；带了且该频道 `options.slots[callsiteId]` 非空 → 用槽位指定的 Provider 集合替代
-全局 binding（parked 行同样在槽位路径被过滤，语义与全局 binding 一致）；不带 `channelId`、或该
-频道没填这个槽位 → 回落全局 binding，行为不变。HTTP 层只有携带频道语境的调用点（Video Present
-的搜索/播放解析、音乐播放解析等）在 query string 上传 `channelId`；MCP 全局搜索、radar 富化等无
-频道语境的调用点不传，永远走全局 binding。调用计数仍只在执行器内打点，槽位路径同样被计数覆盖。
-被任一频道槽位引用的 Provider 与被 binding 引用的 Provider 同规则不可删除（`DELETE
-/api/providers/:id` 的 `409 error.details.channels` 列出引用的频道+callsite）。
+**Channel-level slots override the global binding (2026-07-24)**: `ProviderBindings.fixed()`/`.dispatch()` both accept optional
+`{ channelId }`; when it is present and that Channel's `options.slots[callsiteId]` is non-empty -> use the Provider set specified by the slot instead of the
+global binding (parked rows are filtered on the slot path as well, with semantics consistent with the global binding); without `channelId`, or when that
+Channel has not filled this slot -> fall back to the global binding, with behavior unchanged. At the HTTP layer, only callsites that carry Channel context (Video Present
+search/playback resolution, music playback resolution, etc.) upload `channelId` in the query string; callsites without
+Channel context, such as MCP global search and radar enrich, do not pass it and always use the global binding. Call counts are still recorded only inside the executor, and the slot path is covered by the same counting.
+A Provider referenced by any Channel slot cannot be deleted under the same rule as a Provider referenced by a binding (`DELETE
+/api/providers/:id` returns `409 error.details.channels` listing the referencing Channels + callsites).
 
-**槽位废 = 显式报错,绝不静默回落（spec §5.1）**：槽位是用户显式意图，槽里挑不出任何可用行
-（全 parked/已删）时不回落全局 binding、也不回落调用点写死的默认值——抛 `SlotBrokenError`，
-HTTP 层接住转成 `422 slot_broken` + `provider.slot_broken` Bell 事件（Bell 全端点覆盖；
-toast 目前只接在资源搜索面，其余端点靠 Bell）。
+**Broken slot = explicit error, never silent fallback (spec §5.1)**: a slot is explicit user intent. When no usable row can be selected from the slot
+(all parked/deleted), do not fall back to the global binding and do not fall back to the default value hard-coded by the callsite -- throw `SlotBrokenError`.
+The HTTP layer catches it and converts it to `422 slot_broken` + a `provider.slot_broken` Bell event (Bell covers all endpoints;
+the toast is currently wired only on the resource search surface, and the remaining endpoints rely on Bell).
 
 A Provider is a **global, call-driven, on-demand capability**, expressed as **one config row**
-(与 Stream 同构，2026-07-03 设计收敛并落地):
+(isomorphic to Stream; design converged and landed on 2026-07-03):
 
 ```
-身份（category / serves 键 / fallback / strategy / contract / expand）
-  ├─ 系统 Provider：住代码 —— src/providers/system/ 一条一个模块（SYSTEM_IDENTITIES 静态表）；
-  │   行上的身份字段只是落库副本，读写两侧都以代码为准（PATCH 身份字段 → 400 响亮拒绝）
-  └─ 用户自建 Provider：住行上（它没有代码）
-编排（members / options / binding）：一律住 stream.db 的行上，用户可编辑、可分享
-调用点 = 自身 category（编译期身份） + 路由键提取函数（输入 → key） + 一句 invoke()
-分发   = ProviderDirectory.match(category, key, {fallback}) —— 选行判据的唯一入口：
-         具名 serves 键命中优先；无命中且调用点显式传 fallback:true 才落兜底行，
-         命中结果带 viaFallback 进账本/DebugBox。'*' 只是兜底布尔的线上/落库形状。
+Identity (category / serves key / fallback / strategy / contract / expand)
+  ├─ System Provider: lives in code -- one module per row under src/providers/system/ (SYSTEM_IDENTITIES static table);
+  │   identity fields on the row are only persisted copies; both read and write sides treat code as authoritative (PATCH identity fields -> 400 loud rejection)
+  └─ User-created Provider: lives on the row (it has no code)
+Orchestration (members / options / binding): always lives on the stream.db row, user-editable and shareable
+Callsite = its own category (compile-time identity) + routing-key extractor function (input -> key) + one invoke()
+Dispatch = ProviderDirectory.match(category, key, {fallback}) -- the only entry point for row-selection checks:
+         named serves key hits have priority; when there is no hit, only callsites that explicitly pass fallback:true fall to the fallback row,
+         and hit results carry viaFallback into the ledger/DebugBox. '*' is only the online/persisted shape of the fallback boolean.
 ```
 
-- **variant** 决定输入/输出签名与默认 strategy：`search`（查询词 → 条目列表，并发合并）、
-  `resolve`（key → 一个对象，顺次首胜）、`download`（ref → 资产，顺次 + contract）、
-  `transform`（内容 → 内容，顺次）。`timeline` 不是 variant——那是 Stream。
-- **members** 四型：`{source}` 显式源成员、`{matches}` radar 匹配段（按 URL pattern 实时展开
-  命中的源）、`{mode:'auto', provides:X}` 派生段（声明 `provides: [X]` 的源实时展开入列，新装
-  插件自动加入）、`{provider}` **组合成员**（一个 Provider 引用另一个 Provider）。前三型全部展开
-  成 Source；`{provider}` 是**组合闭包**——执行器**递归 `invoke()`** 子 Provider（黑盒：子的
-  strategy/门禁/去重是子的内部语义,父层不复制），子的 items 型结果并入父。递归带访问路径,**防
-  自引用/环/超深**（`MAX_COMPOSITION_DEPTH`,越界抛错、不进 invoke 循环）；被 `{provider}` 成员
-  引用的 Provider 不可删除（与 binding 引用保护同构）。成员参数以 `$input` 洞声明绑定,输入值由
-  调用点在调用时给——绑定归行定义,输入归调用点。调用点给的输入若是一个**普通对象**（如
-  `video.resolve` 的 `{vid, format}`、`content.enrich` 的 `{url}`），非 builtin 成员收到的是
-  空键 + 该对象整个展开进 `params`（`memberCallArgs`，`src/providers/invoke-types.ts`）；
-  builtin 成员的实现函数则直接拿整个输入对象。
-- **认领 → 派发：链接先认领，再按键派发**。「用户贴一条链接」这类调用点分两步：**认领**回答这条链接是哪个包、
-  哪个平台、什么类型、id 多少——只有一张表（各包的 `stream.links`）、一个函数（`recognizeLink`，
-  `src/links/recognize.ts`），宿主不认识任何站；**派发**用认领结果拼键（`<platform>-<名词>`：`content.enrich`
-  用 `<platform>-link`、`video.resolve` 用 `<platform>-video`、取歌用平台键），交给声明了那个键的 Provider 行。
-  任何声明里都不写域名形状的键。没人认领的链接走宿主的通用兜底（直链媒体 / 网页正文）。曲目识别与下载中转页
-  同样只吃认领结果。`radar`（这页能订阅成哪个源）与 `serving`（这台 CDN 主机的字节怎么送）回答的是别的问题，
-  不在这张表里。声明形状与校验见 [PACKAGE.md](PACKAGE.md) §0.5「`links`」，设计见
-  `internal design record`。
-- **多实例成员与 per-instance key**（LLM 归一化，2026-07-27）：`{source}` 成员可选带 `name`——
-  同一个 Source 可以在一行里出现多次，各带不同 `params`，寻址键（去重、排序、
-  `options.exclude`、调用账本）一律用 `name ?? source` 取，不是裸的 sourceId。`llm` 行正是
-  这么用的：`llm-openai`（OpenAI 兼容 Source）配多个实例，各自 `params.{baseUrl, model,
-  tokenName}` 自足描述一个端点，互不共享配置。key 落点是**成员实例**而非整个 Source：manifest
-  声明 `runtime_config.perInstance: true` 的 Source（今天仅 `llm-openai`），一份 key 存在
-  `params.tokenName` 指向的那一层（约定 `<ref命名空间>:<实例名>`，如 `llm:<实例名>`），不是
-  `runtime_config.ref` 那层——`GET /api/providers` 的 `resolvedMembers[].keyState`
-  （`stored`/`env`/`missing`）按 `keyRefOf`（`src/credentials/key-state.ts`）取的就是这一层，一个
-  实例缺 key 不牵连另一个。调用点（`llm.summarize`/`llm.chat`/`netdisk.spec.suggest`）可在
-  binding 上带 `params.model` 覆盖，赢过成员自己的默认——模型选择因此下放到"这次调用要哪个
-  模型"，不是"这条连接固定哪个模型"。注意 `params.model` **只换型号名，不换端点和钥匙**：换到
-  另一家（另一个 baseUrl + token）是"换成员"，不是改这个覆盖。对话通道就是这么换的——每条
-  会话记一个**成员键**（`GET /api/agent/models` 的 `member`，存在会话表的 `model_member` 上），
-  输入框左下角那个开关写它；存键不存型号，型号是成员自己的参数、会被改。**不变量**：实例名与 auto 段（`{mode:'auto', provides}`）
-  展开出的真实 source id 共享同一个寻址命名空间——`name` 撞上任何已注册 source id 时写入侧拒绝
-  （`422 name_shadows_source`），因为寻址键一撞车真源会被这个实例悄悄顶掉、行为异常但界面上看
-  不出来（`name` 等于自己的 `source` 不算撞，等价于不写 `name`）。详见 [API.md](API.md)「LLM
-  设置」一节与 `internal design record`。
-- **strategy `expand`**（依赖式 A→B 组合子,provisional）：作用于有序两成员 `[A,B]`——invoke A →
-  每个 A-item(handle)按 `expand.map` 的 `$item.<field>` **纯字段取值**参数化 B（不引入任意求值,
-  守"数据拿不到 ambient capability"红线）→ invoke B → B 的 items 经 `expand.assemble` 装配进该条
-  的 `links[]{url,type,desc}`。有界并发 + handle 封顶 + 单钻失败/超时跳过。契约按第一个消费者
-  （btbtla:搜索出季卡片→逐条钻详情页取下载行,产 pansou 多链接形状）够用而定,待第二样本收敛。
-- **成员结果两种形状**（2026-07-17 能力归一化）：**items 型** = 条目数组（`[]` = decline，
-  既有全部成员）；**object 型** = 一个判决/结果对象（`null` = decline，探针与解析器——判决
-  不穿 item 的衣服）。形状由 Source 的 `manifest.output` 声明（recipe 侧对应
-  `output:'object'`），执行器缝上解包。`resolve` variant 的成员应当是 object 型（key → 一个
-  对象本来就是它的定义）；存量数组形状的 resolve 成员机会性迁移。
-- **contract**：命名的结果合格判据（如 `{accept:'lossless'}`）——不合格视为 miss 落档。
-- 运行时是**一个执行器**（`src/providers/executor.ts` 的 `invoke()`）：顺次分支 =
-  decline/合同拒/抛错三类 miss 落档、首个合格结果携 `via` 返回；并发分支 = 全员合并、
-  逐源归属。**调用计数只在执行器内打点**（`cache.db.provider_calls`），管理页据此验证
-  调用点是否真实经过 Provider 行。
-- **执行策略是可换件的注册表**（`src/providers/strategies/`，sequential/concurrent/expand
-  三件内置,`BUILTIN_STRATEGY_NAMES` 驱动写入校验）——加一个新策略不改执行器本体。横切
-  （超时 / 分类 / 健康记账）不住在任何一条策略里,统一收在单成员管道 `member-pipeline.ts`
-  （碰成员的唯一口子）,三条策略共用同一份。**降级读法是熔断,不是重排**：顺序永远是行里
-  定的原序,`SourceBreaker` 只按健康账本裁决"这个成员这一下试不试"（只吃错/超时,空不触发,
-  冷却随连败递增且有封顶,绝不永久降级）。权威设计见
-  `internal design record`。
-- **`ResolveEngine`（`src/resolve/engine.ts`）吃同一套件**,不是第二条各写各的梯子：
-  `resolve()` 是原序逐档 + 同一个 `SourceBreaker` 裁决（整表走 `plan()`：冷却中跳过；全员冷却时
-  强行试冷却剩余**最短**的那一档——一次调用至少真实试一档）。那条兜底不变量只有一个实现
-  （`forceProbeShortest`）,顺次策略吃的是同一份——它逐成员 `admit` 只为豁免组合成员。
-  成员调用走 `member-pipeline.ts`。
-  **超时只吃 manifest 自报的 `member_timeout_ms`,不设全局缺省**——resolve 的调用方全是交互式的
-  （`GET /api/resolve`、MCP `resolve_target`；周期采集走 `Scheduler.fetchSource`,不经这里）,
-  确实可能被挂死的源拖住;之所以还不设全局闸,是墙钟上限眼下有两套并存的表,值定在哪一层要随
-  `project planning record` 那条一起定,先设第三个数只会再多一套。resolve 的"空 = 这一档答不了这个 key,
-  落下一档"照旧,空永不触发熔断。
-- **`collect()` 不是第二种语义,是全收（并发）语义下的另一种结果形状**：`invoke()` 把合格结果
-  合并成一个 items 数组,`collect()` 保留「哪个成员给的哪份」的成对结构,供**按来源合并字段**的
-  调用点用（影视详情三行就是：TMDb 与 OMDb 都要跑完,再按声明顺序填空)。顺次（首胜即停）语义
-  下 collect 自相矛盾——"逐个问但一个都不停"那不是顺次,是并发。两侧都响亮拒绝：执行器分发处
-  `strategy.collect` 缺席即抛（带策略名与行 id）,绑定写入侧由 `PROVIDER_CALLSITES` 的
-  `collect: true` 标记 + `ProviderBindings.validateSelection` 提前拒（全局 binding 与频道槽位
-  共用这一条,槽位不另立规则）——别让"绑了一条首胜行"拖到详情页真去取数时才炸。
+- **variant** determines the input/output signature and default strategy: `search` (query term -> item list, concurrent merge),
+  `resolve` (key -> one object, sequential first win), `download` (ref -> asset, sequential + contract),
+  `transform` (content -> content, sequential). `timeline` is not a variant -- that is Stream.
+- **members** have four forms: `{source}` explicit Source member, `{matches}` radar match segment (real-time expansion of Sources hit
+  by URL pattern), `{mode:'auto', provides:X}` derived segment (Sources that declare `provides: [X]` are expanded into the row in real time, and newly installed
+  plugins are added automatically), and `{provider}` **composition member** (one Provider references another Provider). The first three all expand
+  to Sources; `{provider}` is a **composition closure** -- the executor **recursively `invoke()`s** the child Provider (black box: the child's
+  strategy/gating/deduplication are the child's internal semantics, and the parent layer does not copy them), and the child's items-shaped results merge into the parent. Recursion carries the access path and **prevents
+  self-reference/cycles/excessive depth** (`MAX_COMPOSITION_DEPTH`; exceeding it throws and does not enter an invoke loop); a Provider referenced
+  by a `{provider}` member cannot be deleted (isomorphic to binding reference protection). Member parameters declare binding through `$input` holes, and input values are supplied by
+  the callsite at invocation time -- binding belongs to the row definition, input belongs to the callsite. If the input supplied by the callsite is a **plain object** (for example
+  `{vid, format}` from `video.resolve`, or `{url}` from `content.enrich`), non-builtin members receive an
+  empty key + the entire object spread into `params` (`memberCallArgs`, `src/providers/invoke-types.ts`);
+  builtin member implementation functions receive the entire input object directly.
+- **Claim -> dispatch: links are claimed first, then dispatched by key**. A callsite such as "the user pasted a link" has two steps: **claim** answers which package,
+  which platform, which type, and which id this link is -- there is only one table (each package's `stream.links`) and one function (`recognizeLink`,
+  `src/links/recognize.ts`), and the host does not know any site; **dispatch** builds a key from the claim result (`<platform>-<noun>`: `content.enrich`
+  uses `<platform>-link`, `video.resolve` uses `<platform>-video`, and song retrieval uses the platform key), then hands it to the Provider row that declared that key.
+  No declaration writes a key shaped like a domain name. Links that nobody claims go through the host's generic fallback (direct media link / webpage body). Track recognition and download transit pages
+  also consume only claim results. `radar` (which Source this page can be subscribed as) and `serving` (how bytes from this CDN host are served) answer different questions
+  and are not in this table. Declaration shape and validation are in [PACKAGE.md](PACKAGE.md) §0.5 "`links`"; design is in
+  `internal design record`.
+- **Multiple-instance members and per-instance key** (LLM normalization, 2026-07-27): a `{source}` member may optionally carry `name` --
+  the same Source can appear multiple times in one row, each with different `params`; addressing keys (deduplication, sorting,
+  `options.exclude`, call ledger) always use `name ?? source`, not the bare sourceId. The `llm` row uses exactly this:
+  `llm-openai` (OpenAI-compatible Source) is configured with multiple instances, each of whose `params.{baseUrl, model,
+  tokenName}` self-sufficiently describes an endpoint, without shared config. The key lands on the **member instance**, not the whole Source: for a Source whose manifest
+  declares `runtime_config.perInstance: true` (today only `llm-openai`), a key is stored at the layer pointed to by
+  `params.tokenName` (convention: `<ref namespace>:<instance name>`, for example `llm:<instance name>`), not at
+  the `runtime_config.ref` layer -- `resolvedMembers[].keyState` from `GET /api/providers`
+  (`stored`/`env`/`missing`) is fetched from exactly this layer by `keyRefOf` (`src/credentials/key-state.ts`), so one
+  instance missing a key does not implicate another. Callsites (`llm.summarize`/`llm.chat`/`netdisk.spec.suggest`) can carry
+  `params.model` on the binding as an override, which wins over the member's own default -- model choice is therefore delegated to "which
+  model this invocation wants", not "which model this connection fixes". Note that `params.model` **only changes the model name, not the endpoint and key**: switching to
+  another provider (another baseUrl + token) is "switch member", not editing this override. The chat channel switches this way: each
+  session records a **member key** (`member` from `GET /api/agent/models`, stored on `model_member` in the session table),
+  and the switch in the lower-left of the input box writes it; it stores the key, not the model name. The model name is the member's own parameter and can be changed. **Invariant**: instance names and the real source ids
+  expanded by auto segments (`{mode:'auto', provides}`) share the same addressing namespace -- when `name` collides with any registered source id, the write side rejects it
+  (`422 name_shadows_source`), because once addressing keys collide the real Source is silently displaced by this instance, behavior becomes abnormal, and the UI
+  cannot show it (`name` equal to its own `source` does not count as a collision and is equivalent to omitting `name`). See the "LLM
+  settings" section in [API.md](API.md) and `internal design record`.
+- **strategy `expand`** (dependent A->B combinator, provisional): applies to ordered two-member `[A,B]` -- invoke A ->
+  parameterize B for each A-item(handle) through **pure field access** from `$item.<field>` in `expand.map` (without introducing arbitrary evaluation,
+  preserving the red line that "data does not get ambient capability") -> invoke B -> assemble B's items into that entry's
+  `links[]{url,type,desc}` through `expand.assemble`. Bounded concurrency + handle cap + per-drill failure/timeout skip. The contract is set to be sufficient for the first consumer
+  (btbtla: search yields season cards -> drill each detail page to retrieve download rows, producing the pansou multi-link shape), and awaits convergence from a second sample.
+- **Two member result shapes** (2026-07-17 capability normalization): **items shape** = item array (`[]` = decline,
+  as in all existing members); **object shape** = one decision/result object (`null` = decline; probes and resolvers -- decisions
+  do not wear an item costume). The shape is declared by the Source's `manifest.output` (corresponding to
+  `output:'object'` on the recipe side), and the executor stitches in unpacking. Members of the `resolve` variant should be object-shaped (key -> one
+  object is its definition in the first place); existing array-shaped resolve members are migrated opportunistically.
+- **contract**: a named result acceptance check (for example `{accept:'lossless'}`) -- non-conforming results are treated as misses and fall through.
+- Runtime is **one executor** (`invoke()` in `src/providers/executor.ts`): the sequential branch has three kinds of misses that fall through --
+  decline/contract rejection/thrown error -- and returns the first acceptable result with `via`; the concurrent branch merges all members and
+  assigns ownership per Source. **Call counts are recorded only inside the executor** (`cache.db.provider_calls`), and the management page uses this to verify
+  whether a callsite really went through a Provider row.
+- **Execution strategy is a swappable registry** (`src/providers/strategies/`, with three built-ins: sequential/concurrent/expand;
+  `BUILTIN_STRATEGY_NAMES` drives write validation) -- adding a new strategy does not change the executor body. Cross-cutting concerns
+  (timeout / classification / health accounting) do not live in any single strategy; they are centralized in the single-member pipeline `member-pipeline.ts`
+  (the only opening that touches members), and the three strategies share the same one. **Degrade is read as circuit breaking, not reordering**: order is always the original order
+  defined in the row, and `SourceBreaker` only uses the health ledger to decide "whether to try this member this time" (only errors/timeouts count; empty results do not trigger it;
+  cooldown increases with consecutive failures and has a cap; it never permanently degrades). The authoritative design is in
+  `internal design record`.
+- **`ResolveEngine` (`src/resolve/engine.ts`) consumes the same kit**, not a second separately written ladder:
+  `resolve()` is original-order fallthrough + the same `SourceBreaker` decision (the whole table goes through `plan()`: skip entries in cooldown; when all are cooling down,
+  forcibly try the tier with the **shortest** remaining cooldown -- one call always truly probes at least one tier). There is only one implementation
+  of that fallback invariant (`forceProbeShortest`), and the sequential strategy consumes the same one -- its per-member `admit` exists only to exempt composition members.
+  Member calls go through `member-pipeline.ts`.
+  **Timeouts only consume `member_timeout_ms` self-reported by the manifest; there is no global default** -- all resolve callers are interactive
+  (`GET /api/resolve`, MCP `resolve_target`; periodic harvest uses `Scheduler.fetchSource` and does not go through here),
+  and they can indeed be dragged down by a hung Source. The reason a global gate is still not set is that the wall-clock cap currently has two coexisting tables, and which layer owns the value must be decided together with
+  the `project planning record` item; adding a third number first would only create another system. The resolve rule "empty = this tier cannot answer this key,
+  fall to the next tier" stays as-is, and empty never triggers circuit breaking.
+- **`collect()` is not a second semantics; it is another result shape under collect-all (concurrent) semantics**: `invoke()` merges acceptable results
+  into one items array, while `collect()` preserves the paired structure of "which member produced which payload" for callsites that **merge fields by source**
+  (the three-line video details case is exactly: TMDb and OMDb must both run, then fill gaps in declaration order). Under sequential (first win stops) semantics,
+  collect is self-contradictory -- "ask one by one but stop for none" is not sequential, it is concurrent. Both sides reject loudly: at executor dispatch,
+  missing `strategy.collect` throws (with strategy name and row id); on binding write, the `collect: true` marker in `PROVIDER_CALLSITES` plus
+  `ProviderBindings.validateSelection` rejects early (global binding and Channel slots share this rule, and slots do not create a separate rule) -- do not let
+  "a first-win row was bound" explode only when the detail page actually fetches data.
 
 The litmus test against Stream is **trigger + result ownership**, not parameter count. A Stream is
 time-driven (T1) and persists feed items; a Provider is call-driven (T2) and returns results to its
@@ -505,19 +507,19 @@ stores its list-facing facts (`videoRef`: title, explicit work year/kind, source
 authority IDs). It never triggers metadata traffic.
 
 Netdisk availability, however, does not *require* a Stream. A binding's left side is「where the
-episode list comes from」, a discriminant — not「a subscribed Stream」. `left.kind:'stream'` reads
+episode list comes from」, a discriminant -- not「a subscribed Stream」. `left.kind:'stream'` reads
 the list from ItemStore; `left.kind:'tmdb'` reads it from the TMDb authority, so an un-subscribed
 movie or series binds a netdisk folder and plays without ever becoming a Stream. The alignment
-engine never learns which — it only ever consumes `LeftEntry[]`. This does **not** introduce a
+engine never learns which -- it only ever consumes `LeftEntry[]`. This does **not** introduce a
 sixth top-level concept: 「a film」stays un-modelled (its identity already lives, cache-shaped, in
 `video_details` keyed `tmdb:<id>`); the discriminant names a *source*, not an entity. Design:
 `internal design record`.
 
-富化有**两个触发点**，都落到同一份缓存上：打开详情页（cache miss 时现场跑），以及**采集把条目写进
-读模型的那一刻**（`VideoEnrichQueue`，挂在 Scheduler 的 `onItemPersisted` 上，范围是视频频道的成员
-流）。后者是列表侧封面和中文名的来源——只有一行标题的源（奖项名单之类）自己交不出图，不在采集时
-富化的话，没被点开过的作品在墙上永远是灰框。队列只对缓存已过期的身份发请求，按 cacheKey 去重，
-失败只记日志：它是背景动作，没有资格拖慢或拖垮一轮采集。
+Enrich has **two trigger points**, both landing on the same cache: opening the detail page (run on the spot on cache miss), and **the moment harvest writes an item into
+the read model** (`VideoEnrichQueue`, attached to the Scheduler's `onItemPersisted`, scoped to member
+Streams of video Channels). The latter is the source of list-side covers and Chinese names -- a Source that has only a one-line title (such as an awards list) cannot provide an image itself. If it is not
+enriched during harvest, works that have never been opened stay gray boxes on the wall forever. The queue only requests identities whose cache has expired, deduplicates by cacheKey,
+and logs failures only: it is a background action and is not allowed to slow down or bring down a harvest round.
 
 On a detail cache miss, the `video-canonical` resolver receives those facts and verifies an
 authority-side TMDb/IMDb reference without fetching the discovery page. Its evidence may include
@@ -527,243 +529,243 @@ candidate is a miss, never a fuzzy substitution. The `video-metadata` Provider a
 posters, backdrops, and logos. Member order is merge priority even when a Provider is concurrent.
 The combined result is cached in `stream.db` table `video_details`, keyed by the discovery lookup
 so the next detail open returns without another Provider call. Future local embedded artwork and
-screen grabs join `video-images` as Sources—no Stream or detail-page rewrite. Ranking feeds,
+screen grabs join `video-images` as Sources--no Stream or detail-page rewrite. Ranking feeds,
 including Douban rankings, remain discovery inputs rather than detail metadata Sources.
 implementation MAY reuse a facility-scoped runtime resource such as a logged-in browser session.
 It MAY also be parameterless: Home recommendation is the canonical example.
 
-*行模型的落地范围：`stream.db.providers` 存整行，`/api/providers` 全套 CRUD + 匹配预览，
-音频双链 / 三类搜索 / magnet / enrich-url / ResolveEngine 都经行执行并计数。**尚未**经行走的能力：
-parse(MinerU)、transcribe(ASR)、enrich 富化聚合、summarize(LLM)——它们「异步排队 + 落库」的形状
-不适配 invoke，管理页的"待迁移"区标着各自的调用位置。*
+*Landed scope of the row model: `stream.db.providers` stores the whole row; `/api/providers` provides full CRUD + match preview;
+audio dual-chain / three search types / magnet / enrich-url / ResolveEngine all execute through rows and are counted. Capabilities that **do not yet** go through rows:
+parse(MinerU), transcribe(ASR), enrich aggregation, summarize(LLM) -- their "async queue + write to disk" shape
+does not fit invoke, and the management page's "pending migration" area marks each call location.*
 
-### 影视页找资源（video resource finder）
+### Video Page Resource Finder
 
-绑了 AList 的剧集走 `gateResolveOnlyVideoMedia`（`src/content/video-playability.ts`）：对齐执行器
-配上文件的集能播，没配上的是一张「网盘未匹配」灰卡。灰卡上的「找资源」按钮直通既有的
-`/api/search?scope=resources&stream=1`，影视二级页 hero 上另有一个整剧维度的同名入口。
+Episodes bound to AList go through `gateResolveOnlyVideoMedia` (`src/content/video-playability.ts`): episodes that the alignment executor
+matches to files are playable; unmatched episodes are a gray `网盘未匹配` ("netdisk unmatched") card. The `找资源` ("find resources") button on the gray card goes straight to the existing
+`/api/search?scope=resources&stream=1`, and the video secondary-page hero has another same-named entry point at whole-series scope.
 
-**去重在后端，过滤在前端**——两件事性质不同，别合并：
+**Deduplication is backend-side, filtering is frontend-side** -- they are different kinds of things; do not merge them:
 
-- **去重是数据质量问题。** `resource-search` 跨源去重（`src/video/dedupe.ts` 的 `Deduper`，键由
-  `dedupeKey` 给出：磁力取 btih、ed2k 取 file hash、网盘取分享 ID）。插在 `extract → aggregate`
-  之间，批量路与流式路共用 `src/video/facet-source.ts` 的 `facetOneSource`。重复对谁都是脏的，
-  所以 MCP `video_search` 那条 AI 路同样受益。两条路的顺序语义**有意不同**：批量路按 Provider
-  成员声明序（确定性），流式路按到达序（先到先得——要按声明优先级就得等齐，废掉流式）。
-  `VideoSourceTiming.dropped` 把「全是重复」与「无结果」分开，否则全重复的源会谎报 `status:'empty'`。
-- **过滤是「我这台机器能用什么」的视图问题。** 允许集 = `GET /api/netdisk/mounts` 的
-  `searchableSourceTypes`（`src/netdisk/source-types.ts`：magnet/ed2k 无条件 + AList **实际挂载**
-  的 driver 映射出的类型）。真相源是 `listStorages()` 而非 `MOUNT_PRESETS`——presets 只是挂载
-  助手的清单，手挂的百度/阿里也该被认。过滤动作在 `app/src/lib/resourceFilter.ts`，**逐链**走
-  `links[]`（pansou 一条消息常带混合类型链接，按条目过滤会误杀「首链百度、但也带夸克」的结果），
-  存活首链重新镜像回 `link`/`sourceType`/`password`。AList 不可达 → 退到 `{magnet, ed2k}` 并标降级。
+- **Deduplication is a data-quality issue.** `resource-search` deduplicates across Sources (`Deduper` in `src/video/dedupe.ts`, with the key
+  supplied by `dedupeKey`: magnet uses btih, ed2k uses file hash, netdisk uses share ID). It is inserted between `extract -> aggregate`,
+  and the batch path and streaming path share `facetOneSource` from `src/video/facet-source.ts`. Duplicates are dirty for everyone,
+  so the AI path through MCP `video_search` benefits as well. The order semantics of the two paths are **intentionally different**: the batch path follows Provider
+  member declaration order (deterministic), while the streaming path follows arrival order (first-come, first-served -- waiting for all results to honor declaration priority would destroy streaming).
+  `VideoSourceTiming.dropped` separates "all were duplicates" from "no results"; otherwise a Source whose results are all duplicates would falsely report `status:'empty'`.
+- **Filtering is a view issue of "what can this machine use".** Allowed set = `searchableSourceTypes` from `GET /api/netdisk/mounts`
+  (`src/netdisk/source-types.ts`: magnet/ed2k unconditionally + types mapped from AList's **actually mounted**
+  drivers). The source of truth is `listStorages()`, not `MOUNT_PRESETS` -- presets are only the mount
+  helper's checklist, and manually mounted Baidu/Ali should be recognized too. Filtering happens in `app/src/lib/resourceFilter.ts`, walking
+  `links[]` **link by link** (one pansou message often carries mixed-type links; filtering by item would wrongly kill a result whose "first link is Baidu, but it also carries Quark"),
+  then mirrors the surviving first link back into `link`/`sourceType`/`password`. If AList is unreachable -> fall back to `{magnet, ed2k}` and mark degraded.
 
-结果面板是 `app/src/components/ResourceFinder.tsx`（摊平分面树、一键复制）；`VideoChannel`
-挂在全局搜索，是另一个入口。
+The results panel is `app/src/components/ResourceFinder.tsx` (flattened facet tree, one-click copy); `VideoChannel`
+mounts in global search and is another entry point.
 
-**链接 → 文件这一段，网盘剧集已经通了，磁力/ed2k 还没有。** 搜索返回链接不是文件：网盘链接靠
-转存变成文件（人手动点「转存」，或追更循环自动转存缺集，见「追更循环」一节），磁力/ed2k 仍然
-没有下载器接住，落不了地。文件一旦落到 AList 上，后半段（对齐执行器 → resolve URL → 灰卡变活）
-是通的。验活=recipe（热插数据，quark/baidu 都走这条），转存=代码（实现选择，非禁令——写效应
-一档的口径是「recipe 也可写账户」，见「能力归一化」一节）。
-设计见 `internal design record`。
+**For the link -> file segment, netdisk episodes are connected, but magnet/ed2k are not yet.** Search returns links, not files: netdisk links become files through
+save (the user manually clicks `转存` ("save"), or the follow loop automatically saves missing episodes; see the "Follow Loop" section), while magnet/ed2k still
+have no downloader to catch them and cannot land. Once a file lands on AList, the latter half (alignment executor -> resolve URL -> gray card becomes live)
+works. Live verification = recipe (hot-swappable data; quark/baidu both use this path), save = code (implementation choice, not a prohibition -- the policy for the write-effect
+tier is "recipes may also write accounts"; see the "Capability Normalization" section).
+Design is in `internal design record`.
 
-### 归档器（reconciler）：文件落到网盘之后，谁把它挪到该在的地方
+### Reconciler: after files land in the netdisk, who moves them to the right place
 
-转存只是把文件放进了共享上游目录；「按集身份认出它、归到认领货架还是第二货架、同集多份择优、
-真重复静默清掉」是另一段活，落在 `src/netdisk/reconcile/`——三层模型。**整理的对象是一条绑定**，
-不是"一个节目"：影视一键去重是「无暂存区、无第二货架」的退化配置，和播客整理共用同一套代码，
-不是平行实现。
+Saving only places files into the shared upstream directory; "identify it by episode identity, fold it into the claimed shelf or secondary shelf, choose the best among multiple copies of the same episode,
+and silently clear true duplicates" is another piece of work, living in `src/netdisk/reconcile/` -- a three-layer model. **The object being organized is a binding**,
+not "a show": video one-click dedupe is a degenerate configuration with no staging area and no secondary shelf, sharing the same code as podcast organization,
+not a parallel implementation.
 
-- **认集只有一个脑**：「这个文件是哪一集」由**绑定匹配器**（`src/netdisk/match-engine/`：
-  证据层收全事实 → 裁决层按规则表 R1–R14 判，时长主锚 + 名字地板 + 阈值体系，
-  见 `docs/MATCHING.md`）回答，用的谱和绑定同步是同一份
-  （`sync.ts` 的 `resolveSpec`）。**归档器不许有自己的判定逻辑**——它只把结论落成动作。
-  要改判定就改谱，绑定与归档器一起变。
-- **分组键**（`src/netdisk/identity.ts` 的 `makeIdentity()`）：内建通用清洗（水印/噪声括注/标点/
-  异体字归一/小写化）+ 来自绑定 `MatchSpec` 的标题前缀剥离与集号正则。它**只做分组键**：人工豁免
-  按它存、字节全等重复按它判"是不是同一集"。
-- **输入池**：来源目录（只读扫描，`sourceDirs`，**可选**——不配就是原地模式，只在认领货架自身的
-  文件里挑赢家、判删落选副本，没有搬运）**∪ 认领货架（`claimed`）现有文件**——库内那份是不是
-  这一集，同样只能由那一个匹配脑说。第二货架（`secondary`）不进池（它的契约就是"不配对"），
-  只用来判字节全等重复和同名占位；这条绑定没配 `secondary`（如影视）就没有这一层。
-- **归档**：`plan.ts` 的 `buildPlan` 是纯函数，顺序为 豁免/墓碑 → 字节全等重复（`delete-dup`）→
-  跑一次匹配器 → 四个筐（`claimed` 进认领货架、`offline` 进第二货架——没配 `secondary`
-  则判定照记、原地不动；`copy` 三道闸门（正主在架、质量可比、配上集才算重复）全过 → 判
-  `delete-loser`（同集只留质量最高那份；质量平手时留**名字对得上这一集标题**的那份，判据见
-  `docs/MATCHING.md`），任一道不过转人裁 `compare` 并排对照；`hold` 时长未知
-  下轮续探）。`execute.ts` 只在这之后按 plan 真正调 AList move/remove。设计见
-  `internal design record` 与
-  `internal design record`。
-  - **去向只有三个**：认领货架、第二货架、子节目目录（外加 `delete-dup`/`delete-loser` 两种删除，
-    不是"搬去哪"而是直接移除）。子节目（独立编号体系 + 独立文件夹）的 `numPattern` **只选
-    目的地、不豁免匹配**：命中它只是把 `claimed` 的落点从认领货架根换成子节目文件夹，认领本身
-    照样由匹配器裁。做成"名字命中即认领"的前置 pass 就是第二个判定脑——错身文件被按名字认领
-    原地不动，正确那份永远 `swap-hold` 等一个不腾空的位置（死锁）。
-  - **两个货架的真实契约是不同的**，名字讲的却是来历，读的时候要翻译一次：`claimed` = **要跟
-    节目单配对的那些**（绑定的落地目录，匹配器只看这里，播客影视通用必有）；`secondary`
-    （播客场景下即「下架」）= **不配对、文件自己就是一集的那些**——它本身被当作一个 alist source
-    采进来（`packages/alist/normalizer.ts`），每个文件直接变成一条可播 item。所以「挪去 `secondary`」
-    不是让文件消失，是把它换到另一条路上；这也是为什么"没配上"可以是自动且安全的默认结果。
-    `secondary` 是可选概念——影视没有，认不出的文件原地不动、永不删。
-  - **两个货架的地址不在归档器的配置里**（spec §6 P8）：`claimed` 的地址是绑定的 `right.path`
-    （绑定属于解析层，它的活是给收费集补音频/视频）；`secondary` 的地址是该订阅那条**下架
-    stream** 扫的目录（下架集是权威清单的补充来源，本身就是一条扫网盘的 stream）。归档器每轮
-    现解（`ReconcileService.shelvesOf`），配置里只有 `sourceDirs`。左侧来自 TMDb 的绑定
-    （`left.kind:'tmdb'`，典型是影视）天然没有「下架」这个概念，`secondary` 留空、不报错；左侧
-    来自订阅流（`left.kind:'stream'`）却解不出下架来源、或地址撞了来源目录——就停下报错，不拿
-    别处的路径顶上：没有 stream 在扫的目录，文件搬进去不可播、不在任何清单里，等于从用户眼前
-    消失。
-  - **`durationS === undefined` 是"没探到"、不是"时长不对"**：只能进 `hold`，永远不进 `offline`
-    ——否则一次夸克凭证过期就会把一批好文件挪下货架。
-  - **绝不往已有同名文件的目录里搬**：`executePlan` 的 move 按 `(srcDir → dstDir)` 分组、组间
-    顺序不保证，同轮对搬会撞名。撞上就降级 `pending swap-hold`，下一轮自然落位——**除非占位
-    那份本轮就被无条件删掉**，那时它提升回 `move` 并带 `evicts`，执行器先删后搬、删没成这条
-    搬运也不跑（换槽位，判据见 `docs/MATCHING.md`）。
-  - **多季影视绑定（`left.kind:'tmdb' && media:'tv'`）落点与改名走另一套规则**：认领的集不落
-    认领货架根，落 `tv-<id>/S<nn>/`（`<nn>` 取匹配器判给它的 leftKey 里的季号，两位补零）；
-    `auto` 认领时给文件名加 `S03E14 - ` 前缀（原名原样跟在后面，绝不把标题塞进去——和谐规避
-    的理由不变），已带**正确**前缀的不改，前缀与引擎判断**打架**（名字写 S03E14、引擎判它是
-    S03E15）出 `pending`（`evidence-conflict`），不搬不改名——名字和引擎打架时不许机器单方面
-    改写证据。「同一集」的判据也换了：配上集的文件按匹配器给的 leftKey（`tmdb:<id>:S03E14`）
-    判同集，跨季两个都叫「第7期」天然不撞；没配上集的文件原地不动，只在**同一目录**内做字节
-    全等去重（`delete-dup`），永不参与 `delete-loser`/`replace`——落选副本必须是引擎认定的同一
-    集才算。归档器与绑定同步**走同一条季分区匹配路**（先按叶子文件夹定季、再每季单独匹配，
-    见 `docs/MATCHING.md`「多季影视归档」）——一锅裁决会把跨季同期号的文件判成同一集。文件名
-    里带「纯享」的是另一条播放线、不是那一集：它们进 `tv-<id>/纯享/S<nn>/`，不加编号前缀，
-    也不走落选副本那一路（除非引擎把它认成了某一集的正主，那时它就是那一集）。改名
-    （`rename` 动作）与移动一样先记溯源，一轮里的全部动作共享一个 `run_id`，可整轮撤销
-    （`POST /api/netdisk/reconcile/undo-run`，按 rowid 倒序）。
+- **There is only one brain for episode claiming**: "which episode is this file" is answered by the **binding matcher** (`src/netdisk/match-engine/`:
+  the evidence layer collects all facts -> the adjudication layer decides by rule table R1-R14, duration as primary anchor + name floor + threshold system;
+  see `docs/MATCHING.md`). The spec it uses is the same one binding sync uses
+  (`resolveSpec` in `sync.ts`). **The reconciler must not have its own decision logic** -- it only turns conclusions into actions.
+  To change the decision, change the spec, and binding plus reconciler change together.
+- **Grouping key** (`makeIdentity()` in `src/netdisk/identity.ts`): built-in generic cleaning (watermark/noisy bracket notes/punctuation/
+  variant-character normalization/lowercasing) + title-prefix stripping and episode-number regex from the binding `MatchSpec`. It **only produces the grouping key**: manual exemptions
+  are stored by it, and byte-identical duplicates use it to decide "whether this is the same episode".
+- **Input pool**: source directories (read-only scan, `sourceDirs`, **optional** -- when absent this is in-place mode, which only picks winners from files already on the claimed shelf
+  and decides deletion of losing copies, with no moving) **union existing files on the claimed shelf (`claimed`)** -- whether the copy inside the library is
+  this episode can likewise only be answered by that one matching brain. The secondary shelf (`secondary`) does not enter the pool (its contract is "does not pair"),
+  and is only used to decide byte-identical duplicates and same-name placeholders; if this binding has no `secondary` (such as video), this layer does not exist.
+- **Archive**: `buildPlan` in `plan.ts` is a pure function. Its order is exemption/tombstone -> byte-identical duplicate (`delete-dup`) ->
+  run the matcher once -> four buckets (`claimed` goes to the claimed shelf, `offline` goes to the secondary shelf -- when `secondary` is not configured,
+  keep the decision recorded and leave in place; `copy` passes three gates (the rightful copy is on-shelf, quality is comparable, and it matched an episode before it counts as a duplicate) -> decide
+  `delete-loser` (for the same episode, keep only the highest-quality copy; when quality ties, keep the copy whose **name matches this episode title**, with the check in
+  `docs/MATCHING.md`); if any gate fails, send to human adjudication as a side-by-side `compare`; `hold` means duration is unknown and probing continues next round).
+  Only after that does `execute.ts` truly call AList move/remove according to the plan. Design is in
+  `internal design record` and
+  `internal design record`.
+  - **There are only three destinations**: claimed shelf, secondary shelf, subprogram directory (plus the two deletion actions `delete-dup`/`delete-loser`,
+    which are not "where to move" but direct removal). A subprogram (independent numbering system + independent folder)'s `numPattern` **only chooses
+    the destination and does not exempt matching**: a hit merely changes the landing point of `claimed` from the claimed-shelf root to the subprogram folder, while the claim itself
+    is still decided by the matcher. Making "name hit means claimed" into a pre-pass is a second decision brain -- a mismatched file would be claimed by name
+    and stay in place, while the correct copy would remain forever in `swap-hold` waiting for a position that never clears (deadlock).
+  - **The real contracts of the two shelves differ**, but their names describe provenance, so translate once while reading: `claimed` = **things that should pair with
+    the program list** (the binding's landing directory; only this is seen by the matcher; podcasts and videos both always have it); `secondary`
+    (in podcast scenarios, `下架` ("taken down")) = **things that do not pair and whose file itself is an episode** -- it is itself harvested as an alist source
+    (`packages/alist/normalizer.ts`), and each file directly becomes a playable item. So "move to `secondary`"
+    does not make the file disappear; it moves it to another path. This is also why "not matched" can be an automatic and safe default result.
+    `secondary` is an optional concept -- video does not have it, and unrecognized files stay in place and are never deleted.
+  - **The addresses of the two shelves are not in reconciler config** (spec §6 P8): the address of `claimed` is the binding's `right.path`
+    (the binding belongs to the resolution layer, and its job is to supply audio/video for paid episodes); the address of `secondary` is the directory scanned by that subscription's **taken-down
+    stream** (taken-down episodes are a supplementary source for the authoritative list, and are themselves a Stream scanning the netdisk). The reconciler resolves them on each round
+    (`ReconcileService.shelvesOf`), and config only has `sourceDirs`. A binding whose left side comes from TMDb
+    (`left.kind:'tmdb'`, typically video) naturally has no concept of "taken down", so `secondary` is empty and that is not an error; but if the left side
+    comes from a subscribed Stream (`left.kind:'stream'`) and the taken-down source cannot be resolved, or its address collides with a source directory, stop and report an error instead of
+    filling in a path from elsewhere: without a directory scanned by a Stream, moving files there makes them unplayable and absent from every list, which is equivalent to making them
+    disappear from the user.
+  - **`durationS === undefined` means "not probed", not "duration mismatch"**: it can only enter `hold`, never `offline`
+    -- otherwise one expired Quark credential would move a batch of good files off the shelf.
+  - **Never move into a directory that already has a same-named file**: `executePlan` groups moves by `(srcDir -> dstDir)`, and order between groups
+    is not guaranteed, so cross-moves in the same round can collide by name. On collision, degrade to `pending swap-hold`, and the next round naturally lands it -- **unless the placeholder
+    is deleted unconditionally in this round**, in which case it is promoted back to `move` and carries `evicts`; the executor deletes first, then moves, and if deletion fails this
+    move does not run either (slot swapping; check in `docs/MATCHING.md`).
+  - **Multi-season video bindings (`left.kind:'tmdb' && media:'tv'`) use a separate rule set for landing points and renaming**: claimed episodes do not land at
+    the claimed-shelf root; they land at `tv-<id>/S<nn>/` (`<nn>` is the season number from the leftKey assigned by the matcher, zero-padded to two digits).
+    On `auto` claim, prefix the file name with `S03E14 - ` (the original name follows unchanged; never stuff the title into it -- the reason for harmony avoidance
+    is unchanged). If the **correct** prefix is already present, do not change it. If the prefix **conflicts** with the engine's decision (the name says S03E14, while the engine judges it as
+    S03E15), emit `pending` (`evidence-conflict`) and do not move or rename -- when the name and engine conflict, the machine must not unilaterally
+    rewrite evidence. The criterion for "same episode" also changes: files matched to an episode are judged same-episode by the leftKey assigned by the matcher (`tmdb:<id>:S03E14`);
+    two cross-season files both named `第7期` ("Episode 7") naturally do not collide. Files not matched to an episode stay in place and only perform byte-identical dedupe within the **same directory**
+    (`delete-dup`), and never participate in `delete-loser`/`replace` -- a losing copy only counts if the engine identified it as the same
+    episode. The reconciler and binding sync **use the same season-partitioned matching path** (first decide the season by leaf folder, then match each season separately;
+    see "multi-season video archive" in `docs/MATCHING.md`) -- a single pot of adjudication would judge cross-season same-period files as the same episode. File names
+    containing `纯享` ("pure version") are another playback line, not that episode: they go into `tv-<id>/纯享/S<nn>/`, with no numbering prefix,
+    and do not go through the losing-copy path either (unless the engine recognizes one as the rightful copy of a certain episode, in which case it is that episode).
+    Renames (`rename` action), like moves, record provenance first. All actions in one round share one `run_id` and can be undone as a whole round
+    (`POST /api/netdisk/reconcile/undo-run`, descending by rowid).
 
-**对账式，没有独立进度账本**：来源目录本身就是待处理队列，每轮重新扫描 + 重新决策，幂等靠文件系
-统现状而非记录"上次处理到哪"——这也是为什么 `runScheduled` 可以每天整份重跑而不必对齐续跑点。
-`service.ts` 落三份状态，全在 `data/netdisk.db`（网盘域一域一库，与 `stream.db`/`cache.db`
-并列——绑定/绑定条目/整理配置/裁决/账本/审计/时长缓存共七张表，设计见
-`internal design record` §4；各 Store 对外 API
-不变，只换底座）：
-**决定账本**（`decisions` 表，人工 `exempt`/`tombstone`，命中即跳过、不动不报）+ **溯源**
-（`run_actions` 表，每次 move/delete 一条，携带匹配依据 `basis`，支持 `undo`）+ **运行账本**
-（`reconcile_runs` 表，每次 preview/execute 一条，同时原样进 API 响应）。运行账本是"这一轮到底
-发生了什么"的唯一落点：每个进入本轮的文件恰好一行（含无动作的）、`conservation` 自证
-`input === 各筐之和`、`authority` 记清单条数/付费数/时长覆盖率、`errors` 收探测失败与 AList
-报错——**错误是行，不是日志**。另有两位管「这一轮算不算数」：`trigger`（`'scheduled'` /
-`'manual'`）和 `gated`（清单健康闸挡下的那轮，带 `reason` + `detail`）。**权威清单的健康闸拿它们
-挑基线**——只有没被闸住的定时轮和手动执行当得了基线，判据见 `docs/MATCHING.md`
-「输入失真时归档器怎么降级」。
+**It is reconciliation-style, with no independent progress ledger**: the source directories themselves are the pending-processing queue. Each round scans again and decides again; idempotence relies on the filesystem
+state, not a record of "where the last run got to" -- this is also why `runScheduled` can rerun the whole set every day without aligning a resume point.
+`service.ts` writes three kinds of state, all in `data/netdisk.db` (the netdisk domain has one domain database, alongside `stream.db`/`cache.db`
+-- seven tables total for bindings / binding entries / organization config / adjudication / ledger / audit / duration cache; design is in
+`internal design record` §4; the external APIs of each Store
+stay unchanged, only the substrate changes):
+**decision ledger** (`decisions` table, manual `exempt`/`tombstone`; on hit, skip without moving or reporting) + **provenance**
+(`run_actions` table, one row per move/delete, carrying matching `basis` and supporting `undo`) + **run ledger**
+(`reconcile_runs` table, one row per preview/execute, also copied as-is into API responses). The run ledger is the only landing point for "what exactly happened in this round":
+each file entering the round has exactly one row (including no-op rows), `conservation` proves
+`input === sum of buckets`, `authority` records list count/paid count/duration coverage, and `errors` collects probe failures and AList
+errors -- **errors are rows, not logs**. Two additional fields control "whether this round counts": `trigger` (`'scheduled'` /
+`'manual'`) and `gated` (the round blocked by the list-health gate, with `reason` + `detail`). **The authoritative-list health gate uses them
+to pick the baseline** -- only scheduled rounds and manual executes that were not gated can serve as the baseline; the check is in the
+"how the reconciler degrades when input is distorted" section of `docs/MATCHING.md`.
 
-默认**观察档**（`autoExecute:false`）：定时任务只报告数量、不动文件，需人工在 UI 确认后显式
-`execute`（或事后把某个 show 配成 `autoExecute:true` 真正自动落地——但删除类动作即使
-`autoExecute:true` 也必过一次「将删清单」预览确认，搬运和字节全等重复不受这道闸拦）。路由
-`/api/netdisk/reconcile/*`（config/preview/execute/undo/provenance/decisions，见
-`src/http/netdisk-routes.ts`）；另有 `/api/netdisk/reconcile/bindings/:bindingId/preview|execute`——
-不依赖预配置的整理 show，直接对任意一条绑定跑一键去重（UI 入口：MovieChannel 作品绑定菜单、
-整理面板「扫全部绑定去重」）。调度任务 `netdisk-reconcile`（`0 30 3 * * *`，互斥组 `netdisk`——
-与网盘同步、追更共用那份登录态，同时只跑一条；见「调度中心」
-一节）每天一次跑 `runScheduled()`，按 show 汇总一条通知（`dedupeKey: reconcile:<show>`）——
-定时轮永远不会自己删掉质量落选的同集副本，只报数量。
+Default is **observe mode** (`autoExecute:false`): scheduled jobs only report counts and do not move files. A human must explicitly confirm
+`execute` in the UI (or later configure a show as `autoExecute:true` so it truly lands automatically -- but deletion actions, even with
+`autoExecute:true`, must still pass one "to-delete list" preview confirmation; moves and byte-identical duplicates are not blocked by this gate). Routes:
+`/api/netdisk/reconcile/*` (config/preview/execute/undo/provenance/decisions; see
+`src/http/netdisk-routes.ts`); also `/api/netdisk/reconcile/bindings/:bindingId/preview|execute` --
+without relying on a preconfigured organization show, it runs one-click dedupe directly for any binding (UI entry points: MovieChannel work binding menu,
+organization panel `扫全部绑定去重` ("scan all bindings for dedupe")). The scheduled task `netdisk-reconcile` (`0 30 3 * * *`, mutex group `netdisk` --
+sharing the same login state with netdisk sync and the follow loop, so only one runs at a time; see the "Scheduling Center"
+section) runs `runScheduled()` once a day and summarizes one notification per show (`dedupeKey: reconcile:<show>`) --
+a scheduled round never deletes lower-quality losing copies of the same episode by itself; it only reports counts.
 
-### 追更循环（follow loop）：找资源 → 补集 → 归位，人只打一个开关
+### Follow Loop: find resources -> fill missing episodes -> put them in place, while the human flips one switch
 
-TMDb 剧集绑定上有一个「追」开关（`MappingSet.follow.enabled`）：新建的 tv 绑定默认开，存量绑定
-迁移默认关，电影绑定永远没有这个字段。开着的剧，系统自己判断哪几集已播出但还没拿到、回访已知
-分享、找不到再搜新分享、只转存缺的那几集、同步归位，结果推成通知——人不点搜索、不点转存，只
-决定追不追。实现在 `src/netdisk/follow/`：纯策略在 `plan.ts`（无 I/O），执行在 `service.ts`。
+TMDb TV bindings have a `追` ("follow") switch (`MappingSet.follow.enabled`): newly created tv bindings default to on; migrated existing bindings
+default to off; movie bindings never have this field. For shows where it is on, the system decides by itself which episodes have aired but are not yet acquired, revisits known
+shares, searches for new shares if none are found, saves only the missing episodes, syncs and files them into place, and pushes the result as a notification -- the human does not click search or save,
+only decides whether to follow. The implementation is in `src/netdisk/follow/`: pure policy lives in `plan.ts` (no I/O), and execution lives in `service.ts`.
 
-**已播出但没拿到，判据是**：`entries` 里没有已认领文件、且 `airDate` 存在、且 `airDate ≤` 今天。
-**`airDate` 缺席不算已播出**——TMDb 没给日期时宁可漏追，不能拿"缺席"当"还没播"来搪塞，也不能
-当"已经播"去瞎搜。
+**The check for aired but not acquired is**: `entries` has no claimed file, `airDate` exists, and `airDate <=` today.
+**Missing `airDate` does not count as aired** -- when TMDb provides no date, prefer missing the follow; do not use "absent" as "not aired" as an excuse, and do not
+treat it as "already aired" and search blindly.
 
-一轮（`FollowService.runOnce`）依次：
+One round (`FollowService.runOnce`) proceeds in order:
 
-1. **同步 + 算缺集**：先 `sync` 一次拿最新分集与当前配对，算出 `missingAired`。空 → 本轮结束。
-2. **回访旧源**：账本里没标记「不可用」的每条分享逐条验活、递归列目录（深度上限 3、每层 200
-   条）。候选池是**这条分享里还没转存过的全部文件**（`savedFids` 之外的），不是"上次没见过的"
-   ——上一轮见过但当时没配上（还没播）、或转存失败的文件，这轮照样要认；「比上次多了几个文件」
-   只是给人看的数字。喂给匹配引擎对缺集配对，命中的进转存清单。
-3. **找新源**（仅当回访后仍有缺集）：缺集落在哪几季就搜哪几季（缺得多的季先搜，最多 3 季），每季
-   查询串 = 作品名 + 第N季（阿拉伯数字与中文数字各试一次，见 `docs/MATCHING.md` 判据），走
-   `/api/search?scope=resources` 同一个批量搜索函数，只留支持转存的网盘、验活、算「这条分享覆盖
-   几集缺集」，按**覆盖数 → 覆盖文件字节之和 → 该分享总配对数**排序取前 3 条。
-4. **转存**：只提交命中的文件，不整份转存。落点是绑定右侧目录**下与分享同名的子文件夹**（文件在
-   分享里的 `第三季（4K）/xxx.mp4` 就落到 `tv-<id>/第三季（4K）/xxx.mp4`），不平铺进作品根——根
-   目录里可能已经躺着别季同名的「第7期上」，而认集时靠的正是那个季文件夹。夸克那一侧的三条硬约束
-   （`shared/netdisk/quark/save.ts`）：文件 token 绑在取它的那次会话上，转存前一律用自己的会话按父
-   目录重取；提交按分享里的父目录分组、每组带各自的 `pdir_fid`；`status 2` 不等于全到了，实报的
-   落地数（`save_as_sum_num`）写进结果。
-5. **同步**：转存是夸克那边的异步任务、AList 再慢一拍，所以转存后最多同步 6 轮、每轮隔 10 秒
-   （`RESYNC_ATTEMPTS` / `RESYNC_INTERVAL_MS`），认出来就停。
-6. **归档**：首次 `sync` 没失败就跑，不论本轮有没有转存到新文件——调
-   `reconcile.executeBinding(setId, { losers: true, gated: true })`：`losers:true` 让同集落选
-   副本自动删进回收站（用户拍板，无人介入，夸克回收站约 10 天兜底）；`gated:true` 走定时轮
-   `netdisk-reconcile` 同一道权威清单健康闸，被闸住就只记账不动文件。结果记进
-   `follow_runs.archived`（`{runId, moved, deleted, renamed, gated?}`），归档器未装配 → 记一行
-   错误、不影响本轮转存结果。归档搬了 / 删了 / 改了名，说明有文件刚落进季文件夹，多同步一轮把
-   它们认出来。`netdisk-follow` 与 `netdisk-reconcile` 两条定时任务对同一条绑定加**按绑定的
-   互斥锁**（`ReconcileService` 内 `Map<bindingId, Promise>`，进程内），后到的等前一个跑完，
-   不会一个在转存、一个在规划搬删地并发改同一目录。
-7. **轮末裁决**（spec `2026-09-03-netdisk-llm-adjudicator`）：归档之后，把归档待定卡与本轮判成
-   `pending` 的追更候选（分享里有货、但置信度不够自动转存的文件）打包问一次模型，结论过代码闸
-   后落决策账本；归档卡过闸的立刻重跑一次归档，追更候选过闸的直接转存到货架。裁决器没装配
-   （`deps.adjudicate` 结构类型注入缺席）→ 跳过，不算故障。结果记进 `follow_runs.adjudicated`
-   （`{runId, asked, applied, rejected, unsure, failed?}`）；有采纳就多同步一轮把新落地/新裁定的
-   文件认出来。详见 `docs/MATCHING.md` 「轮末裁决」一节。
-8. **通知**：一条 `follow.round` 事件，`dedupeKey: follow:<setId>`，零缺集且零错误的轮不发。转存了
-   文件但一轮都没认出（夸克还在搬 / 文件名认不出集号），标题如实说「转存了 N 个文件，还没认出集」，
-   这种轮不计无果。归档搬了或删了东西，通知里附一句「归档：搬 N · 删 M · 改名 K」；被闸住则附
-   「归档被闸：<detail>」。
+1. **Sync + calculate missing episodes**: first run `sync` once to get the latest episodes and current pairings, then calculate `missingAired`. Empty -> this round ends.
+2. **Revisit old Sources**: for every share in the ledger not marked "unavailable", live-verify it one by one and recursively list directories (max depth 3, 200
+   entries per level). The candidate pool is **all files in this share that have not been saved before** (outside `savedFids`), not "files unseen last time"
+   -- files seen in a previous round but not matched at that time (not aired yet), or files whose save failed, must still be recognized in this round; "how many more files than last time"
+   is only a number for humans. Feed them to the match engine to pair against missing episodes; hits enter the save list.
+3. **Find new Sources** (only when missing episodes remain after revisits): search the seasons where missing episodes fall (seasons with more missing episodes first, max 3 seasons). For each season,
+   query string = work name + `第N季` ("Season N"; try both Arabic numerals and Chinese numerals; see the check in `docs/MATCHING.md`), using
+   the same batch search function behind `/api/search?scope=resources`; keep only netdisks that support save, live-verify them, calculate "how many missing episodes this share covers",
+   and take the top 3 by **coverage count -> total bytes of covered files -> total pair count of this share**.
+4. **Save**: submit only matched files, not the entire share. The landing point is a subfolder **under the binding's right-side directory with the same name as the share** (a file
+   at `第三季（4K）/xxx.mp4` ("Season 3 (4K)/xxx.mp4") inside the share lands at `tv-<id>/第三季（4K）/xxx.mp4`), not flattened into the work root --
+   the root directory may already contain same-named files from another season, such as `第7期上` ("Episode 7 Part 1"), and episode claiming relies exactly on that season folder. Three hard constraints on the Quark side
+   (`shared/netdisk/quark/save.ts`): a file token is bound to the session that fetched it, so before saving always refetch by parent directory using its own session;
+   submit grouped by the parent directory inside the share, with each group carrying its own `pdir_fid`; `status 2` does not mean everything arrived, and the reported
+   landed count (`save_as_sum_num`) is written into the result.
+5. **Sync**: save is an async task on Quark's side and AList lags another beat, so after saving, sync at most 6 rounds with 10 seconds between rounds
+   (`RESYNC_ATTEMPTS` / `RESYNC_INTERVAL_MS`), stopping once recognized.
+6. **Archive**: if the first `sync` did not fail, run this regardless of whether the round saved new files -- call
+   `reconcile.executeBinding(setId, { losers: true, gated: true })`: `losers:true` lets losing copies of the same episode be automatically deleted to the recycle bin
+   (user-approved, no human intervention; the Quark recycle bin is a roughly 10-day fallback); `gated:true` uses the same authoritative-list health gate as the scheduled
+   `netdisk-reconcile` round, and if gated it only records the ledger and does not move files. The result is recorded in
+   `follow_runs.archived` (`{runId, moved, deleted, renamed, gated?}`); if the reconciler is not assembled -> record one
+   error row and do not affect the save result of this round. If archive moved / deleted / renamed files, that means files just landed in season folders, so sync one more round to
+   recognize them. The two scheduled jobs `netdisk-follow` and `netdisk-reconcile` acquire a **per-binding mutex**
+   for the same binding (`Map<bindingId, Promise>` inside `ReconcileService`, in-process); the later one waits for the earlier one to finish,
+   so they do not concurrently modify the same directory with one saving while the other plans moves/deletions.
+7. **End-of-round adjudication** (spec `2026-09-03-netdisk-llm-adjudicator`): after archive, package archive pending cards together with follow candidates judged
+   `pending` in this round (files exist in the share, but confidence is not high enough for automatic save) and ask the model once. After conclusions pass code gates,
+   write them to the decision ledger; archive cards that pass the gate immediately rerun archive, and follow candidates that pass the gate are saved directly to the shelf. If the adjudicator is not assembled
+   (`deps.adjudicate` structural-type injection is absent) -> skip, and it does not count as a fault. Results are recorded in `follow_runs.adjudicated`
+   (`{runId, asked, applied, rejected, unsure, failed?}`); if anything is accepted, sync one more round to recognize newly landed / newly adjudicated
+   files. See the "end-of-round adjudication" section in `docs/MATCHING.md`.
+8. **Notification**: one `follow.round` event, `dedupeKey: follow:<setId>`; rounds with zero missing episodes and zero errors send nothing. If files were saved
+   but none were recognized in any round (Quark is still moving / file names do not expose episode numbers), the title truthfully says `转存了 N 个文件，还没认出集` ("saved N files, but no episode recognized yet"),
+   and this kind of round does not count as no-result. If archive moved or deleted things, the notification adds `归档：搬 N · 删 M · 改名 K` ("archive: moved N · deleted M · renamed K"); if gated, it adds
+   `归档被闸：<detail>` ("archive gated: <detail>").
 
-**对话里也能开这一轮**：MCP 工具面上有 `netdisk_follow`（看 / 开 / 关 / 跑一轮）与
-`netdisk_share_verify`（只读地验一条分享），骑的是 `FollowService` 自己那几个方法——账本、退避、
-归位那一步全在方法里面，所以模型走的和定时轮是同一条路，不存在"绕过循环自己转存"这一档。
-`run` 会真转存 + 按 `losers:true` 删落选副本，工具描述里写着「先跟用户说」。**`run` 开完就返回**
-（回 `{started, setId, note}`）：一轮量级是分钟，而一次工具调用 200 秒就超时——等下去只会让模型
-手里拿着一条「失败了」，而那一轮还在后台真转存、真删副本。结果去 `view` 的 `lastRuns[0]` 读
-（那一行额外带 `errorList`）。同一条绑定已经在跑时回 `{started:false, alreadyRunning:true}`，
-在跑名册是 `FollowService` 自己那一份（定时轮与工具面共用一个入口）。
+**This round can also be started from chat**: the MCP tool surface has `netdisk_follow` (view / enable / disable / run one round) and
+`netdisk_share_verify` (read-only live verification of one share), riding on `FollowService`'s own methods -- the ledger, backoff,
+and filing step all live inside those methods, so the model follows the same path as scheduled rounds; there is no "bypass the loop and save by itself" tier.
+`run` truly saves + deletes losing copies under `losers:true`, and the tool description says "tell the user first". **`run` returns immediately after starting**
+(returning `{started, setId, note}`): one round is minutes-scale, while one tool call times out at 200 seconds -- waiting would only leave the model holding
+a "failed" result while that round is still truly saving in the background and truly deleting copies. Read the result from `lastRuns[0]` in `view`
+(that row additionally carries `errorList`). When the same binding is already running, return `{started:false, alreadyRunning:true}`;
+the running roster belongs to `FollowService` itself (scheduled rounds and the tool surface share one entry point).
 
-**匹配引擎在无时长档下怎么用**：候选文件只有名字和大小，用绑定自己的 `matchSpec` 跑规则表，
-时长证据缺席时走名字地板；**只接受 `status:'auto'` 的配对**，`pending` 一律不转存——宁可漏拿，
-不乱拿，拿错的文件会占坑，漏掉的下一轮还能补。「认集只有一个脑」这条不变量不因为无时长而松动：
-候选筛选与落地后配对用的是同一个 `NetdiskService.matchExternalFiles`。
+**How the match engine is used without duration**: candidate files only have names and sizes, and the binding's own `matchSpec` runs the rule table.
+When duration evidence is absent, use the name floor; **only accept pairings with `status:'auto'`**. `pending` is never saved -- better to miss than to take the wrong file;
+a wrong file occupies a slot, while a missed one can be filled next round. The invariant "there is only one brain for episode claiming" does not loosen when duration is absent:
+candidate filtering and post-landing pairing use the same `NetdiskService.matchExternalFiles`.
 
-**两本账本**（`data/netdisk.db`）：`binding_shares` 记每条绑定知道的分享（`origin: 'manual' |
-'search'`、上次验活结果、已转存过的文件 fid），是回访的依据；`follow_runs` 每轮一行（缺集、回访
-明细、搜索明细、转存明细、同步前后配对数、错误），通知与详情页都从它读，**错误是行，不是日志**。
+**Two ledgers** (`data/netdisk.db`): `binding_shares` records shares known by each binding (`origin: 'manual' |
+'search'`, last live-verification result, fids of files already saved), and is the basis for revisits; `follow_runs` has one row per round (missing episodes, revisit
+details, search details, save details, pair counts before/after sync, errors). Notifications and detail pages both read from it, and **errors are rows, not logs**.
 
-**失败与降级**：
-- 首次 `sync` 失败 → 本轮直接结束，不推进节奏、不动无果计数，下个周期原样再试。
-- 夸克登录态掉了（`quarkSave` 回 `stage:'auth'`）→ 本轮剩余转存全部跳过，不计入无果轮数，另发
-  一条 `follow.auth` 事件（`severity:'warn'`，`dedupeKey: 'follow-auth'`）。
-- 验活/列目录/搜索/匹配报 `unknown` 或抛错（问不到答案）→ 记一行错误，但**不算无果轮**——「问不
-  到答案」和「问到了、答案是没有」是两回事，前者不该拖慢节奏。只有真的问到了、答案是「这轮没补
-  上任何一集」才计一次无果。
+**Failure and degradation**:
+- First `sync` fails -> this round ends directly, without advancing cadence or changing the no-result count; the next cycle retries unchanged.
+- Quark login state is lost (`quarkSave` returns `stage:'auth'`) -> skip all remaining saves in this round, do not count it as a no-result round, and emit
+  one `follow.auth` event (`severity:'warn'`, `dedupeKey: 'follow-auth'`).
+- Live verification / listing directories / search / matching reports `unknown` or throws (cannot ask the answer) -> record one error row, but **do not count it as a no-result round** -- "could not
+  ask the answer" and "asked, and the answer is none" are different; the former should not slow the cadence. Only when it truly asked and the answer is "this round did not fill
+  any episode" should it count as one no-result round.
 
-**节奏**（`follow/plan.ts` 的 `nextCheckAt`，纯函数）：
+**Cadence** (`nextCheckAt` in `follow/plan.ts`, pure function):
 
-| 状态 | 间隔 |
+| State | Interval |
 |---|---|
-| 有缺集且最近一集 `airDate` 在 3 天内（`FRESH_WINDOW_DAYS`） | 6 小时（`FRESH_INTERVAL_H`） |
-| 有缺集，其余 | 24 小时 × 2^min(无果轮数, 3)，封顶 7 天（`BASE_INTERVAL_H` / `MAX_BACKOFF_POW`） |
-| 无缺集，但有未播出的集（在播季） | 下一集 `airDate` 当天 20:00 本地时区（`AIR_CHECK_HOUR`） |
-| 无缺集也无未播出 | 30 天（`IDLE_DAYS`，等 TMDb 加新季） |
+| Has missing episodes and the most recent episode's `airDate` is within 3 days (`FRESH_WINDOW_DAYS`) | 6 hours (`FRESH_INTERVAL_H`) |
+| Has missing episodes, other cases | 24 hours x 2^min(no-result rounds, 3), capped at 7 days (`BASE_INTERVAL_H` / `MAX_BACKOFF_POW`) |
+| No missing episodes, but has unaired episodes (airing season) | 20:00 local timezone on the next episode's `airDate` (`AIR_CHECK_HOUR`) |
+| No missing episodes and no unaired episodes | 30 days (`IDLE_DAYS`, waiting for TMDb to add a new season) |
 
-调度：内置任务 `netdisk-follow`（每小时扫一次，只跑到期的绑定，`serial:true`）。**到期与否每次扫描按
-当前分集现算**（`FollowService.dueAt`：锚在 `lastCheckAt`、按真正的今天判「已播」），不信上一轮存下的
-`nextCheckAt`——两轮之间分集会变（人手 / 裁决器补上了缺集、TMDb 给占位补了日期、今天恰好是播出日），
-存下的数只是那一刻的答案；现算出来不同就写回，面板显示的「下次检查」才是真的。刚打开开关时
-`nextCheckAt` 被清空 = 立刻到期，这条不变。
+Scheduling: built-in task `netdisk-follow` (scan once per hour, only running due bindings, `serial:true`). **Whether something is due is recalculated on every scan from the
+current episode set** (`FollowService.dueAt`: anchored at `lastCheckAt`, and judges "aired" by the real today), not trusting the
+`nextCheckAt` stored by the previous round -- episodes can change between two rounds (a human / adjudicator filled missing episodes, TMDb added dates to placeholders, or today happens to be the air date).
+The stored number is only the answer at that moment; if the recalculated value differs, it is written back, so the panel's "next check" display is real. When the switch is just opened,
+`nextCheckAt` is cleared = immediately due, and this does not change.
 
-**进度的分母只数已播出的集**（`follow/plan.ts` 的 `progressOf` / `isUnaired`，作品面板与 `netdisk_sync` 的
-`bySeason` 同一把尺）：TMDb 先把整季占位列出来，还没播（airDate 在今天之后）或未定档（无 airDate）且盘上
-没有任何候选文件的，不进分母、也不算缺，单独报 `unaired`；已配上或盘上已有候选的一律在分母里。
+**The denominator of progress only counts aired episodes** (`progressOf` / `isUnaired` in `follow/plan.ts`, the same ruler used by the work panel and `bySeason` in `netdisk_sync`):
+TMDb first lists placeholders for the whole season. Episodes that have not aired yet (airDate after today) or are unscheduled (no airDate), and for which the disk has
+no candidate file, do not enter the denominator and do not count as missing; they are reported separately as `unaired`. Episodes that are paired or already have candidates on disk always enter the denominator.
 
-路由（未装配 `FollowService` 时四条全 503）：`GET/PATCH /api/netdisk/mappings/:id/follow`（看一眼 /
-开关）、`POST /api/netdisk/mappings/:id/follow/run`（手动跑一轮）、`POST /api/netdisk/follow`（还没
-绑定的剧：建作品目录 + 建空绑定 + 开关）。
+Routes (all four return 503 when `FollowService` is not assembled): `GET/PATCH /api/netdisk/mappings/:id/follow` (peek /
+toggle), `POST /api/netdisk/mappings/:id/follow/run` (manually run one round), `POST /api/netdisk/follow` (for an unbound
+show: create work directory + create empty binding + enable switch).
 
-**现状的限制**：先转存、之后才手动建绑定的分享不会进 `binding_shares`——账本只在「转存时就带着
-`bind` 参数直接自动绑定」那条路上才写（`POST /api/netdisk/share/save`）；分开两步做的用户体验是
-「转存成功但这条分享追更从来没听说过」。
+**Current limitation**: shares that are saved first and only manually bound afterward do not enter `binding_shares` -- the ledger is written only on the path where the save carries the
+`bind` parameter and automatically binds directly (`POST /api/netdisk/share/save`); for users who do the two steps separately, the experience is
+"save succeeded, but this share is never known by the follow loop".
 
 ## Source
 
@@ -774,23 +776,25 @@ declaration), route/params schema, cadence hint. A Source belongs to exactly one
 (`pluginId` is assigned by the backend catalog) and is only ever executed through it. Sources
 are members — of Streams and of Providers — never subscribed to directly.
 
-### 掉了登录态谁去登：`auth.login` 的三档
+### Who logs back in when login state is lost: the three tiers of `auth.login`
 
-`auth: { type: 'session', login }` 说的**不是登录态存在哪**（浏览器档一律住在用户自己的
-Chrome 里），而是**掉了谁出面**：
+`auth: { type: 'session', login }` says **not where the login state is stored** (the browser tier
+always lives in the user's own Chrome), but **who steps in when it is lost**:
 
-| `login` | 谁出面 | 形状 |
+| `login` | Who steps in | Shape |
 |---|---|---|
-| `cookie` | 用户自己在 Chrome 上重登 | 只声明 `cookieDomain`；**不进重登面板**（点了没用） |
-| `qr` | Stream 弹扫码面板，扫在这个 facility 自己那条采集 lane 上 | `loginUrl` + `qrSelector` |
-| `oauth` | Stream 替他点掉"用 Google 继续"，骑浏览器里已有的第三方登录态 | `loginUrl` + `oauthButton` + `accountSelector`；**`account` 不在包里**，它是用户各自的邮箱，住 `runtime_config`，登录时现取 |
+| `cookie` | The user logs back in on Chrome themselves | Only declares `cookieDomain`; **does not enter the re-login panel** (clicking would be useless) |
+| `qr` | Stream opens a QR-scan panel, and the scan happens on this facility's own harvest lane | `loginUrl` + `qrSelector` |
+| `oauth` | Stream clicks `"用 Google 继续"` ("Continue with Google") for the user, riding the third-party login state already present in the browser | `loginUrl` + `oauthButton` + `accountSelector`; **`account` is not in the package**; it is each user's own email address, lives in `runtime_config`, and is fetched on demand at login time |
 
-后两档共用一条装配路径（同一条 lane、同一个 Transport-backed 登录页，`src/kernel/plugins/auth.ts`），
-差别只在 provider。**哪几档在重登面板里露面是一份具名的名单**：`PANEL_LOGIN_KINDS`
-（`src/auth/facility-auth-view.ts`）——加第四档 login 时必须来这里回答一次「它需不需要 Stream
-出面」，漏了的表现是 provider 注册了、能跑，但横幅永不点亮、面板里没有那一行，整条能力静默
-地是死代码。运行经验（provider 不认识任何一种验证方式、`needsHuman` 的边界、活体量到的坑）
-在 `.claude/skills/write-recipe/references/login-and-session.md`。
+The latter two tiers share one assembly path (the same lane, the same Transport-backed login page,
+`src/kernel/plugins/auth.ts`); the only difference is the provider. **Which tiers appear in the
+re-login panel is a named list**: `PANEL_LOGIN_KINDS` (`src/auth/facility-auth-view.ts`) — when
+adding a fourth login tier, this is where it must answer once whether Stream needs to step in. If
+this is missed, the provider is registered and can run, but the banner never lights up, that row is
+absent from the panel, and the whole capability is silently dead code. Operating experience (a
+provider not recognizing any verification method, the boundary of `needsHuman`, and pitfalls found
+by live verification) is in `.claude/skills/write-recipe/references/login-and-session.md`.
 
 ## Plugin
 
@@ -835,118 +839,189 @@ Full package/plugin guide (slot contracts, worked example + template): `docs/PAC
 Gateway & port rules (`expose` vs `publish`, one host port `127.0.0.1:8900`, troubleshooting order): `docs/GATEWAY.md`.
 Dev/prod container runtime & how deps reach the container (add-a-dependency flow, anonymous-volume staleness): `docs/DEVELOPMENT.md`.
 
-## Intent（意图）
+## Intent
 
-订阅的单位有两层：Stream 订阅的是**源**（"这个播客的 RSS"），Intent 订阅的是**目的**（"我想追某类
-内容，不管它从哪冒出来"）。一个 Intent 聚合 ≥1 个 Stream（一部分是手动绑的已有 Stream，一部分是
-招源订到的），本身不采集，只消化其名下 Stream 已经采到的 item。它不是 Channel 的替代——Channel
-仍是"怎么看"（present + 渲染），Intent 是"看完之后哪些算数、沉淀成什么"，两者相互独立、都可以
-指向同一批 Stream。
+There are two layers of subscription unit: Stream subscribes to a **Source** ("this podcast's
+RSS"), while Intent subscribes to a **purpose** ("I want to follow a certain kind of content, no
+matter where it appears"). An Intent aggregates ≥1 Stream (some are existing Streams bound
+manually, and some are subscribed through recruiting Sources). It does not harvest by itself; it
+only digests items already harvested by the Streams under it. It is not a replacement for Channel
+— Channel is still "how to view" (present + render), while Intent is "which things count after
+viewing, and what they settle into"; the two are independent from each other and can both point to
+the same group of Streams.
 
-- **招源（recruit）在本机源注册表内找源，一次调用直接落订阅**：注册表按 `goal+criteria` 搜（取前
-  30 条候选）→ LLM 从候选里挑最多 5 条 → 逐条验参（`params_schema.required` 里的字段缺值即丢弃，
-  宁缺毋滥、不猜参数）→ 查重（已订过同 source+等值 params 的流 → 复用，不再新订）→ 试吃闸
-  （`previewSource` 空结果或报错即丢弃）→ 首次真订时懒建意图专属频道 `intent-<id 前 8 位>`、把新
-  流订进去 → 记录 `subscribed`/`reused`/`dropped` 并发一条事件（零命中也发，讲明是候选池空还是
-  全被闸门挡下）。落地在 `src/intent/recruit.ts::runRecruit`。
-- **退休（retire）把 `status` 置 `retired` 并回退招源产生的订阅**：下线该 Intent 招源订到的每个
-  流（`recruitedStreamIds`，手动绑的不动）、删掉意图专属频道；单个回退失败只记日志、不回滚整个
-  retire。`intent-digest-scan` 只扫 `status: 'active'` 的 Intent，退休的不参与，但仍可手动触发一轮
-  消化。
-- **criteria 是立意图时一次性生成的**：`goal`（用户原话，不改写）交给 LLM，产出 `criteria`（白话
-  判定标准：什么算相关、什么明确排除）。criteria 之后只读不改——消化的每一条判定都靠它，不存在
-  跑一半标准变了的情况。LLM 不可用时 Intent 不立（create 直接抛错），不留一个没有判定标准的空壳。
-- **注解是意图驱动的，没有通用标签体系。** Stream 层的 item 不带"相关/不相关"这类通用字段；相关性
-  只在某个 Intent 的账本里成立——同一条 item 在意图 A 的账本里可能是 relevant，在意图 B 的账本里
-  从未出现（因为 B 根本没订阅那个 Stream）或被判 not relevant。判定标准不是全局分类器，是这一个
-  Intent 私有的尺子。
-- **消化产物 = 账本 + 档案，两者性质不同**：
-  - **账本**（每 Intent 一份，键 = itemId）记录"这条 item 判过了、结论是什么、摘要是什么"。**账本
-    即增量游标**——一轮消化只处理不在账本里的 item，不需要额外的"上次消化到哪"指针；判定失败的
-    item 不入账本，下轮自然重试，不会因为一次 LLM 抖动永久漏判。
-  - **档案**是**累积改写的认知**，不是逐条摘要的堆叠日志：每轮消化把新的相关内容并入既有档案，
-    由 LLM 重写出一份更新后的整体认知（读者是人，不是"第 N 条：…"的流水账）。档案先于账本写入
-    ——一轮里合并档案失败则整轮不落账本、`lastDigestAt` 不推进，下轮全量重判（零丢失，代价是
-    重复判一次）；合并成功但落账本失败则相关内容已经进了档案，不会因为账本没写成而在档案里消失。
-    写档案前把当前版本留一份 `dossier.prev.md`（同目录，覆盖式，只留上一版）——LLM 重写出问题
-    （如把档案改坏、清空）时能对照上一版核实或手动恢复。
-- **调度**：每 10 分钟跑一次全量扫描（`intent-digest-scan`，`src/tasks/builtin.ts`，接入通用
-  「调度中心」，与 Data Scheduling 的 T1/T2/T3 无关——它不产出 Stream item，只是驱动"该消化的
-  Intent 去消化"这件运维性周期活），到期判据是 `lastDigestAt + cadenceHours*3600s <= now`（或从未
-  消化过）；单个 Intent 消化失败不打断其余到期的 Intent。消化本身（`IntentService.digestNow`）单槽
-  串行——手动触发的消化与巡检共用同一个队列，避免同一时刻打多轮 LLM。一轮消化最多判 `maxJudged`
-  （生产传 100）条，超出留给下一轮（账本天然是断点）；截断发生时（`remaining > 0`）本轮不推进
-  `lastDigestAt`，下一次 `intent-digest-scan` 会判它仍然 due、立即接着排，不必等整个
-  cadence——否则日产量超过 `maxJudged` 的 Intent 积压只会越攒越多。`listItems` 每个 stream 只取
-  最近 200 条（窗口），两轮间某 stream 新增超过 200 条时最旧的条目会被永久漏判——`runDigestRound`
-  检测到窗口整窗都是未判条目时会记日志并在 `DigestOutcome.windowSaturated` 里报出该 stream。
-  一轮里判过的条目全部失败（`errors === judged`，通常是 LLM 端点整体不可用）算失败轮，触发指数
-  退避：`digestBackoffUntil` 从 30 分钟起、每连续失败一轮翻倍、封顶 4 小时；退避期内该 Intent 被
-  `scanDue` 跳过（不占用整点扫描的重试预算）；出现一次成功判定即清零退避计数。
-- **落地**：`src/intent/`（`types.ts` 数据形状、`store.ts` 持久化——JSON 落盘，Intent 清单一份
-  `intents.json`，每个 Intent 各自一份 `ledger.json` + `dossier.md`、`llm.ts` 四原语
-  `parseIntent`/`judgeItem`/`mergeDossier`/`pickSources`、`digest.ts` 一轮消化的纯函数、
-  `recruit.ts` 注册表内招源的纯函数、`service.ts` 服务面）。
-  HTTP 面 `/api/intents*`（7 条路由，见 [API.md](API.md)）。MCP 面三个工具：`intent_create` /
-  `intent_list` 走通用 catalog，`intent_dossier` 因为要把 markdown 原文直送客户端（不能被
-  `json(...)` 信封转义）而单独手注册在 `src/mcp/server.ts`，与 `stream_subscribe` 同一类"形状不同
-  故 bespoke"的先例。招源与主动消化不进 MCP 面——那是后台调度或 HTTP 操作，不是查询。
+- **Recruiting Sources (`recruit`) finds Sources in the local Source registry, and one call
+  directly persists subscriptions**: the registry searches by `goal+criteria` (taking the first 30
+  candidates) → the LLM picks at most 5 from the candidates → parameters are checked one by one
+  (a Source is dropped if any field in `params_schema.required` is missing; better to miss than to
+  guess parameters) → duplicates are checked (a Stream already subscribed with the same source and
+  equal params → reuse it, do not subscribe again) → the tasting gate runs (`previewSource` with an
+  empty result or error is dropped) → on the first real subscription, lazily create the
+  intent-specific Channel `intent-<first 8 chars of id>` and subscribe the new Stream into it →
+  record `subscribed`/`reused`/`dropped` and emit an event (also emit on zero hits, explaining
+  whether the candidate pool was empty or every candidate was blocked by gates). This lands in
+  `src/intent/recruit.ts::runRecruit`.
+- **Retiring (`retire`) sets `status` to `retired` and rolls back subscriptions created by
+  recruiting Sources**: take offline every Stream subscribed through recruiting Sources for this
+  Intent (`recruitedStreamIds`; manually bound Streams are not touched), and delete the
+  intent-specific Channel; a single rollback failure is only logged and does not roll back the
+  whole retire. `intent-digest-scan` only scans Intents with `status: 'active'`; retired ones do
+  not participate, but a digest round can still be triggered manually.
+- **`criteria` is generated once when the Intent is created**: `goal` (the user's original words,
+  not rewritten) is handed to the LLM, producing `criteria` (plain-language check criteria: what
+  counts as relevant and what is explicitly excluded). After that, `criteria` is read-only and is
+  not modified — every judgement during digesting relies on it, so there is no case where the
+  standard changes halfway through. If the LLM is unavailable, the Intent is not created (`create`
+  throws directly), leaving no empty shell without check criteria.
+- **Annotations are Intent-driven; there is no general tag system.** Stream-layer items do not
+  carry general fields such as "relevant/not relevant"; relevance only exists in a given Intent's
+  ledger — the same item may be relevant in Intent A's ledger, and may never appear in Intent B's
+  ledger (because B did not subscribe to that Stream at all) or be judged not relevant. The check
+  criterion is not a global classifier; it is this one Intent's private ruler.
+- **Digest outputs = ledger + dossier, with different properties**:
+  - **Ledger** (one per Intent, key = itemId) records "this item has been judged, what the result
+    was, and what the summary was". **The ledger is the incremental cursor** — one digest round
+    only processes items not in the ledger, so there is no need for an additional "where the last
+    digest stopped" pointer; items that fail judgement do not enter the ledger and naturally retry
+    in the next round, so they are not permanently missed because of one LLM fluctuation.
+  - **Dossier** is **accumulated and rewritten knowledge**, not a stacked log of per-item
+    summaries: each digest round merges new relevant content into the existing dossier, and the
+    LLM rewrites an updated overall understanding (the reader is a human, not a running account of
+    "item N: ..."). The dossier is written before the ledger — if merging the dossier fails during
+    a round, the whole round writes no ledger entries and `lastDigestAt` does not advance, so the
+    next round rejudges everything (zero loss, at the cost of one repeated judgement); if merging
+    succeeds but writing the ledger fails, the relevant content has already entered the dossier and
+    will not disappear from the dossier because the ledger write did not complete. Before writing
+    the dossier, keep one copy of the current version at `dossier.prev.md` (same directory,
+    overwrite style, only the previous version retained) — when the LLM rewrite has a problem
+    (such as damaging or emptying the dossier), it can be checked against the previous version or
+    manually restored.
+- **Scheduling**: a full scan runs every 10 minutes (`intent-digest-scan`,
+  `src/tasks/builtin.ts`, connected to the general scheduling center and unrelated to Data
+  Scheduling's T1/T2/T3 — it does not produce Stream items; it only drives the operational periodic
+  work of "digest the Intents that should be digested"). The due check is
+  `lastDigestAt + cadenceHours*3600s <= now` (or never digested before); a failure digesting one
+  Intent does not interrupt other due Intents. Digesting itself (`IntentService.digestNow`) is
+  single-slot serial — manually triggered digests and patrol scans share the same queue, avoiding
+  multiple LLM rounds at the same time. One digest round judges at most `maxJudged` items (100 in
+  production), and leaves overflow to the next round (the ledger is naturally the checkpoint);
+  when truncation happens (`remaining > 0`), this round does not advance `lastDigestAt`, and the
+  next `intent-digest-scan` will judge it still due and immediately enqueue it again, without
+  waiting for the whole cadence — otherwise Intents whose daily volume exceeds `maxJudged` only
+  accumulate more and more backlog. `listItems` takes only the most recent 200 items from each
+  stream (the window); when a stream adds more than 200 items between two rounds, the oldest items
+  are permanently missed — when `runDigestRound` detects that the whole window is unjudged items,
+  it logs this and reports the stream in `DigestOutcome.windowSaturated`. If all judged items in a
+  round fail (`errors === judged`, usually because the LLM endpoint is wholly unavailable), the
+  round counts as a failed round and triggers exponential backoff: `digestBackoffUntil` starts at
+  30 minutes, doubles on each consecutive failed round, and caps at 4 hours; during the backoff
+  period, that Intent is skipped by `scanDue` (it does not consume the retry budget of the regular
+  scan); one successful judgement clears the backoff count.
+- **Landing**: `src/intent/` (`types.ts` data shape, `store.ts` persistence — JSON written to
+  disk, one Intent list `intents.json`, each Intent with its own `ledger.json` + `dossier.md`,
+  `llm.ts` with the four primitives `parseIntent`/`judgeItem`/`mergeDossier`/`pickSources`,
+  `digest.ts` as the pure function for one digest round, `recruit.ts` as the pure function for
+  recruiting Sources inside the registry, and `service.ts` as the service surface). HTTP surface
+  `/api/intents*` (7 routes; see [API.md](API.md)). MCP surface has three tools: `intent_create` /
+  `intent_list` go through the general catalog, while `intent_dossier` is manually registered
+  separately in `src/mcp/server.ts` because it must deliver raw markdown directly to the client
+  (and must not be escaped by the `json(...)` envelope), following the same kind of precedent as
+  `stream_subscribe`, where the shape differs and therefore is bespoke. Recruiting Sources and
+  active digesting do not enter the MCP surface — those are background scheduling or HTTP
+  operations, not queries.
 
-## 配置分享（stream-bundle）
+## Configuration sharing (stream-bundle)
 
-Plugin/Recipe 分发的是**能力**（分发层只读声明）；**配置分享**分发的是上面一层——用户在
-`stream.db` 里攒的**编排**（Channel/Stream/Provider 闭包）。代码在 `src/sharing/`，路由挂在
-`/api/sharing/*`（`src/http/sharing-routes.ts`）。设计：`internal design record`
-（闭包/包格式）+ `2026-07-24-import-decision-ledger-design.md`（导入台账）。
+Plugin/Recipe distributes **capability** (the distribution layer only reads declarations);
+**configuration sharing** distributes the layer above that — the **orchestration** accumulated by
+the user in `stream.db` (Channel/Stream/Provider closure). The code is in `src/sharing/`, and the
+routes are mounted at `/api/sharing/*` (`src/http/sharing-routes.ts`). Design: `internal design
+record` (closure/package format) + `2026-07-24-import-decision-ledger-design.md` (import ledger).
 
-- **分享单位** = Channel/Stream/Provider 任一为根，沿 `stream_ids → members → {plugin,source}` 收闭包。
-- **包形态** = 单个 `stream-bundle/v1` JSON（form B）：代码型 Plugin 只进 `requires.plugins`（声明+版本约束、塞不进），数据型 Recipe 整份内嵌 `embedded.recipes`（对方开箱即用）。判定唯一走 plugin-source-catalog。
-- **凭证红线**：包内**永无**任何 cookie/token/apiKey 值——`auth:cookie` 域与 `runtime_config` 只翻成 `requires.credentials`/`runtimeConfig` 的需求声明（schema）。导出对 `members.params` 做敏感字段体检，命中即拒。
-- **传输 host 无关**：导入接受 URL（走 `ownedFetch`，不特判 host）或本地文件。
-- **两轴冲突**：配置行 id 撞车 → remap（生成新 id + 改写包内引用，绝不动本机已有行；system 频道 stream_ids append 复用、槽位键级合并——本机未配的静默并入，已配的落 slot-conflict 待拍板）；recipe 版本撞车 → semver 合并（升/复用/跨 major 停并落 notice）。
-- **导入零执行**：导入只写配置行 + 落盘内嵌 recipe；recipe 只在被引用 Stream 下次 T1 tick 才跑。
-- **import decision ledger**（`src/sharing/import-run-store.ts` + `decide.ts`）：一次导入 = 一个可寻址 run，
-  遗留事项统一为 items（`parked-provider`/`slot-conflict`/`notice`，各带 mine/theirs/choices）；decision 是
-  唯一状态迁移，执行失败不半提交。落一份**本机私有 JSON**（数据目录，不进 `stream.db`/`cache.db`），离线、
-  不外发。API：`POST/GET /api/sharing/imports*` + `POST /api/sharing/imports/:id/decisions`。UI 导入结果页
-  与 AI「帮我导入并处理」吃同一份数据。
+- **Sharing unit** = any one of Channel/Stream/Provider as the root, collecting the closure along
+  `stream_ids → members → {plugin,source}`.
+- **Package shape** = a single `stream-bundle/v1` JSON (form B): code Plugins only enter
+  `requires.plugins` (declaration + version constraint, cannot be stuffed in); data Recipes are
+  embedded whole in `embedded.recipes` (ready to use for the other side). The judgement only goes
+  through plugin-source-catalog.
+- **Credential red line**: a package **never** contains any cookie/token/apiKey value —
+  `auth:cookie` domains and `runtime_config` are only translated into requirement declarations
+  (schemas) in `requires.credentials`/`runtimeConfig`. Export performs a sensitive-field physical
+  check on `members.params`, and rejects on a hit.
+- **Transport is host-agnostic**: import accepts a URL (through `ownedFetch`, with no special host
+  cases) or a local file.
+- **Two-axis conflicts**: configuration row id collision → remap (generate new ids + rewrite
+  references inside the package, never touch existing local rows; system Channel `stream_ids`
+  append reuses, slot-key-level merge — locally unconfigured entries are silently merged in, while
+  already configured entries become `slot-conflict` pending decision); recipe version collision →
+  semver merge (upgrade/reuse/stop across major and create a notice).
+- **Zero execution on import**: import only writes configuration rows + writes embedded recipes to
+  disk; a recipe only runs on the next T1 tick of a referenced Stream.
+- **Import decision ledger** (`src/sharing/import-run-store.ts` + `decide.ts`): one import = one
+  addressable run, and leftovers are unified as items (`parked-provider`/`slot-conflict`/`notice`,
+  each with mine/theirs/choices); decision is the only state transition, and execution failure does
+  not half-commit. It writes one **local private JSON** (data directory, not in
+  `stream.db`/`cache.db`), offline and not sent out. API: `POST/GET /api/sharing/imports*` +
+  `POST /api/sharing/imports/:id/decisions`. The UI import result page and AI "help me import and
+  handle it" consume the same data.
 
-**外部前置依赖（未落地）**：recipe 包的 **author-scoped 身份**（`@author/facility` + semver + integrity）
-归 `recipe-packages` spec，是另一个 change。本分享层的冲突接口已按 scoped id 写好、内嵌装载先兼容
-当前 facility 单包形态；前置落地后把 binding 的 `plugin` 位换成 `@author/facility` 即启用三分支，
-**不需重写冲突逻辑**。提交侧（预填 issue/token 静默提交）、一键发布、中央 registry 均本期非目标。
+**External prerequisite dependency (not yet landed)**: the recipe package's **author-scoped
+identity** (`@author/facility` + semver + integrity) belongs to the `recipe-packages` spec and is
+another change. This sharing layer's conflict interface has already been written around scoped
+ids, and embedded loading first remains compatible with the current facility single-package shape;
+after the prerequisite lands, replacing the binding's `plugin` position with `@author/facility`
+enables the three branches, with **no need to rewrite conflict logic**. Submission-side work
+(prefilled issue/token silent submission), one-click publish, and the central registry are all
+non-goals for this period.
 
-### 能力搭车（capability-share，config-sharing v2）
+### Capability piggybacking (capability-share, config-sharing v2)
 
-分享包可选搭载作者的**能力层**——因为 Provider 是**全局路由**（按 serves+variant 在 callsite 处
-dispatch），加一个改变对方所有同变体频道的行为，**不能照搬 Stream 的加法语义**。三层 dispatch 里只
-有 callsite 是代码（应用契约、两边都有、不进包）；binding 与 Provider 行是数据、才搬。
+A shared package can optionally carry the author's **capability layer** — because Provider is a
+**global route** (dispatch happens by serves+variant at the callsite), adding one changes the
+behavior of all of the other side's Channels with the same variant, so it **cannot copy Stream's
+additive semantics directly**. In the three-layer dispatch, only the callsite is code (application
+contract, present on both sides, and not in the package); binding and Provider rows are data, so
+only they are carried.
 
-- **顶层可选块** `providers` / `providerBindings`（与 `channels` 平级、**不进频道闭包**）——只由作者
-  **显式勾选**加入，且只收 `system!==true` 的行。
-- **park-on-import（趴着进）**：导入的 Provider 打 `options.parked=true` 落库，但**被所有 serves
-  匹配/枚举点排除**（`ProviderExecutor.match`→`listActiveProviders`、`ProviderBindings.dispatch`、
-  `/api/provider-callsites` 选项逐处过滤 `isParked`），导入后对方路由**逐字不变**。binding 覆盖落
-  `options.candidateBinding` 候选，**不写生效的 `provider_bindings`**。
-- **激活时才解冲突**：每个 parked Provider 在导入 run 里落一个 `parked-provider` item（choices：用导入的 /
-  用本机的 / 按序并存 / 先不管）；`GET /api/sharing/imports/:id` 实时投影 serves 重叠 / 候选 binding 抢占的
-  冲突体检，decision 执行激活（清 `parked`、按需写 `provider_bindings`），其间对方 dispatch 不变。
+- **Top-level optional blocks** `providers` / `providerBindings` (peers of `channels`, **not in
+  the Channel closure**) — included only when the author **explicitly checks** them, and only rows
+  with `system!==true` are collected.
+- **Park-on-import**: imported Providers are written to the database with `options.parked=true`,
+  but are **excluded from all serves match/enumeration points**
+  (`ProviderExecutor.match`→`listActiveProviders`, `ProviderBindings.dispatch`, and
+  `/api/provider-callsites` options each filter `isParked`); after import, the other side's
+  routing is **byte-for-byte unchanged**. Binding overrides land as candidates in
+  `options.candidateBinding`, and **do not write active `provider_bindings`**.
+- **Conflicts are resolved only on activation**: each parked Provider creates one
+  `parked-provider` item in the import run (choices: use imported / use local / coexist in order /
+  leave it alone for now); `GET /api/sharing/imports/:id` projects a real-time conflict physical
+  check for serves overlap / candidate binding preemption, and the decision executes activation
+  (clears `parked`, writes `provider_bindings` as needed), while the other side's dispatch remains
+  unchanged during this.
 
-**后继**：网盘对齐 binding 的分享（`netdisk-binding-share`，change B）复用本节的「顶层可选块 + 显式
-勾选 + 趴着进」地基——见下。
+**Follow-up**: sharing netdisk alignment bindings (`netdisk-binding-share`, change B) reuses this
+section's foundation of "top-level optional blocks + explicit check + park-on-import" — see below.
 
-### 网盘 binding 搭车（netdisk-binding-share，config-sharing v2 · B）
+### Netdisk binding piggybacking (netdisk-binding-share, config-sharing v2 · B)
 
-分享包顶层可选 `netdiskBindings` 块携带 `MappingSet` 的**可移植子集** `left + matchSpec + 仅人工订正
-entries`（+ 可选 `shareUrl`）——**零 fileId、无 `right.path`（作者本机 AList 路径）、无凭证**。成立靠已验证
-的真相：`matchSpec` 是规则（对 `{name,size}` 匹配）、`rightFile`/`right.path` 是路径/文件名身份、转存保
-目录树。导入把每项暂存为 `right` 未解析、`autoSync:false` 的 **pending MappingSet**（**导入零执行**：不
-转存/不 sync/不采集），回一份待转存清单；对方用自己夸克登录态转存 → 挂 AList → 走**既有** `rebind` →
-`sync` 用随包 matchSpec **确定性重算**完成首绑，**不重跑 AI、不改对齐引擎**（`sync.ts`/`mapping-store.ts`
-零改动）。stream-left 且 stream 未随包 → 告缺/落 notice item（tmdb-left 无此问题）。
+The shared package's top-level optional `netdiskBindings` block carries the **portable subset** of
+`MappingSet`: `left + matchSpec + manually corrected entries only` (+ optional `shareUrl`) —
+**zero fileId, no `right.path` (the author's local AList path), and no credentials**. This relies
+on verified truths: `matchSpec` is the rule (matching on `{name,size}`),
+`rightFile`/`right.path` is path/file-name identity, and saving to the netdisk preserves the
+directory tree. Import stages each entry as a **pending MappingSet** with unresolved `right` and
+`autoSync:false` (**zero execution on import**: no saving to the netdisk, no sync, no harvest), and
+returns a list to be saved to the netdisk; the other side uses their own Quark login state to save
+to the netdisk → mounts AList → uses the **existing** `rebind` → `sync` uses the package-carried
+matchSpec to complete the first binding with **deterministic recomputation**, with **no rerun of
+AI and no changes to the alignment engine** (zero changes to `sync.ts`/`mapping-store.ts`).
+stream-left where the stream is not included in the package → report missing / create a notice
+item (tmdb-left does not have this problem).
 
-至此 **config-sharing v2 收束**：A（自定义 Provider 能力搭车）+ B（网盘 binding 搭车），二者共用「顶层
-可选块 + 显式勾选 + 导入不改对方现状（Provider 趴着进 / 网盘暂存 pending）」这一套分享安全地基。
+At this point **config-sharing v2 closes**: A (custom Provider capability piggybacking) + B
+(netdisk binding piggybacking) share the same sharing safety foundation of "top-level optional
+blocks + explicit check + import does not change the other side's current state (Provider parks on
+import / netdisk stages pending)".
 
 ## Invariants
 
@@ -964,159 +1039,159 @@ entries`（+ 可选 `shareUrl`）——**零 fileId、无 `right.path`（作者�
 4. **Trigger exclusivity** — every data acquisition is initiated by exactly one of the three
    scheduling triggers (T1 tick / T2 invoke / T3 enqueue — see [Data Scheduling](#data-scheduling)).
    No other code path fetches. A second standing harvest loop is by definition a bug.
-5. **归堆永不阻止入库** — 同质内容归堆（下节）只回答「这几条摆一格还是摆三格」，
-   永远不回答「这条存不存」。后者只属于 `DedupStore`。合并这两者的后果是跨平台采到的
-   第二份被当重复丢在入库那一步，连「他也发到 B 站了」这个事实都存不下来。
+5. **Folding never prevents insertion into storage** — folding homogeneous content (next section)
+   only answers "should these items be placed in one cell or three cells"; it never answers "should
+   this item be stored". The latter belongs only to `DedupStore`. The consequence of merging these
+   two is that the second copy harvested cross-platform is treated as a duplicate and discarded at
+   the insertion step, so even the fact that "they also posted it to Bilibili" cannot be stored.
 
-## 同质内容归堆 (story fold)
+## Homogeneous Content Folding (story fold)
 
-**转载、搬运、同一件事的多份拷贝，只占一格。** 代码在 `src/story-fold/`，权威设计见
-`internal design record`。
+**Reposts, mirrors, and multiple copies of the same thing occupy only one slot.** The code is in `src/story-fold/`; the authoritative design is in
 
-- **它是呈现层的能力**，不是采集层的：只产出「谁和谁是一堆、代表是谁、为什么」，
-  一条内容都不删（`rep + members` 展开等于输入，测试钉着这条）。
-- **和 `DedupStore` 的边界**见上面不变量 5。一个管「存不存」，一个管「摆几格」。
-- **骨架通用，阈值不通用**：证据器（url-identity / title-dice / 以后的媒体指纹、
-  作者身份、语义）是共用的，每个场景配一份自己的 `FoldProfile`。一个阈值通吃
-  「转载」和「同作者不同内容」必然误并。
-- **序列身份是判据的命门**：数字 + 第 X 季/期 + 上下集（中文数字归一）对不上 → 一票否决，
-  跑在任何相似度之前。**站点不是判据**——百家号/搜狐号/网易号是「一个域名、无数个发布者」，
-  转载最密的地方恰好都在站内，所以「同一档节目的两集不许并」全靠这道否决扛着。
-- **同站的「标题像」只算疑似，要第 2 档抓正文确认**（`titleNeedsTextConfirm`）：同一个号
-  天天更新的栏目标题只换尾巴词，实测搜狐两天的「每日一练｜时事政治模拟题」Dice 0.857
-  越过 0.85，题目却完全不同，而序列身份挡不住它（标题里一个号都没有）。降级后这一对在
-  第 1 档各自成堆，自然流到第 2 档，不另开确认通路。**跨站不降级**（标题像就免费并完，
-  那是第 1 档存在的价值），**同一个链接也不降级**（URL 同一性是事实）。
-  降级由 `withSameHostTextConfirm` 按第 2 档到底可不可用来置位：**第 2 档缺席就不降级**——
-  没人接得住的「疑似」等于把同站的标题相同转载永久拆开。
-- 字面相似度公式全后端只有一份：`src/text/similarity.ts`（网盘认集与归堆共用同一把尺）。
-- **判据：折叠只在消费端能展开时才生效**——没有展开入口就折，等于把内容无声藏掉。
+- **It is a presentation-layer capability**, not a harvest-layer capability: it only produces "who is in the same fold, who is the representative, and why";
+  it does not delete a single piece of content (`rep + members` expands to the input, and tests pin this invariant).
+- **Its boundary with `DedupStore`** is covered by invariant 5 above. One manages "whether to store"; the other manages "how many slots to show".
+- **The skeleton is shared, but thresholds are not**: evidence providers (url-identity / title-dice / future media fingerprints,
+  author identity, semantics) are shared, and each scenario configures its own `FoldProfile`. One threshold that covers both
+  "reposts" and "different content by the same author" inevitably merges items incorrectly.
+- **Sequence identity is the critical check**: number + season/issue + Part 1/Part 2 (with Chinese numerals normalized) mismatch -> hard veto,
+  and it runs before any similarity check. **The site is not the check**: Baijiahao / Sohuhao / NetEasehao are "one domain name, countless publishers";
+  the places with the densest reposting are exactly inside the same site, so "two episodes of the same show must not merge" is carried entirely by this veto.
+- **A "title looks similar" pair on the same site only counts as suspicious and must fetch body text in tier 2 to confirm** (`titleNeedsTextConfirm`): the same account
+  updates a column every day with only the tail words changed. In live measurement, Sohu's two-day titles `每日一练｜时事政治模拟题` ("Daily Practice | Current Affairs Politics Mock Questions") had Dice 0.857
+  and crossed 0.85, but the questions were completely different, and sequence identity could not block it (there was no number in the title). After degradation, this pair
+  forms separate folds in tier 1 and naturally flows to tier 2, without opening a separate confirmation path. **Cross-site pairs do not degrade** (if titles look similar, they merge for free,
+  which is the value of tier 1), and **the same link also does not degrade** (URL identity is a fact).
+  Degradation is set by `withSameHostTextConfirm` according to whether tier 2 is actually available: **if tier 2 is absent, do not degrade**,
+  because a "suspicious" state that nobody can catch means permanently splitting same-site reposts with identical titles.
+- There is only one literal-similarity formula in the whole backend: `src/text/similarity.ts` (netdisk episode recognition and folding share the same ruler).
+- **Check: folding only takes effect when the consumer can expand it**. Folding without an expand entry point is silently hiding content.
 
-**两处挂点，两份场景档**（`src/story-fold/profiles.ts` / `inbox.ts`）：
+**Two attachment points, two scenario profiles** (`src/story-fold/profiles.ts` / `inbox.ts`):
 
-| 档 | 挂在哪 | 主力证据 | 消费端 |
-|---|---|---|---|
-| A 搜索折叠 | 网页搜索梯子出口（`src/search/web-search-ladder.ts`） | 三级阶梯，一级比一级贵、前一级判不动才轮到后一级：**① URL 归一 + 标题 Dice**（本地零请求；同站的标题证据降级成疑似，交给 ②）→ **② 正文最长共享块**（`story-fold/text-fold.ts`，抓正文）→ **③ 问模型「是不是同一篇稿子」**（`story-fold/semantic-fold.ts`，零抓取、一发调用） | MCP `web_search` / 对话 agent / search_agent（共享一个出口） |
-| B 收件箱归堆 | 采集那一跳只**记账 + 排队**（`scheduler.ts`）→ **后台 worker 判**（`story-fold/worker.ts`）→ 账本 → `/api/items` 投影 | **媒体对媒体走声学指纹**（chromaprint，判「同一份录音」，见 spec）；其余对走**文本**（正文 / 转写） | 前端列表（`app/src/lib/storyFold.ts`） |
+| Tier | Where attached | Main evidence | Consumer |
+| --- | --- | --- | --- |
+| A Search folding | Web search ladder exit (`src/search/web-search-ladder.ts`) | Three-level ladder, each level more expensive than the previous one, and only reached when the previous level cannot decide: **1. URL normalization + title Dice** (local, zero requests; same-site title evidence degrades to suspicious and is handed to 2) -> **2. longest shared body-text block** (`story-fold/text-fold.ts`, fetch body text) -> **3. ask the model "is this the same article?"** (`story-fold/semantic-fold.ts`, zero crawling, one call) | MCP `web_search` / chat agent / search_agent (shared exit) |
+| B Inbox folding | The harvest hop only **records ledger + queues** (`scheduler.ts`) -> **background worker decides** (`story-fold/worker.ts`) -> ledger -> `/api/items` projection | **Media-to-media uses acoustic fingerprints** (chromaprint, deciding "the same recording"; see spec); all other pairs use **text** (body text / transcript) | Frontend list (`app/src/lib/storyFold.ts`) |
 
-### 档 A 的第二道判据：比正文（`src/story-fold/text-fold.ts`）
+### Tier A's Second Check: Compare Body Text (`src/story-fold/text-fold.ts`)
 
-链接和标题判不出来的那些——**门户转发、聚合站、镜像站会重拟标题**，两条的 Dice 只有 0.3，
-正文却是同一段话。这一档就是来救它们的。
+The cases that links and titles cannot decide -- **portal reposts, aggregation sites, and mirror sites rewrite titles**, so the Dice between two items is only 0.3,
+while the body text is the same paragraph. This tier exists to rescue them.
 
-**判据是「最长连续共享块」≥ 130 字，不是草图 Jaccard**（`src/text/shingle.ts` 的
-`longestSharedRun`）。理由是量出来的：网页正文抽出来必然拖着一身样板（导航、推荐位、
-免责声明、股吧滚动条），**整篇算的 Jaccard 对真转载只有 0.076–0.14**、对「各写各的同一件事」
-是 0.006–0.016，两个数都贴着 0，中间没有能安全下刀的地方；换成最长共享块，同一批数据是
-**246 字 vs 11 字**。样板文字（「投资者据此操作，风险自担」这类）都在几十字量级，够不着门槛。
-档 B 仍用草图，因为它两边不同时在场、只存得下指纹——**两把尺各有各的场景，别互相替换**。
+**The check is "longest continuous shared block" >= 130 characters, not sketch Jaccard** (`src/text/shingle.ts`'s
+`longestSharedRun`). The reason is measured: extracted web body text inevitably drags along a body of boilerplate (navigation, recommendation slots,
+disclaimers, stock-forum tickers), and **whole-article Jaccard for true reposts is only 0.076-0.14**, while for "separate articles about the same event"
+it is 0.006-0.016. Both numbers sit near 0, with no safe place to cut between them; after switching to longest shared block, the same data set is
+**246 characters vs 11 characters**. Boilerplate text (such as "Investors operate accordingly at their own risk") is all at the dozens-of-characters scale and cannot reach the threshold.
+Tier B still uses sketches because both sides are not present at the same time and only a fingerprint can be stored -- **the two rulers each have their own scenario; do not replace one with the other**.
 
-- **抓正文用来救第 1 档判不动的那些**——标题不像的转载，以及**同站那些「标题像但只算疑似」的**
-  （见上一节）：`fold()` 先跑，只在**剩下的堆代表之间**补判。
-  成本因此是 O(堆数) 次抓取，不是 O(对数)——比对免费，抓取才要钱。
-- **候选闸门**（`worthFetchingText`）两条：两边都抠得出 host（抠不出的是磁力/非 http，
-  本来也抓不了正文）、序列身份不冲突（第 2 集和第 3 集正文可能很像，这道硬否决必须跑在
-  花钱之前）；**不设标题相似度下限**（"标题完全不像"正是它存在的理由）。上限 12 篇，
-  按输入序（＝相关性序）截断。
-- **同站的一对先剥掉共同页眉页脚再比**（`sharedStoryRun`）：同一个站的任意两个页面天然共享
-  一整段样板，而它足够长，**自己就能越过门槛**——实测澎湃 484 字、网易号 209 字（三对内容
-  毫不相干的同站文章之间一字不差），百家号 66 字、搜狐 37 字。四个站的样板**都正好是两篇的
-  共同后缀**，所以剥的是量出来的那一截，不靠名单也不靠结构标记。剥完还剩 ≥ 门槛 = 正文里
-  真有一大段一样。共同边长过较短那篇一半时反过来认它是正文（同站一字不差的转载）。
-  跨站一律不剥——两个不同站的共同后缀是内容，不是样板。
-- 转成文字复用 `read_url` 背后那一份（`makeArticleFetchDep`），不另造抓取器；草图按归一化 URL
-  缓存在进程里，同一个地址一次进程只抓一次。
-- **抓不到 = 判不了 ≠ 不像**：失败、超时（8s）、正文太短（<200 字，多半是拦截页/登录墙——
-  两个站撞上同一屏「Just a moment…」会相似度 1.0，字数门槛就是防这个误并）都只让那一对
-  保持原样。整段兜底，绝不把一份好好的搜索结果变成 error。
-- 关灯开关 `STREAM_SEARCH_TEXT_FOLD=0`（默认开）：关掉只是退回「只比链接和标题」。
-- **「各写各的同一件事」不在这一档的射程内**（NHK 自己写的稿 vs 通稿转载：最长共享块 8 字）。
-  那是设计里的第三种同质，别指望调这里的门槛把它们并起来——第 3 档也不做它，见下。
+- **Fetching body text rescues the cases tier 1 cannot decide**: reposts whose titles do not look similar, and **the same-site cases whose "titles look similar but only count as suspicious"**
+  (see the previous section): `fold()` runs first, and supplemental checks run only **between the remaining fold representatives**.
+  Therefore the cost is O(number of folds) fetches, not O(number of pairs): comparison is free; fetching is what costs.
+- The **candidate gate** (`worthFetchingText`) has two rules: both sides must have an extractable host (items without one are magnets/non-http,
+  which cannot fetch body text anyway), and sequence identity must not conflict (body text for Episode 2 and Episode 3 may be very similar, so this hard veto must run
+  before spending money); **there is no lower bound on title similarity** ("titles look completely different" is exactly why it exists). The upper limit is 12 items,
+  truncated by input order (= relevance order).
+- **A same-site pair first strips the shared header/footer before comparison** (`sharedStoryRun`): any two pages on the same site naturally share
+  a whole block of boilerplate, and it is long enough to **cross the threshold by itself**: measured values are The Paper 484 characters and NetEasehao 209 characters (between three same-site article pairs
+  with wholly unrelated content, character-for-character identical), Baijiahao 66 characters, and Sohu 37 characters. The boilerplate on all four sites **is exactly the common suffix of the two articles**,
+  so the code strips the measured segment, not relying on a list or structural markers. After stripping, remaining >= threshold means the body text
+  really contains a large identical block. When the shared edge is longer than half the shorter article, it is instead treated as body text (a same-site verbatim repost).
+  Cross-site pairs are never stripped: a common suffix across two different sites is content, not boilerplate.
+- Text conversion reuses the same path behind `read_url` (`makeArticleFetchDep`) and does not create another fetcher; sketches are cached in-process by normalized URL,
+  so the same address is fetched only once per process.
+- **Cannot fetch = cannot decide != not similar**: failure, timeout (8s), and body text too short (<200 characters, usually an interception page/login wall --
+  two sites hitting the same "Just a moment..." screen would have similarity 1.0, and the character-count threshold prevents that false merge) all only keep that pair
+  unchanged. The whole segment falls back and never turns a valid search result into an error.
+- Kill switch `STREAM_SEARCH_TEXT_FOLD=0` (enabled by default): turning it off only returns to "compare only links and titles".
+- **"Separate articles about the same event" is outside this tier's range** (NHK's own article vs a wire repost: longest shared block 8 characters).
+  That is the third type of homogeneous content in the design; do not expect to merge it by tuning this threshold -- tier 3 does not do it either; see below.
 
-### 档 A 的第三道判据：问模型（`src/story-fold/semantic-fold.ts`）
+### Tier A's Third Check: Ask the Model (`src/story-fold/semantic-fold.ts`)
 
-**同一篇通稿被 AI 重写过**，字面上就不剩什么了：活体实测新浪原样转发共享 **246 字**、
-搜狐让 AI 重写后只剩 **17 字**，而「各写各的同一件事」是 **6–11 字**——17 和 11 挨在一起，
-**这条线上没有能下刀的地方**，所以判据只能从「字面」换成「意思」。
+When **the same wire article has been rewritten by AI**, almost nothing remains literally shared: live verification measured Sina's verbatim repost sharing **246 characters**,
+while Sohu's AI rewrite leaves only **17 characters**, and "separate articles about the same event" is **6-11 characters**. Since 17 and 11 sit next to each other,
+**there is no place to cut on this line**, so the check has to move from "literal text" to "meaning".
 
-三档问的**始终是同一个问题：这是不是同一份内容**。第 1 档看链接，第 2 档看字面，第 3 档看意思。
-**「两家各自采写同一件事」三档都不并**：那是两篇不同的稿子，各有各的采访和角度，两篇都该看得见。
+All three tiers **always ask the same question: is this the same content**. Tier 1 looks at links, tier 2 looks at literal text, tier 3 looks at meaning.
+**"Two outlets each reporting the same event" is not merged by any of the three tiers**: those are two different articles, each with its own reporting and angle, and both should remain visible.
 
-- **零抓取**：只吃第 2 档已经抓到的那批正文（按归一化 URL 查表），没正文的堆不参与。
-  它的全部成本是**一次搜索最多一发模型调用**（走 `llmContentQuiet` + `story-fold.semantic`
-  调用点，模型可单独绑定），不是每对问一次。
-- **模型说了也不算数**：序列身份这道硬否决在**问之前和拿到答案之后各跑一次**。
-  同一档节目两集的正文开头几乎一样，模型没有条件分辨——分辨那件事靠标题里的号。
-  同站样板不会污染这一档：递给模型的是正文**开头** 600 字，而样板都在页尾。
-- **evidence 的 kind 是 `semantic`，绝不混进 `text-identity`**：这一档是问出来的、不是算出来的，
-  可信度天然软一档，看的人要能一眼分清是哪一级下的判断。
-- **判不了的一切形态保持原样**：没配 LLM、梯子全 decline、超时（20s）、回话读不懂、
-  正文没抓到。绝不变成 error。
-- 关灯开关 `STREAM_SEARCH_SEMANTIC_FOLD=0`（默认开）。
-- **已知的软肋**（活体实测）：模型会往「同一件事」滑——同一场采访的两家不同写法有时被判成同一篇稿子。
-  prompt 里那条「删掉一篇会不会丢信息」是收住它的主力判据，改 prompt 前先读
-  `semantic-fold.ts` 的头注。
-- **同站放开之后新出现的代价**：标题相似度这一档不看站点了，于是**同一个站里两条标题极像、
-  却又没有任何序号可以区分**的内容会被并掉。活体真样本：搜狐 `a/613889193_121124005` 与
-  `a/577012683_121124005` 是两天的「每日一练｜时事政治模拟题」，题目完全不同，标题 Dice
-  0.857 → 被并。序列身份对这一类无能为力（标题里没有号）。
+- **Zero crawling**: it consumes only the body texts tier 2 has already fetched (looked up by normalized URL); folds without body text do not participate.
+  Its full cost is **at most one model call per search** (through `llmContentQuiet` + the `story-fold.semantic`
+  callsite, with the model bindable separately), not one question per pair.
+- **The model's answer is not authoritative**: the hard sequence-identity veto runs **both before asking and after receiving the answer**.
+  The beginnings of two episodes of the same show are almost identical, and the model does not have enough information to distinguish them; distinguishing them depends on the number in the title.
+  Same-site boilerplate does not contaminate this tier: the model receives the **beginning** 600 characters of the body text, while boilerplate is at the page tail.
+- The **evidence kind is `semantic`, and must never be mixed into `text-identity`**: this tier is asked, not calculated,
+  so its confidence is naturally one level softer, and readers need to tell at a glance which level made the judgment.
+- **Anything that cannot be decided keeps its original shape**: no configured LLM, the whole ladder declines, timeout (20s), unreadable response,
+  or body text not fetched. It never becomes an error.
+- Kill switch `STREAM_SEARCH_SEMANTIC_FOLD=0` (enabled by default).
+- **Known weak spot** (live verification): the model tends to slide toward "the same event" -- two different writeups of the same interview are sometimes judged as the same article.
+  The prompt line "would deleting one lose information" is the main check that reins it in; read the header comment in
+  `semantic-fold.ts` before changing the prompt.
+- **The new cost after allowing same-site merging**: the title-similarity tier no longer looks at site, so **two items on the same site with extremely similar titles
+  and no sequence number to distinguish them** can be merged. A live real sample: Sohu `a/613889193_121124005` and
+  `a/577012683_121124005` are two days of `每日一练｜时事政治模拟题`, with completely different questions and title Dice
+  0.857 -> merged. Sequence identity cannot help this class (there is no number in the title).
 
-### 档 B 的判据：内容身份 = 内容本身（文本或波形）
+### Tier B's Check: Content Identity = The Content Itself (Text or Waveform)
 
-**同一条内容被重新投放时，标题会被改写、封面会换、时长会因转码/剪片头差几秒、链接必然
-不同——只有内容本身不变。** 身份按形态落在两种判据上：
+**When the same piece of content is republished, the title can be rewritten, the cover can change, duration can differ by a few seconds because of transcoding or clipped intros, and the link is necessarily
+different -- only the content itself remains unchanged.** Identity lands on two checks by form:
 
-- 文字类内容：正文本来就在，白拿；网页链接走正文抓取。判据是文本草图
-  （`src/text/shingle.ts`，MinHash，每条存 64 个数）。
-- 媒体对媒体（两边都是音视频）：声学指纹（chromaprint，`src/media/audio-fingerprint.ts`），
-  比的是波形不是文字——本地零模型调用，编码差异/片头错位天然鲁棒。设计见
-  `internal design record`。
-- 跨形态对（一边文章一边音视频）：媒体侧走转写取文本再比文本；超 20 分钟的媒体受成本
-  闸门保护（`src/story-fold/text-source.ts` 的 `maxMediaSeconds`），这类对判不了。
+- Text content: the body text is already present and free; web links use body-text fetching. The check is text sketches
+  (`src/text/shingle.ts`, MinHash, storing 64 numbers per item).
+- Media-to-media (both sides are audio/video): acoustic fingerprints (chromaprint, `src/media/audio-fingerprint.ts`);
+  it compares the waveform, not text -- local, zero model calls, naturally robust to encoding differences and intro offsets. The design is in
+- Cross-form pairs (one side article, one side audio/video): the media side is transcribed to text and then compared as text; media longer than 20 minutes is protected by the cost
+  gate (`src/story-fold/text-source.ts`'s `maxMediaSeconds`), so this kind of pair cannot be decided.
 
-**标题和时长退成候选生成器**（`store.neighbors` + `worthChecking`），一个字都不参与结论。
-这条是被活体打出来的：拿时长当判据时，两个歌单共享几十首歌，四分钟左右的歌互相乱折，
-一个堆滚到 22 条。**时长从来不是身份。**
+**Title and duration degrade into candidate generators** (`store.neighbors` + `worthChecking`), and not a single character participates in the conclusion.
+This rule was beaten out by live verification: when duration was used as a check, two playlists sharing dozens of songs caused songs around four minutes long to fold into each other,
+and one fold grew to 22 items. **Duration is never identity.**
 
-**取文本是有代价的**（转写实测平均 16s、最慢 142s），所以：
+**Getting text has a cost** (transcription measured average 16s, slowest 142s), so:
 
-- 判据搬到**后台 worker**，不在采集热路径上；
-- **只给有候选的条目取文本**——一条 item 没有任何候选，就永远不会被转写；
-- 复用 `extract` 那条链路（自己判分支、自己缓存、转过一次不重复计费），不另造转写；
-- 太长的音视频（>20 分钟）暂不取文本，于是**判不了**（不是判成"不是同一条"）。
-  抽段转写落地后这条闸门放开。
-- **「判不了」和「不像」必须分开**：前者留在待判队列等文本，后者出队。混成一个，
-  等文本的条目会被当成已经判过而永远不再看。
+- The check moves to a **background worker**, not the hot harvest path;
+- **Text is fetched only for items with candidates**: if an item has no candidates, it is never transcribed;
+- Reuse the `extract` chain (it decides its own branch, caches itself, and does not charge twice for a prior transcription); do not create another transcription path;
+- Audio/video that is too long (>20 minutes) is temporarily not converted to text, so it **cannot be decided** (it is not judged "not the same item").
+  This gate opens after sampled transcription lands.
+- **"Cannot decide" and "not similar" must stay separate**: the former remains in the pending-review queue waiting for text; the latter leaves the queue. If they are collapsed into one,
+  items waiting for text are treated as already checked and are never revisited.
 
-**作者不参与判断。** 同一条内容就是同一条，谁发的不改变这件事——搬运号发的和本人发的
-本来就该收在一起。「来源」在归堆之后只剩**一个**用处：**看哪个源在同质内容上持续先发**
-（`source_lead` 表 → `GET /api/story-fold/leaderboard`；列表里门面那条标一句"首发，早 N 小时"）。
+**Author does not participate in the judgment.** The same piece of content is the same piece of content, and who posted it does not change that fact: a reposting account's copy and the original author's copy
+should naturally be gathered together. After folding, "source" has only **one** remaining use: **seeing which Source consistently publishes first among homogeneous content**
+(`source_lead` table -> `GET /api/story-fold/leaderboard`; in the list, the facade item shows "first published, N hours earlier").
 
-**这条线一个字都不问用户。** 两个源常发同一条内容这件事，靠并堆次数自己攒
-（`story_pair`）——观察得到的事实没有理由做成一个待办去打扰人。
+**This line does not ask the user a single word.** The fact that two Sources often post the same content is accumulated by the merge count itself
+(`story_pair`): an observable fact has no reason to become a pending task that bothers someone.
 
-档 B 的几条硬规矩，破一条这个能力就变成"内容会莫名消失"：
+Tier B has several hard rules; break any one of them and this capability becomes "content mysteriously disappears":
 
-- **同一个 Stream 内永不归堆**——一个 Stream = 一个源 + 一个账号，它自己的两条按定义
-  就是两条内容。这道闸门不依赖任何阈值，比阈值可靠。
-- **collection 流（歌单/收藏夹）整个不进这条线**。它们是**目录快照，不是发布事件**：
-  一首歌出现在两个歌单里，说的是"这两个歌单都收了它"；而「谁先发」算出来的是**用户
-  两次收藏之间隔了多久**。2026-08-13 活体上真这么算过一轮，领先榜煞有介事地报了
-  "平均领先 15253 秒"。判据放在 `scheduler.ts` 的 collection 分支——那里刻意没有归堆那一跳。
-- **代表 = 发布最早的那条**，每次并入/拆堆都重算。不是"我先采到的那条"——那只反映采集
-  顺序（谁 cadence 短谁先被采到），和"谁先发"无关，而这条线要回答的正是后者。
-- **一对只记一次领先**：两条都在待判队列里，先判的那条已经并了它们；后判的那条若再走
-  一遍，同一对的"谁先发"会被记第二次，领先数直接翻倍。已归堆的条目直接出队。
-- **人工拆堆要记否决**（`story_fold_veto`）：只删归属的话，下一轮采集照原判据合回去。
-- **代表不在当前页时，成员照常显示**（前端）：堆的代表可能在分页之外，藏起来就是
-  "这条凭空消失了"，而且没有找回的入口。
-- **并列不硬分先后**：同一秒发出来的只记源对、不记领先。判谁快是编造精度。
-- **时长永远不是身份**，它只是把候选集缩到个位数的检索键（2026-08-13 活体上当过一次
-  判据：两个网易云歌单共享几十首歌，此后任意两首四分钟左右的歌被折成一堆，一个堆滚到
-  22 条）。判据只有文本。
+- **Never fold within the same Stream**: one Stream = one source + one account, so its own two items are by definition
+  two pieces of content. This gate does not depend on any threshold and is more reliable than thresholds.
+- **Collection Streams (playlists/favorites) do not enter this line at all**. They are **directory snapshots, not publish events**:
+  one song appearing in two playlists means "both playlists contain it"; what "who published first" calculates is **how long elapsed between the user's
+  two saves**. On 2026-08-13, live verification really calculated a round this way, and the leaderboard solemnly reported
+  "average lead 15253 seconds". The check is placed in `scheduler.ts`'s collection branch, which intentionally lacks the folding hop.
+- **Representative = the earliest published item**, recalculated on every merge/split. It is not "the item I harvested first" -- that only reflects harvest
+  order (whoever has the shorter cadence gets harvested first) and has nothing to do with "who published first", which is exactly the question this line answers.
+- **Record lead only once per pair**: if both items are in the pending-review queue, the first checked item has already merged them; if the later checked item runs
+  again, the same pair's "who published first" is recorded a second time and the lead count doubles directly. Already-folded items leave the queue immediately.
+- **Manual split must record a veto** (`story_fold_veto`): if only membership is deleted, the next harvest merges them back according to the original check.
+- **When the representative is not on the current page, members still display normally** (frontend): the fold's representative may be outside pagination, and hiding it means
+  "this item disappeared out of thin air", with no entry point to recover it.
+- **Ties are not forcibly ordered**: items published in the same second record only the source pair, not lead. Deciding who was faster would fabricate precision.
+- **Duration is never identity**; it is only a retrieval key that shrinks the candidate set to single digits (on 2026-08-13, it once served as the live
+  check: two NetEase Cloud Music playlists shared dozens of songs, and after that any two songs around four minutes long were folded into one pile, with one pile growing to
+  22 items). The only check is text.
 
-账本全部住 `cache.db`——**纯附加，删光就回到没有归堆的样子**，而且里面没有一格是用户
-手输的（同质关系和领先度都是从采集到的内容自己攒出来的，删了重跑一遍采集就有）。
+The entire ledger lives in `cache.db`: **purely additive; deleting it all returns the system to a state with no folding**. There is not a single slot in it that is user-
+entered manually (homogeneous relationships and lead values are accumulated from the harvested content itself; delete it and rerun harvest to get them again).
 
 ## Data Scheduling
 
@@ -1222,36 +1297,48 @@ the highest ItemStore `seq` the viewer has seen. It is **Channel-agnostic** — 
 Stream's unread state via `ItemStore.newCountSince(streamId, seenSeq)` (count of items inserted after
 the watermark) and advance it via `POST /api/streams/:id/seen` (→ `maxSeq`). The watermark only
 advances (`max()`), so re-marking is idempotent. First consumer: the video Channel's **正在追的**
-section, where `/api/channels` attaches `newCount` to a video Channel's non-ranking members (its
-presence is what marks a Stream as "followed") and the badge clears on open. `seq` (not `timestamp`)
+("Currently Following") section, where `/api/channels` attaches `newCount` to a video Channel's
+non-ranking members (its presence is what marks a Stream as "followed") and the badge clears on
+open. `seq` (not `timestamp`)
 is the key so counts are robust to missing/unreliable publish dates.
 
-### 存量查询 —— 读「已经采集进库的那批」
+### Existing-Item Query — Read “the batch already harvested into the database”
 
-`ItemStore.search({ streams, author, q, since, until, limit, order })` 是**按条件读存量**的唯一
-入口：过滤维度 AND 起来，按发布时间（`timestamp`，缺省回落 `created_at`）排序，回
-`{ items, matched }`——`matched` 是 limit 之前的全部命中数，消费方靠它说「共 N 条，这里给了 M 条」。
+`ItemStore.search({ streams, author, q, since, until, limit, order })` is the only entry point for
+**reading existing items by condition**: it ANDs the filter dimensions, sorts by publish time
+(`timestamp`, falling back to `created_at` by default), and returns `{ items, matched }` —
+`matched` is the total number of hits before `limit`, which consumers use to say "N total, M
+returned here".
 
-- **实现是朴素的 SQLite LIKE，不是 FTS5**，这是量过之后的决定：活体 13k 行 / 190MB 的
-  `cache.db` 上，作者过滤 ~140ms、正文关键词 ~93ms。FTS5 要建索引 + 迁移，还要与四条写入路径
-  （`add`/`addMany`/`replaceStream`/`rewriteItems`）保持同步，而那种漂移是**静默**的。
-  **重评触发条件：这条查询过 ~500ms，或表过 ~10 万行**（写在 `src/item-store.ts` 的头注里）。
-- `q` 只扫 title / `body_text` / `content.text`，**不扫整份 json**——`raw` 里是上游原样 payload，
-  扫它会把 url、id 和无关字段一起命中。
-- **消费方**：MCP 的 `inbox_search`（`src/mcp/inbox-search.ts`）。它把每条投影成瘦身回执
-  （id/stream_id/title/author/timestamp/url/excerpt，excerpt 截断了就标 `excerpt_truncated`），
-  **绝不带 `raw`/`body_html`/`content.media`**：一条条目的完整 JSON 约 850 字符，几十条就能把
-  一轮对话的上下文撑爆。频道过滤在那一层解析（频道 id 或用户嘴里的名字 → 它引用的 stream
-  集合；认不出就把现有频道列进回执），ItemStore 自己不认识频道。
-- **正文给多少，按 `planExtract` 的分支给**（`shared/extract/plan.ts`，「这条 item 的正文该怎么取」
-  的唯一权威）：`inline` 档（正文本来就在条目上）给到 1000 字并在没截断时标 `full_text: true`
-  ——**明说别再对它调 `extract`**；其余分支（音视频/图片/外链，正文真要跑一趟转换才有）给 300 字。
-  两档不分家的代价实测过：模型对 8 条纯文本帖调了 10 次 extract，每次只是把同一段文字原样再取
-  一遍。**回执里的"下一步"也是承诺**——指一条对这类数据不成立的路，模型就会照着走。
+- **The implementation is plain SQLite LIKE, not FTS5**. This is a measured decision: on a live
+  13k-row / 190MB `cache.db`, author filtering is ~140ms and body keyword search is ~93ms. FTS5
+  requires building an index + migration, and also keeping it in sync with the four write paths
+  (`add`/`addMany`/`replaceStream`/`rewriteItems`), while that kind of drift is **silent**.
+  **Re-evaluation triggers: this query exceeds ~500ms, or the table exceeds ~100k rows** (written
+  in the head comment of `src/item-store.ts`).
+- `q` scans only title / `body_text` / `content.text`; it **does not scan the full json**. `raw`
+  contains the upstream payload as-is, and scanning it would also match url, id, and irrelevant
+  fields.
+- **Consumer**: MCP's `inbox_search` (`src/mcp/inbox-search.ts`). It projects each item into a
+  slim receipt (id/stream_id/title/author/timestamp/url/excerpt, with `excerpt_truncated` set when
+  the excerpt is truncated) and **never includes `raw`/`body_html`/`content.media`**: the complete
+  JSON for one item is about 850 characters, and dozens of items can blow up one conversation's
+  context. Channel filtering is resolved at that layer (Channel id or the name the user says → the
+  set of streams it references; if it cannot recognize the Channel, it lists the existing Channels
+  in the receipt). ItemStore itself does not know Channels.
+- **How much body text to return follows the `planExtract` branch** (`shared/extract/plan.ts`, the
+  single authority for 「这条 item 的正文该怎么取」 ("how to get the body text for this item")): the
+  `inline` tier (the body text is already on the item) returns up to 1000 characters and marks
+  `full_text: true` when it is not truncated — **explicitly saying not to call `extract` on it
+  again**; the other branches (audio/video/image/external link, where the body text exists only
+  after running a conversion pass) return 300 characters. The cost of merging the two tiers has
+  been measured: the model called extract 10 times for 8 plain-text posts, each time merely
+  fetching the same text again unchanged. **The "next step" in a receipt is also a commitment** —
+  if it points to a path that does not hold for this type of data, the model follows it.
 
 ### Live preview (no store)
 
-"看看展示效果" before committing: fetch a Stream (or one ad-hoc source with unsaved params),
+"See how it looks" before committing: fetch a Stream (or one ad-hoc source with unsaved params),
 normalize it, and render it in the UI exactly like the Channel timeline — **without writing
 anything**. This is the read-side counterpart to T1: same fetch + normalizer path, none of the
 persistence.
@@ -1265,7 +1352,7 @@ persistence.
 - **Service** — `StreamService.previewStream` / `previewSource` delegate verbatim (MCP-reachable).
 - **REST** — `GET /api/streams/:id/preview?limit=` and `POST /api/sources/preview`
   (`{ sourceId, params }`), both returning `PreviewResult { items, errors }`.
-- **UI** — a「预览」button per Stream (the channel's 配置 tab) and in the source config sheet opens a modal
+- **UI** — a「预览」("Preview") button per Stream (the channel's 配置 ("Configuration") tab) and in the source config sheet opens a modal
   that reuses the timeline's `PostItemRow`; failures surface through the shared `Warnings` panel.
   Nothing touches ItemStore or the health ledger.
 
@@ -1277,12 +1364,16 @@ simultaneous observations (Network response bodies, page state, or DOM fallback)
 and validation/drift guards. Recipe remains the product and file-format term; the architecture does
 not introduce a parallel top-level "Workflow" concept.
 
-**drift 的判定不是一次布尔。** 一步的 `expect` 落空、或整趟判 `blocked`/`drift` 时，runner 会先
-按一张**状态图**认一眼当前页面（`src/replay/state-*.ts`；今天只有内置的 Cloudflare 三档）：认出
-死路或有逃生口的障碍，结论就翻成 `challenged`，而不是 `drift`。这是一条**架构级判据**，因为两边
-代价极不对称——判 `drift` 会让 `RepairLedger` 连着几次把这个源**静默隔离**，此后它返回
-`items:0 + errors:[]`，和「跑成功了、但确实没搜到」一模一样；判 `challenged` 只是等一次 facility
-冷却。这一步**排在 `loginCheck.wall` 探测之前**：具体的先于笼统的。整套模型见 `docs/ENGINE.md` §6。
+**Drift is not decided by a single boolean.** When one step's `expect` misses, or when the whole run
+is classified as `blocked`/`drift`, the runner first recognizes the current page through a **state
+graph** (`src/replay/state-*.ts`; today only the three built-in Cloudflare states exist): if it
+recognizes a dead end or an obstacle with an escape route, the conclusion flips to `challenged`
+instead of `drift`. This is an **architecture-level check**, because the costs on the two sides are
+highly asymmetric — classifying as `drift` causes `RepairLedger` to **silently isolate** this Source
+after several consecutive occurrences, after which it returns `items:0 + errors:[]`, exactly like
+"the run succeeded, but genuinely found nothing"; classifying as `challenged` only waits for one
+facility cooldown. This step **comes before `loginCheck.wall` probing**: the specific precedes the
+generic. See `docs/ENGINE.md` §6 for the full model.
 
 These axes are independent:
 
@@ -1346,140 +1437,140 @@ into storage. (**Do not build a surface that renders `xhs-home` live** — a nev
 not serve an AI-facing collection layer, and it is the one thing that would need a fat browser tab
 kept alive.)
 
-## 调度中心 (Task Scheduling Center)
+## Task Scheduling Center
 
-Stream 进程内还有一类周期任务，跟 Data Scheduling 章节的 T1/T2/T3 完全不是一回事：不产出
-Stream item，只是些运维性的后台活儿——刷新 cookie、清扫过期 job、standby reaper、网盘 autosync。
-它们统一收在调度中心里——**别为一个周期需求裸起 `setInterval`**，那等于一处一份重试/日志/失败
-处理、互不复用。调度中心内嵌 [Sidequest](https://github.com/lukin/sidequest)（inline runner + SQLite 落盘，
-无需额外容器/队列），cron 表达式驱动，失败自带重试与可观测的运行记录。
+There is another class of periodic tasks inside the Stream process, and they are completely different from the T1/T2/T3 in the Data Scheduling section: they do not produce
+Stream items, but are operational background work such as refreshing cookies, sweeping expired jobs, the standby reaper, and netdisk autosync.
+They are collected in the scheduling center — **do not start a bare `setInterval` for a periodic need**, because that means every place has its own retry/logging/failure
+handling and cannot reuse the others. The scheduling center embeds [Sidequest](https://github.com/lukin/sidequest) (inline runner + SQLite write to disk,
+no extra container/queue needed), is driven by cron expressions, and includes retries plus observable run records for failures.
 
-- **怎么加一个周期任务**：在 `src/tasks/builtin.ts` 里加一条 `ScheduledTask`（cron + handler），
-  handler 需要的依赖（cookie provider、events sink、netdisk store…）通过 `TaskDeps`
-  （`src/tasks/types.ts`）声明式注入，`serve.ts` 用 `setTaskDeps()` 在启动时一次性接好；不要在
-  handler 里闭包捕获全局单例。
-- **两类任务**：运维任务写死在 `src/tasks/builtin.ts`（stream 自己的内脏，改排期改代码）；
-  业务任务住 `data/stream.db` 的 `scheduled_tasks` 表，`run` 是**跑一条外部命令**
-  （`src/tasks/exec-runner.ts`），排期在 UI 里改、改完立即重排不重启。两类编译成同一个
-  `ScheduledTask`、走同一个 Job 类、落同一张账本——历次执行是同一套查询。
-- **外部任务怎么报效果**：退出码只说明进程没崩。约定任务在 stdout 打一行
-  `::outcome:: {"summary":"...","detail":{...}}`，执行器取最后一行解析成 `TaskOutcome`
-  存进账本（`src/tasks/outcome.ts`）。不报就只有一句「exit 0（任务没报 ::outcome::）」。
-- **面板**：任务清单、排期与历次执行在 `present: 'tasks'` 那档频道（`app/src/components/tasks/`，
-  数据走 `/api/tasks`，`src/http/task-routes.ts`）。顶栏与其余四档 Present 同一格
-  （`ChannelTitleMenu` + 32px 标题行），卡片走 acrylic `Card`/`Badge`/`Button`。
-  Sidequest 自带的 `/_p/sidequest`（走 gateway 前缀，见 `src/plugins/gateway.ts`）仍在，但它是
-  job 视角、所有任务共用一个 Job 类，分不出谁是谁——查单条任务用前者。
-- **排期在页面上怎么读怎么改**：cron 原文没人一眼读得出来，所以卡片上**人话在主位、cron 原文
-  在次位、后面跟接下来三次触发时刻**（`app/src/lib/cronFriendly.ts`：翻译 + 预设编译 + 下次触发
-  求解，无第三方 cron 依赖）。改排期是**先选形状（每 N 分钟 / 每小时 / 每天 / 每周 / 每月）再填
-  数字**，表达式由预设写出来；复杂表达式留了「自定义表达式」逃生口，边打边校验、边打边给人话。
-  两条不许破的规矩：**认不出就退回原文，绝不编一句近似的人话**；**跨时区、或「日」与「周几」
-  同时限定时，下次触发时刻显式说"算不出来"，不猜**（各家 cron 实现在这两处语义不一致）。
-- **改一条用户任务要把整行发回去**：写路由只有 upsert 一条（`PUT /api/tasks/:id`），只发
-  `{ enabled: false }` 会被 400 挡在「command 必填」上。页面的暂停/恢复、改排期都是拿列表里
-  那一行原样回发、只覆盖一个键（`app/src/lib/api.tasks.ts` 的 `saveTask`）。内置任务这两个
-  控件不画——它们的排期改代码不改库。
-- **分组（`group`）只影响这一页怎么摆。** 任务表按它分节渲染，每节一个组名小标题；没有 `group`
-  的行落进最后一节「未分组」（不替它们编组名），全都没分组时一条组标题也不画。它**不参与调度、
-  依赖、并发或路由**——别给它执行语义。它存在的理由是任务拆细了：一个数据源一条（各源更新时间
-  不同，共用一个 cron 就没有新鲜度可言），拆完列表变长，"这几条是同一个市场的"在界面上看不出来。
-  组名不是白名单：编辑器那格是**可输入的下拉**，候选来自现有任务用过的组名（内置的也算），
-  也能当场敲一个新的。组的顺序和候选顺序都按组名排（`localeCompare`，中文按拼音），组内顺序原样
-  保留——顺序稳定，加一条任务不会把整页重排。内置任务分四组：**登录态 / 网盘 / 意图 / 运维**
-  （`src/tasks/builtin.ts` 的 `GROUPS`）；DB 里那一列叫 **`group_name`**，因为 `group` 是 SQL 关键字。
-- **并发由三格分别管，各答一个问题**（`src/tasks/types.ts`，判定流程见 `stream-cron` skill）：
-  - `serial` —— **这一条任务不叠着自己跑**（uniqueness 存活即拒：上轮没完就跳过本次）。
-    它只管这条任务和它自己，**不决定队列、不让它跟别的任务互斥**。不变量：**终态 job 不带
-    `unique_digest`**——带着就等于"永远排着队"，同一任务此后每班都被判 duplicated；启动巡检
-    （`src/tasks/orphan-sweep.ts`）把上次进程留下的 claimed/running 行记成 failed 时一并清 digest，
-    并把任何终态还带 digest 的行清掉、记日志。
-  - `exclusiveOn` —— **这条任务独占的那样东西的名字**（一座外部数据桥的 worker、一份登录态
-    标签、一个库文件的写锁、一把 key 的配额）。同名的任务共用队列 `x:<组名>`（concurrency 1），
-    同时只跑一条；缺席 = 进 `default`（concurrency 4），不跟任何人互斥。名字是**资源**的名字，
-    不是业务类别：`jq-bridge` 好（看一眼采集器就知道自己该不该进来），`cn-data` 坏
-    （"我这条算不算"永远说不清）。**独享的东西不需要排队**——只有一条任务用它，`serial` 就够了。
-  - `whenBusy` —— 轮不上的时候：`queue`（默认，排着）或 `skip`（这一班不跑）。判据只有一句：
-    **迟到之后还算不算同一件事**。补数、导出、发布算 → 排着（排队不吃 `timeoutMs`，那是在子进程
-    spawn 那一刻才起表，所以"等"没有隐藏代价）；有外部时间窗的动作（申购/打新、竞价前报盘、
-    有截止时间的提交）不算 → 这一班不跑，并在后端日志和事件面板各留一条（`task.skipped`，warn）。
-  互斥组的队列是**运行期建的**（`Sidequest.queue.create`，concurrency 1）：组名是用户在界面上
-  现敲的，静态 `queues` 声明里没有它。建不出来时那条任务**不排期**——未知队列的 job 会落账然后
-  永远没人捡，那比不排期更坏。`skip` 那一档的节拍器是调度中心自己持的 node-cron，不走 sidequest 的
-  `schedule()`：那条路到点直接落账、中间没有钩子，而"组正忙就别入队"必须在**入队之前**答完
-  （入队之后再判就晚了——队列 concurrency 是 1，那条 job 会安静地排着，等前面跑完再跑）。
-  丢班自愈也过这一关：skip 任务的丢班在组正忙时不补（`skipped-busy`，进那一轮 watchdog 的
-  summary 和 detail）。「立即跑一次」是人点的，不看 `whenBusy`，照常入队由队列保住互斥。
-  DB 里两列叫 `exclusive_on` / `when_busy`；界面上有互斥组的行画一枚行内小标记（组名 + skip 档
-  的「不排队」），不新开一列——绝大多数行没有它。
-- **「立即跑一次」一律两步确认**，确认态 5 秒自己过期，**不按任务分档**。理由是具体的：A 股
-  逆回购任务误点一次 = 撤掉全部挂单 + 全仓买入逆回购，当天撤不回来。**闸挂在动作上，不挂在
-  任务的自述上**——别再给任务行加一个 `effect` 之类的自述枚举来分档：那种字段是行主自己填的，
-  没有后端消费方，填错不报错，于是闸静悄悄地就不在了。这一档的代价（只读任务多一次点击）
-  远小于它换来的"没有缺口"。
-- **一条任务的全部参数就是它的命令行**（`command` / `args` / `env` / `cwd`），没有第二层参数
-  模型。"用哪个账号跑"是 argv 里的一个词（`--alias jagger`），所以配置页把这四格放在同一块里；
-  真正的密码/token 一格都不在任务行上，它们住脚本自己的配置或 Stream 的 `runtime_config`。
-- **账本保留期**：`ledger-prune` 每天 04:15 清一次，每任务留最近 200 次或 30 天（取宽的）。
-- **登录态导出（`session-export`，每 10 分钟）**：凭证域的**出口方向**。此前宿主手里那份登录态
-  只有两个进程内消费者（采集注入 env、插件容器拿 Cookie 头），这是第三个——**本机一个我们不
-  拥有的进程**，它按自己的约定读一个磁盘文件。它存在的理由是消掉那个进程为了拿登录态而自己
-  开的第二个浏览器：同一份登录态在用户自己的 Chrome 里本来就有，Stream 也本来就在取
-  （`cookiePull`）。声明只在 `config.yaml` 的 `session_exports`（一条都没写 = 整格不装配，
-  任务表上也不出现这个任务），实现与三条边界在 `src/credentials/session-export.ts` 的头注：
-  **无 API/UI 入口**、`extras[].url` 必须落在声明的 `domain` 之内且过 SSRF 闸、文件 0600。
-  声明的 `domain` 会并进 `requiredCookieDomains`（第二个来源，manifest 的 `auth` 是第一个）
-  ——漏了这一并集就是每轮拿到空 cookie 而**没有任何一处会报错**。周期是 10 分钟而不是"够新
-  就行"：那一发带 cookie 的 GET 同时把站点的 session idle 计时器按回零，**保鲜之外还在续命**，
-  这是有意为之。
-- **后端得自己活过来**：调度中心跑在后端进程里，所以"后端在不在"直接决定"任务跑不跑"。常驻形态
-  是 `scripts/stream-back.service`（`Restart=always` + 开机自启，安装说明在文件头注）；`scripts/dev.sh`
-  进场时把它停掉、退场时起回来，两者抢同一个 8900 由 `serve.ts` 的单实例锁兜底。
-- **边界（互不接管）**：调度中心只管"运维性周期任务"；采集主链路（T1 `tick(stream)`，见上面
-  Data Scheduling 章节的 `scheduler.ts`）不迁移进来——它的链式 `setTimeout` 自重新武装、抖动、
-  exclusive 降级等语义是采集专属的，两套调度器各管一摊，谁也不吃谁。
-- **防回归**：`src/tasks/no-bare-setinterval.test.ts` 对 `src/` 做全量词边界 grep（`\bsetInterval\b`），
-  白名单外一律 FAIL——新的周期需求禁止绕开调度中心裸起定时器。
+- **How to add a periodic task**: add a `ScheduledTask` entry (cron + handler) in `src/tasks/builtin.ts`;
+  dependencies needed by the handler (cookie provider, events sink, netdisk store...) are injected declaratively through `TaskDeps`
+  (`src/tasks/types.ts`), and `serve.ts` wires them once at startup with `setTaskDeps()`; do not capture global singletons
+  in handler closures.
+- **Two task types**: operational tasks are hard-coded in `src/tasks/builtin.ts` (Stream's own internals; change code to change schedules);
+  business tasks live in the `scheduled_tasks` table in `data/stream.db`, and `run` means **run an external command**
+  (`src/tasks/exec-runner.ts`); their schedule is edited in the UI, and after editing they are rescheduled immediately without restart. Both types compile into the same
+  `ScheduledTask`, use the same Job class, and write to the same ledger — every past execution uses the same query path.
+- **How external tasks report results**: the exit code only says the process did not crash. By convention, a task prints one line to stdout:
+  `::outcome:: {"summary":"...","detail":{...}}`; the executor takes the last line, parses it into `TaskOutcome`,
+  and stores it in the ledger (`src/tasks/outcome.ts`). If it does not report one, there is only the sentence `exit 0（任务没报 ::outcome::）` ("exit 0 (task did not report ::outcome::)").
+- **Panel**: the task list, schedule, and past executions are in the channel whose `present` is `'tasks'` (`app/src/components/tasks/`;
+  data goes through `/api/tasks`, `src/http/task-routes.ts`). The top bar uses the same slot as the other four Present modes
+  (`ChannelTitleMenu` + 32px title row), and cards use acrylic `Card`/`Badge`/`Button`.
+  Sidequest's built-in `/_p/sidequest` (through the gateway prefix; see `src/plugins/gateway.ts`) is still there, but it is
+  a job perspective; all tasks share one Job class, so it cannot tell which is which — use the former to inspect a single task.
+- **How schedules are read and edited on the page**: nobody can read raw cron at a glance, so on cards **human wording is primary, raw cron
+  is secondary, followed by the next three trigger times** (`app/src/lib/cronFriendly.ts`: translation + preset compilation + next-trigger
+  solving, with no third-party cron dependency). Editing a schedule means **first choosing the shape (every N minutes / hourly / daily / weekly / monthly), then filling in
+  numbers**; the expression is generated from the preset. Complex expressions keep a `自定义表达式` ("custom expression") escape hatch, with validation and human wording while typing.
+  Two rules must not be broken: **if it is not recognized, fall back to the raw text and never invent approximate human wording**; **when crossing time zones, or when "day of month" and "day of week"
+  are both constrained, explicitly say `算不出来` ("cannot calculate") for the next trigger time instead of guessing** (cron implementations disagree on those two semantics).
+- **Updating a user task must send the whole row back**: the write route only has a single-row upsert (`PUT /api/tasks/:id`); sending only
+  `{ enabled: false }` is blocked with 400 at "command is required". The page's pause/resume and schedule-edit actions take the row from the list,
+  send it back as-is, and override only one key (`saveTask` in `app/src/lib/api.tasks.ts`). These two controls are not drawn
+  for built-in tasks — their schedules are changed in code, not in the database.
+- **Grouping (`group`) only affects how this page is laid out.** The task table renders sections by it, with each section using a group-name subheading; rows without a `group`
+  fall into the final `未分组` ("ungrouped") section (no group name is fabricated for them), and if all rows are ungrouped, no group heading is drawn at all. It **does not participate in scheduling,
+  dependencies, concurrency, or routing** — do not give it execution semantics. It exists because tasks have been split more finely: one task per data source (different sources update at different times;
+  sharing one cron would make freshness meaningless), and after splitting, the list is longer, so the UI cannot show that "these rows belong to the same market".
+  Group names are not a whitelist: that editor cell is an **editable dropdown** whose candidates come from group names already used by existing tasks (including built-ins),
+  and it can also accept a new one typed on the spot. Group order and candidate order are both sorted by group name (`localeCompare`, Chinese by pinyin), while order within each group is preserved as-is
+  — the order is stable, and adding one task does not reorder the whole page. Built-in tasks are split into four groups: **登录态 / 网盘 / 意图 / 运维**
+  ("login state / netdisk / intent / operations"; `GROUPS` in `src/tasks/builtin.ts`); the column in DB is called **`group_name`** because `group` is a SQL keyword.
+- **Concurrency is controlled by three fields, each answering one question** (`src/tasks/types.ts`; see the `stream-cron` skill for the decision flow):
+  - `serial` — **this task does not overlap with itself** (reject while uniqueness is live: if the previous run has not finished, skip this run).
+    It only controls this task and itself; **it does not decide the queue and does not make it mutually exclusive with other tasks**. Invariant: **terminal jobs do not carry
+    `unique_digest`** — carrying one would mean "forever queued", and every future shift for the same task would be judged duplicated. The startup sweep
+    (`src/tasks/orphan-sweep.ts`) clears the digest when it marks claimed/running rows left by the previous process as failed,
+    and also clears any terminal row that still has a digest, then logs it.
+  - `exclusiveOn` — **the name of the thing this task exclusively owns** (the worker for an external data bridge, a login-state
+    label, a write lock for a database file, the quota for one key). Tasks with the same name share queue `x:<组名>` (concurrency 1),
+    so only one runs at a time; absent = goes into `default` (concurrency 4) and is not mutually exclusive with anyone. The name is the name of the **resource**,
+    not the business category: `jq-bridge` is good (the harvester can tell at a glance whether it belongs in it), `cn-data` is bad
+    ("does my task count?" is forever unclear). **An exclusively owned thing does not need a queue** — if only one task uses it, `serial` is enough.
+  - `whenBusy` — when it cannot get a turn: `queue` (default, queue it) or `skip` (do not run this shift). There is only one check:
+    **after being late, is it still the same work?** Backfilling, exporting, and publishing count -> queue them (queueing does not consume `timeoutMs`; that timer starts only when the child process
+    is spawned, so "waiting" has no hidden cost). Actions with an external time window (subscription/reverse repo purchases, quoting before auction,
+    submissions with deadlines) do not count -> skip this shift, and leave one record each in the backend log and the events panel (`task.skipped`, warn).
+  Mutually exclusive queues are **created at runtime** (`Sidequest.queue.create`, concurrency 1): group names are typed by users on the page,
+  so they do not exist in the static `queues` declaration. If a queue cannot be created, that task **is not scheduled** — a job for an unknown queue would write to the ledger and then
+  never be picked up, which is worse than not scheduling it. The ticker for the `skip` tier is held by the scheduling center's own node-cron and does not go through Sidequest's
+  `schedule()`: that path writes a ledger row directly when the time arrives and has no hook in between, while "if the group is busy, do not enqueue" must be answered **before enqueueing**
+  (checking after enqueueing is too late — queue concurrency is 1, and that job will quietly sit in line, then run after the earlier one finishes).
+  Missed-shift self-healing also passes through this check: missed shifts for skip tasks are not backfilled while the group is busy (`skipped-busy`, included in that watchdog round's
+  summary and detail). `立即跑一次` ("run once now") is a human click and does not look at `whenBusy`; it enqueues as usual and lets the queue preserve mutual exclusion.
+  The DB columns are `exclusive_on` / `when_busy`; on the page, rows with a mutual-exclusion group draw a small inline marker (group name + the `不排队` ("do not queue") label
+  for the skip tier), without adding a new column — the vast majority of rows do not have it.
+- **`立即跑一次` ("Run once now") always requires two-step confirmation**, and the confirmation state expires by itself after 5 seconds; **it is not tiered by task**. The reason is concrete: one mistaken click on an A-share
+  reverse repo task = cancel all open orders + buy reverse repos with the whole position, and it cannot be undone that day. **The gate is attached to the action, not to
+  the task's self-description** — do not add a self-description enum such as `effect` to task rows to tier them again: that field is filled by the row owner,
+  has no backend consumer, and a wrong value does not error, so the gate silently disappears. The cost of this tier (one extra click for read-only tasks)
+  is far smaller than the "no gaps" it buys.
+- **All parameters of a task are its command line** (`command` / `args` / `env` / `cwd`); there is no second-level parameter
+  model. "Which account to run with" is a word in argv (`--alias jagger`), so the configuration page puts these four fields in the same block;
+  actual passwords/tokens are not on the task row at all. They live in the script's own configuration or in Stream's `runtime_config`.
+- **Ledger retention**: `ledger-prune` cleans once every day at 04:15; for each task, keep the latest 200 runs or 30 days, whichever is wider.
+- **Login-state export (`session-export`, every 10 minutes)**: the **outbound direction** of the credential domain. Previously the login state held by the host
+  had only two in-process consumers (harvest injection into env, plugin containers receiving Cookie headers). This is the third one — **a local process we do not
+  own**, which reads a disk file according to its own convention. It exists to remove the second browser that process started itself
+  just to get login state: the same login state already exists in the user's own Chrome, and Stream is already fetching it
+  (`cookiePull`). The declaration exists only in `session_exports` in `config.yaml` (if there are no entries = the whole slot is not assembled,
+  and this task does not appear in the task table). The implementation and three boundaries are in the header comment of `src/credentials/session-export.ts`:
+  **no API/UI entrypoint**, `extras[].url` must fall under the declared `domain` and pass the SSRF gate, and files are 0600.
+  The declared `domain` is merged into `requiredCookieDomains` (the second source; `auth` in the manifest is the first)
+  — missing this union means every round receives empty cookies and **no place reports an error**. The period is 10 minutes, not merely "fresh enough":
+  that cookie-bearing GET also resets the site's session idle timer to zero; **besides keeping it fresh, it keeps it alive**,
+  intentionally.
+- **The backend must keep itself alive**: the scheduling center runs inside the backend process, so "whether the backend is present" directly decides "whether tasks run". The resident form
+  is `scripts/stream-back.service` (`Restart=always` + start on boot, with installation instructions in the file header comment); `scripts/dev.sh`
+  stops it on entry and starts it back on exit, and the two competing for the same 8900 are covered by the single-instance lock in `serve.ts`.
+- **Boundary (no takeover across it)**: the scheduling center only handles "operational periodic tasks"; the main harvest path (T1 `tick(stream)`, see
+  `scheduler.ts` in the Data Scheduling section above) does not migrate into it — that path's chained `setTimeout` self-rearming, jitter,
+  exclusive degrade, and other semantics are harvest-specific. The two schedulers each own their own area and do not swallow each other.
+- **Regression prevention**: `src/tasks/no-bare-setinterval.test.ts` runs a full word-boundary grep over `src/` (`\bsetInterval\b`);
+  anything outside the whitelist FAILs — new periodic needs must not bypass the scheduling center by starting bare timers.
 
-## 进程内内核（Cordis）：域插件树与生命周期
+## In-Process Kernel (Cordis): Domain Plugin Tree and Lifecycle
 
-后端进程的装配骨架是 [Cordis](https://github.com/cordiverse/cordis)（`cordis@4.0.0-rc.8`，
-精确锁版）。`bootstrap()`（`src/bootstrap.ts`，~530 行）只做一件事：建内核 → 按依赖序挂
-**域插件** → 返回 `{ config, kernel }`。跨模块能力全部住在 `ctx.<域>` 上，域插件在
-`src/kernel/plugins/`，一域一文件一聚合对象（declaration merging 就近声明）。
+The backend process assembly skeleton is [Cordis](https://github.com/cordiverse/cordis) (`cordis@4.0.0-rc.8`,
+with the exact version locked). `bootstrap()` (`src/bootstrap.ts`, ~530 lines) does only one thing: create kernel -> mount
+**domain plugins** in dependency order -> return `{ config, kernel }`. Cross-module capabilities all live on `ctx.<domain>`, and domain plugins live in
+`src/kernel/plugins/`, one file and one aggregate object per domain (declaration merging is declared nearby).
 
-装配序（即依赖序）：settings → credentials → packages → sources → storage → streamEvents →
-harvest → auth → adapters → provider → llm → netdisk → search-fanout → conversions → agent →
-scheduling。另有三个机制件：`runtime-config`（唯一 runtimeConfig 解析器）、`backend-directory`
-（带 backend 的包的唯一合并名单）、`module-hooks`（模块级钩子随内核挂卸 + 未接线报告）。
+Assembly order (that is, dependency order): settings -> credentials -> packages -> sources -> storage -> streamEvents ->
+harvest -> auth -> adapters -> provider -> llm -> netdisk -> search-fanout -> conversions -> agent ->
+scheduling. There are also three mechanism pieces: `runtime-config` (the only runtimeConfig parser), `backend-directory`
+(the only merged list of packages with backends), and `module-hooks` (module-level hooks mounted/unmounted with the kernel + unwired report).
 
-`ctx.llm`（`src/kernel/plugins/llm.ts`）是**后端自己**全部 LLM 出站的单点，只有两格：
-`forTask`（按调用点路由的任务级调用，带按 callsite×日的用量账本与 validate 失败升级）和
-`usage`（账本，cache.db）。**它没有 HTTP 面**——所有消费方都在本进程内，一步 HTTP 都不经过。
-要用 LLM 的新功能 = 注册一个 callsite + 绑 Provider 行，禁止另配 endpoint+key 入口。
+`ctx.llm` (`src/kernel/plugins/llm.ts`) is the single point for **the backend itself** to make all outbound LLM calls, with only two slots:
+`forTask` (task-level calls routed by callsite, with a callsite-by-day usage ledger and validate-failure escalation) and
+`usage` (ledger, cache.db). **It has no HTTP surface** — all consumers are inside this process, and not a single HTTP hop is involved.
+A new feature that needs LLM = register a callsite + bind a Provider row; do not configure a separate endpoint+key entrypoint.
 
-对话里那个模型是**另一条路**：它归用户自己的宿主（Claude Code / Codex / DSH），由宿主直接打
-它配的网关，不经过 `ctx.llm`、也不经过 Stream 的任何端点（见下面「对话」一节）。两条路各自的
-账本各自记，别指望在一处看到全部。
+The model in the chat is **another path**: it belongs to the user's own host (Claude Code / Codex / DSH), and the host directly calls
+its configured gateway. It does not go through `ctx.llm` or any Stream endpoint (see the "Chat" section below). Each path keeps
+its own ledger; do not expect to see everything in one place.
 
-规则（改这一层前必读）：
+Rules (must read before changing this layer):
 
-- **ctx key 一律带域前缀或域名**；上游 cordis 占用 `logger/events/registry/reflect/fiber`——
-  尤其 `events`：`provide('events')` 不抛不覆盖**静默无效**，所以事件层叫 `streamEvents`。
-  完整规则见 `src/kernel/context.ts` 头注。
-- **持句柄/定时器/watcher/WSS 的对象必须 `ctx.effect()` 登记**，disposer 关它。关停统一走
-  `quiesceKernel(kernel)`（撤销按注册反序）；serve 层手写关停只剩 stopTaskCenter/standbyMgr。
-- **域间的前向依赖用运行时解引用**（thunk / 调用时读 `ctx.<域>`），绝不装配期解构存快照——
-  装配期冻结的症状是热换失效/启动窗口静默失真，且不报错。scheduler⇄service 的真环在
-  scheduling 域内闭合（`onFeedTitle` 回调运行时解引用）。
-- **HttpDeps 键冻结**（`src/http/app.ts` 头注）：新增能力挂 `ctx.<域>`，不加键。
-  注意有若干**不走 HttpDeps 的直连**（插件网关、standby、taskDeps、mountMcp、mountLlmIngress、mountConfigRows、registerDshRoutes、
-  mountLiveRoutes、mountResearchRoutes、两个 WS attach、stdio disk 档）——改域时用
-  `rg "boot\.<字段>"` + 各批次 spec 的收尾扫描键核对。
-- **Stream 包 ≠ Cordis 插件**：包（`packages/<id>/`）是跨进程信任边界（六格槽位模型），
-  内核插件是进程内组合单位，两者永不合并。
+- **ctx keys always carry a domain prefix or domain name**; upstream cordis occupies `logger/events/registry/reflect/fiber` —
+  especially `events`: `provide('events')` does not throw and does not override; it is **silently ineffective**, so the event layer is called `streamEvents`.
+  See the header comment of `src/kernel/context.ts` for the full rules.
+- **Objects holding handles/timers/watchers/WSS must be registered with `ctx.effect()`**, and their disposer closes them. Shutdown uniformly goes through
+  `quiesceKernel(kernel)` (revocation in reverse registration order); handwritten shutdown in the serve layer is reduced to stopTaskCenter/standbyMgr.
+- **Forward dependencies between domains use runtime dereferencing** (thunks / reading `ctx.<domain>` at call time), never destructuring during assembly and saving snapshots —
+  symptoms of assembly-time freezing are hot-swap failure/startup-window silent distortion, with no error. The real scheduler<->service cycle is closed
+  inside the scheduling domain (the `onFeedTitle` callback dereferences at runtime).
+- **HttpDeps keys are frozen** (header comment in `src/http/app.ts`): add new capabilities under `ctx.<domain>`, not by adding keys.
+  Note that there are several **direct connections that do not go through HttpDeps** (plugin gateway, standby, taskDeps, mountMcp, mountLlmIngress, mountConfigRows, registerDshRoutes,
+  mountLiveRoutes, mountResearchRoutes, two WS attaches, stdio disk tier) — when changing domains, use
+  `rg "boot\.<字段>"` plus the closing scan keys from each batch spec to cross-check.
+- **Stream packages are not Cordis plugins**: packages (`packages/<id>/`) are a cross-process trust boundary (the six-slot model);
+  kernel plugins are in-process composition units, and the two never merge.
 
-演进史与各批验收在 `internal design record`（母 spec + 八个批次）。
+Evolution history and each batch of verification live in the `internal design record` (parent spec + eight batches).
 
 ## Serving
 
@@ -1507,26 +1598,26 @@ Ways that one backend gets started (all the same process, same port, same door):
 no watch — what the packaged `server.mjs` is), or the self-host container.
 Never two at once on `8900`; there is exactly one entry per machine.
 
-**进程级兜底网**（`src/process-guard.ts`，`main()` 里紧跟 `createKernel()` 挂上，源码树与打包的
-`server.mjs` 同一个入口所以两种形态都盖住）：孤儿 promise 的 `unhandledRejection` **不再带走整个
-进程**——完整堆栈进 error 日志 + 一条 `process.unhandled-rejection` 通知（severity `error`）；
-`uncaughtException` 同样记录 + 通知（`process.uncaught-exception`），但**仍然退出(1)**交给
-supervisor 拉起（栈被撕断在半路，带着半截状态继续服务比死掉更坏）。**它不是消音器**：日志绝不
-降级成摘要，这里也绝不许长出「分类后忽略某几种」的白名单——要治的是那条孤儿 promise 本身。
+**Process-level fallback net** (`src/process-guard.ts`, attached in `main()` right after `createKernel()`; the source tree and packaged
+`server.mjs` share the same entry, so both forms are covered): an orphan promise's `unhandledRejection` **no longer takes down the entire
+process** — the full stack goes to the error log + one `process.unhandled-rejection` notification (severity `error`);
+`uncaughtException` is also recorded + notified (`process.uncaught-exception`), but **still exits(1)** and lets the
+supervisor bring it back up (the stack is torn halfway through, and continuing to serve with half-state is worse than dying). **This is not a silencer**: logs must never be
+degraded into summaries, and this layer must never grow a whitelist for "classify and then ignore some categories" — the thing to fix is the orphan promise itself.
 
-### 前端↔后端传输（两种，权威定义见 `backend-connection` spec）
+### Frontend↔Backend Transport (two kinds; authoritative definition is in the `backend-connection` spec)
 
-Stream 自己的界面是 `app/` 打出来的几份 IIFE bundle（`app/dist-panel/panel*.js`），由后端那扇门
-（`:8900`）从 `/panel/*` 发（`src/http/panel-mount.ts`），页面因此与 API 同源。挂它的壳有两个：
-8900 的独立正门（`src/http/standalone-page.ts`，没被 `/api`、`/_p`、`/panel` 认领的路径都落它），
-以及用户 DSH 里那个 Stream UI 插件的页面（跨源，但 origin 是本机地址，`isTrustedOrigin` 默认认）。
+Stream's own UI is several IIFE bundles built from `app/` (`app/dist-panel/panel*.js`), served by the backend door
+(`:8900`) from `/panel/*` (`src/http/panel-mount.ts`), so the page is same-origin with the API. There are two shells that mount it:
+the standalone front door on 8900 (`src/http/standalone-page.ts`; every path not claimed by `/api`, `/_p`, or `/panel` falls to it),
+and the Stream UI plugin page inside the user's DSH (cross-origin, but the origin is a local address and `isTrustedOrigin` trusts it by default).
 
-传输只有一种：**原生 `fetch` + 原生 `WebSocket`**。同源那一档（浏览器直接打 `:8900`——dev 期页面
-就是后端反代过来的 Vite，release 期是后端 serve 的静态；自托管档则由边缘 Caddy 同源托管）基址为空、
-走相对路径；跨源那一档（面板住在用户 DSH 那一页）基址是后端自己的 origin。
+There is only one transport: **native `fetch` + native `WebSocket`**. The same-origin tier (the browser talks directly to `:8900` — in dev the page
+is Vite reverse-proxied by the backend, in release it is static assets served by the backend; the self-host tier is same-origin hosted by the edge Caddy) has an empty base URL and
+uses relative paths; the cross-origin tier (the panel lives on the user's DSH page) uses the backend's own origin as the base URL.
 
-**upstream 指向谁（发现阶梯）**：① 用户在设置里配的**远程后端 URL** —— 优先，探健康后直取；
-② 没配 → 同源相对，不探端口。配了但探不通 → 回落同源。
+**Who upstream points to (discovery ladder)**: ① the **remote backend URL** the user configured in settings — first priority, probe health and use it directly;
+② not configured → same-origin relative paths, no port probing. Configured but probe fails → fall back to same-origin.
 
 ### MCP over stdio (on-demand)
 
@@ -1591,31 +1682,31 @@ both transports live in [`README.md` → *MCP usage*](../README.md#mcp-usage). N
 tool set is defined here, server-side: when tools change (e.g. a rename), clients pick it up by
 reconnecting/restarting — a running MCP session keeps the `tools/list` it fetched at startup.
 
-### 后端生命周期：两模式 + 分层安装
+### Backend Lifecycle: Two Modes + Layered Installation
 
-MCP 按需（上面 stdio 一节）解决的是「查询不需要常驻后端」；但 **timeline 采集本质上需要「有人按时去
-跑」**——没有一个活着的进程，就没人触发 cadence 定时器。这是采集和 MCP 查询的根本区别，也是「后端
-到底要不要常驻」这个问题的来源。答案不是两个产品，而是**同一份 core 的两种模式**，只差一根轴：
-有没有常驻（OS 服务）。
+On-demand MCP (the stdio section above) solves "queries do not need a standing backend"; but **timeline harvest fundamentally needs "someone to go
+run on schedule"** — without a live process, nobody triggers the cadence timer. This is the fundamental difference between harvest and MCP queries, and it is also where the question "does the backend
+need to be standing after all" comes from. The answer is not two products, but **two modes of the same core**, differing along only one axis:
+whether there is a standing resident process (OS service).
 
-|  | **无常驻** | **有常驻（OS 服务）** |
+|  | **No resident process** | **Has a resident process (OS service)** |
 |---|---|---|
-| 纯 MCP | 按需：stdio 起来，disk 读 / 写降级为 `needs_backend`。全关掉什么都不跑。 | 无头服务器：后端作为 OS 服务常驻，MCP 永远 forward 给它，频道后台自动更新，用 Claude 查最新。 |
+| Pure MCP | On demand: stdio starts, disk reads / writes degrade to `needs_backend`. When everything is closed, nothing runs. | Headless server: the backend stays resident as an OS service, MCP always forwards to it, Channels update automatically in the background, and Claude can query the latest state. |
 
-**core（node 后端 + MCP，一份代码、一个入口）在这两格里一个字节都不变。** 变的只有「谁负责让它活着」。
-DB 单访问者不变量自动成立，不靠锁：probe-first 纪律（见上 stdio 一节）保证「服务在跑就 forward/复用、
-没在跑才 disk 读」。
+**The core (node backend + MCP, one codebase, one entry) does not change by even one byte between these two cells.** The only thing that changes is "who is responsible for keeping it alive".
+The DB single-accessor invariant holds automatically, without relying on locks: the probe-first discipline (see the stdio section above) guarantees "if the service is running, forward/reuse it;
+only do disk reads when it is not running".
 
-**分层安装**（把「core 是唯一不变量」落到安装物理层，而不只是运行时行为）：
+**Layered installation** (put "core is the only invariant" into the physical installation layer, not just runtime behavior):
 
 ```
-L0 core 基座   node 后端 + MCP（一份代码，一个入口）   ← 始终存在，唯一不变量
-L1 MCP 注册    stdio 命令写进客户端配置                ← 指向 L0，几乎总在
-L2 常驻（可选） OS 服务单元（systemd user / LaunchAgent / 登录任务）  ← 指向 L0，运行时开关
+L0 core base   node backend + MCP (one codebase, one entry)   ← always present, the only invariant
+L1 MCP registration    stdio command written into client config                ← points to L0, almost always present
+L2 resident (optional) OS service unit (systemd user / LaunchAgent / login task)  ← points to L0, runtime switch
 ```
 
-**没有桌面壳这一层**：界面是 8900 那扇门发的面板，以及用户 DSH 里那份 Stream UI 插件。L2 只是
-「指向 L0」，可随时装卸、不改 L0。纯 MCP 用户装的就真的只有 L0+L1。
+**There is no desktop-shell layer**: the UI is the panel served by the 8900 door, plus the Stream UI plugin inside the user's DSH. L2 only
+"points to L0"; it can be installed or removed at any time without changing L0. A pure MCP user really installs only L0+L1.
 
 **Companion extension (`extension/`).** A standalone WXT/MV3 Chrome extension is a thin face
 over this API: it tells Stream which cookie domains are worth pulling (and answers the backend's
@@ -1624,230 +1715,230 @@ page via `GET /api/intents` + `POST /api/streams/from-intent` (classify a URL �
 member → create the Stream in one call). It ships no radar rules and no resolve logic — the
 brain stays in Stream. See `extension/README.md`.
 
-**它怎么装到用户的 Chrome 里。** 三态判定来自 `GET /api/browser-capability`
-（`ready` / `disconnected` / `never-seen`）；引导只在 `never-seen` 出现——`disconnected` 是
-"装过又掉了"，走排查，不是再劝他装一遍。引导出现在三个地方：面板首次打开时的横幅（拒绝一次就
-记 `settings.json` 的 `extension_onboarding.declinedAt`，之后不再在启动时提）、设置页里那个
-**永远在**的固定入口、以及用户自己发起的动作因为扩展没连而做不成时的现场提示（同一个能力
-一天最多提一次）。
+**How it gets installed into the user's Chrome.** The three-state decision comes from `GET /api/browser-capability`
+(`ready` / `disconnected` / `never-seen`); onboarding appears only for `never-seen` — `disconnected` means
+"installed before and then dropped", so it goes to troubleshooting, not another prompt to install it. Onboarding appears in three places: the banner when the panel first opens (after one decline,
+`extension_onboarding.declinedAt` is written to `settings.json`, and it is no longer mentioned on startup), the fixed entry in the settings page that is
+**always present**, and the in-context prompt shown when a user-initiated action cannot complete because the extension is not connected (the same capability is
+mentioned at most once per day).
 
-三个动作端点：`POST /api/extension/materialize`（把扩展目录物化到 `<dataDir>/extension/`，
-回绝对路径）、`POST /api/extension/install`（代装，见下）、`POST /api/extension/decline`；
-另有 `POST /api/extension/uninstall`（卸载）与 `POST /api/extension/reload`（在扩展详情页点「重新加载」、
-以中继换新连接为判据；**全程走 Stream Desktop 不经中继**，扩展断连时也够得着）、
-`POST /api/extension/console`（读扩展后台控制台，同样不经中继）——这四条桌面 recipe 共用 `openExtensionsPageSteps`（`src/browser/chrome-ext-page.ts`）那四步进扩展页；
-另有 `GET /api/extension/onboarding` 读"拒绝过没有"。**手动装和代装指向同一个目录**，
-出问题时排查只有一条路径。目录来源三档（判据一律是**产物在不在**，不是"是不是开发模式"，
-解析在 `shared/browser-relay/extension-dir.ts`）：
+Three action endpoints: `POST /api/extension/materialize` (materializes the extension directory into `<dataDir>/extension/`,
+returns the absolute path), `POST /api/extension/install` (assisted install, see below), `POST /api/extension/decline`;
+also `POST /api/extension/uninstall` (uninstall) and `POST /api/extension/reload` (clicks `重新加载` ("Reload") on the extension details page,
+using the relay obtaining a new connection as the check; **the whole flow goes through Stream Desktop and not through the relay**, so it remains reachable when the extension is disconnected),
+`POST /api/extension/console` (reads the extension background console, also not through the relay) — these four desktop recipes share the four `openExtensionsPageSteps` (`src/browser/chrome-ext-page.ts`) steps to enter the extension page;
+also `GET /api/extension/onboarding` reads "whether it has been declined before". **Manual install and assisted install point to the same directory**,
+so when something goes wrong there is only one troubleshooting path. There are three directory sources (the check is always **whether the artifact exists**, not "whether this is dev mode";
+resolution lives in `shared/browser-relay/extension-dir.ts`):
 
-1. 仓库里的 `extension/.output/chrome-mv3`——开发机（判据是 cwd 下那个相对路径上有没有产物）。
-2. npm 包 `@streamapp/chrome-extension`（目录 = 包根下的 `chrome-mv3`）——CLI 发行包
-   （`cli/package.json` 依赖它）走这一档：干净装机上仓库产物不在。
-   这个包由 `scripts/publish-extension.mjs` 发，版本照抄扩展的 `manifest.version`。
+1. `extension/.output/chrome-mv3` in the repository — development machines (the check is whether an artifact exists at that relative path under cwd).
+2. npm package `@streamapp/chrome-extension` (directory = `chrome-mv3` under the package root) — CLI distribution packages
+   (`cli/package.json` depends on it) use this tier: on a clean install machine, the repository artifact is absent.
+   This package is published by `scripts/publish-extension.mjs`, and its version copies the extension's `manifest.version`.
 
-代装（`src/browser/extension-install.ts`）和卸载（`extension-uninstall.ts`）各是一条
-`kind:'desktop'` recipe，跑在和 telegram/qq 同一个 `runDesktopRecipe` 上——同一套失败判定、
-同一份现场、同一个会话租约（接管指示条与 `Ctrl+Alt+Esc` 中止都挂在那个租约上）。三条必须
-知道的事实：开发者模式开没开**读不出来**，判据是「加载未打包」这个按钮在不在；文件夹对话框
-是一个**独立的顶层窗口**（Chrome 主窗口的 owned window，但进程还是 `chrome.exe` 自己），
-所以要先 `scopeWindow` 过去才找得到它的控件；窗口标题是**包含**匹配，所以扩展页那个标题必须
-写全「扩展程序 - Google Chrome」——只写「扩展程序」会匹配上对话框的「选择扩展程序目录。」。
-控件名候选表在 `src/browser/chrome-ext-page.ts`，全部实测得来；每一步在 `out.log` 里留一行
-`[desktop-probe]` 时间戳，出问题先看它。
+Assisted install (`src/browser/extension-install.ts`) and uninstall (`extension-uninstall.ts`) are each a
+`kind:'desktop'` recipe, running on the same `runDesktopRecipe` as telegram/qq — the same failure checks,
+the same captured scene, and the same session lease (the takeover indicator and the `Ctrl+Alt+Esc` abort both hang off that lease). Three facts must be
+known: whether developer mode is on **cannot be read**; the check is whether the `加载未打包` ("Load unpacked") button exists. The folder dialog
+is an **independent top-level window** (an owned window of the Chrome main window, but the process is still `chrome.exe` itself),
+so you must `scopeWindow` into it before its controls can be found. Window-title matching is **contains** matching, so the extension page title must be
+written in full as `扩展程序 - Google Chrome` ("Extensions - Google Chrome") — writing only `扩展程序` ("Extensions") also matches the dialog's `选择扩展程序目录。` ("Select extension directory.").
+The control-name candidate table is in `src/browser/chrome-ext-page.ts`, all from live measurements; every step leaves one
+`[desktop-probe]` timestamp line in `out.log`, so look there first when something goes wrong.
 
-**成功判据只有一条：扩展连上了中继**（`browser-capability` 变 `ready`）。页面上出现卡片不算
-——两者会安静地分家，最常见的是 native messaging 清单在这次 Chrome 启动之后才登记。所以
-"步骤跑完但没连上"回的是 `needs-chrome-restart`，不是"安装失败"。开发者模式扩展每次启动的
-那个气泡是已知代价，绕不开（商店上架能免掉，但扩展要读本机 `data/ext-relay-token`）。
+**There is only one success check: the extension connects to the relay** (`browser-capability` becomes `ready`). Seeing a card appear on the page does not count
+— the two can quietly split, most commonly because the native messaging manifest is registered only after this Chrome launch. Therefore
+"steps completed but not connected" returns `needs-chrome-restart`, not "install failed". The developer-mode extension bubble on every startup
+is a known cost and cannot be worked around (store publication can avoid it, but the extension needs to read the local `data/ext-relay-token`).
 
-### 进程出站 HTTP 归属
+### Process Outbound HTTP Ownership
 
-内嵌 RSSHub 的 request-rewriter 在懒加载时**进程级** patch 了 `globalThis.fetch` 与
-`node:http`/`node:https` 的 `get`/`request`（无 Referer 时强塞 self-origin Referer）。所以出站分两条：
+The embedded RSSHub request-rewriter patches `globalThis.fetch` and
+`node:http`/`node:https` `get`/`request` at **process level** during lazy loading (when there is no Referer, it force-injects a self-origin Referer). So outbound traffic has two branches:
 
-- **Stream 自己的出站** → 一律走 `src/http/owned-outbound.ts`：`ownedFetch`（Response 语义）或
-  `owned.{httpGet,httpsGet,httpRequest,httpsRequest}`（流式 / Range / 精细 header）。它在进程启动
-  **顶层同步**快照原始绑定（结构性早于 RSSHub 运行时懒加载），改写器够不着；`serve.ts` 在 `load-env`
-  之后**首位** import 以保证捕获时序；命门测试 `owned-outbound.sentinel.test.ts` 锁死的是捕获机制本身
-  （import 后再 patch，已存引用不受影响）。
-- **RSSHub 路由** → 走它自己的改写器，不经 owned（那是它的内政，不动）。
-- SSRF 守卫（`safe-fetch.ts` 的 `isPrivateHost`/`publicHttpUrl`）与逐 host Referer 策略
-  （`media/serving.ts` 的 `refererForUrl`，数据来自包的 `serving[].referer` 声明）是**业务层**职责，跑在 owned 之上，不下沉到 owned。
-- **别再造第四份私人绕法**：需要改写器够不着的出站，import owned，不要新写 node-http 快照。其余
-  全局 `fetch` 调用点按证据分批迁（见 `openspec/changes/owned-outbound-http/recon.md`）。
+- **Stream's own outbound traffic** → always goes through `src/http/owned-outbound.ts`: `ownedFetch` (Response semantics) or
+  `owned.{httpGet,httpsGet,httpRequest,httpsRequest}` (streaming / Range / precise headers). It snapshots the original bindings
+  **synchronously at top level** during process startup (structurally before RSSHub runtime lazy loading), so the rewriter cannot reach them; `serve.ts` imports it **first** after `load-env`
+  to guarantee capture order; the key sentinel test `owned-outbound.sentinel.test.ts` locks down the capture mechanism itself
+  (patch after import, and the already-stored references are unaffected).
+- **RSSHub routes** → go through their own rewriter and not through owned (that is RSSHub's internal affair; do not touch it).
+- The SSRF guard (`safe-fetch.ts` `isPrivateHost`/`publicHttpUrl`) and per-host Referer policy
+  (`media/serving.ts` `refererForUrl`; data comes from the package's `serving[].referer` declaration) are **business-layer** responsibilities; they run above owned and do not sink into owned.
+- **Do not create a fourth private bypass**: outbound traffic that must be unreachable by the rewriter should import owned; do not write another node-http snapshot. The remaining
+  global `fetch` callsites are migrated in evidence-based batches (see `openspec/changes/owned-outbound-http/recon.md`).
 
-## Diagnostics — 两个「飞行记录器」，不同层，别混
+## Diagnostics — Two "Flight Recorders", Different Layers, Do Not Mix
 
-同名但毫无关系。都叫飞行记录器是因为思路一样：故障发生时当事人已经死了，没法自己报告，
-只能靠提前采样、事后取证。
+They have the same name but no relationship. Both are called flight recorders because the idea is the same: when a failure happens, the participant is already dead and cannot report for itself,
+so the only option is sampling ahead of time and collecting evidence afterward.
 
-| | 事件循环卡顿记录器 | OOM 诊断记录器 |
+| | Event-loop lag recorder | OOM diagnostics recorder |
 |---|---|---|
-| 观测谁 | **后端** Node 进程 | **前端** Chrome 标签页（renderer） |
-| 代码 | `src/loop-lag.ts` → `src/serve.ts` | `app/src/lib/diagnostics/` |
-| 记什么 | `perf_hooks` 事件循环延迟直方图 + 任务级归因（`src/op-track.ts`，常开）+ CPU profile 归因（按需） | heap / DOM 规模 / 音频缓冲 / 音频事件 |
-| 记哪 | stdout 一行 + DebugBox `loop` 频道 | 浏览器 IndexedDB（`stream-diagnostics`） |
-| 常态 | **常开**，idle 零噪声 | **默认关闭**，在后端设置 Sheet 里开 |
-| 为什么要 | 同步操作堵住事件循环时连自己的日志都打不出来 | renderer 被 OOM 杀掉后没有代码能再执行 |
+| Observes whom | **backend** Node process | **frontend** Chrome tab (renderer) |
+| Code | `src/loop-lag.ts` → `src/serve.ts` | `app/src/lib/diagnostics/` |
+| Records what | `perf_hooks` event-loop delay histogram + task-level attribution (`src/op-track.ts`, always on) + CPU profile attribution (on demand) | heap / DOM scale / audio buffers / audio events |
+| Records where | one stdout line + DebugBox `loop` Channel | browser IndexedDB (`stream-diagnostics`) |
+| Normal state | **always on**, zero noise when idle | **off by default**, enabled in the backend settings Sheet |
+| Why needed | When synchronous operations block the event loop, even its own logs cannot be printed | After the renderer is killed by OOM, no code can execute anymore |
 
-### DebugBox 的两层：看现在用环，等偶发用文件
+### DebugBox's Two Layers: Use the Ring for the Present, Use the File for Intermittent Issues
 
-两者都由 `serve.ts` 那一个 `recordDebug` 喂，任何频道的生产者都不用关心自己进了哪层：
+Both are fed by the same `recordDebug` in `serve.ts`; producers for any Channel do not need to care which layer they enter:
 
-| | 内存环（`src/http/debug-log.ts`） | 落盘（`src/http/debug-sink.ts`） |
+| | In-memory ring (`src/http/debug-log.ts`) | Written to disk (`src/http/debug-sink.ts`) |
 |---|---|---|
-| 存哪 | 进程内，200 条**跨全频道共用** | `data/debug-failures.jsonl`，一行一条 JSON |
-| 收什么 | 全部条目 | **只收 `ok:false`**，且**一字不差的重复按 10 分钟窗口折叠**——文件是证据，不是流水账 |
-| 活多久 | **进程一重启就没** | 一直在；超 4MB 轮转成 `.jsonl.1`，只留一代 |
-| 谁读 | `GET /api/debug/log?channel=…`、前端 DebugBox | 人 / agent 直接 `grep '"<频道>"' data/debug-failures.jsonl` |
+| Stores where | In-process, 200 entries **shared across all Channels** | `data/debug-failures.jsonl`, one JSON entry per line |
+| Collects what | All entries | **Only `ok:false`**, and **byte-identical duplicates are folded in 10-minute windows** — the file is evidence, not a transaction log |
+| Lives how long | **Gone as soon as the process restarts** | Stays around; over 4MB it rotates to `.jsonl.1`, keeping only one generation |
+| Read by whom | `GET /api/debug/log?channel=…`, frontend DebugBox | humans / agents directly `grep '"<频道>"' data/debug-failures.jsonl` (`<频道>` = `<Channel>`) |
 
-**读这个文件时先看 `_repeated`**：带这个字段的行意味着"上一段窗口里它还出现了 N 次"，
-也就是一条**常态噪音**，不是偶发现场。没有这个字段才是只响过一次的那种。
+**When reading this file, check `_repeated` first**: a line with this field means "it also appeared N times in the previous window",
+so it is **normal-state noise**, not an intermittent scene. Lines without this field are the ones that only rang once.
 
-**为什么必须有第二层**（这是踩出来的）：偶发故障的排查全都写成「观测已埋好，等撞一次现场」，
-而探针只进内存环时那句话是假的——开发期 `tsx watch` 一天热重载几十次，一轮采集就能把 200 条
-冲干净。实测：三条各自等了若干天的 TODO，回头去读环，里面只剩后端启动那一分钟的东西。
-**观测埋在会被清空的地方，等于没埋**；而这类墙/竞态还都会自己好，现场不留就再也复现不了。
+**Why the second layer is mandatory** (learned the hard way): investigations for intermittent failures are all written as "observability is in place; wait until a scene appears",
+but that sentence is false when probes only enter the in-memory ring — during development, `tsx watch` hot-reloads dozens of times a day, and one harvest round can flush all 200 entries.
+Live measurement: for three TODOs that had each waited several days, reading the ring later showed only the one minute when the backend started.
+**Observability placed somewhere that gets cleared is equivalent to no observability**; these walls/races also heal themselves, so without a retained scene they can never be reproduced.
 
-判"哪些值得留档"的判据只有 sink 里那一份——环无条件把每条转给它（`debug-log.test.ts` 钉着这条，
-在环里补第二道 `ok` 过滤会当场变红）。
+The only check for "which entries are worth preserving" is the one in the sink — the ring unconditionally forwards every entry to it (`debug-log.test.ts` pins this down;
+adding a second `ok` filter in the ring turns the test red immediately).
 
-**为什么要折叠**（同样是踩出来的）：落盘上线半天就攒了 2.2MB，其中 `plugin-target` 1216 条里
-**1184 条一字不差**——standby 让 voiceprint 容器睡着，例行探测每分钟如实答一次"没有地址"，
-连打 21 小时。这不是故障，但按这个速度一两天就冲一轮轮转，而要等的偶发现场几周才撞一次：
-**噪音会在证据到来之前把它挤出去**，等于把"几分钟被清空"换成"几天被冲掉"。折叠的判据是
-**一字不差**（channel+key+summary+fields），不能放宽成 channel+key——真现场的 summary 里带着
-耗时/状态码，几乎不会重复，而放宽之后同一 key 的第二次真现场会被前一条挡掉。
+**Why fold duplicates** (also learned the hard way): half a day after writing-to-disk went online it had already accumulated 2.2MB, and among 1216 `plugin-target` entries,
+**1184 entries were byte-identical** — standby put the voiceprint container to sleep, and the routine probe truthfully answered `没有地址` ("no address") once per minute,
+continuing for 21 hours. This is not a failure, but at this rate it runs through one rotation in a day or two, while the intermittent scene being waited for may only appear after several weeks:
+**noise pushes evidence out before it arrives**, which just changes "cleared in a few minutes" into "flushed in a few days". The folding check is
+**byte-identical** (channel+key+summary+fields), and must not be relaxed to channel+key — real scenes carry
+duration/status code in their summary and almost never repeat, and after relaxing, the second real scene with the same key would be blocked by the first one.
 
-**OOM 诊断记录器的关键不变量**（设计与细节：`internal design record`）：
+**Key invariants of the OOM diagnostics recorder** (design and details: `internal design record`):
 
-- 会话一开始就写 `running`。下次启动仍看到 `running` = 上次没能收尾 → 改写为
-  `suspected-abnormal`。这是**推断不是确证** —— 别在 UI 或结论里把它说成「确定 OOM」。
-- 数据**只存本地、只由用户主动导出**，不上传后端也不给第三方。播放 URL 只留 host +
-  pathname 的 hash，query/fragment 丢弃（签名密钥就在 query 里）。
-- 字段为 `null` = **未测量**，不是「实测为 0」。`performance.memory` 是 Chromium 专有的
-  **趋势**指标，不等于 renderer 总内存，不可单独用于归因。
-- 裁剪按会话隔离；会话淘汰先丢例行的 `ended`、按 `lastWriteAt` 排序。**这两条都是踩过坑
-  的**：全局裁剪会让新会话挤掉崩溃会话的样本；按 `startedAt` 排序会把「播了 70 分钟才崩」
-  的会话当成最旧的删掉 —— 两种都正好毁掉本功能的唯一意义。
+- Write `running` as soon as the session starts. Seeing `running` again on the next startup = the previous run could not finish → rewrite to
+  `suspected-abnormal`. This is **inference, not confirmation** — do not describe it in the UI or conclusions as "confirmed OOM".
+- Data is **stored only locally and exported only by explicit user action**; it is not uploaded to the backend or given to third parties. Playback URLs keep only the host +
+  hash of the pathname, and discard query/fragment (the signing key is in the query).
+- Field value `null` = **not measured**, not "measured as 0". `performance.memory` is a Chromium-only
+  **trend** metric; it is not equal to total renderer memory and cannot be used alone for attribution.
+- Pruning is isolated by session; session eviction first drops routine `ended` sessions and sorts by `lastWriteAt`. **Both are lessons learned the hard way**:
+  global pruning lets new sessions evict samples from a crashed session; sorting by `startedAt` treats a session that "played for 70 minutes before crashing"
+  as the oldest and deletes it — both variants destroy exactly the only meaning of this feature.
 
-## 对话
+## Conversation
 
-**对话不在 Stream 里，在宿主里。** Stream 里有三种东西，家不一样（spec
-`2026-09-05-stream-stops-hosting-dsh-design.md` §1.3）：**后台**（调度、采集、追更、归档——常驻进程，
-8900 那个后端）、**能力**（叫一次做一次，给 agent 用的形态是 MCP + skill）、**看**（monitor、收件箱、
-影视音乐、网盘浏览——8900 的独立正门 `src/http/standalone-page.ts`，挂 `app/dist-panel/` 那几份
-面板 bundle，里面没有对话）。对话属于用户自己的宿主：Claude Code、Codex、DSH，都经
-`/api/mcp` 使唤后台，skill 告诉它们怎么用（`src/skills/shipped.ts`）。
+**Conversation is not in Stream; it is in the host.** Stream contains three kinds of things, each with a different home (spec
+`2026-09-05-stream-stops-hosting-dsh-design.md` §1.3): **backend** (scheduling, harvest, follow loop, archive -- the resident process,
+the backend on 8900), **capability** (called once, does one job; the form exposed to agents is MCP + skill), and **viewing** (monitor, inbox,
+film and music, netdisk browsing -- the standalone front door on 8900, `src/http/standalone-page.ts`, mounting the panel bundles under
+`app/dist-panel/`, with no conversation inside). Conversation belongs to the user's own host: Claude Code, Codex, and DSH all drive the backend through
+`/api/mcp`, and skills tell them how to use it (`src/skills/shipped.ts`).
 
-**宿主那边只有一行，指向 Stream**：`claude mcp add stream -- stream mcp`（Codex 是 `config.toml`
-的 `mcp_servers` 一行；DSH 的 stream-ui bundle 里那行 `dsh-mcp-client` 直接指
-`http://127.0.0.1:8900/api/mcp`）。`stream mcp`（`src/install/mcp-command.ts`）是一层 stdio 壳，
-探一次后端、在场整面转发、不在场先拉起它。**这一行此后不用再改**——往 Stream 里加多少能力包，
-工具都从同一个口出去。
+**The host side has only one line, pointing to Stream**: `claude mcp add stream -- stream mcp` (Codex has one `mcp_servers` line in
+`config.toml`; in DSH's stream-ui bundle, that `dsh-mcp-client` line points directly to
+`http://127.0.0.1:8900/api/mcp`). `stream mcp` (`src/install/mcp-command.ts`) is a stdio shell:
+it probes the backend once, forwards the whole surface when it is present, and starts it first when it is absent. **This line does not need to change afterward** -- no matter how many capability packages are added to Stream,
+tools all go out through the same opening.
 
-**Stream 不装、不起、不代理任何宿主。** 仓库里不出现 DSH 的版本号；`child_process` 里不出现 `dsh`
-（`src/no-dsh-hosting.guard.test.ts` 钉着）。将来打包成带对话的产品，起 DSH 的是一个站在后端与
-DSH 之上的**启动器**，不是后端（spec §2.1）。
+**Stream does not install, start, or proxy any host.** The repository does not contain DSH version numbers; `child_process` does not contain `dsh`
+(`src/no-dsh-hosting.guard.test.ts` pins this down). If this is packaged into a product with conversation in the future, the thing that starts DSH is a **launcher** above the backend and
+DSH, not the backend (spec §2.1).
 
-**DSH 这条路上多一样东西：Stream UI 插件**（`hosts/dsh/`，npm `@streamapp/dsh-plugin-stream-ui`）。
-它是一个 DSH **bundle**：用户把它 `dsh plugin --profile web add` 进带 web 界面的 profile 之后，包里的 `cordis.patch.yml`
-叠在那个 profile 上——关掉 web-app 的整页壳与侧栏、插一行 `dsh-mcp-client` 指向 Stream 的
-`/api/mcp`（`serverName: stream`，模型看到的名字是 `mcp__stream__<raw>`，UI 插件按这个前缀
-注册定制卡）、插本包。装好后 DSH 的整张脸是 Stream（内容流为主面、对话为侧列，同一批面板
-bundle 从 8900 的 `/panel/*` 取），卡片和会话之间能互送——这是 DSH 独有的锦上添花，8900 独立页
-里没有对话也就没有这条联动。壳反转的机制读数在 spec `2026-08-17-stream-as-dsh-plugin-design.md`
-§9–§15；安装的主语是用户。
+**The DSH path has one more thing: the Stream UI plugin** (`hosts/dsh/`, npm `@streamapp/dsh-plugin-stream-ui`).
+It is a DSH **bundle**: after the user runs `dsh plugin --profile web add` to add it to a profile with a web UI, the package's `cordis.patch.yml`
+is overlaid onto that profile -- it turns off the web-app full-page shell and sidebar, inserts a `dsh-mcp-client` line pointing to Stream's
+`/api/mcp` (`serverName: stream`; the name seen by the model is `mcp__stream__<raw>`, and the UI plugin registers custom cards by this prefix),
+and inserts this package. After installation, DSH's whole face is Stream (the content stream is the main surface and conversation is the side column; the same panel
+bundles are fetched from `/panel/*` on 8900), and cards and sessions can send data to each other -- this is DSH-specific icing; the 8900 standalone page
+has no conversation, so it also has no such linkage. The mechanism readings for shell inversion are in spec `2026-08-17-stream-as-dsh-plugin-design.md`
+§9-§15; the installer is the user.
 
-**「空间 → 频道」导航是面板 bundle 的第二个挂载点**（`mountNav`），不是宿主的东西：8900 独立
-正门把它摆在左列、DSH 壳把它摆在侧栏里那一段，两处挂的是同一份代码，宿主只决定摆哪、把
-`--stream-nav-*` 配色 token 指到自己的变量。两个挂载点之间的"当前频道"在 bundle 内部同步，
-**宿主不是中间的转发点**——每个宿主各养一份镜像状态的那套往返契约已经退役
-（spec `2026-09-06-shared-sidebar-nav-design.md`）。
+**The "space -> Channel" navigation is the panel bundle's second mount point** (`mountNav`), not something owned by the host: the standalone
+front door on 8900 places it in the left column, and the DSH shell places it in that segment of the sidebar. Both places mount the same code; the host only decides where to place it and where to point the
+`--stream-nav-*` color tokens in its own variables. The "current Channel" is synchronized inside the bundle between the two mount points;
+**the host is not an intermediate relay** -- the old round-trip contract where each host kept its own mirrored state has been retired
+(spec `2026-09-06-shared-sidebar-nav-design.md`).
 
-导航树底下还有一条**宿主动作栏**（`mountNav` 的 `footer`）：「管理」入口与明暗切换，**各自给了
-才画，两格都不给整条不出现**。8900 独立正门两格都给（所以那张页**没有顶栏**——标题、管理、
-明暗全在这条栏里，管理是盖在内容上的一层弹层，内容区那棵树从头活到尾不被卸）；DSH 一格都不给
-（它有自己的设置窗与主题开关），所以侧栏里的 DOM 与没有这条栏时逐字相同。
+Under the navigation tree there is also a **host action bar** (`mountNav`'s `footer`): the `管理` ("manage") entry and the light/dark toggle, **each is drawn only if supplied,
+and if neither slot is supplied the whole bar does not appear**. The standalone front door on 8900 supplies both slots (so that page **has no top bar** -- title, management,
+and light/dark all live in this bar; management is an overlay over the content, and the content area's tree stays alive from beginning to end and is never unmounted); DSH supplies no slot
+(it has its own settings window and theme toggle), so the DOM in the sidebar is byte-for-byte the same as when this bar does not exist.
 
-那张页要打 Stream 的 `/api/*`，而它的 origin 是用户 dsh web 的口——Stream 不知道那个数，也不需要：
-本机来源（127.0.0.1 / localhost 任意口）`isTrustedOrigin` 默认可信。只有后端与 DSH 不在同一台机器时，
-才把那张页的 origin 经 `STREAM_TRUSTED_ORIGINS`（逗号分隔，精确串匹配）登记进白名单。
+That page needs to call Stream's `/api/*`, while its origin is the user's dsh web port -- Stream does not know that number and does not need to:
+local origins (127.0.0.1 / localhost on any port) are trusted by `isTrustedOrigin` by default. Only when the backend and DSH are not on the same machine
+does that page's origin need to be registered in the allowlist through `STREAM_TRUSTED_ORIGINS` (comma-separated, exact string match).
 
-**模型、工具面、preset 都归用户的 DSH。** 模型在 DSH「设置 - 模型」页配；模型手里有没有 bash 是
-用户 profile 的事，Stream 不保证也不守。会话标题用用户自己的模型。
+**Models, tool surfaces, and presets all belong to the user's DSH.** Models are configured in DSH's `设置 - 模型` ("Settings - Models") page; whether the model has bash in hand is
+the user's profile's concern, and Stream neither guarantees nor guards it. Session titles use the user's own model.
 
-**能力包装进 Stream，不装进 DSH**（定义见「能力归一化」一节的「能力包」）：
-`stream add @streamapp/<x>`，工具从 8900 的 `/api/mcp` 出去。DSH 那边只有一行 MCP 客户端指着
-`http://127.0.0.1:8900/api/mcp`，装不装能力包它一个字都不用改。要装进 DSH profile 的只有
-`dsh-plugin-stream-ui`（那份必须进带 `dsh-web-app` 的 profile，例如 `web`）。网盘包要复用 Stream
-那份 OpenList（external 档）时问 `GET /api/netdisk/openlist-access` 拿网关路径与永久 token，
-写进 `config.yaml` 的 `capabilities.netdisk` 那一格。
+**Capability packages are installed into Stream, not into DSH** (see the definition of "capability package" in the "Capability normalization" section):
+`stream add @streamapp/<x>`, and tools go out through `/api/mcp` on 8900. On the DSH side there is only one MCP client line pointing at
+`http://127.0.0.1:8900/api/mcp`; whether capability packages are installed or not, it does not need to change a single word. The only thing that needs to be installed into the DSH profile is
+`dsh-plugin-stream-ui` (that package must go into a profile with `dsh-web-app`, for example `web`). When a netdisk package needs to reuse Stream's
+OpenList (external file), it calls `GET /api/netdisk/openlist-access` to get the gateway path and permanent token,
+and writes them into the `capabilities.netdisk` slot in `config.yaml`.
 
-**后端不读宿主的私有文件，没有例外。** 用户和宿主聊过什么归宿主自己（DSH 有自己的会话历史），
-Stream 不提供读口——读另一个产品的内部日志格式，格式一变就静默读空。
+**The backend does not read the host's private files, with no exceptions.** What the user and host have talked about belongs to the host itself (DSH has its own session history),
+and Stream provides no read interface -- reading another product's internal log format silently reads empty as soon as the format changes.
 
-**`src/agent/` 下留着的不是聊天**：`search/`（目标导向的发现循环，spec 2026-07-15）与
-`ctx.agent` 域里的意图跟踪 / 网页搜索梯子 / `mcpExtras` 工具面——它们本来就与聊天路径无关，
-只是共用同一条 `llm.chat` 调用点和同一份工具面。
+**What remains under `src/agent/` is not chat**: `search/` (goal-oriented discovery loop, spec 2026-07-15) and
+intent tracking / web-search ladders / `mcpExtras` tool surfaces in the `ctx.agent` domain -- they were never related to the chat path;
+they only share the same `llm.chat` callsite and the same tool surface.
 
-**发现循环是一条，域有两个**（spec 2026-09-01）。`runSearch`（`src/agent/search/flow.ts`）
-是「搜索领路 → 找到聚集地 → 进窝抽候选 → 验 → 学会了再搜一轮」的骨架，代码定分支和停止
-条件，LLM 只在三个关节上被问（搜什么词 / 这条是窝还是货 / 切不切题）。**领域差异全部收在
-一个注入的 `DiscoveryDomain`，只有五格**（`domain.ts`）：`parse`（从窝的页面认出候选）、
-`check`（这条算不算数）、`habitat`（这类东西通常在哪儿出没）、`identityOf`（两条是不是同
-一个）、`originsOf`（这条来自哪几个窝）。
+**There is one discovery loop and two domains** (spec 2026-09-01). `runSearch` (`src/agent/search/flow.ts`)
+is the skeleton for "search leads the way -> find habitats -> enter nests and extract candidates -> verify -> search another round after learning"; the code determines branches and stopping
+conditions, and the LLM is only asked at three joints (what search terms / whether this item is a nest or goods / whether it is on topic). **All domain differences are contained in
+one injected `DiscoveryDomain`, with only five slots** (`domain.ts`): `parse` (recognize candidates from a nest page),
+`check` (whether this item counts), `habitat` (where this kind of thing usually appears), `identityOf` (whether two items are the same
+one), and `originsOf` (which nests this item comes from).
 
-| 域 | 候选是什么 | 验证器 | 工具面 |
+| Domain | What the candidate is | Verifier | Tool surface |
 |---|---|---|---|
-| `netdisk`（`domains/netdisk.ts`） | 一条网盘分享链 | 开链验活（`netdisk.share.verify`） | `search_agent` —— 吃一句自由描述，找**某个具体东西**的获取渠道 |
-| `catalog`（`domains/catalog.ts`） | 一个商品型号 + 价格 + 出处 | `price_search`（现成能力，不新增源） | `enumerate_candidates` —— 吃**结构化约束**，回答"符合条件的有哪些" |
+| `netdisk` (`domains/netdisk.ts`) | One netdisk share link | Open the link to verify liveness (`netdisk.share.verify`) | `search_agent` -- takes one free-form description and finds acquisition channels for **one specific thing** |
+| `catalog` (`domains/catalog.ts`) | One product model + price + origin | `price_search` (existing capability, no new Source) | `enumerate_candidates` -- takes **structured constraints** and answers "which ones meet the conditions" |
 
-两个工具分开而不是加参数，理由是**入参形状不同**（自由描述 vs 已经是结构的约束），塞进
-同一个 `goal: string` 等于把结构拍平成散文再让 LLM 猜回去。两者共用一个 run 库
-（`agent-runs.db`）和 `get_agent_run`；记录上的 `domain` 是**读 `targets` 的前提**——两个
-域的候选形状不同、共用一格。
+The two tools are separate instead of adding a parameter because **their input shapes differ** (free-form description vs constraints that are already structured); stuffing them into
+the same `goal: string` is equivalent to flattening structure into prose and then asking the LLM to guess it back. Both share one run library
+(`agent-runs.db`) and `get_agent_run`; the `domain` on the record is **a prerequisite for reading `targets`** -- the two
+domains have different candidate shapes while sharing one slot.
 
-**候选集必须带出处。** 枚举不可能是全集，所以回执里 `stopped`（收敛 / 被轮次截断 / 早停 /
-扩源干涸）和 `coverage`（几轮、开了几个窝、还剩几个没开、抽出多少、验完留下多少）是一等
-产物：**在任意子集上算支配，结论不是"不完整"而是误导**——「已排除 X」照样自信地印出去，
-而真正划算的那个可能压根没进过候选集。这条判据的下游是 `purchase_decide` 的支配运算（见"最优性价比"
-一节的 `research record`）。
+**Candidate sets must carry provenance.** Enumeration cannot be exhaustive, so `stopped` (converged / truncated by round limit / early stop /
+source expansion dried up) and `coverage` (how many rounds, how many nests opened, how many remain unopened, how many extracted, how many remain after verification) are first-class
+products in the receipt: **computing dominance over any subset is not "incomplete" but misleading** -- "X has been excluded" is printed with equal confidence,
+while the actually cost-effective item may never have entered the candidate set. The downstream consumer of this check is the dominance calculation in `purchase_decide` (see `research record` in the "Best price-performance"
+section).
 
-**购买决策整条路线跑在代码里，不跑在提示词里**（`src/agent/purchase/job.ts`，spec
-`2026-09-02-purchase-decision-job-design.md`）。工具是 `purchase_decide`：一次调用走完
-「枚举全集 → 横评里谁被点名 → 逐台取价 → 支配运算 → 回执」。**模型只在三个窄口上**：
-把用户的话变成结构化约束、读一页横评、把回执讲成人话。它不能改数，答案里出现的型号必须
-在回执里。
+**The entire purchase-decision route runs in code, not in prompts** (`src/agent/purchase/job.ts`, spec
+`2026-09-02-purchase-decision-job-design.md`). The tool is `purchase_decide`: one call completes
+"enumerate the full set -> who was named in comparative reviews -> fetch prices for each item -> dominance calculation -> receipt". **The model is only at three narrow openings**:
+turn the user's words into structured constraints, read one comparative-review page, and explain the receipt in human language. It cannot change numbers, and models that appear in the answer must
+be in the receipt.
 
-为什么要收进代码：**提示词是请求不是约束**——把九步写成一段几百词的说明交给模型自觉执行，
-最常被跳过的恰好是枚举那一步。同理，**这条线在工具面上只有这一个入口**：再给模型一个"手工
-组装终稿"的工具，它就会把回执逐字段手抄进去、抄的时候把口径抄错（"残值查不到"→"残值按 0 计"）。
-回执就是终稿，Stream UI 插件直接把它画成对比卡。**先跑再问**：只有品类必填，其余带默认值起跑、
-回执自报假设——让它先访谈用户的结果是一张五行问卷、一个工具都没调。**说法只有一份源码**：
-`.claude/skills/purchase-decision/SKILL.md`，出货给用户的每个宿主都读它（`src/skills/shipped.ts`）。
-闭合 job 的固定形状 = 一个 MCP 工具（路线）+ 一份 skill（说法）。
+Why this belongs in code: **a prompt is a request, not a constraint** -- writing nine steps as a few hundred words of instructions and handing them to the model to execute conscientiously
+most often skips exactly the enumeration step. Likewise, **this line has only this one entry point on the tool surface**: if the model is also given a tool to "manually
+assemble the final answer", it will copy the receipt field by field and change the semantics while copying (`残值查不到` ("residual value unavailable") -> `残值按 0 计` ("count residual value as 0")).
+The receipt is the final answer, and the Stream UI plugin renders it directly as comparison cards. **Run first, ask later**: only the category is required; everything else starts with defaults,
+and the receipt reports its assumptions itself -- making it interview the user first produces a five-line questionnaire and no tool call. **There is only one source file for wording**:
+`.claude/skills/purchase-decision/SKILL.md`, and every host that ships to users reads it (`src/skills/shipped.ts`).
+The fixed shape of a closed job = one MCP tool (the route) + one skill (the wording).
 
-三个只有这条链才有的判据，都在 `job.ts` 里：
+The three checks that only this chain has are all in `job.ts`:
 
-- **枚举优先直查，不优先 discovery**。有产品库可问的品类（手机 → `packages/zol/`）按品类和
-  价格档拼 URL 一次取回，零 LLM。discovery 那条留给没有产品库的品类。
-- **抽取关节的 enum 必须带逃生项**（`signal.ts` 的 `NOT_IN_SET`）。强制模型在候选集里选、
-  又不给"都不是"这一项，它会挑一个并把理由写得头头是道——**字段本身是个假的正确答案**。
-  逃生项的计数是一等回执字段：它是"全集抓漏没有"的唯一线索。enum 之外还有事后集合校验，
-  两道都要（这条路上没有语法层的约束解码可用，见 spec §4）。
-- **取不到的数不许悄悄拿默认值顶替，也不许因此装死**。用户说会转手却查不到保值率：不按残值 0
-  算成"持有成本"（那等于凭空多记一笔成本、把它错误地斩掉，而表格上一切正常），也不把它踢出比较
-  （那样前沿为空、模型手里没东西可交）。做法是**整份回执统一退到按买入价排**，并在一等字段
-  `residual.mode: 'purchase_only'` 里大声说明——口径必须全体一致，一台扣一台不扣就不在同一根轴上。
+- **Enumeration prefers direct lookup first, not discovery first**. Categories with a product library to query (`手机` ("mobile phone") -> `packages/zol/`) assemble URLs by category and
+  price band and fetch them once, with zero LLM. The discovery path is reserved for categories without a product library.
+- **The enum at the extraction joint must include an escape item** (`NOT_IN_SET` in `signal.ts`). Forcing the model to choose from the candidate set
+  without giving it a "none of these" item makes it pick one and write a perfectly plausible reason -- **the field itself becomes a fake correct answer**.
+  The escape item's count is a first-class receipt field: it is the only clue for whether "full-set capture missed anything". In addition to the enum there is also post hoc set validation;
+  both are required (this path has no grammar-level constrained decoding available; see spec §4).
+- **Numbers that cannot be fetched must not be silently replaced with defaults, and must not make the system play dead either**. If the user says they will resell but retention-rate data cannot be found, do not calculate
+  "holding cost" with residual value treated as 0 (that records an extra cost out of thin air and incorrectly cuts the item, while the table looks normal), and do not kick it out of comparison
+  (that leaves the frontier empty and gives the model nothing to hand over). The approach is to **degrade the entire receipt uniformly to sorting by purchase price** and say so loudly in the first-class field
+  `residual.mode: 'purchase_only'` -- the semantics must be consistent for everyone; deducting one item but not another puts them on different axes.
 
-**搜到 → 接成订阅。** 对话里搜到一个地址之后，接进来这一跳是三步：搜索工具给出 URL →
-`resolve_intent`（`RadarMatcher`，按域名+路径模板找谁能吃它）→ `subscribe_source` 建流。
-代订的流统一落频道「对话订的」（`agent-subscriptions`）——给用户留后悔药，一眼看清 AI 替他
-订了些什么。**建频道必须排在 subscribe 前面**：`StreamService.subscribe` 拿到不存在的频道 id
-时静默不挂（流建了、调度加了、就是不属于任何频道，且没有一处报错），所以那一步收敛成了具名的
-`ensureChannel`。接不上时（`matches` 为空）助手如实说并停，同时用 `note_unonboardable` 记进
-「想接还接不了」清单（`/api/onboard/wishlist`）——那份清单靠模型主动调，**不保证完整**。
+**Found -> connect as subscription.** After an address is found in conversation, connecting it is a three-step jump: the search tool gives a URL ->
+`resolve_intent` (`RadarMatcher`, finding who can consume it by domain + path template) -> `subscribe_source` creates a Stream.
+Streams subscribed on behalf of the user all land in the Channel `对话订的` ("subscribed from conversation", id `agent-subscriptions`) -- this gives the user a way back and makes it obvious at a glance what the AI
+subscribed for them. **Creating the Channel must come before subscribe**: when `StreamService.subscribe` receives a nonexistent Channel id,
+it silently does not attach (the Stream is created and scheduling is added, but it belongs to no Channel and no error is reported anywhere), so that step has converged into the named
+`ensureChannel`. When connection fails (`matches` is empty), the assistant says so truthfully and stops, while calling `note_unonboardable` to record it in
+the `想接还接不了` ("wants to connect but cannot yet") list (`/api/onboard/wishlist`) -- that list depends on the model proactively calling it and is **not guaranteed to be complete**.
 
 ## Data & File Structures (target state)
 
@@ -1914,48 +2005,58 @@ packages/<pluginId>/
 (Huge generated catalogs — RSSHub — keep their runtime catalog loader; static `manifests.yaml`
 is for hand-written plugins.)
 
-#### RSSHub 有两个来源，catalog 只有一个
+#### RSSHub has two sources, but only one catalog
 
-RSSHub 跑在自己的 worker 线程里（`src/rsshub-worker.ts`），本体从三处解析，顺序在
-`resolveRsshubPkg`（`src/rsshub-client.ts`）：
+RSSHub runs in its own worker thread (`src/rsshub-worker.ts`), and the package itself resolves
+from three places. The order is in
+`resolveRsshubPkg` (`src/rsshub-client.ts`):
 
-| 档 | 是什么 | 谁在用 | 要 tsx 吗 |
+| Tier | What it is | Who uses it | Needs tsx? |
 |---|---|---|---|
-| 开发检出 | `RSSHUB_PKG`（默认旁边那个 git clone）的 **TypeScript 源码** | 源码形态。自己写 RSSHub 路由时改了要立刻跑到，所以**检出在场就它赢** | 要（.ts + tsconfig 的 `@/*` paths） |
-| `<dataDir>/rsshub/` | 预构建 ESM `dist-lib/pkg.mjs` | 发行安装。**第一次跑到 RSSHub 源时由 Stream 自己 `npm install` 到那儿**（`src/rsshub-install.ts`） | 不要 |
-| npm 包 `rsshub` | 同上 | 谁自己往我们旁边装了一份就用它 | 不要 |
+| development checkout | The **TypeScript source** of `RSSHUB_PKG` (by default the adjacent git clone) | Source form. When writing RSSHub routes locally, changes must run immediately, so **the checkout wins whenever it is present** | Yes (.ts + tsconfig `@/*` paths) |
+| `<dataDir>/rsshub/` | Prebuilt ESM `dist-lib/pkg.mjs` | Distribution install. **The first time an RSSHub Source is reached, Stream itself runs `npm install` there** (`src/rsshub-install.ts`) | No |
+| npm package `rsshub` | Same as above | Used if someone installed a copy next to us themselves | No |
 
-**RSSHub 不是发行包的依赖，这是故意的**：它经 `@jocmp/mercury-parser` 拖着两个 `github:` 依赖，
-npm 装它们必须 spawn git，而干净的 Windows 上没有 git——整条 `npm i @streamapp/stream` 会直接失败
-（实测）。改成我们自己当那次 install 的根，`overrides` 才生效（依赖里的 overrides 被 npm 完全忽略），
-git 也就不需要了。解析顺序、代价、失败话术全在 `src/rsshub-install.ts` 的头注。
+**RSSHub is intentionally not a dependency of the distribution package**: through
+`@jocmp/mercury-parser` it drags in two `github:` dependencies, and npm must spawn git to
+install them. A clean Windows machine has no git, so the whole `npm i @streamapp/stream`
+fails directly (measured). Making ourselves the root for that install makes `overrides` take
+effect (npm completely ignores overrides inside dependencies), so git is no longer needed.
+The resolution order, cost, and failure wording all live in the header comment of
+`src/rsshub-install.ts`.
 
-- **`--import tsx` 只加在 worker 入口自己是 `.ts` 那一档**（`execArgvForEntry`）。发行包里入口是
-  预构建的 `resources/rsshub-worker.mjs`（`scripts/build-server.mjs` 单独打、`build-cli.mjs` 单独
-  出货——它是运行时 `new Worker(URL)` 找的文件，**不会被 server.mjs 的 bundle 拽进去**）。
-- **catalog（RSSHub 全量路由长尾，~3900 条）来自一份缓存，由取数顺手刷新**：
-  `<dataDir>/rsshub-routes.json`。开机时读它（读不到就退回检出的 `assets/build/routes.json`，
-  两个都没有就只有 curated）；缓存缺席或过期（7 天）时，**在一次真的 RSSHub 取数之后**由
-  `RssHubAdapter` 顺手取一遍 `request('/api/namespace')`，落盘并 `Registry.swapCatalog()` 换进去。
-  `request('/api/namespace')` 返回的就是 `routes.json` 的同一个对象
-  （`scripts/workflow/build-routes.ts` 正是把它 `JSON.stringify` 出来的），实测更全
-  （1981 ns / 3861 routes vs 检出那份构建产物 1670 / 3309）。
-  **为什么不在开机时取**：拉起 RSSHub worker 要 +168MB RSS、0.65s，而 worker 起来就不会自己退——
-  从不碰 RSSHub 源的用户不该背这份内存。取数之后那一刻它已经热着，代价只剩 67ms 加一次写盘。
+- **`--import tsx` is added only for the tier where the worker entry itself is `.ts`**
+  (`execArgvForEntry`). In the distribution package the entry is the prebuilt
+  `resources/rsshub-worker.mjs` (`scripts/build-server.mjs` builds it separately, and
+  `build-cli.mjs` ships it separately — it is the file found by `new Worker(URL)` at runtime,
+  and **does not get pulled into the server.mjs bundle**).
+- **The catalog (the long tail of all RSSHub routes, ~3900 entries) comes from one cache and is
+  refreshed opportunistically during harvest**: `<dataDir>/rsshub-routes.json`. Startup reads
+  it (if it cannot be read, it falls back to the checkout's `assets/build/routes.json`; if
+  neither exists, only curated routes are available). When the cache is absent or stale
+  (7 days), **after one real RSSHub harvest** `RssHubAdapter` opportunistically fetches
+  `request('/api/namespace')`, writes it to disk, and swaps it in with
+  `Registry.swapCatalog()`. `request('/api/namespace')` returns the same object as
+  `routes.json` (`scripts/workflow/build-routes.ts` is exactly what `JSON.stringify`s it), and
+  is measured to be more complete (1981 ns / 3861 routes vs 1670 / 3309 in the checkout's
+  built artifact). **Why not fetch it at startup**: starting the RSSHub worker costs +168MB RSS
+  and 0.65s, and the worker does not exit by itself once started. Users who never touch RSSHub
+  Sources should not pay that memory cost. After a harvest, the worker is already warm, so the
+  remaining cost is only 67ms plus one write to disk.
 
 **Runtime layer** (user data, SQLite — no YAML/JSON user config). Two files, split on one
 criterion: *would losing it hurt, or can it be re-harvested?*
 
 ```
 data/stream.db   # user-owned, precious, small — the single backup unit
-  channels           # views: present, label, stream references, options.slots（开库时把存量 targets 表就地 RENAME 收编）
+  channels           # views: present, label, stream references, options.slots (on DB open, existing targets table is adopted in place by RENAME)
   streams            # fully-bound units (cadence, global id, reusable; options JSON absorbs
                      #   per-stream toggles like autoDownload — no single-flag side tables)
   providers          # user overrides of derived capability defaults (priority, exclusions)
   liked_track        # liked-songs ledger
   asset, track_asset # audio archive ledger (the one real FK pair — stays in one file)
   download_job       # download queue
-  conversions        # 转换产物 (extract/identify/frames/summary/audio-fp，item-keyed;
+  conversions        # conversion artifacts (extract/identify/frames/summary/audio-fp, item-keyed;
                      #   outlive item eviction by design — see Conversions below)
   discovered_channel # search-channel telemetry
 
@@ -1970,180 +2071,266 @@ state-specific columns — the inheritance relationship expressed in storage. `c
 references evictable cache rows, so it carries **no** FK constraint — those records deliberately
 outlive their items.
 
-**Conversions**：所有转换产物住单张 `conversions` 表，按
-`kind`（`extract | identify | frames | summary | audio-fp`）判别；`extract`（转成文字）内部按 `content.archetype`
-分 `stt`/`ocr`/`article` 三条分支 + `inline` 直取，判分支在 `shared/extract/plan.ts`（前端按钮
-显隐与后端选分支同一份代码）。**队列/去重/取消/重启续跑/计时这套编排只有一份**
-（`src/conversions/runner.ts`）：一种新转换 = 注册一个 converter，**别新建 service + store +
-端点族**——抄第二份的代价实测过，先长出来的那份后来加的延迟重排、job 账本、事件，抄出来的那份
-一个都没有。分阶段耗时打在 runner 的阶段边界上，所以每个 kind 免费拥有。契约见 [API.md](API.md#conversions转换-转成文字--补说话人--抽帧取画面文字--摘要)。
+**Conversions**: all conversion artifacts live in the single `conversions` table and are
+discriminated by `kind` (`extract | identify | frames | summary | audio-fp`); inside `extract`
+(turning content into text), `content.archetype` splits it into the three branches `stt`/`ocr`/
+`article` plus direct `inline` fetch. Branch selection lives in `shared/extract/plan.ts` (the
+frontend button visibility and backend branch selection use the same code). **There is only one
+orchestration path for queueing/deduplication/cancel/resume after restart/timing**
+(`src/conversions/runner.ts`): one new conversion = register one converter, **do not create a
+new service + store + endpoint family** — the cost of copying a second path has been measured:
+the first one later gained delayed rescheduling, a job ledger, and events, and the copied one
+had none of them. Per-stage timing is recorded at the runner's stage boundaries, so every kind
+gets it for free. The contract is in [API.md](API.md#conversions-convert-to-text--add-speakers--extract-frame-text--summaries).
 
-**转成文字是一条会自己往上长的梯子。** `extract` 只产出底座那一份（转写 / OCR / 网页正文 / 直取）；
-更深的层（`identify` 补说话人、`frames` 抽帧取画面文字）是**独立的 conversion**，由
-`ConversionRunner` 按 `src/conversions/derive.ts` 的规则表自动排出。
+**Turning content into text is a ladder that grows upward by itself.** `extract` produces only
+the base layer (transcription / OCR / web article body / direct fetch); deeper layers
+(`identify` for adding speakers, `frames` for extracting screen text from video frames) are
+**independent conversions**, automatically scheduled by `ConversionRunner` from the rule tables
+in `src/conversions/derive.ts`.
 
-**那里有两张表，别混**——判据是「下游要不要读上游的产物」：
+**There are two tables there; do not mix them up** — the check is "does the downstream need to
+read the upstream artifact?":
 
-| | 表 | 什么时候排 | 今天有谁 |
+| | Table | When scheduled | Who exists today |
 |---|---|---|---|
-| **接力** | `CONVERSION_DERIVATIONS` | 上游 `done` 之后 | extract → `frames` |
-| **并肩** | `CONVERSION_COSTARTS` | 起上游的**同一刻** | extract ‖ `identify` |
+| **relay** | `CONVERSION_DERIVATIONS` | After the upstream is `done` | extract → `frames` |
+| **co-start** | `CONVERSION_COSTARTS` | At **the same moment** the upstream starts | extract ‖ `identify` |
 
-接力的下游要拿上游的产物当判据（抽帧要读转写才知道值不值得抽），所以必须等。并肩的两件事
-互不为输入，只是碰巧要同一份字节——等就是白等（实测取白文 20–140s、分人 200–900s）。
+Relay downstreams need the upstream artifact as their check (frame extraction must read the
+transcript to know whether extraction is worthwhile), so they must wait. The two co-start tasks
+do not use each other as input; they only happen to need the same bytes — waiting is pure waste
+(measured: fetching plain text takes 20–140s, speaker diarization takes 200–900s).
 
-| 规则 | 判据 | 判不出来时 |
+| Rule | Check | When it cannot decide |
 |---|---|---|
-| 接力 → `frames` | 上游带时间轴（`segmentsIn`，`shared/extract/transcript.ts` 前后端同吃一份），且 `detail.media` 里有 video | **放行**（这层便宜） |
-| 并肩 ‖ `identify` | 这条 item 有能转写的音视频（`transcribableMedia`，后端真身那个具名判断） | **不起**（这层贵） |
+| relay → `frames` | The upstream has a timeline (`segmentsIn`, shared by frontend and backend from `shared/extract/transcript.ts`), and `detail.media` contains video | **allow** (this layer is cheap) |
+| co-start ‖ `identify` | This item has transcribable audio/video (`transcribableMedia`, the named backend check) | **do not start** (this layer is expensive) |
 
-**两条的方向刻意相反**，别当成不一致：抽帧漏掉一条的代价是那页幻灯片的字永远不进正文、
-没有任何一处会喊；声纹多起一批的代价是一堆必然 `no_media` 的记录和真金白银的容器时间。
+**The two directions are intentionally opposite**; do not treat this as inconsistency: the cost
+of missing one frame extraction is that the text on that slide never enters the article body,
+and nothing anywhere reports it; the cost of starting one extra voiceprint batch is a pile of
+records that inevitably become `no_media` plus real container time.
 
-- 两张表的 `when` 都是**纯判据**：接力那张只拿得到那条 `ConversionRecord`，并肩那张只拿得到
-  起跑时的 `options`（**那一刻还没有上游记录可读**，这正是两者签名不同的原因）。都不许打 store、
-  不许打任何 I/O，也**不许抛**——谓词抛出会被 runner 的外层 try 当成「没有要排的」，
-  **静默吃掉整张表**。`options` 是从 HTTP body 一路递进来的，形状是调用方说了算：用之前先验类型。
-- 并肩**只在真的新建了记录时**发生。命中去重（缓存）时不排，否则每次点一下转成文字都白排一条声纹。
-  `force` 原样传下去：重跑转成文字时并肩那条跟着重跑。
-- 真不是视频的由 `frames` converter 自己兜底（取不到视频地址 → `no_source`，零字节、`done`）。
-- 接力只在上游 `done` 时发生；上游失败或被取消，不派。
-- **`identify` 不认识文字**：它产出一条带名字的说话人时间线，「把标签投影到文字段上」
-  （`alignTextToClusters`）由 converter 在时间线出来**之后**自己做。这不是风格，是并肩的前提——
-  文字塞进去就等于把它重新绑回转成文字后面。converter 因此**读两次上游**：起跑时读媒体线索，
-  分人跑完再读一次拿转写。写成一次读就等于并行白做（起跑那一刻上游必然还没落定，读到的永远
-  是空）。真赶上上游还没好，就少一次投影，时间线照样落库、照样成功。
-- 并肩还有一个前提是**取字节不重复付**：落盘缓存取完才写，两条同时开工时后来的那个必然读空。
-  在途表（`AudioCache.share`）保证同一份字节同一时刻只取一次。缺了它并行是负收益。
-- 上游**真的重跑过**时下层跟着重排（走到派生就说明上游有了新产物，旧的下层是对着旧产物算的）。
-  唯一不排的情况是该 (item, kind) 已经有一条在排队/在跑——那条就是这条 item 的下一层。
-- 每次补说话人都会把探到的读数写进转换结果（`probe`：几个说话人、有人说话的总秒数、每簇多久）。
-  **读的是 diarization 时间线，不是转写段**——没有转写的那些正是这份账最该覆盖的。
-- 派生失败**不回头影响上游**——最贵的那份（转写）必须落地即安全。
-- 两张规则表在 `ConversionRunnerDeps` 上都是**必填**字段：漏接线的表现是「什么都不发生」
-  （并肩漏了就是「串行照跑，只是永远不并行」，没有一处会喊），必须在 typecheck 就炸。
-  **加一层就在 `derive.ts` 加一行**，那是唯一的装配点。
+- The `when` in both tables is a **pure check**: the relay table can only receive that
+  `ConversionRecord`, while the co-start table can only receive the startup `options` (**at that
+  moment there is no upstream record to read**, which is exactly why the signatures differ).
+  Neither may touch the store, perform any I/O, or **throw** — if a predicate throws, the
+  runner's outer try treats it as "nothing to schedule" and **silently swallows the whole table**.
+  `options` is threaded all the way from the HTTP body, so its shape is decided by the caller:
+  validate the type before using it.
+- Co-start happens **only when a record is actually newly created**. It is not scheduled on a
+  deduplication/cache hit; otherwise every click on turning content into text would schedule one
+  wasted voiceprint job. `force` is passed through unchanged: when turning content into text is
+  rerun, the co-started entry reruns with it.
+- Items that truly are not video are handled by the `frames` converter's own fallback (cannot
+  obtain a video URL → `no_source`, zero bytes, `done`).
+- Relay happens only when the upstream is `done`; if the upstream fails or is canceled, nothing
+  is dispatched.
+- **`identify` does not understand text**: it produces a named speaker timeline, and "projecting
+  labels onto text segments" (`alignTextToClusters`) is done by the converter itself **after**
+  the timeline exists. This is not style; it is the premise of co-starting — putting text into it
+  would bind it back behind turning content into text. The converter therefore **reads the
+  upstream twice**: at startup it reads media clues, and after diarization finishes it reads again
+  to get the transcript. Writing this as a single read makes the parallelism pointless (at the
+  startup moment the upstream is necessarily not settled yet, so the read is always empty). If
+  the upstream truly is not ready yet, there is simply one fewer projection; the timeline is
+  still written to the DB and still succeeds.
+- Co-starting also has the precondition that **fetching bytes is not paid for twice**: the
+  write-through cache writes only after the fetch completes, so when two tasks start together
+  the later one will necessarily read empty. The in-flight table (`AudioCache.share`) guarantees
+  the same bytes are fetched only once at the same moment. Without it, parallelism is negative
+  value.
+- When the upstream **really reruns**, lower layers are rescheduled with it (reaching derivation
+  means the upstream has a new artifact, and the old lower layer was computed against the old
+  artifact). The only case not scheduled is when that (item, kind) already has one entry queued
+  or running — that entry is the next layer for this item.
+- Each speaker-identification run writes the observed readings into the conversion result
+  (`probe`: number of speakers, total seconds with speech, duration per cluster). **It reads the
+  diarization timeline, not transcript segments** — the cases with no transcript are exactly
+  what this ledger most needs to cover.
+- A derivation failure **does not affect the upstream retroactively** — the most expensive part
+  (transcription) must be safe as soon as it is written.
+- Both rule tables are **required** fields on `ConversionRunnerDeps`: a missing wire presents as
+  "nothing happens" (missing co-start means "the serial path still runs, but it never runs in
+  parallel", and nothing reports it), so it must explode at typecheck. **Add one row in
+  `derive.ts` when adding a layer**; that is the only assembly point.
 
-设计见 `internal design record`。
+See `internal design record` for the design.
 
-**视频抽帧**（`src/media/video-frames.ts` + `src/media/frame-hash.ts`）：给一个**可寻址的输入**
-（本地路径或支持 range 的 URL，ffmpeg 一视同仁；**管道喂不了**——`-ss` 精确 seek 要能往回跳），
-产出一串去过重的候选帧（时刻 + 感知哈希）。整帧要用时才 `frameAt` 去取。
+**Video frame extraction** (`src/media/video-frames.ts` + `src/media/frame-hash.ts`): given an
+**addressable input** (a local path or a URL that supports range requests; ffmpeg treats them the
+same; **a pipe cannot feed it** — precise `-ss` seeking must be able to jump backward), it
+produces a deduplicated sequence of candidate frames (timestamp + perceptual hash). The full
+frame is fetched with `frameAt` only when needed.
 
-- 取候选走 **I 帧直取**，不做场景检测——后者要解码全片，实测慢 3.7 倍，而更准的帧位置对
-  下游没用：花钱的是每帧一次 OCR，帧数由「画面变了几次」决定，那是去重在管的。
-- 去重用 dHash 比**上一张留下的**（不是上一张看过的，否则慢慢漂移的画面会一张都留不下）。
-- 缩放与灰度由 ffmpeg 直出 **17×16** raw 灰度，**整条链路不解码图片、不引图像库**。不用更省
-  内存的 9×8：实测换页信号只有 5 位、淹没在 0–1 位的噪声里（调门槛救不了），17×16 下换页
-  是 28 位、噪声 0–2，隔离带够宽（详见 spec §5.3）。
-- `DEFAULT_MIN_DISTANCE`（10）已按 17×16 网格的实测数字钉死：噪声底 0–2、换页信号 28，
-  量的是合成素材，真实素材噪声底可能更高。
+- Candidate selection uses **direct I-frame extraction**, not scene detection — scene detection
+  decodes the whole video, measured 3.7× slower, and more precise frame positions are useless
+  downstream: the paid work is one OCR per frame, and the number of frames is determined by "how
+  many times the image changed", which is handled by deduplication.
+- Deduplication compares dHash with **the previous frame kept** (not the previous frame seen;
+  otherwise slowly drifting images would all be discarded).
+- Scaling and grayscale are emitted directly by ffmpeg as **17×16** raw grayscale, and **the
+  whole path decodes no images and imports no image library**. It does not use the more
+  memory-efficient 9×8: measured page-turn signal is only 5 bits and is drowned in 0–1 bits of
+  noise (adjusting the threshold cannot save it), while with 17×16 the page-turn signal is 28
+  bits and noise is 0–2, leaving a wide enough separation band (see spec §5.3).
+- `DEFAULT_MIN_DISTANCE` (10) is pinned to the measured numbers on the 17×16 grid: noise floor
+  0–2, page-turn signal 28. The measurement used synthetic material; real material may have a
+  higher noise floor.
 
-抽帧分**两段路，成本差三个数量级**：探测走 `sampleFrames`（按时刻 seek 取样，每帧一次 range
-请求，代价与片长无关）；闸门放行之后才走 `planVideoFrames`（`-skip_frame nokey` 扫完整个文件）。
-`mediaDurationS`（`src/media/video-frames.ts`）是全仓共用的时长探测口，`src/media/audio-windows.ts`
-的转写热路径也吃它，**别各自维护第二份**。输入既可以是本地路径也可以是 URL——ffmpeg 一视同仁。
+Frame extraction has **two paths whose costs differ by three orders of magnitude**: probing uses
+`sampleFrames` (seek to timestamps and sample, one range request per frame, cost independent of
+video length); only after the gate allows it does `planVideoFrames` run (`-skip_frame nokey`
+scans the whole file). `mediaDurationS` (`src/media/video-frames.ts`) is the shared duration
+probe for the whole repo, and the transcription hot path in `src/media/audio-windows.ts` uses it
+too, so **do not maintain a second copy in each place**. The input can be either a local path or
+a URL — ffmpeg treats them the same.
 
-- `src/conversions/frames/gate.ts`：要不要抽。只吃转写白拿的东西（字数÷时长、指示语密度）。
-  **没有转写 → 抽**：那恰恰说明信息可能全在画面上。**时长量不到时也抽**（`unknown_duration`），
-  理由要说实话——不能因为算不出密度就谎称「语速密度低」。这两种「抽」在账上的
-  `charsPerMinute` 都记 `null`；只有真转写、真时长都有、算出来就是 0 字/分钟才记 `0`——
-  `null`（没量到）与 `0`（真的没人说话）绝不能混，这批读数将来要用来定阈值，混了就污染量法。
-- `src/conversions/frames/new-text.ts`：抽到的字里有多少是新的。逐行与**同一时刻**的转写比，
-  重合的丢（烧进画面的字幕天生与该时刻语音一致），不重合的留。按时刻不按全片——全片比对会
-  误杀「他后面才念到的那页要点」。
-- 两处的默认阈值都**还没在真实素材上量过**，是待验证的起点不是判据。
+- `src/conversions/frames/gate.ts`: whether to extract frames. It only consumes things obtained
+  for free from transcription (characters ÷ duration, cue-word density). **No transcript →
+  extract**: that precisely suggests the information may all be on screen. **Also extract when
+  duration cannot be measured** (`unknown_duration`), and the reason must be honest — do not
+  claim "low speech density" just because density cannot be computed. Both of these "extract"
+  cases record `charsPerMinute` as `null` in the ledger; only when there is a real transcript,
+  real duration, and the computed value is 0 characters/minute is `0` recorded — `null`
+  (not measured) and `0` (really nobody spoke) must never be mixed, because these readings will
+  be used to set thresholds later, and mixing them contaminates the measurement method.
+- `src/conversions/frames/new-text.ts`: how much of the extracted text is new. Each line is
+  compared with the transcript at **the same timestamp**; overlaps are discarded (subtitles
+  burned into the image naturally match the speech at that moment), and non-overlaps are kept.
+  The comparison is by timestamp, not by whole video — whole-video comparison would incorrectly
+  kill "the key points on that slide that he only read later".
+- The default thresholds in both places **have not yet been measured on real material**; they are
+  starting points to validate, not checks.
 
-**`frames` 这一层的全部形状是一道逐级止损的梯子**（`src/conversions/converters/frames.ts`），
-每一级都留下一份说得出理由的读数（`result.probe`，契约见
-[API.md](API.md#conversions转换-转成文字--补说话人--抽帧取画面文字--摘要)）：
+**The entire shape of the `frames` layer is a stepwise loss-limiting ladder**
+(`src/conversions/converters/frames.ts`), and each level leaves behind readings with an
+explainable reason (`result.probe`; contract in
+[API.md](API.md#conversions-convert-to-text--add-speakers--extract-frame-text--summaries)):
 
-| `probe.stop` | 判据 | 这一级的读数 | 付了什么 |
+| `probe.stop` | Check | Readings at this level | What was paid |
 |---|---|---|---|
-| `gate` | `framesGate` 判纯口播 | `gate`（判词 + 字/分钟 + 指示语命中数） | 零 |
-| `no_source` | `resolveVideoSource` 回 null | — | 零字节 |
-| `still_picture` | 稀疏 8 帧两两哈希距离最大值 < 门槛 | `sampled`、`maxDistance` | 8 次 range 请求 |
-| `no_new_text` | 探帧挑 2–3 张 OCR，`newTextAt` 全无新字 | + `ocrTried`/`ocrFailed`/`ocrEmpty` | + 3 次 OCR |
-| `done` | 全扫 → 逐帧 OCR → 逐帧判增量 | + `planned`/`truncated`/`framesKept` | 全片一遍 |
+| `gate` | `framesGate` decides it is pure speech | `gate` (verdict + characters/minute + cue-word hits) | Zero |
+| `no_source` | `resolveVideoSource` returns null | — | Zero bytes |
+| `still_picture` | Maximum pairwise hash distance across 8 sparse frames < threshold | `sampled`, `maxDistance` | 8 range requests |
+| `no_new_text` | Probe frames select 2–3 images for OCR, and `newTextAt` finds no new text in any of them | + `ocrTried`/`ocrFailed`/`ocrEmpty` | + 3 OCR calls |
+| `done` | Full scan → OCR each frame → judge incremental text per frame | + `planned`/`truncated`/`framesKept` | One pass over the full video |
 
-- **前四级「判为不抽」全是 `status: done`。** 判成 `error` 会让通知中心报错、让用户以为坏了，
-  而它恰恰是在正常工作。真失败只有 `source_failed`（取视频地址炸了）/ `sample_failed` /
-  `plan_failed`（ffmpeg 自己炸了）三种，
-  它们**绝不能混进 `no_source` / `no_new_text`**——否则一次真的取址/取样失败在账上会跟
-  「这条 item 就是没有可抽帧的东西」「探过没料」长得一模一样。
-- **`track: []` 不是证据**（四级止损都产出空数组）。「没跑」和「跑了没料」的分界线是 `ocrTried`。
-- **全扫必须在三道闸之后。** `planVideoFrames` 是唯一读完整个文件的一步（两小时的片子几个 GB），
-  而且这一层要**重新取一遍视频源**——转写那份字节只有音轨，复用不了。顺序写反了不会有任何报错，
-  只会每条视频都白烧几个 GB 流量。所以三条 ffmpeg 命令（`sampleFrames`/`planVideoFrames`/
-  `frameAt`）在 converter 上是**注入项**而不是直接 import：这条不变量只能靠「planVideoFrames
-  被调用过几次」来钉，直接 import 就钉不住。
-- 视频源两条腿在 `src/media/video-source.ts`，形状一致——**直链 + 那个 CDN 要的 headers**
-  （网盘 AList 直链 / `video.resolve` 调用点按 `(provider, vid)` 派发到认领那个平台的包，包的
-  resolve 成员给出渐进式直链）。与取音频那条（`src/transcribe/media.ts`）**故意分开**：那条只要能喂
-  音轨的 media（含纯音频），这条只认带画面信号的 video-kind media。
-  **这条腿只吃直连地址，不吃任何包的容器端点**：某些设施容器的下载端点报错时回 200 + 一段 JSON
-  （外面还套着 `video/mp4`），ffmpeg 只会换回一句 `Invalid data found`，真实原因全丢；能翻译那个错误
-  信封的只有认识它的包，而 ffmpeg 自己发请求绕不过去——所以解析成员的合同就是「直链 + headers」，
-  作品没了 / 私密时成员**抛**带站方原话的 `ContentUnavailableError`。解析器（`makeVideoResolver`）
-  自己不往上抛——执行器把成员的错收进 `InvokeResult.misses`、值为 null——所以抽帧和转写那两条腿
-  都经第五参 `sink` 接下这一次的结果，成员失败过就把原话（`memberFailureReason`）抛成 Error；
-  只是 decline 才落 null（抽帧）/ 通用那句（转写）。
-- 逐帧认字走的是与 `extract` 的 ocr 分支**同一条 `parse` 能力行**（同一份「配没配」判据，
-  bootstrap 里的 `parseLadderAvailable`）——判据分家的表现是「一个按钮亮着、另一个恒 503」。
-- 帧文字轨**不混进正文**：转写是「谁说了什么」，帧文字是「屏幕上写着什么」。今天它只经
-  `GET /api/conversions?kind=frames&expand=result` 读得到；合成读口是下一步。
+- **The first four levels that decide "do not extract" are all `status: done`.** Marking them as
+  `error` makes the notification center report an error and makes the user think something is
+  broken, while it is doing exactly the right work. True failures are only `source_failed`
+  (fetching the video URL exploded) / `sample_failed` / `plan_failed` (ffmpeg itself exploded),
+  and they **must never be mixed into `no_source` / `no_new_text`** — otherwise a real URL/sample
+  failure looks exactly like "this item simply has nothing frame-extractable" or "probe ran and
+  found nothing" in the ledger.
+- **`track: []` is not evidence** (all four loss-limiting levels produce an empty array). The
+  boundary between "did not run" and "ran and found nothing" is `ocrTried`.
+- **The full scan must happen after the three gates.** `planVideoFrames` is the only step that
+  reads the whole file (a two-hour video is several GB), and this layer must **fetch the video
+  source again** — the bytes used for transcription contain only the audio track and cannot be
+  reused. Reversing the order produces no error at all; it only burns several GB of traffic on
+  every video. Therefore the three ffmpeg commands (`sampleFrames`/`planVideoFrames`/`frameAt`)
+  are **injected dependencies** on the converter rather than direct imports: this invariant can
+  only be pinned by "how many times planVideoFrames was called"; direct imports cannot pin it.
+- The video-source path has two legs in `src/media/video-source.ts`, with the same shape —
+  **direct link + the headers required by that CDN** (netdisk AList direct link /
+  `video.resolve` callsite dispatches by `(provider, vid)` to the package that claimed that
+  platform, and the package's resolve member returns a progressive direct link). It is
+  **intentionally separated** from the audio-fetching path (`src/transcribe/media.ts`): that path
+  only needs media that can feed an audio track (including pure audio), while this path only
+  accepts video-kind media with an image signal. **This leg accepts only direct-connect URLs, not
+  any package's container endpoint**: when some facility containers' download endpoints error,
+  they return 200 + a JSON blob (wrapped in `video/mp4`), and ffmpeg only turns that into
+  `Invalid data found`, losing the real reason completely; only the package that understands
+  that error envelope can translate it, and ffmpeg making the request itself cannot go through
+  that path — so the resolve member's contract is "direct link + headers", and when the work is
+  gone / private the member **throws** a `ContentUnavailableError` containing the site's original
+  wording. The resolver (`makeVideoResolver`) itself does not throw upward — the executor
+  collects the member's error into `InvokeResult.misses` and sets the value to null — so both the
+  frame-extraction and transcription legs receive this invocation's result through the fifth
+  argument `sink`; if a member failed, the original wording (`memberFailureReason`) is thrown as
+  an Error; only decline becomes null (frame extraction) / the generic sentence (transcription).
+- Per-frame text recognition uses the **same `parse` capability line** as the OCR branch of
+  `extract` (the same "configured or not" check, `parseLadderAvailable` in bootstrap) — split
+  checks present as "one button is lit, the other is always 503".
+- The frame text track **is not mixed into the article body**: transcription is "who said what",
+  while frame text is "what was written on screen". Today it is readable only through
+  `GET /api/conversions?kind=frames&expand=result`; the composed read API is the next step.
 
-**说话人是一条独立的轴**：`identify`（补说话人）只跑 diarization + 认名，**不跑 STT**——所以给
-一条已经转写过的内容补名，不用再付一次 whisper 的钱。转写也不是它的前提（没有转写就只做纯
-diarization）。
+**Speakers are an independent axis**: `identify` (adding speakers) only runs diarization +
+name recognition, and **does not run STT** — so adding names to already-transcribed content does
+not pay for whisper again. Transcription is not its prerequisite either (without a transcript it
+performs pure diarization only).
 
-**说话人数据只有一份存储：声纹库时间线**（`item_diarization`，`src/voiceprint/store.ts`）。
-「名字贴在文字上」不是存储物，是读口 `src/voiceprint/view.ts` 用 时间线 × 转写段 读时现算的
-投影——现算的永远新鲜，转写重跑后不会读到旧快照。所有改名（enroll、自动抽名、删人撤名）都
-只落时间线，投影自动跟上；`identify` 的 `result` 只存探测读数（`probe`）。出现账
-（appearances）也只从时间线记。老 item 的存量抄件由启动迁移反推进时间线
-（`src/voiceprint/migrate-segments.ts`，幂等）。**别在转写 segments 的 `speaker` 字段上建任何
-新读写**——那是历史遗留的死数据，读口会无条件覆写它。收敛始末见
-`internal design record`。
+**Speaker data has only one storage location: the voiceprint-library timeline**
+(`item_diarization`, `src/voiceprint/store.ts`). "Names attached to text" are not stored; they
+are a projection computed on read by the read API `src/voiceprint/view.ts` from timeline ×
+transcript segments — computation on read is always fresh, so a transcription rerun cannot read
+an old snapshot. All renames (enroll, automatic name extraction, deleting a person or revoking a
+name) are written only to the timeline, and the projection follows automatically; the `result`
+of `identify` stores only probe readings (`probe`). Appearances are also recorded only from the
+timeline. Existing copied segments on old items are reverse-applied into the timeline by startup
+migration (`src/voiceprint/migrate-segments.ts`, idempotent). **Do not build any new reads or
+writes on the `speaker` field of transcript segments** — it is dead historical data, and the
+read API overwrites it unconditionally. The convergence record is in
+`internal design record`.
 
-对话侧的接线跟着这条分法走，**三个工具，按「起任务」和「读结果」分开**：
+The chat-side wiring follows this split: **three tools, separated by "start a task" and "read
+results"**:
 
-| 工具 | 干什么 | 会不会等 |
+| Tool | What it does | Waits? |
 |---|---|---|
-| `extract` | 起转成文字，答「说了什么」。返回的文本**不带任何说话人信息**（哪怕 diarize 开着） | 等，最多 3 分钟 |
-| `identify_speakers` | 起补说话人，答「谁说的」，回一份带人名和时间戳的对话稿 | 等，最多 5 分钟 |
-| `read_content` | **读口**：把三条轨合成一份按时刻排好的稿子 | 不等，立刻回 |
+| `extract` | Starts turning content into text and answers "what was said". The returned text **contains no speaker information** (even if diarize is enabled) | Waits, up to 3 minutes |
+| `identify_speakers` | Starts adding speakers and answers "who said it", returning a script with names and timestamps | Waits, up to 5 minutes |
+| `read_content` | **Read API**: composes the three tracks into one timestamp-ordered script | Does not wait, returns immediately |
 
-**起任务和读结果必须分开。**「等一层跑完」和「把已有的拼起来」耗时差着两个数量级，混成一个
-工具就只能取其一：要么读一次也可能卡三分钟，要么永远读不到还在跑的那层。
+**Starting tasks and reading results must be separate.** "Wait for a layer to finish" and
+"compose what already exists" differ in latency by two orders of magnitude. Mixing them into one
+tool forces a choice: either one read may hang for three minutes, or the layer that is still
+running can never be read.
 
-`read_content`（`src/conversions/read-content.ts` + 纯函数 `src/conversions/compose.ts`）是**帧文字轨
-在模型这一侧的唯一到达路径**——没有它那层就是没有消费者的死代码。两条不变量：
+`read_content` (`src/conversions/read-content.ts` + pure function `src/conversions/compose.ts`)
+is **the only path by which the frame text track reaches the model side** — without it, that
+layer is dead code with no consumer. Two invariants:
 
-- **吃哪几层由模型选，不设默认**（`include_speakers` / `include_screen_text`）。能力是逐层累加的，
-  帧文字可能有几十行，问「他说了什么」的人不该被迫付这笔 token。
-- **每层都带 `state`，内容为空时那才是答案**：`absent`（没跑）/ `running`（在跑）/ `error`（失败）
-  / `empty`（跑了没料，**这是有效答案**，`detail` 说得出为什么）/ `ready`。四种「空」合成一个空值，
-  就等于让模型据此告诉用户「这视频屏幕上没有字」——而真相可能是那层压根没跑。
-- 画面文字在稿子里带 `〔画面〕` 前缀：屏幕上的字和话混在一起，模型会把幻灯片标题当成某人
-  说过的原话去引用。
-- 说话人的**内容**来自声纹读口的现算投影（`McpExtras.speakers` → `view.ts`）；这一层的
-  **状态**只看 identify 记录自己的 `probe`——时间线上还留着上一轮的名字时，一次一无所获的
-  识别必须报 `empty`，不能借旧名冒充成功。
+- **The model chooses which layers to consume; there is no default** (`include_speakers` /
+  `include_screen_text`). Capabilities accumulate layer by layer, and frame text may contain
+  dozens of lines; someone asking "what did he say" should not be forced to pay those tokens.
+- **Every layer carries `state`; when content is empty, that is the answer**: `absent` (did not
+  run) / `running` (running) / `error` (failed) / `empty` (ran and found nothing, **this is a
+  valid answer**, and `detail` can explain why) / `ready`. Collapsing four kinds of "empty" into
+  one empty value makes the model tell the user "there is no text on screen in this video" based
+  on it — while the truth may be that the layer never ran at all.
+- Screen text carries the `〔画面〕` ("screen") prefix in the script: if on-screen text and speech
+  are mixed together, the model will cite slide titles as exact words someone said.
+- The **content** of speakers comes from the voiceprint read API's projection computed on read
+  (`McpExtras.speakers` → `view.ts`); this layer's **state** only looks at the identify record's
+  own `probe` — when names from the previous run remain on the timeline, a recognition run that
+  found nothing must report `empty`, not borrow old names and pretend success.
 
-`speakerScript`（`src/conversions/speaker-script.ts`）负责并段与序号名：分钟级的 segments 数组永远不进
-对话上下文。名单里的 `anonymous` 必须交出去——没认领的簇名字是「说话人 2」这种占位序号，
-不标的话模型会把它当真名引用。**序号名的口径与前端 `useSpeakerMap` 一致**（按总发言时长降序）。
+`speakerScript` (`src/conversions/speaker-script.ts`) handles segment merging and ordinal
+names: minute-level segment arrays never enter the chat context. `anonymous` in the name list
+must be passed through — unclaimed clusters have placeholder ordinal names such as `说话人 2`
+("Speaker 2"), and without marking them the model will cite them as real names. **The ordinal
+name policy is consistent with the frontend `useSpeakerMap`** (descending by total speaking
+duration).
 
-`article` 分支打 `article-extract` Provider 行——一条抓取梯子（`strategy: sequential`）：
-`article-defuddle`（裸 HTTP + Defuddle，不跑页面 JS，免费、不出境）在前，正文太短（< 200
-字符，SPA 空壳）即 decline；`article-firecrawl`（Firecrawl 云端跑 JS）兜底，只在前者 decline
-时才出境，静态页因此永远不出境。降级判据在成员内部，梯子外面不做第二次判断（走法记进
-`ladder`，见 [API.md](API.md#conversions转换-转成文字--补说话人--抽帧取画面文字--摘要)）。正文里的每张配图
-（`![alt](url)` 标记）逐张下载后打一遍 `parse` Provider 行（视觉模型 → MinerU 兜底；MinerU 是可选容器包
-`@streamapp/mineru`，没装时 `ocr-mineru` 这一级不亮、梯子到视觉模型为止），识别
-结果批注回图片所在行的行尾；未识别的留下 `[未识别：<原因>]` 可见标记，不静默跳过。按图缓存
-（`ContentCache` 的 `ocr-image` 命名空间，key = 图片 URL，30 天）。
+The `article` branch calls the `article-extract` Provider line — one fetch ladder
+(`strategy: sequential`): `article-defuddle` (plain HTTP + Defuddle, no page JS, free, no
+cross-border request) comes first, and declines when the article body is too short (< 200
+characters, SPA shell); `article-firecrawl` (Firecrawl runs JS in the cloud) is the fallback and
+goes cross-border only when the former declines, so static pages never go cross-border. The
+degrade check lives inside the member, and the ladder does not make a second judgment outside
+(the path is recorded in `ladder`; see
+[API.md](API.md#conversions-convert-to-text--add-speakers--extract-frame-text--summaries)). Each inline image in the article
+body (`![alt](url)` markup) is downloaded one by one and sent through the `parse` Provider line
+(vision model → MinerU fallback; MinerU is the optional container package `@streamapp/mineru`;
+when it is not installed, the `ocr-mineru` level is not lit and the ladder stops at the vision
+model). The recognition result is annotated back at the end of the line containing the image;
+unrecognized images leave a visible `[未识别：<原因>]` ("unrecognized: <reason>") marker and are
+not silently skipped. Images are cached per image (`ContentCache`'s `ocr-image` namespace,
+key = image URL, 30 days).
 
 **Only these two SQLite files exist** — do not add a third for a new subsystem, and **user config
 never goes into YAML/JSON**: Channel / Stream / Provider config lives in `data/stream.db` and
@@ -2156,15 +2343,15 @@ Source manifests live in `packages/<id>/manifests.yaml`, one per plugin.
 | Concept / mechanism | Location |
 |---|---|
 | Channel / Stream / Provider user config | `data/stream.db` (`src/store/user-store.ts`; adoption of retired sqlite files + orphan sweep: `src/store/import-legacy.ts`) |
-| research present(manifest 解析、live 列表面、详情面) | `src/board/run-source.ts`, `src/http/live-routes.ts`, `src/http/research-routes.ts` |
-| research 前端(一级 live 列表、二级 run 详情、view 注册表) | `app/src/components/ResearchChannel.tsx`, `app/src/components/ResearchRunDetail.tsx`, `app/src/research/` |
+| research present(manifest parsing, live list surface, detail surface) | `src/board/run-source.ts`, `src/http/live-routes.ts`, `src/http/research-routes.ts` |
+| research frontend(primary live list, secondary run detail, view registry) | `app/src/components/ResearchChannel.tsx`, `app/src/components/ResearchRunDetail.tsx`, `app/src/research/` |
 | Source manifests | `packages/<id>/manifests.yaml` |
-| Plugin descriptors | `packages/<id>/package.json`（`stream` 字段） |
+| Plugin descriptors | `packages/<id>/package.json` (`stream` field) |
 | Adapters | `src/adapters/<id>/`, `src/rsshub-adapter.ts` |
-| RSSHub 本体（在哪、哪一份） | `src/rsshub-client.ts` 的 `resolveRsshubPkg`——见下 |
-| Browser Recipe schema / runner / packages | `src/replay/`, `packages/<facility>/*.recipe.json`（内置）、`<dataDir>/recipes/<@scope__name>/`（用户装的） |
-| 状态图（认状态 / 死路 / 逃生口 / 轨迹） | `src/replay/state-graph.ts`（类型与纯函数）、`state-perception{,-dom,-desktop}.ts`（`identify`）、`state-machine.ts`（主循环，未接线）、`state-classify.ts`（失败后的诊断，**唯一接了线的**）、`state-assemble.ts`、`states-builtin.ts`（CF 三档）、`state-trace.ts` |
-| Extension CDP transport / shadow tabs | `shared/browser-relay/`（relay 本体 / wire 常量 / 挑战应答 / 高危闸门 / 元素清单，两侧同吃一份；`src/http/ext-relay.ts` 等旧路径是薄壳）, `src/replay/browser-ext*.ts`, `extension/src/lib/driver.ts` |
+| RSSHub itself (where it lives, which copy) | `src/rsshub-client.ts`'s `resolveRsshubPkg` -- see below |
+| Browser Recipe schema / runner / packages | `src/replay/`, `packages/<facility>/*.recipe.json` (built in), `<dataDir>/recipes/<@scope__name>/` (user-installed) |
+| State graph (recognizing states / dead ends / escape hatches / traces) | `src/replay/state-graph.ts` (types and pure functions), `state-perception{,-dom,-desktop}.ts` (`identify`), `state-machine.ts` (main loop, not wired), `state-classify.ts` (post-failure diagnosis, **the only wired one**), `state-assemble.ts`, `states-builtin.ts` (three CF tiers), `state-trace.ts` |
+| Extension CDP transport / shadow tabs | `shared/browser-relay/` (relay itself / wire constants / challenge-response / high-risk gate / element inventory, both sides consume the same copy; old paths such as `src/http/ext-relay.ts` are thin shells), `src/replay/browser-ext*.ts`, `extension/src/lib/driver.ts` |
 | Normalizers | `src/content/<id>.ts`, registry in `src/content/normalize.ts` |
 | Channel view materialization (/api/channels/:id/items) | `src/http/app.ts` |
 | Exclusive (failover) execution | `src/providers/executor.ts` (Provider rows), `src/scheduler.ts` (Stream harvests) |
@@ -2173,9 +2360,9 @@ Source manifests live in `packages/<id>/manifests.yaml`, one per plugin.
 | HTTP app + MCP mount | `src/http/app.ts`, `src/http/mcp-mount.ts` |
 | MCP tools | `src/mcp/server.ts`, `src/mcp/tools.ts` |
 | Frontend | `app/` |
-| 事件循环卡顿飞行记录器（**后端** Node 进程） | `src/loop-lag.ts`（挂在 `src/serve.ts`） |
-| 任务边界归因（op-track，卡顿时"谁在跑"） | `src/op-track.ts` |
-| OOM 诊断飞行记录器（**前端** Chrome 标签页） | `app/src/lib/diagnostics/`，开关/导出在 `app/src/components/DiagnosticsSettings.tsx` |
+| Event-loop lag flight recorder (**backend** Node process) | `src/loop-lag.ts` (mounted in `src/serve.ts`) |
+| Task-boundary attribution (op-track, "who is running" during lag) | `src/op-track.ts` |
+| OOM diagnostics flight recorder (**frontend** Chrome tab) | `app/src/lib/diagnostics/`, with toggles/export in `app/src/components/DiagnosticsSettings.tsx` |
 
 ## Names & aliases that are still live (read this before renaming anything)
 
@@ -2190,23 +2377,23 @@ Source manifests live in `packages/<id>/manifests.yaml`, one per plugin.
   `manifest.ordering:'snapshot'` still parses (`src/manifest/loader.ts`) but *only* as a read-alias
   to `mode:'collection'`; it never independently drives behavior. Consumption authority is
   `Channel.present`.
-- **netdisk verify/save 的 category 是 `resolve`** — 验活/转存语义上是「key → 一个对象」。
-  身份住 `src/providers/system/`，存量库那一列是死数据（**读侧一律取代码**，别去读那一列）。
-- **`strategy` 只有 `'fanout' | 'exclusive'`**（`src/store/types.ts`）。写 `failover` 会被 user
-  store 直接拒（`src/store/user-store.test.ts` 钉着它抛错）；这个词只活在散文和
-  `scheduler.failover.test.ts` 的文件名里，值一律写 `'exclusive'`。
-- **"Provider" 只指无状态能力。** 有状态的容灾就是一个 `strategy: exclusive` 的 Stream——别为它
-  另造 "Resolver"/"Mirror" 之类的名字，也别把适配引擎叫 Provider。
-- **入口概念一律叫 Channel**（code / API / storage：`ChannelRecord`、`/api/channels*`、
-  `stream.db.channels`）。三处不叫 Channel 的地方是刻意的：opaque id `default-timeline`/
-  `default-audio`，以及 **resolve 模型**的
-  `targetType`/`/api/resolve/targets`——那里的 "target" 指*解析目标*，是另一个词。
-- **`ChannelRecord.present`**（`timeline|search|audio|video`）是权威字段，注册表在
-  `src/providers/presents.ts`（`GET /api/presents`），per-Channel `options.slots` Callsite 覆盖见
-  上面 Provider 一节（设计见 `internal design record`）。
-  两个别名仍在：HTTP POST/PATCH `/api/channels` 接受 `variant` 作为写别名（老前端），
-  `GET /api/channels` 回 `kind` 作为 deprecated 读别名。存量里的 `'mixed'` 在启动时归并成
-  `'timeline'`（幂等，`UserStore` migration）。
-- **scheduler 只从 `stream.db` 取种**（`referencedStreamIds`）——没有第二个订阅来源。
-- 两文件存储模型见 [Data & File Structures](#data--file-structures-target-state)；包一律是
-  per-plugin 目录（`packages/<id>/{package.json,manifests.yaml}`）。
+- **The category for netdisk verify/save is `resolve`** -- semantically, live verification/save to the netdisk is "key -> one object".
+  Identity lives in `src/providers/system/`; that column in the existing database is dead data (**the read side always takes code**, do not read that column).
+- **`strategy` is only `'fanout' | 'exclusive'`** (`src/store/types.ts`). Writing `failover` is rejected directly by the user
+  store (`src/store/user-store.test.ts` pins that it throws); that word lives only in prose and in
+  the `scheduler.failover.test.ts` filename, and values are always written as `'exclusive'`.
+- **"Provider" only refers to stateless capabilities.** Stateful disaster recovery is a Stream with `strategy: exclusive` -- do not
+  invent names such as "Resolver"/"Mirror" for it, and do not call the adapter engine a Provider.
+- **The entry concept is always called Channel** (code / API / storage: `ChannelRecord`, `/api/channels*`,
+  `stream.db.channels`). The three places that are not called Channel are intentional: opaque ids `default-timeline`/
+  `default-audio`, and the **resolve model**'s
+  `targetType`/`/api/resolve/targets` -- there, "target" means *resolution target*, which is another term.
+- **`ChannelRecord.present`** (`timeline|search|audio|video`) is the authoritative field, and the registry is in
+  `src/providers/presents.ts` (`GET /api/presents`); for per-Channel `options.slots` callsite overrides, see
+  the Provider section above (design in `internal design record`).
+  Two aliases remain: HTTP POST/PATCH `/api/channels` accepts `variant` as a write alias (old frontend),
+  and `GET /api/channels` returns `kind` as a deprecated read alias. Existing `'mixed'` values are folded into
+  `'timeline'` at startup (idempotent, `UserStore` migration).
+- **The scheduler only seeds from `stream.db`** (`referencedStreamIds`) -- there is no second subscription source.
+- For the two-file storage model, see [Data & File Structures](#data--file-structures-target-state); packages are always
+  per-plugin directories (`packages/<id>/{package.json,manifests.yaml}`).
