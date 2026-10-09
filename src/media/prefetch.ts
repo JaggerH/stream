@@ -43,7 +43,7 @@ async function sweepOrphans(parent: string): Promise<void> {
  *
  * 出站必须走 `owned`——内嵌 RSSHub 进程级 patch 了 `globalThis.fetch` 和 `node:http`，
  * 无 Referer 时强塞 self-origin Referer，而这条链要带自定 Referer 打网盘 CDN，走错通道就是 412。
- * 见 docs/ARCHITECTURE.md「进程出站 HTTP 归属」。
+ * 见 docs/ARCHITECTURE.md "Process Outbound HTTP Ownership"。
  */
 export interface PrefetchResult {
   /** 落地的本地文件路径，喂给 ffmpeg */

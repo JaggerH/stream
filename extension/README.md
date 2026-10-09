@@ -16,7 +16,7 @@ itself, and holds no key of any kind.**
 ## Pair with your Stream — the one-time setup step
 
 扩展**不认地址，只认 secret**：`127.0.0.1:8900` 那头是不是你那台 Stream，靠双方都知道
-`data/ext-relay-token` 来判（为什么见 `docs/API.md` 的「反方向的那道门」）。扩展读不了文件，
+`data/ext-relay-token` 来判（为什么见 `docs/API.md` 的 "The Reverse Gate"）。扩展读不了文件，
 所以由 `stream-desktop` 代读——需要先把它注册成 Chrome 的 native messaging host：
 
 ```bash

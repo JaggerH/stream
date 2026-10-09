@@ -140,6 +140,8 @@ curl -s http://127.0.0.1:8900/api/health     # 起来了就是 {"ok":true}
 
 ## 文档
 
+`docs/` 下的文档是英文的。
+
 | 文档 | 回答什么 |
 |---|---|
 | [cli/README.zh-CN.md](cli/README.zh-CN.md) | 完整的使用指南：安装、第一条流、各项能力、接 agent |

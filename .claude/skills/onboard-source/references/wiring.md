@@ -40,7 +40,7 @@ auto 段；新的一种调用 → 新调用点。**
 
 ## 站点知识写在包的哪一格
 
-**宿主只放机制，站点知识住包里**（`docs/PACKAGE.md`「宿主与包的边界」；`src/no-facility-names.guard.test.ts`
+**宿主只放机制，站点知识住包里**（`docs/PACKAGE.md` "The host/package boundary"；`src/no-facility-names.guard.test.ts`
 扫宿主代码里的站名）。接线相关的几格：
 
 | 要告诉宿主 | 声明位 | 生效 |

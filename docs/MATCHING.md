@@ -1,1262 +1,1256 @@
-# MATCHING — 网盘文件怎么对上节目单
+# MATCHING — How Netdisk Files Match the Program List
 
-**它解决的问题**：网盘里躺着一堆命名混乱的文件（分享者的规避字、水印、时间戳后缀、错位的
-编号），要判断每个文件对应节目单里的哪一集。
+**Problem it solves**: A netdisk contains a pile of chaotically named files (avoidance words added by the sharer, watermarks, timestamp suffixes, misplaced
+numbers). The system must decide which episode in the program list each file corresponds to.
 
-**它不做的事**：不改文件名、不搬文件、不删文件。匹配只产出"谁对应谁"的账，文件原地不动。
-（网盘上的伪装命名是资产不是噪音——见
-`internal design record`。）
+**What it does not do**: It does not rename files, move files, or delete files. Matching only produces the ledger of "who corresponds to whom"; files stay where they are.
+(Disguised names on the netdisk are assets, not noise — see
+`internal design record`.)
 
-代码：`src/netdisk/match-engine/`（证据层 `collect.ts` → 裁决层 `resolve.ts` + 规则表 `rules.ts`
-→ 适配层 `adapt.ts`），匹配谱这门语言与两侧共用的清洗/比较工具在 `src/netdisk/match-spec.ts`。
+Code: `src/netdisk/match-engine/` (evidence layer `collect.ts` → adjudication layer `resolve.ts` + rule table `rules.ts`
+→ adaptation layer `adapt.ts`), and the language of match specs plus the cleanup/comparison tools shared by both sides are in `src/netdisk/match-spec.ts`.
 
-## 术语
+## Terms
 
-| 名字 | 是什么 |
+| Name | What it is |
 |---|---|
-| `SpecLeft` | 节目单的一条：`{ leftKey, title, durationS?, paid?, needsSupply? }`。来自 TMDb 剧集表或订阅流的条目。`paid` 谁都不读（只解释原因）；`needsSupply`（= 这一集自己带没带可播地址，缺席 = 要供货）才是判定层与处置层唯一读的那一位，见「那一位叫 `needsSupply`，不叫 `paid`」 |
-| `SpecRight` | 一个文件：`{ name, size?, durationS? }`。`name` 递归列目录时带相对子路径 |
-| `inbox` | 等着被处理的那批 `SpecRight`（暂无影视线使用；怡乐播客的三个来源目录是这个角色） |
-| `library` | 已经归档的那批 `SpecRight`。绑定日常匹配的就是它 |
-| `MatchSpec` | 一个绑定的匹配规则，**是数据不是代码**，存在绑定上，可 per-binding 覆盖 |
-| `matchByEvidenceResult` | 干活的入口（`match-engine/adapt.ts`）：给它 MatchSpec + SpecLeft[] + SpecRight[]，产出配对、问句、覆盖率，外加一份完整判决 `Resolution` |
-| `Resolution` | 一次匹配的完整结论：认领 / 问句 / 残差 / 缺档 / 每个文件的裁决轨迹（`match-engine/types.ts`） |
-| 认集函数 | `src/netdisk/identity.ts` 的 `makeIdentity(rules)`：文件名 → `{key, num}`，归档器（`reconcile/`）专用的分组键生成器；绑定匹配走自己的清洗管线，两边共享的是本剧规则数据，不是同一个函数，见「共享认集层」一节 |
+| `SpecLeft` | One item in the program list: `{ leftKey, title, durationS?, paid?, needsSupply? }`. It comes from a TMDb episode table or a subscription Stream item. Nobody reads `paid` (it only explains why); `needsSupply` (= whether this episode itself has a playable URL; absent = needs supply) is the only bit read by the decision layer and the handling layer. See "That bit is called `needsSupply`, not `paid`" |
+| `SpecRight` | A file: `{ name, size?, durationS? }`. `name` includes the relative subpath when directories are listed recursively |
+| `inbox` | The batch of `SpecRight` waiting to be handled (not currently used by film/TV flows; the three source directories for the Yile podcast play this role) |
+| `library` | The batch of `SpecRight` that has already been archived. Daily matching binds to this |
+| `MatchSpec` | A binding's matching rule, **data rather than code**, stored on the binding and overridable per binding |
+| `matchByEvidenceResult` | The work entry point (`match-engine/adapt.ts`): give it MatchSpec + SpecLeft[] + SpecRight[], and it produces pairs, questions, coverage, plus a complete adjudication `Resolution` |
+| `Resolution` | The complete conclusion for one matching run: claims / questions / residue / missing files / each file's adjudication trace (`match-engine/types.ts`) |
+| episode-identification function | `makeIdentity(rules)` in `src/netdisk/identity.ts`: filename → `{key, num}`, a grouping-key generator dedicated to the archiver (`reconcile/`); binding matching uses its own cleanup pipeline. The two sides share this show's rule data, not the same function. See the "Shared Episode-Identification Layer" section |
 
-## 裁决表：什么证据组合出什么结论
+## Adjudication Table: Which Evidence Combinations Produce Which Conclusions
 
-下面的「六档」讲的是**怎么执行**（谁先跑、谁分桶）。这张表讲的是**结论契约**：证据长什么样，
-就该出什么判决。两者不许打架——调档序、动门槛、增删一档，都不许改变这张表的任何一格。
+The "six stages" below describe **how execution works** (who runs first, who buckets). This table describes the **conclusion contract**: given a shape of evidence,
+which decision should come out. The two must not fight each other — changing stage order, moving thresholds, adding or removing a stage must not change any cell in this table.
 
-证据只有**两轴 + 一个放大器**：
+Evidence has only **two axes + one amplifier**:
 
-- **名字**：结构键命中 ＞ 清洗后全等 ＞ 相似度最佳 ＞ 无信号；
-- **时长**：吻合（±容差）/ 矛盾（相对差 > 10%）/ 未知；
-- **唯一性是放大器，不是证据**——「容差内只有它一份」本身不构成"它就是这一集"。
+- **Name**: structural-key hit > exact equality after cleanup > best similarity > no signal;
+- **Duration**: match (±tolerance) / contradiction (relative difference > 10%) / unknown;
+- **Uniqueness is an amplifier, not evidence** — "it is the only one within tolerance" does not itself prove "this is the episode".
 
-字节全等是**文件↔文件**的证据，只用于副本判定，**不参与认集**。
+Byte equality is **file↔file** evidence. It is only used for duplicate-copy decisions and **does not participate in episode identification**.
 
-| # | 证据形状 | 裁决 |
+| # | Evidence shape | Adjudication |
 |---|---|---|
-| 1 | 名字唯一命中某集 + 时长吻合 | 认领 |
-| 2 | 名字唯一命中某集 + 时长**未知** | 认领（名字独证成立，不必撞时长） |
-| 3 | 名字唯一命中某集 + 时长**矛盾** | **出卡**（两个证据打架，人裁） |
-| 4 | 时长吻合唯一 + 名字最佳但没过阈 | 认领取最佳，须过 0.3 名字地板；不过地板 → 出卡 |
-| 5 | 时长吻合多份 + 名字分得出最佳 | 最佳认领，其余进副本链或出卡；**落选份必须留痕** |
-| 6 | 名字指 A 集、时长指 B 集 | **出卡** |
-| 7 | 名字多份命中同一集 | 时长能分就分；分不出走质量择优 / 出卡 |
-| 8 | 名字无信号 + 时长无命中 | 残差 → 下架 |
+| 1 | Name uniquely hits one episode + duration matches | Claim |
+| 2 | Name uniquely hits one episode + duration is **unknown** | Claim (the name alone is valid evidence; no need to collide with duration) |
+| 3 | Name uniquely hits one episode + duration **contradicts** | **Show a card** (two pieces of evidence conflict; human adjudicates) |
+| 4 | Duration uniquely matches + name is best but below the threshold | Claim the best candidate, but it must pass the 0.3 name floor; if it does not pass the floor → show a card |
+| 5 | Multiple files match by duration + name can separate the best candidate | Claim the best candidate, and put the others into the duplicate chain or show a card; **rejected candidates must leave a trace** |
+| 6 | Name points to episode A, duration points to episode B | **Show a card** |
+| 7 | Multiple names hit the same episode | If duration can separate them, separate them; otherwise use quality to choose the best / show a card |
+| 8 | Name has no signal + duration has no hit | Residue → take down |
 
-**两条铁律**：任何一格都不许无痕（每个文件都有轨迹，被否决的边都带得出理由）；
-**下架只许从第 8 格进**。
+**Two iron rules**: no cell may be traceless (every file has a trace, and every rejected edge can give a reason);
+**take-down may only enter from cell 8**.
 
-**第 2 格的陷阱：号撞上不等于名字命中。** 集号只是分桶键，桶里还得靠标题消歧——
-`014.六月新闻大盘点` 和 `14.辛金` 号一样，是两件事，那一种出卡不认领。
+**The trap in cell 2: a number collision is not a name hit.** The episode number is only a bucketing key; disambiguation inside the bucket still depends on the title —
+`014.六月新闻大盘点` ("June news roundup") and `14.辛金` ("Xin metal") have the same number, but they are two different things. That case shows a card instead of claiming.
 
-**第 6 格明确不做自动化**：即便这个文件与 B 的正主**一个字节不差**，也只是卡片上给人看的一句话，
-不构成"自动判成副本删掉"的理由。
+**Cell 6 explicitly does not automate**: even if this file is **byte-for-byte identical** to B's rightful file, that is only a sentence shown to the human on the card;
+it is not a reason to "automatically judge it as a duplicate and delete it".
 
-表的全文与逐格实现出处：`internal design record`
-§8（拍板记录 P13）；结论逐格钉死在 `src/netdisk/match-engine/decision-table.test.ts`，
-整体行为另有 104 组金样冻结基线守着（`match-engine/golden.test.ts` + `golden-baseline.json`）。
+The full table and the implementation source for each cell: `internal design record`
+§8 (decision record P13); each conclusion is pinned cell by cell in `src/netdisk/match-engine/decision-table.test.ts`,
+and the overall behavior is guarded by 104 golden-sample baseline groups (`match-engine/golden.test.ts` + `golden-baseline.json`).
 
-## 六档（stage）
+## Six Stages
 
-`MatchSpec.stages` 是一个**有序**列表，装载成规则表（`match-engine/rules.ts` 的 R1–R14），
-顺序即优先序。每档只处理"还没配上"的左项；配上的右文件被占用，后续档看不到它
-（**一对一**，一个文件不会同时属于两集）。**证据是先收全的**——分桶那一半在证据层一次算完，
-各档拿的是同一张图的切片，不是各自重新扫一遍右侧。
+`MatchSpec.stages` is an **ordered** list loaded into the rule table (R1–R14 in `match-engine/rules.ts`);
+the order is the priority order. Each stage only handles left-side items that have not yet been matched; matched right-side files are occupied, and later stages cannot see them
+(**one-to-one**: one file never belongs to two episodes at the same time). **Evidence is collected in full first** — the bucketing half is computed once in the evidence layer,
+and each stage receives a slice of the same graph, not a fresh scan of the right side.
 
-| 档 | 怎么分桶 | 什么时候用 |
+| Stage | How it buckets | When to use it |
 |---|---|---|
-| `duration` | 两侧的**时长**，容差 1s | **认集主锚**。名字可以骗人，时长不会。见下方「时长档」 |
-| `season-episode` | 左侧从 `leftKey` 末尾取 `S01E02`（TMDb 键自带），右侧从文件名取 `[Ss]\d{1,2}[Ee]\d{1,3}` | 场景组命名的剧集，最可靠 |
-| `season-episode`（单捕获组） | `fileRegex` 只写一个捕获组时退化成"纯按集号分桶"，左侧也只比集号 | 网盘按季分文件夹、文件名本身裸到只剩集号（见下方"按季分文件夹"） |
-| `episode-part` | 期号+分段复合键（`第2期纯享下集` / `第10期（三）` / `第1期四` / `第4期2` / `第一期上`，日期前缀可选吃掉；两侧归一化后比，中文数字＝阿拉伯数字），默认 `DEFAULT_EPISODE_PART_REGEX` | 综艺一期多集 |
-| `epnum` | 开头 1–3 位数字，默认 `^0*(\d{1,3})(?=[.\s、\-]\|[一-鿿])` | 播客/综艺的流水编号。**4 位数按位数排除**，避免把年份当集号 |
-| `title` | 不分桶，纯标题相似度 | 兜底，给没有任何编号的条目（`2026丙午流年运势解析`） |
-| `solo` | 目录里唯一的视频文件即认领；多个则取体量最大的 | **电影专用**，且仅当左侧只有 1 项 |
+| `duration` | The **duration** on both sides, tolerance 1s | **Main anchor for episode identification**. Names can lie; duration cannot. See "Duration Stage" below |
+| `season-episode` | The left side takes `S01E02` from the end of `leftKey` (TMDb keys carry it); the right side takes `[Ss]\d{1,2}[Ee]\d{1,3}` from the filename | Episodes named by scene groups; the most reliable |
+| `season-episode` (single capture group) | When `fileRegex` has only one capture group, it degrades to "bucket purely by episode number"; the left side also compares only the episode number | The netdisk is split into folders by season, and filenames themselves are bare down to only the episode number (see "Folders Split by Season" below) |
+| `episode-part` | Compound key of issue number + segment (`第2期纯享下集` ("issue 2 pure-enjoyment lower episode") / `第10期（三）` ("issue 10 (three)") / `第1期四` ("issue 1 four") / `第4期2` ("issue 4 2") / `第一期上` ("first issue upper"), with an optional date prefix consumed; compare after both sides are normalized, Chinese numerals = Arabic numerals), default `DEFAULT_EPISODE_PART_REGEX` | Variety shows with multiple episodes per issue |
+| `epnum` | Leading 1–3 digits, default `^0*(\d{1,3})(?=[.\s、\-]\|[一-鿿])` | Serial numbers for podcasts/variety shows. **4-digit numbers are excluded by digit count** to avoid treating years as episode numbers |
+| `title` | No bucketing; pure title similarity | Fallback for items with no number of any kind (`2026丙午流年运势解析` ("2026 Bingwu annual fortune analysis")) |
+| `solo` | The only video file in the directory is claimed; if there are multiple, take the largest one | **Movie-only**, and only when the left side has exactly 1 item |
 
-**顺序为什么是这样**：越靠前的档，证据越硬、越不可能巧合。时长（内容自带） > 季集号 >
-期号+分段 > 流水号 > 纯标题。先用强证据把能定的定死，剩下的才交给弱证据，避免标题相似度
-抢走本该由编号确定的配对——也避免**错编号**抢走本该由内容确定的配对。
+**Why the order is like this**: the earlier a stage is, the harder the evidence and the less likely it is to be coincidence. Duration (intrinsic to the content) > season/episode number >
+issue number + segment > serial number > pure title. Strong evidence first pins down what can be determined; only the remainder goes to weaker evidence. This prevents title similarity from
+stealing a pair that should be determined by a number — and also prevents a **wrong number** from stealing a pair that should be determined by content.
 
-默认规则（`DEFAULT_MATCH_SPEC`，你不配就是它）：
+Default rules (`DEFAULT_MATCH_SPEC`; if you configure nothing, this is it):
 
 ```
-duration      (容差 1s, threshold 0.6, margin 0.15)   ← 隐式补的，见下
+duration      (tolerance 1s, threshold 0.6, margin 0.15)   ← filled in implicitly; see below
 season-episode(threshold 0,    margin 0.15)
 episode-part  (threshold 0.25, margin 0.1)
 epnum         (threshold 0.6,  margin 0.15)
 title         (threshold 0.85, margin 0.15)
 ```
 
-电影用 `MOVIE_MATCH_SPEC`：`solo` → `title(0.85, 0.15)`（外加隐式时长档，但电影左侧没有时长，
-整档无信号）。
+Movies use `MOVIE_MATCH_SPEC`: `solo` → `title(0.85, 0.15)` (plus the implicit duration stage, but movie left sides have no duration,
+so the whole stage has no signal).
 
-## 时长档（认集主锚）
+## Duration Stage (Main Anchor for Episode Identification)
 
-**它解决的是文件名规则永远解决不了的那一类**：名字本身就错了。真实的两条——
-`53.财克印、印克食伤` 的内容躺在网盘的 `52.财克印、印克食伤.mp3` 里（编号错位 1）；
-`455.现代版木仓下留人` 其实是源站的 `454.现代版枪下留人`（错位 + 改字避审同时失灵）。
-时长是内容自带的，改名、加水印、打规避字、错编号都改不掉它。
-设计见 `internal design record`。
+**It solves the class of problems filename rules can never solve**: the name itself is wrong. Two real cases:
+the content of `53.财克印、印克食伤` ("wealth restrains seal, seal restrains food/output") sits on the netdisk as `52.财克印、印克食伤.mp3` ("wealth restrains seal, seal restrains food/output") (number shifted by 1);
+`455.现代版木仓下留人` ("modern version of spare the person under the wooden gun") is actually the source site's `454.现代版枪下留人` ("modern version of spare the person under the gun") (shift + avoidance-character rewrite fail at the same time).
+Duration is intrinsic to the content; renaming, adding watermarks, adding avoidance words, or using the wrong number cannot change it.
+The design is in `internal design record`.
 
-**五条要知道的**：
+**Five things to know**:
 
-1. **不用配，自动就有。** `specStages()` 给任何没显式声明 `duration` 的谱在最前面补一档
-   （含 LLM 产的、被冻结尊重的自定义谱）——它是锚，不是"某个节目的命名规则"。
-   要调容差就在该绑定显式写一档 `{ by: 'duration', toleranceS: N, ... }`，写了就不再补。
-2. **两侧都得有时长，否则整档无信号、逐字退回文件名链。** 左侧：订阅流从归一化 media 的
-   `duration_s` 带过来；**TMDb 分集索引不给时长**，所以剧集/电影绑定今天用不上这一档，
-   行为一字不变、也一次探测都不发。右侧：`NetdiskService` 用 ffprobe 探（只读文件头），
-   与归档器共用同一份缓存（`netdisk.db` 的 `durations` 表，key = `字节数:绝对路径`），
-   一次 sync 最多 200 次**新**探测（缓存命中不计），超预算的文件本轮就当没时长。
-3. **唯一命中直接认，且是 `auto`**——不检 threshold。与 `episode-part`/`season-episode` 的
-   "结构化键 + 唯一候选"是同一条特例，时长比那两个键更硬。`455.现代版木仓下留人` 的标题
-   相似度只有 0.615，靠相似度永远到不了 `auto`。
-   **但免检有一道名字地板 `DURATION_MIN_SIM = 0.3`**：容差内独一份也得名字沾一点边。
-   「唯一」不等于「对」——±1s 这个区间里恰好没有第三个文件，很多时候只是运气。
-   **地板不过一律不配**（不是降级 pending、也不是记缺档）：这一集退回文件名链，文件留在池子里，
-   链也配不上就老实报缺、文件进 orphan。**配不上本身就是要报出来的信号**，给它一个"有点像"
-   的分数只是把问题翻译成另一种说法。
-   > 2026-07-30 活体：`848.三十探悬疑案件`（8162s）被判给 `怡乐播客 - 209.十五谈身边灵异事.mp3`
-   > （8163s），名字一个字不沾却是 `auto`；209 那一集不在订阅流给的清单里（feed 只给近 167 条），
-   > 没有"正主"来把文件领回去，错配就一直挂着。
+1. **You do not configure it; it exists automatically.** `specStages()` prepends a stage to any spec that does not explicitly declare `duration`
+   (including LLM-produced specs and frozen custom specs that are respected) — it is an anchor, not "a naming rule for some show".
+   To tune tolerance, explicitly write a stage `{ by: 'duration', toleranceS: N, ... }` on that binding; once written, it is not filled in again.
+2. **Both sides must have duration; otherwise the whole stage has no signal and falls back byte-for-byte to the filename chain.** Left side: subscription Streams carry it from normalized media
+   `duration_s`; **TMDb episode indexes do not provide duration**, so TV/movie bindings cannot use this stage today,
+   behavior stays exactly unchanged, and no probe is sent. Right side: `NetdiskService` probes with ffprobe (header-only read),
+   sharing the same cache as the archiver (the `durations` table in `netdisk.db`, key = `byte count:absolute path`),
+   with at most 200 **new** probes per sync (cache hits do not count). Files beyond the budget are treated as having no duration in this round.
+3. **A unique hit is claimed directly, and it is `auto`** — threshold is not checked. This is the same special case as
+   "structured key + unique candidate" for `episode-part`/`season-episode`; duration is harder than those two keys. The title similarity of `455.现代版木仓下留人` ("modern version of spare the person under the wooden gun")
+   is only 0.615, so similarity alone can never reach `auto`.
+   **But the exemption has a name floor, `DURATION_MIN_SIM = 0.3`**: even the only file within tolerance must have at least some name overlap.
+   "Unique" is not the same as "correct" — when no third file happens to fall in the ±1s interval, that is often just luck.
+   **Anything below the floor is never matched** (it is not degraded to pending, and not recorded as missing): this episode falls back to the filename chain, and the file stays in the pool;
+   if the chain also cannot match it, report the episode as missing honestly and put the file into orphan. **Failure to match is itself a signal that must be reported**; giving it a "somewhat similar"
+   score only translates the problem into another wording.
+   > 2026-07-30 live verification: `848.三十探悬疑案件` ("thirty explorations of suspense cases") (8162s) was assigned to `怡乐播客 - 209.十五谈身边灵异事.mp3`
+   > ("Yile Podcast - 209. fifteen talks about supernatural events around us") (8163s), with no character overlap in the name yet marked `auto`; episode 209 was not in the list provided by the subscription Stream (the feed only provides the most recent 167 items),
+   > so there was no "rightful owner" to claim the file back, and the mismatched pair kept hanging around.
    >
-   > 地板取 0.3 是量出来的，断层两边是空的：真配的下限是 455/454 的 **0.615**（改字避审），
-   > 误配全是 **0.000**（848/209、530/820、29/104）。往上抬会伤到真实错位案例，别乱调。
-4. **撞车不硬配。** 整季等长的节目（每集都 ~60min）时长区分度低：多个候选都落在容差内时，
-   先 `reduceByQuality` 去重、再用标题相似度（0.6/0.15）细分；细分不出就记 ambiguous、
-   把这一集让给后面的 `season-episode`/`epnum`（真配上时 ambiguous 会被清掉）。
-   **体量（`size`）只配用来消同名重复，绝不许在不同标题之间选**——`reduceByQuality` 的
-   `sameEpisodeBucket=false` 就是这道闸门：`epnum`/`season-episode` 的桶键是集号、保证桶里
-   是同一集，"体量大者胜"是在挑清晰度；`duration` 的桶键只是"时长相同"，**不保证同一集**，
-   同一套规则在这里挑的是"哪一集"。
-   > 2026-07-30 首次活体 sync 的实测代价（缺这道闸门时）：怡乐 530 与 820 两集时长同为
-   > 7707s、体量差 3.7KB，撞车被压成"唯一候选"，唯一性又触发第 3 条的免检，两集**交叉**
-   > 配错且都是 `auto`；玄关笔记 `29.十神的生克关系`（1989s/31.9MB）被体量更大的正片
-   > `104.清华大学朱令案`（1989s/47.7MB）挤掉，sim=1 的精确同名文件反而落进 orphan。
-   > 两条都在 `match-spec.test.ts` 有回归，且都在金样基线里。
-5. **零竞争 = 假撞车。** 撞进容差的几份里，只有**一个**名字沾得上边（`titleSim > 0`）、其余恰好是
-   `0`（连一个公共 bigram 都没有）时，那不是撞车：相似度 0 的那些和这一集的标题没有任何交集，
-   撞上只是因为两集一样长。它们不算竞争者，沾边那份按第 3 条的锚级证据直接认（`auto`）。
-   赢家仍要过名字地板 0.3——「唯一沾边」和「沾得够多」是两件事。
-   **落选的那几份绝不算这一集的其余份**（`losers` 的归宿是按质量判删，而它们是**别的集**）：
-   原样留在池子里，各自的那一集来认。
-   > 活体（2026-08-01 怡乐）：005 期（5808s）的桶里是 `怡乐播客 - 005.身边那些灵异事.mp3`
-   > （0.571，只是被分享者前缀稀释）+ `玄关笔记/05.太极两仪生四象.mp3`（0，另一期节目）。
-   > 按"多候选"办的结果是名字一字不差的那份也配不上、攒成问句，而它占着的位置让真正的第 05 期
-   > 一直 `swap-hold` 等人点头。
+   > The 0.3 floor is measured, and both sides of the gap are empty: the lower bound of true matches is **0.615** for 455/454 (avoidance-character rewrite),
+   > while false matches are all **0.000** (848/209, 530/820, 29/104). Raising it would hurt real shifted-number cases; do not tweak it casually.
+4. **Collisions are not forced into matches.** Whole seasons with equal lengths (every episode ~60min) have low duration distinctiveness: when multiple candidates fall within tolerance,
+   first use `reduceByQuality` for deduplication, then use title similarity (0.6/0.15) for subdivision; if subdivision fails, record ambiguous
+   and let this episode go to later `season-episode`/`epnum` stages (if it truly matches later, ambiguous is cleared).
+   **Size (`size`) may only be used to break duplicate files with the same name, and must never choose between different titles** — `sameEpisodeBucket=false` in `reduceByQuality`
+   is this gate: the bucket key for `epnum`/`season-episode` is the episode number, guaranteeing the bucket contains the same episode,
+   so "larger wins" selects clarity; the bucket key for `duration` is only "same duration" and **does not guarantee the same episode**,
+   so the same rule here is choosing "which episode".
+   > Measured cost of the first live sync on 2026-07-30 (when this gate was missing): Yile episodes 530 and 820 both had duration
+   > 7707s and size differed by 3.7KB. The collision was compressed into a "unique candidate", uniqueness then triggered the exemption in item 3, and the two episodes were matched **crosswise**
+   > incorrectly and both marked `auto`; in Xuangguan Notes, `29.十神的生克关系` ("the generation and restraint relationships of the ten gods") (1989s/31.9MB) was displaced by the larger main episode
+   > `104.清华大学朱令案` ("the Zhu Ling case at Tsinghua University") (1989s/47.7MB), while the exact same-name file with sim=1 instead fell into orphan.
+   > Both cases have regressions in `match-spec.test.ts`, and both are in the golden-sample baseline.
+5. **Zero competition = fake collision.** If, among the few files that collide within tolerance, only **one** has any name overlap (`titleSim > 0`) and the others are exactly
+   `0` (not even a shared bigram), that is not a collision: the files with similarity 0 have no overlap at all with this episode's title;
+   they collided only because two episodes have the same length. They do not count as competitors, and the overlapping file is claimed directly as anchor-level evidence (`auto`) according to item 3.
+   The winner still must pass the 0.3 name floor — "the only one with overlap" and "enough overlap" are two different things.
+   **The rejected files must never count as other copies of this episode** (the fate of `losers` is deletion by quality, but they are **other episodes**):
+   leave them in the pool as-is, for their own episodes to claim.
+   > Live verification (2026-08-01 Yile): the bucket for issue 005 (5808s) contained `怡乐播客 - 005.身边那些灵异事.mp3`
+   > ("Yile Podcast - 005. those supernatural events around us") (0.571, only diluted by the sharer's prefix) + `玄关笔记/05.太极两仪生四象.mp3` ("Xuangguan Notes/05. Taiji gives birth to two forms, two forms give birth to four images") (0, another program's episode).
+   > Treating it as "multiple candidates" made even the exact-name file fail to match and accumulate into a question, while the position it occupied made the true issue 05
+   > keep waiting in `swap-hold` for human approval.
 
-**时长档永不记缺档**（`missingEpisodes` 仍只由 `epnum` 产）：时长没撞上只是"这一档没信号"，
-不是"这一集没有文件"——文件名链还没跑呢。
+**The duration stage never records missing files** (`missingEpisodes` is still produced only by `epnum`): a duration miss only means "this stage has no signal",
+not "this episode has no file" — the filename chain has not run yet.
 
-## 三个门槛，各管一件事
+## Three Thresholds, Each Governing One Thing
 
-比较标题前先归一化。**清洗口径分左右，别把两侧合成一份**：
+Normalize before comparing titles. **The cleanup policy is split by side; do not merge the two sides into one**:
 
-| | 是什么 | 怎么洗 |
+| | What it is | How to clean it |
 |---|---|---|
-| 右（`SpecRight.name`） | 网盘文件的**绝对路径**（`plan.ts` 有意这么传：来源和库内常有同名文件） | 先剥目录与扩展名（`fileBase`），再走 `titleStrip` |
-| 左（`SpecLeft.title`） | 节目单里的**集标题**——不是路径 | **只走 `titleStrip`** |
+| Right (`SpecRight.name`) | The **absolute path** of the netdisk file (`plan.ts` intentionally passes it this way: source and library often contain same-name files) | First strip directory and extension (`fileBase`), then run `titleStrip` |
+| Left (`SpecLeft.title`) | The **episode title** in the program list — not a path | **Only run `titleStrip`** |
 
-剥目录/扩展名那一刀**只属于右侧**。套到标题上，标题里一个普通的 `/` 会被砍成最后一段
-（`你有多讨厌男朋友/女朋友（6）` → `女朋友（6）`），一个像扩展名的结尾会被剥掉
-（`…2026.3.21` → `…2026.3`；`putt.day` → `putt`）。**它不报错，只是相似度掉下来**——
-表现为"时长对得上、名字一个字都不沾"的假歧义，而那份文件同时还会作为噪音候选出现在
-**别的集**的问句卡上。活体：春典那条真值 0.959 被压成 0.244，掉到名字地板（0.3）以下。
+The strip-directory/extension cut **belongs only to the right side**. Applied to titles, a normal `/` inside a title is cut down to the last segment
+(`你有多讨厌男朋友/女朋友（6）` ("how much do you hate your boyfriend/girlfriend (6)") → `女朋友（6）` ("girlfriend (6)")), and an ending that looks like an extension is stripped
+(`…2026.3.21` → `…2026.3`; `putt.day` → `putt`). **It does not error; it only lowers similarity** —
+the symptom is a fake ambiguity where "duration matches, but the name shares no characters", while that file also appears as a noise candidate on
+question cards for **other episodes**. Live verification: Chundian's true value 0.959 was compressed to 0.244, below the name floor (0.3).
 
-顺序也不能换：`fileBase` 必须在 `titleStrip` **之前**跑——各档的键正则大多带锚，
-`^0*(\d{1,3})` 遇到 `/quark/…` 前缀读不到集号，`(\d{1,3})$` 遇到 `.mp4` 结尾也读不到。
-这条对**相似度和键提取两条路都成立**（`epnum`/`episode-part` 的取号器同样分左右）。
+The order also cannot be swapped: `fileBase` must run **before** `titleStrip` — most key regexes for the stages have anchors,
+so `^0*(\d{1,3})` cannot read the episode number when it sees the `/quark/…` prefix, and `(\d{1,3})$` cannot read it when it sees the `.mp4` suffix.
+This holds for **both the similarity path and the key extraction path** (the number extractors for `epnum`/`episode-part` are also split by side).
 
-两侧共同的收尾：剥 `titleStrip` 里的每条正则（`g`，一条规则剥掉**所有**命中）、剥**前导集号**、
-去空白、转小写。相似度是 **bigram（相邻两字）重合度**，不是编辑距离。
+The common finishing steps on both sides: apply every regex in `titleStrip` (`g`, one rule strips **all** hits), strip **leading episode numbers**,
+remove whitespace, and lowercase. Similarity is **bigram (adjacent two-character) overlap**, not edit distance.
 
-| 门槛 | 管什么 | 不过会怎样 |
+| Threshold | What it governs | What happens if it fails |
 |---|---|---|
-| `threshold` | 最像的那个候选，相似度得达到这条线 | 不配，且该档若是 `epnum`/`episode-part`/`season-episode` 会记为 **ambiguous** |
-| `margin` | 第一名要比第二名领先这么多 | 同上。防止两个都挺像时瞎选一个 |
-| `AUTO_SIM = 0.8`（写死） | 配上之后是 `auto` 还是 `pending` | 配是配上了，但标记为 `pending` 等你确认 |
+| `threshold` | The most similar candidate must reach this line | No match, and if this stage is `epnum`/`episode-part`/`season-episode`, it is recorded as **ambiguous** |
+| `margin` | First place must lead second place by this much | Same as above. This prevents blindly choosing one when both are fairly similar |
+| `AUTO_SIM = 0.8` (hard-coded) | Whether a match is `auto` or `pending` after it is matched | It is matched, but marked `pending` for your confirmation |
 
-**两条特例，不知道会看不懂结果**：
+**Two special cases; without knowing them, the result is hard to read**:
 
-1. **结构化键 + 唯一候选 → 直接认，不检 threshold**（`episode-part` / `season-episode`）。
-   键本身就是消歧证据。真实回归：喜剧之王 S03 的文件裸到只剩 `第1期一.mkv`，没有任何
-   可比的文字，标题相似度天然算不高——唯一候选还要求它达标等于白白拒掉确定无疑的匹配。
-   多候选（真撞车）不享受这个特例，仍要相似度消歧。
+1. **Structured key + unique candidate → claim directly, without checking threshold** (`episode-part` / `season-episode`).
+   The key itself is disambiguating evidence. Real regression: the files for King of Comedy S03 are so bare that only `第1期一.mkv` ("issue 1 one") remains, with no comparable
+   text, so title similarity is naturally not high — requiring the unique candidate to pass the threshold would reject a certain match for no reason.
+   Multiple candidates (a real collision) do not get this special case and still require similarity to disambiguate.
 
-2. **`title` 档相似度不够时不记 ambiguous**。它只是"高阈值兜底"，没够到就当没信号，不算歧义。
-   `epnum` 记（号命中但标题不敢配 = 真歧义）。这个口径差是有意的。
-   **但"够到了却被时长否掉"要记**（裁决表第 3 格，`match-engine` 的 R14）：清洗后全等 + 时长
-   差出量级，是两个证据在打架，不是"没信号"——那一种必须出卡，否则文件静默流向下架。
+2. **The `title` stage does not record ambiguous when similarity is insufficient**. It is only a "high-threshold fallback"; if it does not reach the line, treat it as no signal, not ambiguity.
+   `epnum` does record it (number hit but title cannot be trusted = real ambiguity). This difference in policy is intentional.
+   **But "reached the line and was rejected by duration" must be recorded** (cell 3 in the adjudication table, R14 in `match-engine`): exact equality after cleanup + duration
+   differing by an order of magnitude means two pieces of evidence conflict; it is not "no signal" — that case must show a card, or the file silently flows to take-down.
 
-## 同一集多份文件
+## Multiple Files for the Same Episode
 
-`epnum` / `episode-part` / `season-episode` 分桶后，桶里可能有好几个文件。处理顺序**不能反**：
+After bucketing by `epnum` / `episode-part` / `season-episode`, a bucket may hold several files. The processing order **must not be reversed**:
 
-1. **按清晰度分层**（用原始文件名探测 4K/2160P/1080P/…）。必须最先做——默认 `titleStrip`
-   会剥掉清晰度标签，先按标题去重会把两个只差清晰度的文件当成重复吞掉一整层
-2. **层内逐字去重**（标题完全相同 = 水印/转存重复），体量大的留
-3. **跨层挑正片**：每层都收敛到唯一赢家时，体量最大的当 primary，其余是**整理的删除候选**
-   （同集只留最高质量那份，怎么裁见后文「同集副本为什么被删 / 为什么被换」）。
-   任一步分不出 → 整组留作候选，交给标题相似度
-4. **名字全等压过体量**：第 2/3 步按体量选出的那份自己连名字地板（`DURATION_MIN_SIM`）都不沾、
-   而落选/丢弃的那些里**恰好一份**名字与节目单全等（`identity-exact`）时，全等的那份才是正主，
-   体量赢家降为同键副本。体量只能在**同一内容**的不同发布之间选；名字一份全等一份 0 分，说明
-   纯享版/花絮只是共用了期号+分段键，根本不是同一份内容。多份全等 = 真重复，体量仍是唯一的尺
+1. **Layer by resolution** (probe 4K/2160P/1080P/… from the original file name). This must come first — the default `titleStrip`
+   strips the resolution tag, so deduplicating by title first would treat two files that differ only in resolution as duplicates and swallow a whole layer
+2. **Verbatim dedup within a layer** (identical title = watermark/save duplicate); keep the larger one
+3. **Pick the main feature across layers**: once each layer has converged to a single winner, the largest one becomes primary and the rest are **deletion candidates for organize**
+   (only the highest-quality copy of an episode is kept; for how to adjudicate see "Why a same-episode copy is deleted / why it is replaced" below).
+   If any step cannot separate them, the whole group stays as candidates and is handed to title similarity
+4. **An exact name match overrides size**: when the file selected by size in step 2/3 does not even touch the name floor (`DURATION_MIN_SIM`),
+   and **exactly one** of the losing/discarded files has a name that exactly equals the listing (`identity-exact`), the exact-name file is the real one
+   and the size winner is demoted to a same-key copy. Size can only choose between different releases of the **same content**; if one name matches exactly and the other scores 0,
+   the pure-cut/behind-the-scenes file merely shares the issue number plus segment key and is not the same content at all. Several exact matches = true duplicates, and size remains the only ruler
 
-### 归档器不做认集判定——它消费本文档这个匹配器的结论
+### The Archiver Makes No Episode-Identity Decisions — It Consumes the Verdict of the Matcher Described in This Document
 
-上面讲的是**匹配器**在一个桶里挑哪个文件配给这一集（挑不出就 ambiguous，不动文件）。
-**归档器**（`reconcile/plan.ts`）会真的搬文件，但它**没有自己的判定逻辑**：每轮把
-**来源目录文件 ∪ 付费货架文件**当成右侧，跑**一次**匹配器（和绑定同步同一份谱，
-`sync.ts` 的 `resolveSpec`），然后照结论把文件放到该在的货架。要改"这个文件是哪一集"，
-改的是本文档讲的规则，绑定和归档器一起受益——归档器里任何"自己再判一遍"都是回归。
+The above describes how the **matcher** picks which file in a bucket pairs with this episode (if it cannot pick, the result is ambiguous and no file is touched).
+The **archiver** (`reconcile/plan.ts`) really moves files, but it has **no decision logic of its own**: each round it treats
+**source-directory files ∪ paid-shelf files** as the right side and runs the matcher **once** (the same spec as binding sync,
+`resolveSpec` in `sync.ts`), then places files on the shelf where they belong according to the verdict. To change "which episode is this file", change
+the rules described in this document, and the binding and the archiver benefit together — any "judge it again" inside the archiver is a regression.
 
-**整理只有一个目标：把来源文件夹的内容归位进库。** 一个文件恰好落进一个筐，每个筐都有结论——
-机器不摊手问"这是什么"，只在"删/换"这一步等人点头：
+**Organize has exactly one goal: put the contents of the source folder into the library.** Each file lands in exactly one basket, and every basket has a verdict —
+the machine never throws up its hands and asks "what is this"; it only waits for human approval at the "delete/replace" step:
 
-| 筐 | 判据 | 去向 |
+| Basket | Criterion | Destination |
 |---|---|---|
-| `claimed` | 匹配器以 `auto` 置信配给了某集（`authority:<leftKey>`） | `claimed` 货架（= 绑定落地目录，库内那份原地不动）；文件名命中子节目 `numPattern` 的落在那个子节目文件夹。**例外：那一集 `needsSupply === false`（源站自己放得出）→ 不搬、直接删**（`delete-redundant`，账本 basis `redundant-free:<leftKey>`），见下面第二条边界 |
-| `copy` | 匹配器把它交成了那一集的**其余份**（`SpecAssignment.losers` → `same-episode-copy:<leftKey>`：同名副本、另一码率、多几秒尾巴的重剪） | 唯一议题是替换：副本更差/平手 → `delete-loser`；更优或比不出 → `replace`（删旧正主 + 这份搬进目标目录）。两者都进「将删清单」等预览确认，**定时轮一步都不动** |
-| `offline` | 没能落到任何一集头上：名字和时长都不指向节目单任何一条 = 清单里没有它 | `secondary` 货架（播客场景下即「下架」，来源/库内同等对待），搬进去前先与架上同集那份择优（差/平 → 删这份、更优 → 换掉架上那份、比不出 → `pending`，卡上给「留哪一份」两个按钮，人裁过就按人说的走）；**这条绑定没配 `secondary`**（如影视）→ 判定照记但**没有动作**，文件原地不动、永不删 |
-| `offline` + `pending duration-collision` | 匹配器**判不出**（`ambiguous`：撞号/相似度不足/被时长闸否掉/时长命中但名字不过地板）或**没到把握**（配对 `status: pending`）——账本 basis `ambiguous:<reason>:<leftKey>` | 不认领、也不自动搬去下架：它可能是那一集的另一版（另一码率），也可能只是撞了车的另一期。带 `compare` 并排给人裁（节目单时长 / 这份 / 现任那份），**绝不进「可以自动完成」**。答"不是"有出口，见下 |
-| `offline` + `delete-redundant` | 没被认领，但**证据指着的那几集全都不需要网盘供货**（`needsSupply === false`）——账本 basis `redundant-free-candidates:<key1,key2,…>` | 直接删，**不出卡**：它不论是其中哪一集，处置都一样，"是哪一集"这个问题不值得问。**零候选（清单里真的没有它）不走这条**，照旧上下架货架。见下面「那一位叫 `needsSupply`，不叫 `paid`」 |
-| `hold` | 时长未知（没探到 / 本轮探测预算用尽） | `pending`，下轮续探。它是**状态不是问题**，不要求用户做什么 |
-| `dup` | 同一集 + **字节数全等** | `delete-dup`——不经「将删清单」预览，`autoExecute` 下即删（留库内那份，其次按 `sourcePriority`）。**例外：那一集是 `paid` → 降级成确认档 `delete-loser`**，见下 |
-| `exempt` | 人工豁免/墓碑（`decisions` 表） | 不动、不报 |
+| `claimed` | The matcher paired it to an episode with `auto` confidence (`authority:<leftKey>`) | The `claimed` shelf (= the binding's landing directory; the copy already in the library stays where it is); a file whose name hits a sub-show's `numPattern` lands in that sub-show's folder. **Exception: if that episode has `needsSupply === false` (the source site can serve it itself) → do not move, delete directly** (`delete-redundant`, ledger basis `redundant-free:<leftKey>`); see the second boundary below |
+| `copy` | The matcher handed it over as one of the **other copies** of that episode (`SpecAssignment.losers` → `same-episode-copy:<leftKey>`: a same-name duplicate, a different bitrate, a re-cut with a few extra seconds of tail) | The only question is replacement: copy worse/tied → `delete-loser`; better or incomparable → `replace` (delete the old primary + move this one into the target directory). Both go into the "to-delete list" and wait for preview confirmation; **the scheduled round does not do a single step** |
+| `offline` | It could not land on any episode: neither its name nor its duration points to any entry of the listing = the listing does not contain it | The `secondary` shelf (for podcasts, the "offline shelf", with source/library files treated alike). Before moving it in, compare it with the copy of the same episode already on the shelf (worse/tied → delete this one, better → replace the one on the shelf, incomparable → `pending`; the card offers two buttons for "which one to keep", and once a person has adjudicated, the system follows what they said). **If this binding has no `secondary` configured** (e.g. film and TV) → the verdict is recorded but **no action is taken**: the file stays where it is and is never deleted |
+| `offline` + `pending duration-collision` | The matcher **cannot decide** (`ambiguous`: number collision / insufficient similarity / vetoed by the duration gate / duration hits but the name fails the floor) or **is not confident enough** (pair `status: pending`) — ledger basis `ambiguous:<reason>:<leftKey>` | Not claimed, and not automatically moved to the offline shelf either: it may be another version of that episode (a different bitrate), or merely a different issue with a colliding number. It carries `compare` and is shown side by side for a person to adjudicate, and **never goes into "can complete automatically"**. Answering "no" has an exit, see below |
+| `offline` + `delete-redundant` | Not claimed, but **every episode the evidence points to has no need for netdisk supply** (`needsSupply === false`) — ledger basis `redundant-free-candidates:<key1,key2,…>` | Delete directly, **without a card**: whichever of those episodes it is, the disposal is the same, so "which episode is it" is not worth asking. **Zero candidates (the listing truly does not contain it) does not take this path** and goes to the offline shelf as before. See "That flag is called `needsSupply`, not `paid`" below |
+| `hold` | Duration unknown (not probed / this round's probe budget exhausted) | `pending`; probing resumes next round. It is a **state, not a question**, and asks nothing of the user |
+| `dup` | Same episode + **identical byte count** | `delete-dup` — skips the "to-delete list" preview and is deleted immediately under `autoExecute` (keep the copy in the library, then break ties by `sourcePriority`). **Exception: if that episode is `paid` → degrade to the confirmation tier `delete-loser`**, see below |
+| `exempt` | Manual exemption/tombstone (`decisions` table) | Not touched, not reported |
 
-五条边界：
+Five boundaries:
 
-- **`paid` 集永不自动删**。`delete-dup`（字节全等）是全流程里**唯一不经人眼、`autoExecute` 下即删**
-  的动作——`execute.ts` 的 `losers` 开关管得到 `delete-loser`/`replace`，唯独管不到它。而 `paid` 集
-  的网盘副本可能是**唯一可播来源**（源站要钱 = 源站自己放不出音频），删错就是这一集彻底哑掉、
-  且不可逆。所以那一集是 `paid` 时，字节全等的处置**降级成确认档 `delete-loser`**：动作语义不变
-  （删这份、留那份，带并排数据），但定时轮永不执行它，必须人点头。免费集不降级（源站放得出，
-  删网盘那份不会让任何一集失声）。
-  最尖的那个形状：**留下的那份在第二货架上**——第二货架不进**主**匹配池，每轮的复核（见下面
-  「下架货架每轮回头看」）又只认 `auto` 命中，改过名/没探到时长的那些认不回来。所以"字节还在"
-  不等于"这一集还有音频"，付费货架那份一删这一集就可能哑了。
-  **这道闸查的是名字认集表，而它只用来「不删」、绝不用来「删」或「认领」**——这条不对称正是它
-  不算第二个判定脑的原因（下一条禁的是"自己判是哪一集**然后据此动手**"）：认错成"要供货"只多一次
-  人点头，认不出就退回原行为。判定层一个都不读它，所以它不改变任何配对结果。**这道闸读的是清单
-  明说的 `needsSupply === true`**，不套"缺席也算要供货"那条保守默认——它管的只是"删之前要不要人
-  点一下头"，而字节全等意味着留下那份一字节不差，缺席跟着倒向"要点头"只会让整个影视库逐条点。
-- **源站自己放得出的那些集，其副本（`needsSupply === false`）直接删，不进确认档**。认领成立、但那一集源站自己放得出 →
-  网盘这份是冗余，`delete-redundant`（**没有 `keptPath`**：留下的那份不是文件，是源站自己）。
-  `execute.ts` 的 `losers` 开关管不到它，定时轮照删——转存成本极低、夸克回收站兜底，
-  攒成一屏要人逐条点头反而没人看。所以定时通知里它**必须单独报一个数**：这一档真的会删文件。
-  同一集的其余份随集一起清（正主都删了，再比一次质量纯属白比）。
-  **这一位缺席（影视，以及任何答不上来的清单）不适用**，判断一律显式比 `=== false`，缺席落在
-  "要供货"那一侧；`pending`/`ambiguous`/`hold` 的文件一份都不碰——不确定就不删，现行问句机制全保留。
-- **判定全在匹配器那一侧**。归档器只读四态：`auto` 配对 → 认领；`auto` 的 `losers` → 同集副本；
-  `pending` 配对 / `ambiguous` → 问句；哪个都不是 → 下架。它自己**没有**时长档、没有名字身份表、
-  没有独立的矛盾闸。**别在归档器里加任何一条自己的判据**：判据比匹配器松一分，两个脑就会对同一份
-  文件给出相反的答案，而播放走的是错的那个（真撞过：绑定把 96–104 分钟的错身文件当成第 05/20/37
-  集、`status: auto`，同一时刻归档器对同三份文件说"这不是"）。见下面「同集的其余份怎么被认出来」。
-- **时长命中要过名字地板**：撞进 1s 容差只是必要条件，两边标题相似度还得 ≥ `DURATION_MIN_SIM`(0.3)
-  才算"对应到这一集"（`match-spec.ts` 的 `DURATION_MIN_SIM`，规则 R3）。过不了地板的命中**一条都不算**：
-  这一集退回文件名链，那份文件留在池子里；同时匹配器把这次命中记成一条 `ambiguous`
-  （reason `name-floor`）——**"它的时长命中过这一集"这条证据不许在链条里蒸发**，下游正是靠它
-  出问句（`pending duration-collision`，带 `compare`），而不是把文件当没人要的搬走。
-  为什么：一两个小时的节目撞时长很常见（同一批 371 个文件里 530 与 820 分毫不差同为 7707s），
-  "容差内独一份"常常只是运气。活体形状：`玄关笔记/37.申与酉.mp3`（100:44、320k）与 756 期
-  （100:43）撞上、名字一个字不沾——归档器比匹配器松一分，就会出「删掉名字与时长都对的 756 正主、
-  换上这一份」的建议，而且落在可以自动完成那一档。
-  **这个问句必须有两个答案**（都记进 `decisions` 账本；key 一律是
-  **这一集 + 这份文件路径** 的组合、由后端拼。裁决入口在**对话**：宿主里的 agent 走
-  `reconcile_decide`，HTTP 面是 `POST /api/netdisk/reconcile/decisions` 带 `leftKey` + `path`
-  ——同一条写入路，账本回填都接在 `service.setXxx` 那一层）：
-  · **「不是这一集 → 挪去下架」**（kind `not-episode`）：下一轮它按"清单里没有它"走下架货架
-  （账本 basis `decision:not-episode:<leftKey>`），位置腾出来、等位的那份自然落位。
-  · **「就是这一集 → 认领」**（kind `is-episode`）：下一轮它变成**匹配层的 pin**
-  （`SpecLeft.pinnedRight`，在任何 stage 跑之前钉死这一对），认领与搬运照常走匹配器 → 归档器
-  那条唯一的路。一集只能钉一份，与同一对的 `not-episode` 互斥，两条都由 `DecisionStore` 保证。
-  **写决定都不动文件**：那条搬运还是下一轮预览里的一条 move，照样要人点执行。
-  只有"不是"没有"是"的话，用户只能把文件推走、推不出"那它是哪一集"，同一个问句一轮轮重来；
-  没有出口则占着位的那份永远不腾，等位的那份永远 `swap-hold` ——两条互相锁死。
-  它**不是按集身份的豁免**：换一份文件、或同一份文件撞上别的集，都会重新问。
-  **组合键里的路径跟着搬运走**：execute 每搬成一份就把三类组合键（not-episode / is-episode /
-  prefer）里命中的路径迁到新地址（`DecisionStore.migratePath`，undo 反向迁回）——所以采纳一张
-  待决卡后文件进货架，钉子不会跟丢，同一份文件不会在新路径上二次出卡。
-- **内容矛盾闸**（规则 R11，管住**所有**档）：名字指向某一集、但与节目单时长**相对差超过 10%**
-  （`match-spec.ts` 的 `CONTENT_MISMATCH_RATIO`）= 另一期节目穿着这一集的名字（错身文件），
-  **不算候选**，在门槛判定之前就被剔掉（活体形状：玄关笔记目录里 104 分钟的错身文件，名字叫 `05`、
-  节目单说 36 分钟——对它出替换建议等于建议删掉正确那份）。整桶候选都被它剔光时记一条
-  `ambiguous`（reason `duration-contradiction`）：号命中但没敢配是问句，不是"清单里没有它"。
-  量级以内、超出 1s 容差的差（几秒尾巴/片头重剪，活体 780：差 0.06%）才是"同集另一版"，
-  进替换裁决，不许扔下架——那会变成和 feed 撞名的独立集（违反"默认不重复"）。
-- **纯享闸**（与内容矛盾闸同级，`src/netdisk/pure-cut.ts` 的 `pureCutMismatch`）：文件名带「纯享」、而这一集
-  是期-段体系里的正片（标题带「第N期」且不含纯享）→ **不建这条边**（`vetoReason: pure-cut-mismatch`），
-  名字/期段/时长全对上也不配，也**不出问句**——纯享是另一条播放线，归档器把它搬去 `纯享/S<nn>/`。
-  只在引擎里拦是有意的：同步与归档器各看各的决定账本，任何一侧单独拦都拦不住另一侧再认一次
-  （脱口秀六份纯享刻着 `S03E11 - ` 前缀被反复认成正片）。标题自己带纯享的集（节目单把纯享列成一集）照常认。
-  10% 两边各留百倍余量：同集变体实测差 ≤0.1%，错身文件差 160%+。
+- **A `paid` episode is never deleted automatically**. `delete-dup` (identical bytes) is the **only** action in the whole flow that **skips human eyes and is deleted immediately under `autoExecute`**
+  — the `losers` switch in `execute.ts` governs `delete-loser`/`replace` but cannot govern this one. And the netdisk copy of a `paid` episode
+  may be the **only playable source** (the source site charges = the source site cannot serve the audio itself); deleting the wrong one silences that episode entirely
+  and irreversibly. So when that episode is `paid`, the disposal of an identical-bytes duplicate **degrades to the confirmation tier `delete-loser`**: the action semantics are unchanged
+  (delete this one, keep that one, with side-by-side data), but the scheduled round never executes it and a person must approve. Free episodes do not degrade (the source site can serve them,
+  so deleting the netdisk copy silences no episode).
+  The sharpest shape: **the copy that stays is on the secondary shelf** — the secondary shelf does not enter the **main** matching pool, and each round's review (see "The offline shelf is re-examined every round" below)
+  only recognizes `auto` hits, so files that were renamed or whose duration was never probed cannot be recognized again. So "the bytes are still there"
+  does not mean "this episode still has audio": once the copy on the paid shelf is deleted, the episode may go silent.
+  **This gate consults the name-to-episode identity table, which is used only to "not delete" and never to "delete" or "claim"** — this asymmetry is exactly why
+  it does not count as a second decision brain (the next item forbids "judging which episode it is **and then acting on it**"): mistaking an episode for one that needs supply costs only one extra
+  human approval, and failing to recognize it falls back to the original behavior. No decision layer reads it, so it changes no pairing result. **This gate reads the
+  `needsSupply === true` that the listing states explicitly**, and does not apply the conservative default "absent also counts as needs supply" — it only governs "whether a person must nod before deleting",
+  and identical bytes mean the copy that stays is byte-for-byte the same; letting absence tip toward "needs a nod" would only make the whole film and TV library click through one by one.
+- **Copies of episodes the source site can serve itself (`needsSupply === false`) are deleted directly and do not enter the confirmation tier**. The claim holds, but the source site can serve that episode →
+  the netdisk copy is redundant, `delete-redundant` (**no `keptPath`**: what stays is not a file but the source site itself).
+  The `losers` switch in `execute.ts` cannot govern it, and the scheduled round deletes it as usual — the cost of saving is very low and the Quark recycle bin is the safety net;
+  piling them up into a screen that needs a nod for each one means nobody reads it. So the scheduled notification **must report a separate number for it**: this tier really deletes files.
+  The other copies of the same episode are cleared together with the episode (the primary is deleted anyway, so comparing quality again is pure waste).
+  **This flag does not apply when absent (film and TV, and any listing that cannot answer)**; the check is always the explicit `=== false`, and absence falls on the
+  "needs supply" side; files that are `pending`/`ambiguous`/`hold` are not touched at all — when uncertain, do not delete, and the existing question mechanism is fully retained.
+- **All decisions live on the matcher side**. The archiver reads only four states: an `auto` pair → claim; the `losers` of an `auto` pair → same-episode copy;
+  a `pending` pair / `ambiguous` → question; none of these → offline shelf. It has **no** duration tier, no name identity table, and no independent
+  contradiction gate of its own. **Do not add any criterion of the archiver's own**: if its criterion is a notch looser than the matcher's, the two brains give opposite answers about the same
+  file, and playback follows the wrong one (this really happened: the binding took a wrong-identity file of 96–104 minutes for episodes 05/20/37
+  with `status: auto`, while at the same moment the archiver said "this is not it" about the same three files). See "How the other copies of the same episode are recognized" below.
+- **A duration hit must pass the name floor**: falling within the 1s tolerance is only a necessary condition; the title similarity of the two sides must also be ≥ `DURATION_MIN_SIM`(0.3)
+  to count as "corresponds to this episode" (`DURATION_MIN_SIM` in `match-spec.ts`, rule R3). A hit that fails the floor **counts for nothing**:
+  that episode falls back to the file-name chain and the file stays in the pool; at the same time the matcher records this hit as an `ambiguous`
+  (reason `name-floor`) — **the evidence "its duration hit this episode" must not evaporate along the chain**; downstream relies on exactly it
+  to raise the question (`pending duration-collision`, with `compare`), instead of moving the file away as if nobody wanted it.
+  Why: for a program of one or two hours, duration collisions are common (in the same batch of 371 files, 530 and 820 are identical to the second at 7707s),
+  and "the only one within tolerance" is often just luck. Live shape: `玄关笔记/37.申与酉.mp3` ("Entrance Notes/37.Shen and You.mp3"; 100:44, 320k) collided with episode 756
+  (100:43) without sharing a single character of the name — if the archiver were a notch looser than the matcher, it would produce the suggestion "delete episode 756, the real one whose name and duration are both right,
+  and replace it with this one", and land it in the can-complete-automatically tier.
+  **This question must have two answers** (both are recorded in the `decisions` ledger; the key is always
+  a combination of **this episode + this file path**, assembled by the backend. The adjudication entry point is in the **chat**: the agent in the host calls
+  `reconcile_decide`, and the HTTP surface is `POST /api/netdisk/reconcile/decisions` with `leftKey` + `path`
+  — the same write path, with the ledger backfill hooked in at the `service.setXxx` layer):
+  · **"Not this episode → move to the offline shelf"** (kind `not-episode`): next round it goes to the offline shelf as "the listing does not contain it"
+  (ledger basis `decision:not-episode:<leftKey>`), the slot is freed, and the file waiting for it lands naturally.
+  · **"This is the episode → claim"** (kind `is-episode`): next round it becomes a **pin at the matching layer**
+  (`SpecLeft.pinnedRight`, fixing this pair before any stage runs), and the claim and the move go through the one and only path of matcher → archiver as usual. An episode can pin only one file, and it is mutually exclusive with `not-episode` on the same pair; both are guaranteed by `DecisionStore`.
+  **Writing a decision never moves a file**: the move is still one move in the next round's preview, and still needs a person to click execute.
+  With only "not" and no "is", the user could only push the file away and never say "then which episode is it", and the same question would come back round after round;
+  without an exit, the file holding the slot never frees it, and the file waiting for it stays in `swap-hold` forever — the two lock each other.
+  It is **not an exemption by episode identity**: with a different file, or the same file colliding with another episode, the question is asked again.
+  **The path in the combination key follows the move**: each time execute moves a file, it migrates the paths hit in the three kinds of combination keys (not-episode / is-episode /
+  prefer) to the new address (`DecisionStore.migratePath`; undo migrates back) — so after a pending card is adopted and the file enters the shelf, the pin is not lost,
+  and the same file does not raise a card a second time at its new path.
+- **Content contradiction gate** (rule R11, governing **all** tiers): a name points to some episode, but its **relative difference from the listing's duration exceeds 10%**
+  (`CONTENT_MISMATCH_RATIO` in `match-spec.ts`) = a different program wearing this episode's name (a wrong-identity file);
+  it is **not a candidate** and is removed before the threshold decision (live shape: a 104-minute wrong-identity file in the 玄关笔记 ("Entrance Notes") directory, named `05`,
+  while the listing says 36 minutes — suggesting a replacement for it amounts to suggesting deleting the correct one). When it removes every candidate in a bucket, an
+  `ambiguous` (reason `duration-contradiction`) is recorded: the number hit but there was no confidence to pair, which is a question, not "the listing does not contain it".
+  Differences within the same order of magnitude but beyond the 1s tolerance (a few seconds of tail / a re-cut of the intro, live 780: difference 0.06%) are "another version of the same episode",
+  go to replacement adjudication, and must not be thrown onto the offline shelf — that would become an independent episode colliding by name with the feed (violating "no duplicates by default").
+- **Pure-cut gate** (same level as the content contradiction gate, `pureCutMismatch` in `src/netdisk/pure-cut.ts`): the file name carries 「纯享」 ("pure cut") while that episode
+  is a main feature in the issue-segment system (title carries 「第N期」 ("issue N") and does not contain 纯享) → **no edge is built** (`vetoReason: pure-cut-mismatch`);
+  even when name/issue-segment/duration all match, it is not paired and **no question is raised** — the pure cut is another playback line, and the archiver moves it to `纯享/S<nn>/`.
+  Blocking only in the engine is deliberate: sync and the archiver each look at their own decision ledger, so blocking on either side alone cannot stop the other side from recognizing it again
+  (six pure-cut talk-show files bearing the `S03E11 - ` prefix were repeatedly recognized as main features). Episodes whose own title carries 纯享 (the listing lists the pure cut as an episode) are recognized as usual.
+  The 10% leaves a hundredfold margin on both sides: same-episode variants measure a difference ≤0.1%, wrong-identity files differ by 160%+.
 
-#### 同集的其余份怎么被认出来（`losers`）
+#### How the Other Copies of the Same Episode Are Recognized (`losers`)
 
-一集只有一个正主，其余份由**匹配器**交出来（`SpecAssignment.losers`），归档器照着比质量、
-出删/换建议。它们有两个来源：
+An episode has only one primary; the other copies are handed over by the **matcher** (`SpecAssignment.losers`), and the archiver compares quality against them
+and produces delete/replace suggestions. They have two sources:
 
-1. **同一个桶里挑正片时**（`reduceByQuality`）：跨清晰度档的落选、以及层内清洗后同名的重复。
-   **只收清洗后同名的**——号相同不等于内容相同：`第7期（一）(二)(三)(四)`、`第5期上/中/下纯享`
-   全落在同一个号桶里，按"整桶同一集"收编会把几十份不同内容标成落选份，而落选份是按质量判删的
-   （2026-08-01 全量实测：喜剧之王 53 份、脱口秀 25 份）。字幕/海报也不收：它们和正片剥掉扩展名
-   后常常同名。
-2. **全部 stage 跑完后的收尾一趟**（`sweepOtherCopies`）：某集一旦被配上，后面的 stage 就整条
-   跳过它，于是"这一集还有另一份"再没机会被发现——活体 780 的库内那份（8279s）就是这么一路掉到
-   "清单里没有它"、被规划搬去下架的。这一趟只看**没人认领**的文件，判据两条：与正主清洗后同名，
-   或**时长落在这一集容差内且过名字地板**。第二条判据撑着整条同集择优——转存副本常带
-   `（补档）`/`_0412212803` 这类尾巴，同名判据够不着它们。
+1. **When picking the main feature within one bucket** (`reduceByQuality`): the losers across resolution tiers, and same-name duplicates after cleaning within a layer.
+   **Only those with the same name after cleaning are collected** — the same number does not mean the same content: `第7期（一）(二)(三)(四)` ("Issue 7 (1)(2)(3)(4)"), `第5期上/中/下纯享` ("Issue 5 part 1/2/3 pure cut")
+   all land in the same number bucket, and absorbing "the whole bucket as the same episode" would mark dozens of different contents as losers, while losers are judged for deletion by quality
+   (2026-08-01 full-scale measurement: 喜剧之王 ("King of Comedy") 53 copies, 脱口秀 ("Talk Show") 25 copies). Subtitles/posters are not collected either: after stripping the extension they are
+   often named the same as the main feature.
+2. **A final pass after all stages have run** (`sweepOtherCopies`): once an episode is paired, later stages skip it entirely, so "this episode has another copy" never gets a chance to be discovered —
+   the library copy of live 780 (8279s) fell all the way to "the listing does not contain it" this way and was planned to move to the offline shelf. This pass looks only at files
+   **nobody has claimed**, with two criteria: the same name as the primary after cleaning, or
+   **a duration within this episode's tolerance that also passes the name floor**. The second criterion holds up the whole same-episode comparison — saved copies often carry
+   tails like `（补档）` ("(re-upload)") / `_0412212803`, which the same-name criterion cannot reach.
 
-活体原型：`20.七杀` 节目单 2389s，来源那份 2390s 被认领、库内那份 **6247s** 谁都不是 → 进下架货架。
+Live prototype: the listing says `20.七杀` ("20.Seven Kills") is 2389s, the source copy of 2390s is claimed, and the library copy of **6247s** is nobody's → into the offline shelf.
 
-**只有音视频文件进这条管线。** 字幕（`.ass/.srt`）、封面图、`.nfo/.txt/.zip` 在扫描层就被挡下
-（`reconcile/service.ts` `scanFiles`，判据是共享认集层的 `EXT`）：不参与匹配、不产生待定噪音、
-**永不删除、永不搬动**，也不进账本行（`input` 计数不含它们，守恒照样成立）。
+**Only audio/video files enter this pipeline.** Subtitles (`.ass/.srt`), cover images, and `.nfo/.txt/.zip` are blocked at the scan layer
+(`scanFiles` in `reconcile/service.ts`, with the check being `EXT` of the shared episode-recognition layer): they take no part in matching, generate no pending noise,
+are **never deleted and never moved**, and get no ledger row either (the `input` count does not include them, so conservation still holds).
 
-**为什么"没配上"的去向是「下架」而不是某个新目录**：两个库目录的契约不同，名字却讲的是来历——
-`付费` 真正的意思是「**要跟节目单配对的那些**」（匹配器只看这里），`下架` 真正的意思是
-「**不配对、文件自己就是一集的那些**」：那个目录本身被当作一个 alist source 采进来
-（`packages/alist/normalizer.ts`），里面每个文件直接变成一条可播的 item。所以一份对不上节目单任何一集的
-文件，留在付费货架上**永远等不到认领**，挪去下架货架**立刻就是独立的一集**——不是消失，是换路。
-下架货架**不进主匹配池**（拉它进主池配对等于否掉这个契约），在主池里只用来判字节全等重复和同名占位。
+**Why the destination of "not paired" is the "offline shelf" and not some new directory**: the contracts of the two library directories differ, but their names speak of their origin —
+`付费` ("paid") really means "**the ones that must be paired with the listing**" (the matcher looks only here), and `下架` ("offline") really means
+"**the ones that are not paired, where the file itself is an episode**": that directory itself is harvested as an alist source
+(`packages/alist/normalizer.ts`), and every file in it becomes a playable item directly. So a file that matches no episode of the listing,
+if left on the paid shelf, **never gets claimed**; moved to the offline shelf, it is **immediately an independent episode** — not gone, just rerouted.
+The offline shelf **does not enter the main matching pool** (pulling it into the main pool for pairing would negate this contract); in the main pool it is used only to judge identical-byte duplicates and same-name placeholders.
 
-#### 下架货架每轮回头看
+#### The Offline Shelf Is Re-Examined Every Round
 
-**契约在两个货架都被持续维护，不是只在入口把一次关。** 下架货架不参与主池认领，但每轮由
-`plan.ts` 的 `reviewSecondary` 用**同一个匹配脑**单独复核一遍：权威清单为左、**只有下架文件**为右，
-多调一次匹配器（同一份谱、判据一行没改）。**结论只用于货架卫生，绝不写回主池的认领**
-——两次调用各自独立，主池的结果与有没有跑这一趟完全一致（单测钉死）。
+**The contract is maintained on both shelves continuously, not checked just once at the entrance.** The offline shelf takes no part in claims in the main pool, but each round
+`reviewSecondary` in `plan.ts` re-examines it separately with the **same matching brain**: the authority listing on the left, **only the offline files** on the right,
+calling the matcher one extra time (the same spec, not a line of the criteria changed). **The verdict is used only for shelf hygiene and is never written back into the main pool's claims**
+— the two calls are independent, and the main pool's result is exactly the same whether or not this pass ran (pinned by a unit test).
 
-**只认 `auto` 命中**：复核跑出的 `pending`/`ambiguous` 一律无动作。下架文件的默认状态就是"待着"，
-把抽屉里的陈年文件翻成一堆新问句只会把面板淹掉——不确定就不折腾。命中后按 `paid` 三态分岔：
+**Only `auto` hits count**: a `pending`/`ambiguous` from the review always yields no action. The default state of an offline file is "sitting there";
+turning old files in the drawer into a pile of new questions would only flood the panel — when uncertain, do not stir things up. After a hit, it forks by the three `paid` states:
 
-| 命中的那一集 | 动作 | `basis` |
+| The episode hit | Action | `basis` |
 |---|---|---|
-| **要供货**且本轮无人认领 | 它重新上架了、下架那份是唯一副本 → `move` 回付费货架（普通搬运档，可自动执行） | `relisted:<leftKey>` |
-| **要供货**且已有正主 | 它是同集的另一份 → `delete-loser` 形状的**确认档**（带并排数据），机器不自动删 | `shelf-copy-of:<正主路径>` |
-| **不要供货** | 源站放得出，副本无处存身 → `delete-redundant`（同主池那条规则） | `redundant-free:<leftKey>` |
-| 没命中 | **那正是它该在的地方**，不动——绝大多数 | — |
+| **Needs supply** and nobody claimed it this round | It is back on sale and the offline copy is the only copy → `move` back to the paid shelf (ordinary move tier, can execute automatically) | `relisted:<leftKey>` |
+| **Needs supply** and a primary already exists | It is another copy of the same episode → a **confirmation tier** in the shape of `delete-loser` (with side-by-side data); the machine does not delete automatically | `shelf-copy-of:<primary path>` |
+| **Does not need supply** | The source site can serve it and the copy has nowhere to live → `delete-redundant` (same rule as in the main pool) | `redundant-free:<leftKey>` |
+| No hit | **That is exactly where it belongs**; do not touch it — the vast majority | — |
 
-回流撞上占位（同名/同集）→ 本轮无动作、**不出 `swap-hold`**：主池那边的等位是句承诺（"下轮自然
-落位"），而货架上这份留在原地本来就是合法状态，不需要惊动用户。回流那一集在货架上还有别的份 →
-本轮只搬正主那一份，剩下的下一轮自然走"已有正主"那一档（拿一个计划中的位置去规划删除是在赌
-执行顺序）。复核要时长才有主锚，所以下架文件也进探测队列——**排在来源与付费货架之后**：预算被
-前两侧吃光时，代价是复核少认几份，而不是主池少落位几份。
+When a move-back collides with a placeholder (same name / same episode) → no action this round and **no `swap-hold` raised**: the waiting in the main pool is a promise ("it lands naturally next round"),
+while the file staying put on the shelf is a perfectly legitimate state that needs no alert to the user. If that episode has other copies on the shelf →
+this round moves only the primary one, and the rest naturally take the "primary already exists" tier next round (planning a deletion against a planned position is gambling on
+execution order). The review needs a duration to have a primary anchor, so offline files also enter the probe queue — **after the source and the paid shelf**: when the budget is
+consumed by the first two sides, the cost is that the review recognizes a few fewer copies, not that the main pool lands a few fewer.
 
-**账本独立成节**（`secondaryReview: { checked, rows }`）：主池 `rows`/`counts` 的守恒律说的是
-"进本轮主池的文件"，下架文件按契约不在池里，塞进去就把恒等式弄破了。`rows` 只记产生了动作的
-那几份，跑过没动的由 `checked` 交代。动作本身照进同一份 `actions`（执行器不关心一条动作是谁判的）。
+**The ledger gets its own section** (`secondaryReview: { checked, rows }`): the conservation law of the main pool's `rows`/`counts` speaks of
+"the files that entered this round's main pool", and offline files by contract are not in the pool; stuffing them in would break the identity. `rows` records only the
+copies that produced an action, while those that were checked but not acted on are accounted for by `checked`. The actions themselves go into the same `actions` (the executor does not care who judged an action).
 
-**付费货架 = `paid` ∧ 匹配器认领。** 两个条件缺一不可（2026-08-01 拍板）：
+**Paid shelf = `paid` ∧ claimed by the matcher.** Both conditions are required (decided 2026-08-01):
 
-| 条件 | 说的是谁 | 不满足会怎样 |
+| Condition | About whom | What happens when it is not met |
 |---|---|---|
-| 匹配器认领 | **文件** | 对不上节目单任何一集 → 它不参与配对，归 `下架` 货架（进去就是独立的一集） |
-| 那一集 `needsSupply` | **集** | 源站自己放得出这一集（`needsSupply === false`）→ 网盘这份是冗余，**删**（`delete-redundant`） |
+| Claimed by the matcher | The **file** | Matches no episode of the listing → it takes no part in pairing and goes to the `下架` ("offline") shelf (entering it makes it an independent episode) |
+| That episode's `needsSupply` | The **episode** | The source site can serve this episode itself (`needsSupply === false`) → this netdisk copy is redundant and is **deleted** (`delete-redundant`) |
 
-**源站自己放得出的那些集，网盘副本没有存在价值**：源站的直链还在，网盘那份顶多是同一段音频的
-另一个拷贝。分享链接转存的成本极低、夸克回收站还兜着底，所以这一档**不进确认档**——定时轮
-直接删，通知里单独报一个数（"N 份冗余副本已删"）。
+**For episodes the source site can serve itself, a netdisk copy has no reason to exist**: the source site's direct link is still there, and the netdisk copy is at most another copy of the same audio.
+The cost of saving from a share link is very low and the Quark recycle bin still backs it up, so this tier **does not enter the confirmation tier** — the scheduled round
+deletes directly, and the notification reports a separate number ("N redundant copies deleted").
 
-#### 那一位叫 `needsSupply`，不叫 `paid`
+#### That Flag Is Called `needsSupply`, Not `paid`
 
-**`paid` 谁都不读**——判定层不读（读了就是第二个判定脑），处置层也不读。它活着只为解释原因：
-账本、证据卡、权威清单统计上那句"源站要钱"。真正决定去留的是另一位：
+**Nobody reads `paid`** — not the decision layer (reading it would be a second decision brain), and not the disposal layer either. It lives only to explain the reason:
+the phrase "the source site charges" in the ledger, the evidence card, and the authority listing statistics. The flag that really decides stay or go is a different one:
 
 ```
-needsSupply = 这一集自己带没带一个可播地址 ? false : true      // 缺席 = 要供货
+needsSupply = this episode carries a playable address of its own ? false : true      // absent = needs supply
 ```
 
-判据在清单那一侧算（`left-from-stream.ts` 的 `hasPlayableMedia`），匹配层和归档器只消费结论。
+The criterion is computed on the listing side (`hasPlayableMedia` in `left-from-stream.ts`), and the matching layer and the archiver only consume the verdict.
 
-**默认必须是"要供货"**：删不可逆、留着只占空间，所以只有**看见**一个自带可播地址的媒体项才敢说
-"不用供货"。反过来（默认不用供货、要证明才供）会把"源站没给地址、但也不要钱"的 app 独占集判成
-冗余删掉——`content.paid` 全仓唯一注入点（`content/normalize.ts` 的 `withPaid`）只在 `price > 0`
-时写 `true`，其余一律不写，所以 `paid` 压根答不了"源站放不放得出"。活体敞口：怡楽
-`rsshub-lizhi-user-id-ln6vj` 有 167 条这种集（含 948/949），网盘那份是它们唯一的来源。
+**The default must be "needs supply"**: deletion is irreversible and keeping a file only costs space, so one dares say "no supply needed" only after **seeing**
+a media item that carries a playable address. The reverse (default to no supply needed, supply only once proven) would judge an app-exclusive episode — "the source site gave no address, but it is not paid either" — as
+redundant and delete it: `content.paid` has a single injection point in the whole repo (`withPaid` in `content/normalize.ts`) that writes `true` only when `price > 0`
+and writes nothing otherwise, so `paid` simply cannot answer "can the source site serve it". Live exposure: 怡楽 ("Yile")
+`rsshub-lizhi-user-id-ln6vj` has 167 episodes of this kind (including 948/949), for which the netdisk copy is the only source.
 
-**判据只认可播那两类（`audio`/`video`）的 `url`，不是"media 里有任意 url"**：封面图
-（`kind:'image'`）的 `url` 是必填字段却一秒都放不出来。实测全库 3295 条（36 条流）是"无可播地址、
-但 media 里有别的 url"，其中包含已绑网盘的 `tencent-talkshow-friends-season3`（210 条，media 只有
-一张封面图）——按"任意 url"判，这条绑定的网盘文件会被整库判成冗余。只认这两类**不是写死播客**：
-新 archetype 只要能放，就会落在这两个 kind 上。**别改用 `media.resolveOnly`**，那是 normalize
-播客分支自己打的标记（实现细节，只有那一条路会打）；地址在不在更根本。
+**The criterion recognizes only the `url` of the two playable kinds (`audio`/`video`), not "any url in media"**: the `url` of a cover image
+(`kind:'image'`) is a required field but cannot play for a single second. Measured, 3295 items across the whole library (36 streams) are "no playable address,
+but media holds some other url", including the netdisk-bound `tencent-talkshow-friends-season3` (210 items, whose media holds only
+a cover image) — judged by "any url", that binding's netdisk files would be judged redundant across the whole library. Recognizing only these two kinds is **not hard-coding podcasts**:
+any new archetype that can play will land on these two kinds. **Do not switch to `media.resolveOnly`** — that is a marker the normalize
+podcast branch sets itself (an implementation detail that only that one path sets); whether an address exists is more fundamental.
 
-接任何新源，只要能回答"这一集自己带播放地址吗"就填得上这个位（`LeftEntry.needsSupply` →
-`AuthorityEntry.needsSupply` / `SpecLeft.needsSupply`，缺席 = 要供货）。
-两处用它，两处都只是**不问 / 不留**，从不改变认领：
+Wiring in any new source only requires answering "does this episode carry a playback address of its own" to fill this slot (`LeftEntry.needsSupply` →
+`AuthorityEntry.needsSupply` / `SpecLeft.needsSupply`, absent = needs supply).
+Two places use it, and in both it only means **do not ask / do not keep**, and never changes a claim:
 
-| 层 | 规则 | 结果 |
+| Layer | Rule | Result |
 |---|---|---|
-| 判定层（`resolve.ts` 的 `note()`，集侧问句的唯一收口点） | 该集 `needsSupply === false` → 不记问句 | 免费集不再出任何集侧卡（`name-floor` / `below-threshold` / `duration-contradiction` 全不出） |
-| 处置层（`reconcile/plan.ts` 主循环） | 一份**没被认领**的文件，其**活候选**全部不需供货 → `delete-redundant`（basis `redundant-free-candidates:<key1,key2,…>`） | 不出卡，直接删 |
+| Decision layer (`note()` in `resolve.ts`, the single choke point for episode-side questions) | That episode has `needsSupply === false` → record no question | Free episodes no longer raise any episode-side card (`name-floor` / `below-threshold` / `duration-contradiction` all stay silent) |
+| Disposal layer (the main loop of `reconcile/plan.ts`) | For a file that was **not claimed**, all of its **live candidates** need no supply → `delete-redundant` (basis `redundant-free-candidates:<key1,key2,…>`) | No card, delete directly |
 
-**活候选** = 该文件裁决轨迹上够格当候选的边（判据是共用的 `candidateWeight`：时长命中 ∣ 结构键 ∣
-名字过 `DURATION_MIN_SIM` 地板），**剔掉**事实级否决（`duration-contradict`、`pure-cut-mismatch`）与人裁过「不是这一集」的。
-其余否决理由（`left-claimed`/`below-threshold`/`no-margin`）是顺序性/门槛性的，证据仍指着那一集，照留。
+**Live candidate** = an edge on the file's adjudication trail that qualifies as a candidate (the shared criterion is `candidateWeight`: duration hit ∣ structural key ∣
+name passing the `DURATION_MIN_SIM` floor), **minus** fact-level vetoes (`duration-contradict`, `pure-cut-mismatch`) and those a person adjudicated as "not this episode".
+The other veto reasons (`left-claimed`/`below-threshold`/`no-margin`) are order- or threshold-based, and the evidence still points at that episode, so they stay.
 
-**剔哪些否决理由，判定层与处置层共用一张表**：`match-engine/live-candidate.ts` 的
-`NON_LIVE_VETO_TO_ASK`（归匹配器定义、归档器读它，方向不能反）。不变量是——**被处置层从活候选里
-剔掉的边，判定层必须照发问句**：那条边走不到自动删，所以"答案不改变动作"在这一档为假
-（是这一集 → 换正主；不是 → 挪去下架）。**加一种剔除理由 = 往这张表里加一行**，两侧口径自动跟着走。
-**别让两侧各写死一个字符串、只靠注释互指**——那样的表现是文件被静默搬走、一张卡都没有
-（2026-08-02 怡楽 `112.河南洛阳案.mp3` / `116.安特卫普金库案.mp3`，名字与节目单一字不差、时长差 350 余秒）。
+**Which veto reasons are removed is a single table shared by the decision layer and the disposal layer**: `NON_LIVE_VETO_TO_ASK` in
+`match-engine/live-candidate.ts` (defined by the matcher and read by the archiver; the direction cannot be reversed). The invariant is — **an edge removed from the live candidates by the disposal layer
+must still raise its question in the decision layer**: that edge cannot reach automatic deletion, so "the answer does not change the action" is false in this tier
+(is this episode → swap the primary; is not → move to the offline shelf). **Adding a removal reason = adding a row to this table**, and the two sides follow automatically.
+**Do not let each side hard-code a string and point at the other only through a comment** — the symptom is a file silently moved away without a single card
+(2026-08-02 怡楽 `112.河南洛阳案.mp3` ("112.Henan Luoyang Case.mp3") / `116.安特卫普金库案.mp3` ("116.Antwerp Vault Case.mp3"), names matching the listing character for character, durations off by 350-odd seconds).
 
-两条护栏（都有用例守着，动这块之前先读 `plan.test.ts` 那一节）：
+Two guardrails (both guarded by test cases; read that section of `plan.test.ts` before touching this):
 
-- **零候选不删。** 一条活候选都没有 = 清单里真的没有它 → 照旧上下架货架。删的依据是"证据指向的
-  集都不需要供货"，没有证据就没有依据。
-- **缺席一律当"要供货"。** 影视绑定（清单来自 TMDb 分集索引，没有这一位）一份都不会因此被删——
-  判据写成 `!== false`，缺席落在"要供货"那一侧，不需要任何特判。
+- **Zero candidates means no delete.** Not a single live candidate = the listing truly does not contain it → goes to the offline shelf as before. The basis for deletion is "every episode the evidence points to
+  needs no supply"; without evidence there is no basis.
+- **Absent always counts as "needs supply".** Film and TV bindings (whose listing comes from the TMDb episode index and has no such flag) never lose a single file this way —
+  the check is written as `!== false`, absence falls on the "needs supply" side, and no special case is needed.
 
-活体（怡楽）：`玄关笔记/37.申与酉.mp3` 的时长同时撞上三集，出了一张"是不是《037.三谈身边灵异事》"
-的卡——而那三集源站全放得出，卡片无论怎么答都通向同一个动作（删）。**问了也白问的问题不该占用户
-一次注意力**，这两条规则就是把它从面板上拿掉。
+Live (怡楽): the duration of `玄关笔记/37.申与酉.mp3` collided with three episodes at once and raised a card "is it 《037.三谈身边灵异事》" ("037. Talking Again About Paranormal Events Around Us")
+— yet the source site can serve all three episodes, and whatever the card is answered it leads to the same action (delete). **A question that is pointless to ask should not take a single moment of the user's attention**; these two rules take it off the panel.
 
-#### 人工覆盖：`matchSpec.needsSupply`
+#### Manual Override: `matchSpec.needsSupply`
 
-算出来的那一位有够不着的情形：源站给了地址、但那地址早失效；或者给的音质差到不能听。人知道、
-机器不知道，所以有一个说了算的口子——**`matchSpec.needsSupply`，缺省 = 自动算，填了以填的为准**
-（`true` 这条绑定的集一律要供货、永不判冗余；`false` 一律不要）。覆盖是**整条判据**的覆盖：
-主循环、同集其余份、下架货架复核、字节全等的降级闸，四处一起走。
+The computed flag has cases it cannot reach: the source site gave an address but the address expired long ago; or the quality it gives is too poor to listen to. A person knows and the machine does not,
+so there is one entry whose word is final — **`matchSpec.needsSupply`; the default = computed automatically, and when filled in, what is filled in wins**
+(`true`: every episode of this binding always needs supply and is never judged redundant; `false`: never needs supply). The override replaces the **whole criterion**:
+the main loop, other copies of the same episode, the offline shelf review, and the identical-bytes degradation gate all follow it together.
 
-**它是逃生口，不是常规手段——所以它没有 UI，也不该有。** 只能经 `applySpec` 带一份完整 spec
-落下去，这个门槛是有意的。它要救的「地址在、其实播不了」是**某一集**的毛病，而这个开关是
-**整条绑定的总闸**：一开，这个节目的所有冗余副本从此永不清理，一个单集问题被换成了"整个节目
-永久退出自动整理"。按集的救援本来就有，而且整理面板里点得到——豁免 / 墓碑（`decisions` 表）、
-`corrected` 钉死。**别给这一位配按钮**：配了它就会被当常规手段用，副作用比它解决的问题更大。
-（2026-08-04 拍板否掉了一条"给它做个开关"的待办；活体 16 条绑定一条都没设过它。）
+**It is an escape hatch, not a routine tool — so it has no UI, and should not have one.** It can only be set by passing a complete spec through `applySpec`, and this threshold is deliberate. The
+"the address exists but actually cannot play" it is meant to rescue is a problem of **a single episode**, whereas this switch is a **master gate for the whole binding**: once on, all redundant copies of this show are never cleaned up again, and a single-episode problem
+is traded for "the whole show permanently leaves automatic organizing". Per-episode rescue already exists and can be reached in the organize panel — exemption / tombstone (`decisions` table) and
+`corrected` pinning. **Do not give this flag a button**: with one, it would be used as a routine tool, and the side effects are larger than the problem it solves.
+(A to-do item "make it a switch" was rejected on 2026-08-04; among the 16 live bindings, none has ever set it.)
 
-两条设计边界，动它之前先看：
+Two design boundaries; read them before touching it:
 
-- **粒度是整条绑定，不是 leftKey 列表。** 订阅流的 leftKey 是 `item:<id>`，item id 会随重新采集
-  变（同 id 重建、renormalize、换 recipe 都动它）。按 id 写死的名单会**悄悄失效**——一个保护用的
-  开关最坏的失败方式就是"看起来还在、其实已经不保护了"。整绑定一刀切没有键可烂。要按集救某一份
-  文件走的是别的口（豁免/墓碑、`corrected` 钉死），不是这个开关。
-- **落在 `matchSpec` 而不是 stream 配置。** 供货与否恰恰按绑定变（同一条 stream 绑到不同目录，
-  策略可以不同）；stream 配置答的是"这个源怎么采"，是另一件事。
-- **它跨过 `resolveSpec` 的重解析。** 库存默认谱（无 `generatedBy`）每轮会被整份丢掉、重解析到
-  当前默认——那条规则对**判据**成立，对这一位不成立（它是用户意图本身）。而绑定绝大多数用的正是
-  库存默认，所以 `resolveSpec` 显式把它带过来；不带的表现是"开关点了、下一轮照旧按算出来的走"。
+- **The granularity is the whole binding, not a leftKey list.** The leftKey of a subscription stream is `item:<id>`, and the item id changes with re-harvesting
+  (rebuilding with the same id, renormalize, and switching recipe all move it). A list hard-coded by id would **quietly stop working** — the worst way for a protective
+  switch to fail is "looks like it is still there, but no longer protects". A whole-binding cut has no key to rot. Rescuing a particular file per episode
+  goes through other entries (exemption/tombstone, `corrected` pinning), not this switch.
+- **It lives in `matchSpec`, not in the stream config.** Whether to supply varies precisely by binding (the same stream bound to different directories
+  may have different policies); the stream config answers "how is this source harvested", which is a different matter.
+- **It survives `resolveSpec`'s re-resolution.** An inventory default spec (without `generatedBy`) is thrown away whole every round and re-resolved to
+  the current default — that rule holds for the **criteria** but not for this flag (it is the user's intent itself). And the vast majority of bindings use exactly the inventory
+  default, so `resolveSpec` explicitly carries it over; without that, the symptom is "the switch was flipped, but next round still follows the computed value".
 
-### 输入失真时归档器怎么降级
+### How the Archiver Degrades When Its Input Is Distorted
 
-上面几节讲的是「判定对不对」。这一节讲另一件事：**判定的输入本身不可信时，动作必须降级，
-而且降级要看得见**——既不许照搬，也不许静默跳过。四道守卫，各守一环。
+The sections above are about "whether the decision is right". This section is about something else: **when the input of the decision itself cannot be trusted, the action must degrade,
+and the degradation must be visible** — neither taken at face value nor silently skipped. Four guards, each protecting one link.
 
-#### 一、权威清单的健康闸（只挡定时轮）
+#### 1. The Authority Listing's Health Gate (Blocks Only the Scheduled Round)
 
-规划之前，把本轮清单和**基线那一轮账本里记的**清单比一次（`reconcile/authority-gate.ts` 的
-`gateAuthority`）。两个数来源独立：本轮来自 `listLeft`，基线来自 `reconcile_runs`，比较才有意义。
-四条判据，任一命中，本轮整个 show 降为观察档：
+Before planning, compare this round's listing with the listing **recorded in the baseline round's ledger** (`gateAuthority` in
+`reconcile/authority-gate.ts`). The two numbers come from independent sources: this round's from `listLeft`, the baseline's from `reconcile_runs`, so the comparison is meaningful.
+Four criteria; if any hits, the whole show drops to the observe tier for this round:
 
-| `gated.reason` | 判据 | 常量 |
+| `gated.reason` | Criterion | Constant |
 |---|---|---|
-| `authority-empty` | 清单一条都没有（`entries === 0`）。**不看历史**：空清单会把整个库判成「清单里没有它」 | — |
-| `authority-truncated` | 清单自报取到上限就截断了（`AuthorityListing.truncated`） | `AUTHORITY_ITEM_LIMIT`（`left-from-stream.ts`） |
-| `authority-shrink` | `entries` 比基线少 ≥10% **或** ≥5 条 | `SHRINK_RATIO` / `SHRINK_ABS` |
-| `authority-flip` | `needsSupply` 为真的集比基线少 ≥10% **或** ≥3 条 | `FLIP_RATIO` / `FLIP_ABS` |
+| `authority-empty` | The listing has no entries at all (`entries === 0`). **History is not consulted**: an empty listing would judge the whole library "the listing does not contain it" | — |
+| `authority-truncated` | The listing itself reports that it was truncated at the limit (`AuthorityListing.truncated`) | `AUTHORITY_ITEM_LIMIT` (`left-from-stream.ts`) |
+| `authority-shrink` | `entries` is ≥10% **or** ≥5 entries fewer than the baseline | `SHRINK_RATIO` / `SHRINK_ABS` |
+| `authority-flip` | The episodes with `needsSupply` true are ≥10% **or** ≥3 entries fewer than the baseline | `FLIP_RATIO` / `FLIP_ABS` |
 
-空清单那条是**地板**，不需要基线也不需要历史：第一次跑就是空的照样闸住。其余三条比例和绝对数
-取「或」：比例放过小清单，绝对数放过大清单，各堵一头。翻面那条的阈值更低——`needsSupply` 是
-`delete-redundant` 的唯一依据，它掉得比清单本身更值得盯。基线账本行没有 `needsSupply` 这一位
-（后加的字段）就**不比这一条**，别把缺席当 0 算出一次假翻面。没有基线 → 除空清单外不比、照常跑。
+The empty-listing rule is a **floor** that needs neither a baseline nor history: if the very first run is empty, it is gated all the same. The other three take the "or" of ratio and absolute count:
+the ratio lets small listings through, the absolute count lets large listings through, each blocking one end. The flip rule's threshold is lower — `needsSupply` is the sole basis of
+`delete-redundant`, so its drop deserves more watching than the listing's own. If the baseline ledger row has no `needsSupply` flag
+(a later-added field), **this rule is not compared**; do not count absence as 0 and produce a false flip. No baseline → apart from the empty listing, nothing is compared and the run proceeds as usual.
 
-**基线是最近一轮「被接受的」运行，不是最近一轮运行**：只有**没被闸住的定时轮**和**手动执行**
-（人看过预览再点的执行）当得了基线；**手动预览和被闸住的那些轮一律不当基线**。
-为什么必须这么定：面板每展开一个 show 就 POST 一次预览，那些预览会把缩水后的数字写进账本——
-按「最近一轮」取基线，缩水的清单一展开面板就成了新常态，闸下一轮自己就放行了，而它本来正是要挡的
-那一轮。账本行上的 `trigger`（`'scheduled' | 'manual'`）加上有没有 `gated`，就是判「这轮算不算基线」
-的全部依据。
+**The baseline is the most recent "accepted" run, not the most recent run**: only **scheduled rounds that were not gated** and **manual executions**
+(an execution a person clicked after viewing the preview) qualify as a baseline; **manual previews and gated rounds never count as a baseline**.
+Why it must be defined this way: every time the panel expands a show it POSTs a preview, and those previews write the shrunken numbers into the ledger —
+taking the "most recent round" as the baseline, a shrunken listing would become the new normal as soon as the panel is expanded, and the gate would let the next round through by itself, when that is exactly
+the round it exists to block. The `trigger` on the ledger row (`'scheduled' | 'manual'`) plus whether there is a `gated` is all the basis for judging "does this round count as a baseline".
 
-**闸住的那一轮照样落账**：`mode` 是 `preview`，本该执行的动作一条不少地记在 `actions` 里，
-run 行上多一个 `gated: { reason, detail }`。**账本行怎么读**：只看 `counts` 和 `autoExecute`
-分不出「搬了」和「本来会搬」——那两轮长得一模一样，唯一的区别是有没有 `gated` 这一格。
-读账本判断文件到底动没动，看的是它。同一行上的 `trigger`（`'scheduled'` / `'manual'`）答的是
-另一个问题：这一轮是定时的还是人点的。两位合起来才判得出「这一轮算不算基线」（见下）。通知抬头把差异和「本来会动多少」一起说出来
-（「清单变了（清单从上一轮 N 条缩到 M 条），本轮只观察不动——X 条搬运、Y 条删除都没做」），
-只说「清单变了」用户判断不了这一轮躲过了什么。
+**A gated round is still recorded in the ledger**: `mode` is `preview`, the actions that should have been executed are all recorded in `actions` without omission,
+and the run row gains a `gated: { reason, detail }`. **How to read a ledger row**: `counts` and `autoExecute` alone
+cannot tell "moved" from "would have moved" — the two rounds look identical, and the only difference is whether the `gated` slot exists.
+To judge from the ledger whether files really moved, look at it. The `trigger` (`'scheduled'` / `'manual'`) on the same row answers
+a different question: was this round scheduled or clicked by a person. The two together determine whether "this round counts as a baseline" (see below). The notification headline states the difference together with "how much would have moved"
+("the listing changed (the listing shrank from N entries last round to M), this round only observes and does not act — X moves and Y deletions were not done"),
+because saying only "the listing changed" leaves the user unable to judge what this round dodged.
 
-**没有自动恢复，出口是人**：清单真的换小了，它会**每晚照闸不误**（每个 show 一条去重的 warn
-通知，不刷屏），直到用户跑一次**手动执行**——那一轮成为新基线，第二天的定时轮拿它比，差在阈值内，
-自然放行。这是有意的：机器分不出「采集挂了」和「节目单真的删了一半」，两者的数字长得一模一样，
-而认错一次的代价是整批文件被搬去下架。所以恢复这一步要一个人来按，闸不替他按。
+**There is no automatic recovery; the exit is a person**: if the listing really did get smaller, it will **block every night as usual** (one deduplicated warn notification per show, no spamming)
+until the user runs a **manual execution** — that round becomes the new baseline, the next day's scheduled round compares against it, the difference is within the threshold,
+and it is let through naturally. This is deliberate: the machine cannot tell "the harvest broke" from "the listing really lost half its entries", the numbers look identical,
+and being wrong once costs a whole batch of files moved to the offline shelf. So the recovery step needs a person to press the button, and the gate does not press it for them.
 
-**手动执行和手动预览一律不过闸**：用户在预览里亲眼看过再点执行，就是那一轮的人眼确认。
-闸只在 `runScheduled` 里对 `autoExecute` 的 show 求值。
+**Manual execution and manual preview never pass through the gate**: the user has seen the preview with their own eyes before clicking execute, which is the human-eye confirmation of that round.
+The gate is evaluated only in `runScheduled`, and only for shows with `autoExecute`.
 
-#### 二、删之前核一次体量
+#### 2. Verify the Size Before Deleting
 
-三种删、以及 `replace` 里删旧正主，`remove` 之前先对目标目录**单层 `refresh`** 列一次比 `size`
-（`execute.ts` 的 `staleBeforeRemove`）。对不上就不删，错误行长这样：
+For the three kinds of delete, and for deleting the old primary inside `replace`, before `remove` do a **single-level `refresh`** listing of the target directory and compare `size`
+(`staleBeforeRemove` in `execute.ts`). If they do not match, do not delete; the error rows look like this:
 
 ```
-delete <path>: stale: expected 12345678 got 12300000      # 还在，但内容换了
-delete <path>: stale: expected 12345678 got missing       # 已经不在了
-delete <path>: stale: expected unknown（replace 没带 compare，拒删）
+delete <path>: stale: expected 12345678 got 12300000      # still there, but the content changed
+delete <path>: stale: expected 12345678 got missing       # no longer there
+delete <path>: stale: expected unknown（replace has no compare, refusing to delete）
 ```
 
-第三种是**不知道该多大**：`replace` 的旧正主体量从 `compare` 里取，没带 `compare` 就没有可比的数，
-这时报 `expected 0 got N` 会读成「文件变了」，所以显式说「不知道」。三种都是**没删**，不是删失败。
-搬不核——撞名 403 本来就会响。
+The third is **not knowing how large it should be**: the size of `replace`'s old primary is taken from `compare`, and without `compare` there is no number to compare,
+and reporting `expected 0 got N` would read as "the file changed", so it explicitly says "unknown". In all three cases **nothing was deleted**; it is not a delete failure.
+Moves are not verified — a name-collision 403 is loud on its own.
 
-**为什么删必须核、列举不算数**：OpenList 挂着夸克时，`fs/remove` 一个**根本不存在**的名字照样
-回 `code 200 success`（活体 2026-09-03）。也就是说「列目录说它在」不是存在性证据，「remove 没报错」
-也不是删成功的证据。核对是这条路上唯一能自己长眼睛的一步。
+**Why deletion must be verified and a listing does not count**: with OpenList mounting Quark, `fs/remove` on a name that **does not exist at all** still
+returns `code 200 success` (live, 2026-09-03). That is, "the directory listing says it is there" is not evidence of existence, and "remove reported no error"
+is not evidence that the delete succeeded either. The verification is the only step on this path that can grow eyes by itself.
 
-#### 三、半截文件当未知
+#### 3. A Half-Written File Counts as Unknown
 
-`size === 0` 或不足 `MIN_MEDIA_BYTES`（1 MiB），或来源申报了 `inProgress` 的文件
-（`plan.ts` 的 `isSizeSuspect`）判 `hold`，`basis: 'size-suspect'`，`pendingKind` 是 `no-duration`。
-它**不进匹配池、不进字节全等签名表**（主池和第二货架两张表都不进）——两份半截的同集文件字节数
-可能碰巧相等，进了签名表就是「同一份」删一份。
+A file with `size === 0` or below `MIN_MEDIA_BYTES` (1 MiB), or one that the source declared `inProgress`
+(`isSizeSuspect` in `plan.ts`) is judged `hold`, `basis: 'size-suspect'`, and its `pendingKind` is `no-duration`.
+It **does not enter the matching pool and does not enter the identical-bytes signature table** (neither the main pool's nor the secondary shelf's) — two half-written files of the same episode
+may happen to have equal byte counts, and entering the signature table would mean "the same copy" and delete one.
 
-`hold` 是**状态不是问题**，不要求用户做什么：下一轮它长全了自然进池。转存中、上传中的文件就该
-是这个样子。
+`hold` is a **state, not a question** and asks nothing of the user: next round it has finished arriving and naturally enters the pool. A file that is being saved or uploaded should
+look exactly like this.
 
-#### 四、批量搬失败后回读现状
+#### 4. After a Batch Move Fails, Read Back the Current State
 
-一批 `move` 抛错之后回读源目录（`refresh`），凡是已经不在源目录的名字按成功记溯源、迁决定键，
-其余才进错误行。不回读的表现是**人裁决静默失效**：实际搬走的那几份下一轮再见时决定键已经掉了。
+After a batch of `move` throws, read back the source directory (`refresh`); every name that is no longer in the source directory is recorded as a success for provenance and its decision keys are migrated,
+and only the rest go into the error rows. Without the read-back, the symptom is **human adjudication silently stops working**: the next time the few files that were actually moved are seen, their decision keys are already lost.
 
-执行是**幂等**的：任何一轮都能从现状重来，规划器只依赖现状 + 账本，不依赖上一轮「做了什么」。
-别引入「已处理清单」那种跳过机制。
+Execution is **idempotent**: any round can start over from the current state, and the planner depends only on the current state + the ledger, not on "what was done" last round.
+Do not introduce a skip mechanism such as a "processed list".
 
-#### 货架自述表：来源的差异由来源自己申报
+#### The Shelf Self-Description Table: Source Differences Are Declared by the Source Itself
 
-规划器**只读一张自述表，不认来源类型**（`shared/netdisk/shelf.ts` 的 `ShelfTraits`）。加一种文件来源
-就是实现五个动作（列 / 建目录 / 搬 / 删 / 给直链）+ 填这张表，规划器一行不改；漏填是编译期
-缺字段，不会静默。
+The planner **reads only one self-description table and does not recognize source types** (`ShelfTraits` in `shared/netdisk/shelf.ts`). Adding a kind of file source
+means implementing five operations (list / create directory / move / delete / give a direct link) + filling in this table, and the planner changes not a single line; a missing field is a compile-time
+missing-field error, not a silent one.
 
-| 格 | 规划器哪条分支吃它 |
+| Field | Which planner branch consumes it |
 |---|---|
-| `caseSensitive` | 占位判据。`false` 的货架上比对折叠成小写，`A.mp3` 与 `a.mp3` 算同名占位 |
-| `hasTrash` | 删的档位。`false` 时同集副本从 `delete-loser` 变成带 ` no-trash` 标记的确认档、`delete-redundant` 带上 `noTrash`——删不可撤的货架上一律要人点头 |
-| `listingIsLive` | 规划前要不要 `refresh`。**暂无消费方**：今天三侧扫描无条件 `refresh:true`，这一位记的是事实（OpenList 有 30 分钟目录缓存），还没有代码按它分支 |
-| `reportsInProgress` | 来源能不能在条目上带 `inProgress`。**暂无消费方**：`isSizeSuspect` 直接读 `RFile.inProgress`，不问货架申报过没有 |
+| `caseSensitive` | The placeholder criterion. On a shelf with `false`, comparison folds to lowercase, and `A.mp3` and `a.mp3` count as same-name placeholders |
+| `hasTrash` | The deletion tier. With `false`, a same-episode copy changes from `delete-loser` to a confirmation tier carrying a ` no-trash` marker, and `delete-redundant` carries `noTrash` — on a shelf where deletion cannot be undone, a person must always nod |
+| `listingIsLive` | Whether to `refresh` before planning. **No consumer yet**: today the three-sided scan unconditionally uses `refresh:true`; this flag records a fact (OpenList has a 30-minute directory cache), and no code branches on it yet |
+| `reportsInProgress` | Whether the source can carry `inProgress` on an entry. **No consumer yet**: `isSizeSuspect` reads `RFile.inProgress` directly and does not ask whether the shelf declared it |
 
-OpenList 那份自述是 `OPENLIST_TRAITS`：`{ caseSensitive: true, hasTrash: true, listingIsLive: false,
-reportsInProgress: false }`。`AlistClient` 就是今天唯一的 `FileShelf` 实现，`id === 'openlist'`。
-一套契约测试（`shelf-contract.ts`）在假 shelf 和真 `AlistClient` 上跑同一份用例——两份实现漂了
-它就是报警的那个人。
+OpenList's self-description is `OPENLIST_TRAITS`: `{ caseSensitive: true, hasTrash: true, listingIsLive: false,
+reportsInProgress: false }`. `AlistClient` is today the only `FileShelf` implementation, with `id === 'openlist'`.
+A set of contract tests (`shelf-contract.ts`) runs the same cases against a fake shelf and the real `AlistClient` — if the two implementations drift,
+it is the one that raises the alarm.
 
-#### 决定键带着货架 id
+#### Decision Keys Carry the Shelf ID
 
-豁免 / 墓碑 / 不是这一集 / 就是这一集 / 留哪份，这五类决定的键是 `fileKeyOf(shelfId, path)`
-（`reconcile/decisions.ts`），`DecisionStore` 建的时候绑定一个 `shelfId`。两个货架上同一个相对
-路径不是同一份文件，不分家就会互相顶掉对方的钉子。键的拼法只在那一个函数里，有守卫测试钉着。
+For the five kinds of decisions — exemption / tombstone / not this episode / is this episode / which copy to keep — the key is `fileKeyOf(shelfId, path)`
+(`reconcile/decisions.ts`), and `DecisionStore` is bound to a `shelfId` when built. The same relative path on two shelves is not the same file; without separating them, they would knock out each other's pins.
+The key format lives in that one function only, pinned by a guard test.
 
-**改一个已上线货架的 id = 它的存量决定整批掉钉**——拼出来的键对不上了，而表现是「用户点过的
-『不再提醒』悄悄失效」，没有一处会喊。
+**Changing the id of a shelf already in production = its existing decisions all lose their pins** — the assembled keys no longer match, and the symptom is "the 'stop reminding me' the user clicked
+quietly stops working", with nothing shouting about it.
 
-### 三层分工：谁供清单、谁出音频、谁搬文件
+### Three-Layer Division of Labor: Who Supplies the Listing, Who Produces the Audio, Who Moves the Files
 
-整理的对象是**一条绑定**（`{claimed, secondary?}`）：`claimed` 货架（= 绑定落地目录
-`right.path`）播客、影视通用必有；`secondary`（播客的「下架」货架）与 `sourceDirs`（暂存区）
-都是**可选**的——都不配就是**原地模式**：只在 `claimed` 货架自己的文件里挑赢家、把落选副本判删，
-没有搬运。电影一键去重就是这个退化配置，不是第二套实现。
+The object of organize is **one binding** (`{claimed, secondary?}`): the `claimed` shelf (= the binding's landing directory
+`right.path`) is always present for podcasts and film/TV alike; `secondary` (the podcast "offline" shelf) and `sourceDirs` (the staging area)
+are both **optional** — configuring neither gives **in-place mode**: pick winners only among the files on the `claimed` shelf itself and judge the losing copies for deletion,
+with no moves. One-click film dedup is this degenerate configuration, not a second implementation.
 
-| 层 | 干什么 | 手里的东西 |
+| Layer | What it does | What it holds |
 |---|---|---|
-| **权威清单** | 给出「这个节目/作品有哪些集」（播客场景下再加付费标志） | 一条 stream 的**节目单层**，或 TMDb 剧集表 |
-| **解析** | 把（付费）集、以及清单里没带播放链接的条目变成真能播的音频/视频 | **绑定**：它的落地目录就是 `claimed` 货架 |
-| **整理** | 把暂存区文件搬进两个货架 + 同集择优、落选副本判删，**只有这一个操作** | 来源目录（配了 `sourceDirs` 时）或货架自身（原地模式） |
+| **Authority listing** | Gives "which episodes this show/work has" (for podcasts, plus the paid flag) | The **program-schedule layer** of a stream, or the TMDb episode table |
+| **Resolution** | Turns (paid) episodes, and entries in the listing that carry no playback link, into audio/video that can really play | The **binding**: its landing directory is the `claimed` shelf |
+| **Organize** | Moves staging-area files into the two shelves + picks the best among same-episode copies and judges losing copies for deletion — **this is the only operation** | The source directory (when `sourceDirs` is configured) or the shelf itself (in-place mode) |
 
-**一条 stream = 节目单层 ⊎ 货架层，权威清单只取节目单层。** 节目单层 = 站外来的条目（源站
-feed）；货架层 = 这条 stream 上**网盘成员**（`alist`）产出的条目——下架货架就是这么进来的
-（`alist-audio` 源扫那个目录），扫到的每个文件直接是一条可播条目，用户点得开。取权威时按成员表算出网盘成员的 source id、
-把它们产出的条目剔掉（`src/netdisk/left-from-stream.ts` 的 `authorityFromStream`）。
+**One stream = program-schedule layer ⊎ shelf layer, and the authority listing takes only the program-schedule layer.** The program-schedule layer = entries from outside (the source site's
+feed); the shelf layer = entries produced by the **netdisk member** (`alist`) on this stream — this is how the offline shelf comes in
+(the `alist-audio` source scans that directory), and every file scanned is directly a playable entry the user can open. When taking the authority, the source ids of the netdisk members are computed from the member table
+and the entries they produce are removed (`authorityFromStream` in `src/netdisk/left-from-stream.ts`).
 
-**为什么必须剔**：货架进节目单 = 把答案抄进题目。整理刚把一份文件判下架、搬进下架货架，
-下一轮采集就把它写回库；权威若照单全收，这份文件就以「节目单上的一集」身份回流，
-归档器再也判不出它已下架。剔的只是「进不进权威」——货架层照常是可播条目、照常在 UI 里，
-那个 `alist` 成员是有意挂的，不要去拆它。
+**Why they must be removed**: letting the shelf into the program schedule = copying the answer into the question. Organize has just judged a file offline and moved it into the offline shelf;
+the next harvest writes it back into the library; if the authority took everything as is, this file would flow back as "an episode on the schedule",
+and the archiver could never again tell it was already taken offline. Only "whether it enters the authority" is removed — the shelf layer is still a playable entry and is still in the UI as usual,
+and that `alist` member is mounted deliberately; do not tear it down.
 
-#### 权威清单的数据来源契约
+#### The Authority Listing's Data-Source Contract
 
-**权威清单只从存储层取**（`itemStore` 那个形状——库里到底存了什么）。**播放投影永不进入整理管线**：
-`/api/items` 上挂着一道服务期投影（`src/content/paid-playability.ts`、`video-playability.ts`），
-付费集在网盘还没配上时，整条音频被换成一张封面图——时长和 `track_id` 随之消失。它回答的是
-「前端此刻看到什么」，不是「库里存了什么」。
+**The authority listing is taken only from the storage layer** (the `itemStore` shape — what the library actually stores). **The playback projection never enters the organize pipeline**:
+`/api/items` carries a serve-time projection (`src/content/paid-playability.ts`, `video-playability.ts`), and
+when a paid episode is not yet paired in the netdisk, the whole audio is replaced by a cover image — the duration and `track_id` vanish with it. It answers
+"what the frontend sees right now", not "what the library stores".
 
-这条契约由**类型系统**强制，不靠记性：投影产出 `PresentedItem`（`src/content/presented-item.ts`），
-它在类型上赋不回 `StoredItem`，而 `src/netdisk/left-from-stream.ts` 的两个入口只收 `StoredItem`。
-把投影的产物喂进去是编译错，不是运行时才发现的假结论。
+This contract is enforced by the **type system**, not by memory: the projection produces `PresentedItem` (`src/content/presented-item.ts`),
+which cannot be assigned back to `StoredItem` in the type system, while the two entry points of `src/netdisk/left-from-stream.ts` accept only `StoredItem`.
+Feeding the projection's product in is a compile error, not a false conclusion discovered at runtime.
 
-**要查整理管线眼里的权威清单，走这三扇门**（只读，与 preview 同一条取数路径，都返回清单本身
-+ `{ entries, paid, withDuration, needsSupply }` 四个数，与运行账本同口径）。排错时用它们，
-别去 `/api/items` 数时长——那里数出来的必然是假的：
+**To inspect the authority listing as the organize pipeline sees it, use these three doors** (read-only, on the same data-fetching path as preview; each returns the listing itself
++ the four numbers `{ entries, paid, withDuration, needsSupply }`, on the same footing as the run ledger). Use them when debugging,
+and do not count durations on `/api/items` — what you count there is necessarily false:
 
-清单还自报**它自己全不全**：`source` 是取数口的名字（`stream:<id>` / `tmdb:<id>`），`truncated:true`
-表示**取数**撞上了 `AUTHORITY_ITEM_LIMIT`、后面还有——**这个字段缺席才表示"全"，它永远不写 false**。
-它是从取回来的原始条数判的，不是从过滤后的 `entries` 判的（货架层与 muted 剔完之后条数天然少于上限）。
-为什么要有：归档器判「下架」用的正是「清单里没有它」，清单不全时那句话是错的。截断丢的永远是**最老的**
-那批（取数按 newest-first 拿 `AUTHORITY_ITEM_LIMIT + 1` 条再倒回入库顺序），不是最新入库的那批。
+The listing also reports **whether it is complete itself**: `source` is the name of the fetch entry (`stream:<id>` / `tmdb:<id>`), and `truncated:true`
+means the **fetch** hit `AUTHORITY_ITEM_LIMIT` and there is more behind it — **the absence of this field means "complete"; it never writes false**.
+It is judged from the raw count fetched, not from the filtered `entries` (after the shelf layer and muted entries are removed, the count is naturally below the limit).
+Why it exists: the archiver judges "offline" with exactly "the listing does not contain it", and when the listing is incomplete that statement is wrong. Truncation always drops the **oldest**
+batch (the fetch takes `AUTHORITY_ITEM_LIMIT + 1` entries newest-first and then reverses them back into ingestion order), not the most recently ingested.
 
-| 门 | 什么时候用 |
+| Door | When to use |
 |---|---|
-| `GET /api/netdisk/reconcile/:show/authority` | 这条流已经配过整理 |
-| `GET /api/netdisk/reconcile/bindings/:bindingId/authority` | 影视那档原地模式（没有 show 配置） |
-| `GET /api/netdisk/reconcile/streams/:streamId/authority` | **什么都还没配**——既没 show 也没绑定 |
+| `GET /api/netdisk/reconcile/:show/authority` | This stream has already been configured for organize |
+| `GET /api/netdisk/reconcile/bindings/:bindingId/authority` | The film/TV in-place mode (no show config) |
+| `GET /api/netdisk/reconcile/streams/:streamId/authority` | **Nothing configured yet** — neither a show nor a binding |
 
-第三扇门是为「**这条订阅该用整理，还是网盘里的其实是另一批节目**」而开的：判据是 `stats.needsSupply`（源站列着但自己
-放不出来的集数，>0 才有东西要从网盘配上去）。前两扇都要先有配置，而配置正是用户还没决定要不要建
-的那个东西，所以它们答不了这一问。UI 侧就是网盘抽屉顶上那一句（`NetdiskAdvice`）——
-**前端不自己数**，`/api/items` 的播放投影会让它数出假结论。
+The third door is opened for "**should this subscription use organize, or is what is in the netdisk actually a different batch of programs**": the criterion is `stats.needsSupply` (the number of episodes the source site lists but
+cannot serve itself; only when >0 is there something to pair from the netdisk). The first two doors both require a config first, and the config is exactly what the user has not yet decided whether to
+build, so they cannot answer this question. On the UI side it is the sentence at the top of the netdisk drawer (`NetdiskAdvice`) —
+**the frontend does not count by itself**, because the `/api/items` playback projection would make it count a false conclusion.
 
-**匹配心智只有一套，两个调用点**：绑定同步（`sync.ts`）和整理（`plan.ts`）都调同一个引擎
-（经 `match-engine/adapt.ts`；整理还会读判决里的残差、文件侧问句与轨迹）。
-用户给了来源就跑这套流程；播放/显示时压根不碰它。
+**There is only one matching mindset, with two callsites**: binding sync (`sync.ts`) and organize (`plan.ts`) both call the same engine
+(via `match-engine/adapt.ts`; organize additionally reads the residuals, the file-side questions, and the trail in the verdict).
+It runs this flow when the user supplies a source; playback/display never touches it.
 
-**由此定归属（spec §6 P8）**：两个货架的地址各有真相源，**整理配置里不存它们**——
-付费货架 = 绑定的 `right.path`，下架货架 = 货架层那个 `alist` 成员扫的目录（`offlineDirOf` 现读
-成员表）。整理每轮现解（`ReconcileService.shelvesOf`）。解不出来（没绑定 / 订阅还没有下架来源 /
-地址撞了来源目录）就**停下报错**，不许拿别处的路径顶上：没有成员在扫的目录，文件搬进去就不可播、
-不在任何清单里，等于从用户眼前消失。
+**Ownership follows (spec §6 P8)**: the addresses of the two shelves each have their own source of truth, and **the organize config does not store them** —
+paid shelf = the binding's `right.path`, offline shelf = the directory scanned by the shelf layer's `alist` member (`offlineDirOf` reads
+the member table live). Organize resolves them fresh every round (`ReconcileService.shelvesOf`). If they cannot be resolved (no binding / the subscription has no offline source yet /
+the address collides with the source directory), **stop and report an error** and do not substitute a path from elsewhere: a directory that no member scans means files moved in would not be playable,
+would be in no listing, and would effectively vanish from the user's sight.
 
-四条不变量：
+Four invariants:
 
-- **子节目 `numPattern` 只选目的地，不豁免匹配**：命中它只是把 `claimed` 的落点从付费根换成那个
-  子节目文件夹；文件是不是那一集照样只由匹配器裁。别把它做成"名字命中即认领"的前置 pass——那就是
-  第二个判定脑：错身文件会被按名字认领、原地不动，正确那份永远 `swap-hold` 等一个不腾空的位置（死锁）。
-- **`durationS === undefined` 是"没探到"不是"时长不对"**——只能进 `hold`，永远不进 `offline`。
-  否则一次夸克凭证过期就能把一批好文件挪下货架。
-- **绝不往已有同名或同集文件的目录里搬**：同名是执行面的（`executePlan` 把 move 按
-  `(srcDir → dstDir)` 分组、组间顺序不保证，同轮"A 搬出去 + B 搬进来"会撞名 403）；同集是
-  语义面的（货架上已有这一集的一份——哪怕正在待裁——再搬进第二份就是一集两份，违反"默认不重复"。
-  同集判按认集身份 key，不是字面文件名：带【】装饰的副本也拦得住）。两种都降级
-  `pending swap-hold`，下一轮那边腾空了自然落位。归档器周期跑，代价只是多一轮。
-- **占位那份本轮就要被无条件删掉时，等位那份当轮落位**（换槽位，`freeSlotPass`）：降级出来的
-  `swap-hold` 会被提升回 `move` 并带上 `evicts`（前置条件是哪份文件）。执行器**先删后搬**，
-  且前置那一步没做成（删失败）时这条搬运跟着不跑——少了这条必撞名 403。
-  三个闸门：占位者只认 `delete-dup` / `delete-redundant`（`delete-loser` 是确认档、定时轮会
-  跳过它，把等它的搬运摆进「可以自动完成」就是说假话）；挡着它的等位只有一条；目标目录**本轮
-  结束时**既没有同名也没有同集的（按"删完之后还剩什么"重算，不是查动手前那张占位表——占位者
-  自己就在那张表里，一查必然命中）。
-  **第二货架是例外**：那边没有"下一轮腾空"这回事（没有任何一轮会去搬走架上那份），干等就是
-  永不腾空的僵尸位——所以判下架的文件搬过去之前先与架上同集那份**择优**（见上表 `offline` 行）。
-- **本轮就要被删掉的文件不挂任何"搬进来"的动作**：一份文件被选成 `replace` 的 `oldPath` 时，它
-  自己那条 `move` 和 `pending swap-hold` 都撤成无动作（账本行照留，`action: none`，守恒不变）。
-  否则账本自相矛盾：同一份文件既"本轮删你"又"下轮搬你进来"，而"等下一轮落位"那一组里会站着
-  一批本轮就不存在了的文件。`no-duration` / `suspect-dir` 讲的是另一回事，不受影响。
-- **同集副本的处置一律是确认档，定时轮永不自己删**：同一集有几份都对得上时（如库内那份尾巴多几
-  秒口播），匹配器按体量/清晰度选出占货架的那份，落选那份进 `copy` 筐 → 更差判 `delete-loser`、
-  更优判 `replace`、分不出高下时按节目单裁方向。两者都进「将删清单」等预览确认——`autoExecute`
-  管得到搬运和字节全等重复，管不到这一类，删除必须先过一次人眼。详见后文「同集副本为什么被删 /
-  为什么被换」。
+- **A sub-show's `numPattern` only chooses the destination and does not exempt matching**: hitting it merely switches the landing point of `claimed` from the paid root to that sub-show
+  folder; whether the file is that episode is still decided only by the matcher. Do not turn it into a pre-pass of "claim on a name hit" — that would be
+  a second decision brain: a wrong-identity file would be claimed by name and left in place, and the correct one would sit in `swap-hold` forever waiting for a slot that never frees (deadlock).
+- **`durationS === undefined` means "not probed", not "duration wrong"** — it can only go to `hold` and never to `offline`.
+  Otherwise a single expiry of the Quark credential could move a whole batch of good files off the shelf.
+- **Never move into a directory that already has a file with the same name or the same episode**: same name is on the execution side (`executePlan` groups moves by
+  `(srcDir → dstDir)` and the order between groups is not guaranteed, so "A moves out + B moves in" in the same round collides on name with a 403); same episode is on the
+  semantic side (if the shelf already holds a copy of this episode — even one awaiting adjudication — moving in a second copy yields two copies of one episode, violating "no duplicates by default".
+  Same-episode is judged by the episode-identity key, not the literal file name: copies decorated with 【】 are caught too). Both degrade to
+  `pending swap-hold`, and next round, once the other side has freed up, the file lands naturally. The archiver runs periodically, so the cost is only one extra round.
+- **When the placeholder is to be deleted unconditionally this round, the waiting file lands in the same round** (slot swap, `freeSlotPass`): a degraded
+  `swap-hold` is promoted back to `move` and carries `evicts` (the precondition is which file). The executor **deletes first, then moves**,
+  and when that precondition step fails (the delete fails) the move does not run either — without this, a name-collision 403 is certain.
+  Three gates: only `delete-dup` / `delete-redundant` count as placeholders (`delete-loser` is a confirmation tier that the scheduled round
+  skips, and listing a move that waits for it under "can complete automatically" would be a lie); only one waiter may be blocking it; and the target directory **at the end of this
+  round** has neither a same-name nor a same-episode file (recomputed as "what remains after the deletes", not by consulting the placeholder table from before the action — the placeholder
+  itself is in that table, so a lookup would always hit).
+  **The secondary shelf is an exception**: there is no "freed next round" there (no round will ever move away the copy on the shelf), and waiting would just be a
+  zombie slot that never frees — so before a file judged offline is moved over, it is first compared with the copy of the same episode already on the shelf for the **better** one (see the `offline` row in the table above).
+- **A file that is about to be deleted this round carries no "move in" action**: when a file is chosen as the `oldPath` of a `replace`, its
+  own `move` and `pending swap-hold` are both withdrawn to no action (the ledger row stays, `action: none`, conservation unchanged).
+  Otherwise the ledger contradicts itself: the same file is both "deleted this round" and "moved in next round", and the group "waiting to land next round" would contain
+  files that no longer exist this round. `no-duration` / `suspect-dir` are a different matter and are unaffected.
+- **Disposal of a same-episode copy is always a confirmation tier, and the scheduled round never deletes it by itself**: when several copies of one episode all match (e.g. the library copy
+  with a few extra seconds of spoken tail), the matcher picks the one that occupies the shelf by size/resolution, and the losing copy goes into the `copy` basket → worse is judged `delete-loser`,
+  better is judged `replace`, and when no difference can be told the direction is adjudicated by the program schedule. Both go into the "to-delete list" to wait for preview confirmation — `autoExecute`
+  governs moves and identical-byte duplicates but not this class, and deletion must first pass a pair of human eyes. See "Why a same-episode copy is deleted /
+  why it is replaced" later for details.
 
-每轮还落一条**运行账**（`netdisk.db` 的 `reconcile_runs` 表，同时进 preview/execute 的响应）：
-每个进入本轮的文件恰好一行（含无动作的）+ `conservation`（`input === 各筐之和`，代码自证）+
-`authority`（清单条数/付费数/时长覆盖率/要供货的集数）+ `errors`（探测失败、AList 报错）。**排错先看它**，
-不用翻后端 stdout。设计见
+Each round also records one **run ledger** (the `reconcile_runs` table in `netdisk.db`, also included in the preview/execute response):
+exactly one row per file entering this round (including no-action ones) + `conservation` (`input === the sum of the baskets`, self-proved by code) +
+`authority` (listing entry count / paid count / duration coverage / number of episodes that need supply) + `errors` (probe failures, AList errors). **Look at it first when debugging**,
+without digging through backend stdout. For the design see
 `internal design record`
-与 `internal design record`。
+and `internal design record`.
 
-## 一条订阅的网盘设置从哪进
+## Where a subscription's netdisk settings come in
 
-**一个入口：网盘面板**（`app/src/components/netdisk/NetdiskPanel.tsx`）。播客频道菜单的「网盘」
-和订阅头部那个硬盘图标打开的是同一个它。面板分两块，它们是**同一条传送带的两端**，
-**各写回自己那一份真相源**：
+**One entry point: the netdisk panel** (`app/src/components/netdisk/NetdiskPanel.tsx`). The "Netdisk" item in a
+podcast Channel's menu and the hard-drive icon in the subscription header open the same panel. The panel has
+two blocks, which are **the two ends of the same conveyor belt**, and
+**each writes back to its own source of truth**:
 
-| 面板里这一块 | 是哪一端 | 读的是 | 真相源 |
+| Block in the panel | Which end | What it reads | Source of truth |
 |---|---|---|---|
-| 整理 | 进料口那一端 | 整理配置（这一轮认上的搬去哪个货架；靠 `bindingId` 一对一挂在下面那条绑定上） | `reconcile_shows` |
-| 配对情况 | 出料口 | 绑定（哪个网盘目录对着这条订阅的节目单、逐集配没配上） | `MappingStore` |
+| Organize | The intake end | The organize config (where the files recognized in this round get moved on the shelf; attached one-to-one to the binding below through `bindingId`) | `reconcile_shows` |
+| Pairing status | The output end | The binding (which netdisk directory faces this subscription's episode list, and which episodes are matched one by one) | `MappingStore` |
 
-**合的是入口，不是数据。** 两份各有职责，并成一张表就把两层搅成一锅——之后没人说得清某个数
-出自哪一层。面板顶上那句「该用整理还是网盘里的是另一批节目」见上面「权威清单的数据来源契约」。
+**What is merged is the entry point, not the data.** The two stores have separate responsibilities; merging them into one table
+mixes the two layers together, and afterwards nobody can say which layer a given number
+came from. The line at the top of the panel, "whether to use organize, or the netdisk holds a different batch of shows", is described above in "Data-source contract of the authoritative list".
 
-**这个面板不写整理配置。** 来源目录是一次性进料，不是这条订阅的长期设置——换目录 = 开新的
-一轮整理，走对话（AI 调 `reconcile_open`，一个动作里把两个货架目录、绑定、下架来源、配置
-四样原子地摆好，失败整体回滚）。别在面板上加配置表单：它会是第二个写回口，而且一定比后端
-那条少一半校验与回滚，留下的是「绑定建了、下架来源没补」那种半截状态——判为下架的文件搬进
-一个没人扫的目录，在用户那边就是直接消失。
+**This panel does not write the organize config.** The source directory is a one-time intake, not a long-term setting of this subscription — changing the directory = opening a new
+round of organizing, which goes through the conversation (the AI calls `reconcile_open`, which sets up the two shelf directories, the binding, the delisted source, and the config
+atomically in one action, and rolls everything back if it fails). Do not add a config form to the panel: it would be a second write-back path, and it would certainly have half the validation and rollback of the backend
+one, leaving behind half-finished states such as "binding created, delisted source not filled in" — files judged as delisted get moved
+into a directory nobody scans, which from the user's side means they simply vanish.
 
-**把一个网盘目录当节目源订阅不在这个面板里**，它是普通的「添加来源」：挑 `alist-audio`
-源（标题「网盘目录（音频）」）、填 `path`（该参数在 manifest 里声明了 `widget: netdisk-dir`，
-所以前端给的是目录选择器不是文本框），写的是**订阅的成员表**，与这条传送带无关。
+**Subscribing to a netdisk directory as a show source does not happen in this panel.** It is an ordinary "Add source": pick the `alist-audio`
+source (titled "网盘目录（音频）" ("Netdisk directory (audio)")), fill in `path` (this parameter is declared in the manifest with `widget: netdisk-dir`,
+so the frontend shows a directory picker rather than a text box). What it writes is the **subscription's member table**, which has nothing to do with this conveyor belt.
 
-「这条整理配置归哪条订阅」是**一条判据、一份实现**（`app/src/lib/reconcileShows.ts` 的
-`showsForStream`）：整理配置本身不记订阅，只记 bindingId，得绕道绑定的 `left.streamId`。
-面板那一块摘要和整理弹窗自己筛选用的是同一份——两份会漂成「整理里配着、面板说没配」。
+"Which subscription this organize config belongs to" is **one criterion, one implementation** (`showsForStream` in `app/src/lib/reconcileShows.ts`): the organize config does not record the subscription itself, only a bindingId, so it has to detour through the binding's `left.streamId`.
+The summary block in the panel and the organize dialog's own filtering use the same one — two copies would drift into "configured in organize, but the panel says not configured".
 
-**影视走同一个面板，只是换一档**：一部作品是一条绑定、没有订阅，所以传 `bindingId` 而不是
-`streamId`。这一档的整理块换成「整理这个目录」，而顶上那句建议不出——它按订阅的节目单算
-（`needsSupply`），这儿没有那个数。
+**Movies and TV use the same panel, just in a different mode**: a title is one binding with no subscription, so `bindingId` is passed instead of
+`streamId`. In this mode the organize block becomes "Organize this directory", and the suggestion line at the top does not appear — it is computed from the subscription's episode list
+(`needsSupply`), and that number does not exist here.
 
-**整理面板（`ReconcilePanel`）同样两档**：`bindingId` 那一档不读整理配置、不选节目、不出
-「还没配过整理」那一档（都是 show 的东西），预览/执行走 `bindings/:id/preview|execute`。
-**待决卡这一档也有**——它只吃 preview 的产出，与配置从哪来无关。影视的
-「一键去重」就在这个面板里，没有单开的菜单项。
+**The organize panel (`ReconcilePanel`) has the same two modes**: the `bindingId` mode does not read the organize config, does not pick a show, and does not show the
+"never configured for organizing" state (all of these are show things); preview/execute go through `bindings/:id/preview|execute`.
+**The pending-decision cards exist in this mode too** — they consume only the output of preview, regardless of where the config comes from. The movie/TV
+"one-click dedup" lives in this panel; there is no separate menu item for it.
 
-### 一条订阅挂了多个目录：表里那一行是「合出来」的
+### A subscription with several directories attached: the row in the table is "merged"
 
-一条订阅可以挂**多个**绑定目录（春典/怡乐那种「付费」+「下架」）。配对表把同一条清单条目在
-各绑定下的记录**合成一行**，取其中一条当代表（`mergedEntries` 的 `best`，
-`app/src/components/netdisk/NetdiskBindings.tsx`）。这一行不只决定显示什么，还决定
-**「编辑」写回哪个绑定、从哪个目录开始浏览**（`setId`）。
+A subscription can have **several** bound directories (the "paid" + "delisted" pair such as 春典/怡乐 (Chundian/Yile)). The pairing table **merges** the records of the same list entry
+under each binding **into one row**, taking one of them as the representative (`best` in `mergedEntries`,
+`app/src/components/netdisk/NetdiskBindings.tsx`). That row decides not only what is displayed but also
+**which binding "Edit" writes back to and which directory browsing starts from** (`setId`).
 
-**挑 best 的第一判据是「手里有没有文件」，不是「有没有被人工订正过」。** 把一条已配在 A 的条目
-改绑到 B，**两边都会被标成人工订正**——A 是被清空（`rightFile` 变 null，`corrected.autoFile`
-记着原来自动配的那个），B 是收到文件。只看 `corrected` 两边同分，同分按绑定顺序取第一个就会
-取到**被清空的那个**：改绑明明成功了，表里却显示「未配对」，而且下次点「编辑」又回到 A。
-数据是对的、界面在骗人——这类错法不会报错，只会让人以为操作没生效然后再做一遍。
+**The first criterion for picking `best` is "does it hold a file", not "has it been manually corrected".** When an entry that was paired in A is
+rebound to B, **both sides get marked as manually corrected** — A is cleared (`rightFile` becomes null, and `corrected.autoFile`
+records the one that was originally auto-paired), and B receives the file. Looking only at `corrected`, the two sides tie, and a tie broken by binding order takes the first one,
+which is **the cleared one**: the rebinding clearly succeeded, yet the table shows "unpaired", and the next click on "Edit" goes back to A.
+The data is right and the UI lies — this kind of bug raises no error; it only makes people think the operation did not take effect, so they do it again.
 
-## 认领一个文件夹
+## Claiming a folder
 
-把网盘上一个既有文件夹接进某个订阅的唯一入口：频道 → 网盘面板 → 打开整理 → 认领。只选文件夹，库目录
-与名称按约定派生（`<挂载根>/From Stream/<节目名>/付费`，同级「下架」目录跟随派生）；提交即
-建绑定 + 写归档配置，文件移动仍只走预览 → 执行。设计与边界见
-`internal design record`。
+The only entry for connecting an existing folder on the netdisk to a subscription: Channel → netdisk panel → open organize → claim. You pick only the folder; the library directory
+and name are derived by convention (`<mount root>/From Stream/<show name>/付费` ("paid"), and the sibling "下架" ("delisted") directory follows the derivation); submitting
+creates the binding and writes the archive config, while file moves still go only through preview → execute. For the design and its boundaries see
+`internal design record`.
 
-## 怎么给一个绑定配规则
+## How to configure rules for a binding
 
-**永远先 preview 再 apply**。preview 返回 `changed` 数组，逐条是 `{leftKey, title, from, to}`。
+**Always preview before apply.** preview returns a `changed` array, each element being `{leftKey, title, from, to}`.
 
 ```
 POST /api/netdisk/mappings/<id>/spec/preview   {"spec": {...}}
 POST /api/netdisk/mappings/<id>/spec/apply     {"spec": {...}}
 ```
 
-**谱是在对话里写的**：跟模型说「这个绑定还有残差，调一下规则」，它用 `netdisk_bindings`
-找到绑定、`netdisk_residue` 读残差（没配上的左项、没人用的右文件、人工订正样本）、自己写一份
-MatchSpec、`netdisk_preview_spec` dry-run 看 `changed`，你点头了再 `netdisk_apply_spec`。
-不满意就让它接着改——这是个能来回几轮的循环，不是一发定生死。
+**The spec is written in conversation**: tell the model "this binding still has a residue, adjust the rules", and it uses `netdisk_bindings`
+to find the binding, `netdisk_residue` to read the residue (left items that did not match, right files nobody uses, manually corrected samples), writes a
+MatchSpec itself, and dry-runs it with `netdisk_preview_spec` to look at `changed`; once you approve, it calls `netdisk_apply_spec`.
+If you are not satisfied, let it keep revising — this is a loop that can go back and forth for several rounds, not a one-shot decision.
 
-**读 preview 的判据**：
+**Criteria for reading the preview**:
 
-- `from: null → to: "文件名"` = 新配上的，**大概率是好事，但不是自动的好事**——去核对一下
-  `to` 那个文件名是不是真的对应这一集。剥掉一条前缀/后缀可能让原本靠这条前缀彼此区分的
-  重复副本掉进弱信号的 `title` 档、被 bigram 相似度错误地凑对（真实案例见「共享认集层」：
-  给怡乐绑定加前缀 strip 后，`878.五十谈身边灵异事` 被配上了完全不同集号的
-  `137.十谈身边灵异事.mp3`）。**判据是集号对不对得上，不是"从 null 变有了"这个事实本身**
-- `from: "A" → to: "B"` = **打破了已有配对**。除非你就是在修错配，否则说明规则写宽了，停下
-- 变化条数远超预期 = 规则写宽了
+- `from: null → to: "文件名"` ("file name") = newly paired. **Most likely good, but not automatically good** — check
+  whether the file name in `to` really corresponds to this episode. Stripping a prefix/suffix may drop
+  duplicate copies, which were told apart by that prefix, into the weak-signal `title` tier, where bigram similarity wrongly pairs them (for a real case see "Shared episode-recognition layer":
+  after adding a prefix strip to the 怡乐 (Yile) binding, `878.五十谈身边灵异事` was paired with the completely different episode number
+  `137.十谈身边灵异事.mp3`). **The criterion is whether the episode numbers match, not the fact that it "went from null to something"**
+- `from: "A" → to: "B"` = **an existing pairing was broken**. Unless you are exactly fixing a wrong pairing, this means the rule is too broad; stop
+- A number of changes far beyond expectation = the rule is too broad
 
-规则是数据，写进绑定，随时可以改回去——但已 apply 的规则会立刻重算 coverage。
+Rules are data, written into the binding, and can be changed back at any time — but an applied rule recomputes coverage immediately.
 
-## 排错：某个文件没配上，怎么查
+## Troubleshooting: a file did not match, how to investigate
 
-先分清三种"对不上"，它们的修法完全不同：
+First tell apart three kinds of "does not line up"; their fixes are completely different:
 
-| 症状 | 含义 | 修法 |
+| Symptom | Meaning | Fix |
 |---|---|---|
-| 左项在 `unmatchedLeft`，右侧**没有**对应文件 | 网盘真没有这一集 | 不是匹配问题，去补文件 |
-| 左项在 `unmatchedLeft`，右侧文件在 `orphanFiles` | **两边都有，就是对不上** | 见下面的逐档排查 |
-| 只有 `orphanFiles`，左侧没有对应条目 | 节目单里本来就没有（花絮/加更/收工了/纯享） | 正常，忽略 |
-| 整个来源目录的动作全部变成 `pending`，理由带「目录疑似认领错误」 | suspect-dir 熔断（`plan.ts` `suspectDirPass`）：该目录内「进下架 + 对不上」的文件过半且 ≥5 | **先去看那个目录里装的是什么**（`netdisk_browse`），再按下面三档对号入座。熔断不落任何持久状态 |
+| The left item is in `unmatchedLeft`, and the right side has **no** corresponding file | The netdisk really does not have this episode | Not a matching problem; go add the file |
+| The left item is in `unmatchedLeft`, and the right file is in `orphanFiles` | **Both sides have it; they just do not line up** | See the tier-by-tier check below |
+| Only `orphanFiles`, with no corresponding entry on the left | The episode list never had it (extras / bonus episodes / wrap-up / 纯享 ("pure-cut")) | Normal; ignore |
+| All actions for a whole source directory become `pending`, with the reason `目录疑似认领错误` ("directory suspected wrongly claimed") | suspect-dir circuit breaker (`suspectDirPass` in `plan.ts`): more than half of the files in that directory are "going to the delisted shelf + not lining up", and there are at least 5 | **First look at what the directory holds** (`netdisk_browse`), then sort it into one of the three cases below. The circuit breaker persists no state |
 
-#### 熔断之后的三档 —— 先看目录，别先问人
+#### The three cases after the circuit breaker — look at the directory first, do not ask a person first
 
-熔断说的是**一件事**（"这个目录到底装的是什么"），不是 N 个待裁决问题。它下面几百条 `pending`
-是同一条判断的副本，**逐条裁是错误动作，不是慢动作**。而目录里装了什么是查得到的事实，
-所以第一步永远是 `netdisk_browse` 那个目录，不是把问题抛给用户。看完对号入座：
+The circuit breaker says **one thing** ("what does this directory actually hold"), not N pending questions to adjudicate. The hundreds of `pending` entries underneath it
+are copies of the same judgment, and **adjudicating them one by one is the wrong action, not just a slow one**. What a directory holds is a fact you can look up,
+so the first step is always `netdisk_browse` on that directory, not throwing the question at the user. After looking, sort it into one of these:
 
-| 看到的 | 是什么 | 修法 |
+| What you see | What it is | Fix |
 |---|---|---|
-| 装的是**别的节目** | 目录真指错了（常见于指到下辖多个节目的父目录） | 改绑定的来源目录，别裁决 |
-| 装的是**本节目，但全是番外/合辑/花絮** | 目录没指错，是**节目单不覆盖这批内容** | 别裁决也别照搬——照搬会把它们整批判进下架。把发现摆给用户，由他决定这批内容怎么安置（例如另立一条订阅，节目单就是这批文件本身） |
-| 确实是**本节目的正片**，只是没匹配上 | 真的要逐条判 | 逐条人工裁决（agent 面用 `reconcile_status` 的 `expandDir` 翻页取） |
+| It holds **a different show** | The directory really points to the wrong place (common when pointing at a parent directory that contains several shows) | Change the binding's source directory; do not adjudicate |
+| It holds **this show, but all extras / compilations / bonus episodes** | The directory is not wrong; **the episode list does not cover this batch of content** | Do not adjudicate, and do not copy as-is — copying would send the whole batch to the delisted shelf. Put the finding in front of the user and let them decide how to place this batch (for example, a separate subscription whose episode list is the batch of files itself) |
+| It really holds **the main episodes of this show**, just unmatched | They genuinely need to be judged one by one | Adjudicate manually one by one (on the agent side, page through them with `expandDir` of `reconcile_status`) |
 
-**第二档最容易被误判成第一档。** 活体样本：一个 349/491 熔断的目录，10 个顶层子目录全是
-plus / 大醉酒馆 / 纪念专辑 / 纳凉故事这类付费番外——目录名字字都是本节目的，一集正片都没有。
-照第一档去"改绑定"改不出结果（没有更对的目录可指），照第三档去逐条裁则是把一个安置问题
-当成了 491 个认集问题。
+**The second case is the one most easily mistaken for the first.** Live sample: a directory tripped at 349/491, whose 10 top-level subdirectories were all paid extras such as
+plus / 大醉酒馆 ("Drunken Tavern") / 纪念专辑 ("commemorative album") / 纳凉故事 ("cool-evening stories") — every directory name carried this show's name, and there was not a single main episode.
+Treating it as the first case and "changing the binding" produces nothing (there is no better directory to point to), while treating it as the third case and adjudicating one by one turns a placement problem
+into 491 episode-recognition problems.
 
-**熔断的分子含 `duration-collision`**：它的判定筐就是 `offline`（没落到任何一集头上），语义上确实是
-"认不出属于本节目"。所以一个目录里成批出现撞时长的文件时，熔断比只看纯 `offline` 时更容易触发——
-**判据不因此放宽**：过敏的代价只是多问一句，而漏判是成批错搬。
+**The numerator of the circuit breaker includes `duration-collision`**: its bucket is `offline` (not landing on any episode), and semantically it really means
+"cannot be recognized as belonging to this show". So when files with colliding durations appear in a directory in bulk, the circuit breaker trips more easily than when counting pure `offline` —
+**the criterion is not loosened because of this**: the cost of oversensitivity is only one more question, whereas a missed call means files get moved wrongly in bulk.
 
-**第三种是大头，别把它当 bug。** 喜剧之王 165 个 orphan 里绝大多数是 TMDb 剧集表里根本
-不存在的衍生内容。
+**The third case is the bulk of it; do not treat it as a bug.** Most of the 165 orphans of 喜剧之王 (King of Comedy) are derivative content that does not exist in the TMDb
+episode table at all.
 
-**归档器（reconcile）把文件搬错了货架** —— 归档器不做认集判定，它照匹配器的结论搬
-（见「归档器不做认集判定」），所以修法就是本文档这一层：绑定的 `titleStrip`/`epNumRegex`
-（认集/分组）+ 谱里的 stage 阈值。**先读那一轮的运行账**（`netdisk.db` 的 `reconcile_runs` 表
-或响应里的 `ledger`）：
-每个文件一行、`basis` 说清它为什么落进那个筐，比对着文件名猜快得多。
+**The archiver (reconcile) moved a file to the wrong shelf** — the archiver does no episode-recognition judgment; it moves files according to the matcher's conclusion
+(see "The archiver does no episode-recognition judgment"), so the fix is at this document's layer: the binding's `titleStrip`/`epNumRegex`
+(recognition/grouping) plus the stage thresholds in the spec. **First read that round's run ledger** (the `reconcile_runs` table in `netdisk.db`,
+or the `ledger` in the response):
+one row per file, with `basis` saying why it landed in that bucket, which is much faster than guessing from file names.
 
-### 两边都有却对不上 —— 逐档看卡在哪
+### Both sides have it but they do not line up — check tier by tier where it is stuck
 
-用 `netdisk_residue`（MCP）或 `GET /api/netdisk/mappings/<id>` 拿到 `unmatchedLeft` 和
-`orphanRight`，把这一对拎出来，从上往下问：
+Use `netdisk_residue` (MCP) or `GET /api/netdisk/mappings/<id>` to get `unmatchedLeft` and
+`orphanRight`, pull out the pair in question, and ask from top to bottom:
 
--1. **两边时长对得上吗？—— 先问这个，它是主锚。** `unmatchedLeft` 每条自带 `durationS`
-   （没有 = 源站就没给，这一档对它天然不生效，跳到第 0 问）。有 `durationS` 却没配上，
-   只有四种可能，按这个顺序查：
-   - **右侧那个文件没探到时长**：AList 未配 / 直链 412（夸克 `__puus` 过期）/ ffprobe 探失败，
-     都会静默降级成"没时长"；也可能是**本轮探测预算（200 次新探测）用尽**，再同步一次即可。
-     判据：`netdisk.db` 的 `durations` 表里有没有 `<字节数>:<绝对路径>` 这个 key
-     （值为 `null` = 探过且失败的负缓存，**改了文件名不会失效，字节数变了才会重探**）。
-   - **差超过 1s**：容差就是 1s（同一集的编码零头量级）。差得更多基本就是另一集了——
-     别急着调容差，先确认这俩真是同一集。
-   - **撞车了**：好几个文件都落在容差内（整季等长的节目常见），标题也分不出 → 记 ambiguous，
-     这是**设计如此**，不许硬配。往下走文件名规则链的排查。
-   - **名字没过地板**：容差内独一份，但两边标题相似度 &lt; `DURATION_MIN_SIM`(0.3) → **故意不配**。
-     判据：把两个归一化后的标题拿去比，几乎没有共同的相邻字对。若你确信这俩就是同一集
-     （名字被改得太狠），**别调地板**——给该绑定的 `titleStrip` 补一条把噪声剥掉，让相似度
-     真实反映内容；剥完还是 0，那就是文件名已经不含任何身份信息，人工 `patchEntry` 收尾。
-     同一个文件在**整理**那边表现为一条 `pending duration-collision`（账本 basis
-     `ambiguous:name-floor:<leftKey>`）——两边是同一道地板，所以两边同时出现、也同时消失。
-0. **多季 tv 绑定：整季/整个子目录都没配上，不是零星几集？** 先怀疑季归属判错了，不是
-   fileRegex/threshold 的事——`GET /api/netdisk/mappings/<id>` 的 `llmSeasonCache` 字段记着
-   每个待判文件夹最终判成了哪一季（`null` = 三档都判不出，文件整段没进任何季的匹配桶）。
-   一整个子目录的文件全在 `orphanFiles` 里、且它们本该对应的左项**恰好**是另一季在
-   `unmatchedLeft` → 大概率是 `season-resolve.ts` 判季环节的问题（见上一节），不是这一节讲的
-   fileRegex/titleStrip 问题——去查文件夹名有没有字面季号、文件数是否撞了别的季。
-1. **分桶键提得出来吗？** 把左右标题各自套一遍该档的正则。
-   - 右侧提不出 → 文件名开头不是数字/没有 SxxExx。看是不是被前缀挡住了（`怡乐播客 - 186.…`
-     开头是汉字，`epnum` 的 `^0*(\d{1,3})` 直接失配）→ 加 `titleStrip` 剥前缀
-   - 左右提出来的号**不一样** → 编号错位，`titleStrip` 救不了，见下节
-2. **键一样了，相似度够吗？** 归一化后比 bigram 重合度。常见的拉低相似度的东西：
-   - 文件名尾巴多了时间戳（`_0603111423`）、发布组、备注
-   - 左侧标题带节目名前缀（`瓜瓜乐-中元聊聊恐怖片`）而右侧没有
-   - → 两者都是加一条 `titleStrip` 正则解决
-3. **相似度够了但没配上？** 看 `margin`——桶里有两个都挺像的（同一集的纯享/非纯享），
-   程序拒绝瞎选。这是对的，用人工兜底而不是降 margin
-4. **配上了但是 `pending`？** 相似度在 `threshold` 和 `AUTO_SIM=0.8` 之间。确认一下就行
+-1. **Do the durations on both sides match? — Ask this first; it is the main anchor.** Each `unmatchedLeft` entry carries its own `durationS`
+   (none = the source site did not provide one, so this tier naturally does not apply to it; skip to question 0). If it has `durationS` but did not match,
+   there are only four possibilities; check them in this order:
+   - **The right-hand file had no duration probed**: AList not configured / direct link 412 (Quark `__puus` expired) / ffprobe probing failed
+     all silently degrade to "no duration"; it may also be that **this round's probe budget (200 new probes) ran out**, in which case sync once more.
+     Check: whether the `durations` table in `netdisk.db` has the key `<byte count>:<absolute path>`
+     (a value of `null` = a negative cache of a probe that was made and failed; **renaming the file does not invalidate it; it is re-probed only when the byte count changes**).
+   - **The difference exceeds 1s**: the tolerance is exactly 1s (the order of magnitude of encoding remainders for the same episode). A larger difference is basically a different episode —
+     do not rush to adjust the tolerance; first confirm that these two really are the same episode.
+   - **A collision**: several files all fall within the tolerance (common for shows whose whole season has equal-length episodes), and the titles cannot tell them apart either → recorded as ambiguous,
+     which is **by design**; forcing a pairing is not allowed. Move on to check the file-name rule chain.
+   - **The name did not clear the floor**: unique within the tolerance, but the title similarity of the two sides is &lt; `DURATION_MIN_SIM`(0.3) → **deliberately not paired**.
+     Check: compare the two normalized titles; they share almost no adjacent character pairs. If you are sure these two are the same episode
+     (the name was altered too heavily), **do not adjust the floor** — add an entry to the binding's `titleStrip` that strips the noise, so that the similarity
+     truly reflects the content; if it is still 0 after stripping, the file name no longer contains any identity information, and a manual `patchEntry` finishes the job.
+     For the same file, the **organize** side shows a `pending duration-collision` (ledger basis
+     `ambiguous:name-floor:<leftKey>`) — both sides use the same floor, so they appear together and disappear together.
+0. **Multi-season tv binding: a whole season / a whole subdirectory did not match, not just a few scattered episodes?** First suspect that the season attribution was judged wrong; it is not a matter of
+   fileRegex/threshold — the `llmSeasonCache` field of `GET /api/netdisk/mappings/<id>` records
+   which season each pending folder was finally judged to be (`null` = none of the three tiers could decide, and the files never entered any season's matching bucket).
+   If all the files of a whole subdirectory are in `orphanFiles`, and the left items they should correspond to are **exactly** in `unmatchedLeft` for another season → most likely a problem in the season-judging step of `season-resolve.ts` (see the previous section), not the
+   fileRegex/titleStrip problem this section covers — check whether the folder name has a literal season number and whether the file count collides with another season.
+1. **Can the bucket key be extracted?** Run each side's title through that tier's regex.
+   - Cannot be extracted on the right → the file name does not start with a digit / has no SxxExx. See whether a prefix is blocking it (`怡乐播客 - 186.…`
+     starts with Chinese characters, so the `^0*(\d{1,3})` of `epnum` simply fails to match) → add a `titleStrip` to strip the prefix
+   - The numbers extracted on the left and right are **different** → the numbering is misaligned, `titleStrip` cannot save it; see the next section
+2. **The keys are the same; is the similarity enough?** Compare bigram overlap after normalization. Common things that pull similarity down:
+   - A timestamp (`_0603111423`), release group, or note tacked onto the end of the file name
+   - The left-side title carries the show-name prefix (`瓜瓜乐-中元聊聊恐怖片`) while the right side does not
+   - → both are solved by adding a `titleStrip` regex
+3. **Similarity is enough but it did not match?** Look at `margin` — the bucket has two that both look quite similar (the 纯享 ("pure-cut") and non-纯享 versions of the same episode),
+   and the program refuses to pick blindly. This is correct; fall back to manual handling rather than lowering the margin
+4. **Matched but `pending`?** The similarity is between `threshold` and `AUTO_SIM=0.8`. Just confirm it
 
-### 同集副本为什么被删 / 为什么被换
+### Why a same-episode copy gets deleted / why it gets swapped in
 
-一份文件走到"同集副本"这一步（`reconcile/plan.ts` 的 `settleCopy`），前提是两件事都成立：
-**它对应到某一集**（时长命中，或认集身份指向它），**且那一集已经有认领音频**。此时唯一的议题
-就是替换，`compareQuality` 定去向：
+A file reaches the "same-episode copy" step (`settleCopy` in `reconcile/plan.ts`) only if both of these hold:
+**it corresponds to some episode** (a duration hit, or the recognized identity points to it), **and that episode already has a claimed audio file**. The only issue left
+is replacement, and `compareQuality` decides the outcome:
 
-| 副本相对正主 | 动作 | `basis` |
+| Copy relative to the authoritative file | Action | `basis` |
 |---|---|---|
-| 更差 | `delete-loser`：删这份，同集只留一份 | `quality-loser-of:<留下那份>` |
-| 更优（清晰度档更高 / 码率更高） | `replace`：删旧正主，这份上位搬进目标目录 | `quality-upgrade:<被删那份>` |
-| **分不出高下**（平手，或清晰度探不出/时长不全/同集另一版长度超容差但在量级内） | 方向按下面的阶梯裁：留正主 → `delete-loser`，留副本 → `replace`（都带 `compare` 并排数据） | `authority-duration:` / `name-authority:` / `quality-loser-of:` / `quality-unknown:` |
+| Worse | `delete-loser`: delete this one, keeping only one per episode | `quality-loser-of:<the one kept>` |
+| Better (higher resolution tier / higher bitrate) | `replace`: delete the old authoritative file; this one takes its place and is moved into the target directory | `quality-upgrade:<the one deleted>` |
+| **Cannot tell which is better** (a tie, or resolution cannot be probed / durations incomplete / the other version of the same episode is longer than the tolerance but within the same order of magnitude) | The direction is decided by the ladder below: keep the authoritative file → `delete-loser`, keep the copy → `replace` (both carry `compare` side-by-side data) | `authority-duration:` / `name-authority:` / `quality-loser-of:` / `quality-unknown:` |
 
-**分不出高下时，方向由节目单裁——不由"谁先被认领"。** 正主/副本的身份只取决于匹配器认领了谁，
-与哪份更像这一集无关，照它定方向就是抓阄。判据阶梯**先到先得，分不出就走下一档**：
+**When it cannot tell which is better, the direction is decided by the episode list — not by "who was claimed first".** Which file is the authoritative one and which the copy depends only on
+whom the matcher claimed, and has nothing to do with which one looks more like this episode; deciding the direction by that is a coin toss. The criterion ladder is **first come, first served; if one tier cannot decide, go to the next**:
 
-1. **贴近节目单时长**（`authority-duration:<被删那份>`）：两份都探到了时长、且节目单给了这一集的
-   时长 → `|时长 − 节目单|` 更小的那份留下。两边差值一样大 → 下一档。
-2. **名字与集标题一致**（`name-authority:<被删那份>`）：认集身份（`identity(文件名).key`）与这一集
-   标题的认集身份相等的只有一边 → 留那边。两边都对得上（或都对不上）→ 下一档。
-3. **都分不出**：平手 → `delete-loser` 删副本（`quality-loser-of:<留下那份>`）；比不出 →
-   `replace` 换正主（`quality-unknown:<被删那份>`）。
+1. **Closer to the episode list's duration** (`authority-duration:<the one deleted>`): both files had durations probed, and the episode list gives a duration for this episode
+   → the one with the smaller `|duration − episode list|` stays. If the two differences are equally large → next tier.
+2. **Name agrees with the episode title** (`name-authority:<the one deleted>`): the recognized identity (`identity(file name).key`) equals the recognized identity of this episode's
+   title for only one side → keep that side. If both sides match (or neither does) → next tier.
+3. **Neither can be decided**: a tie → `delete-loser` deletes the copy (`quality-loser-of:<the one kept>`); not comparable →
+   `replace` swaps in the authoritative file (`quality-unknown:<the one deleted>`).
 
-第 1 档的活体原型（怡楽 780/796）：节目单说 8274s，来源那份 8274s 被认领当上正主、库内那份 8279s
-判副本，差 5 秒超容差 → 比不出高下。方向若固定成"副本上位"，删掉的就是与节目单严丝合缝的那份。
+Live prototype for tier 1 (怡楽 (Yile) 780/796): the episode list says 8274s; the source-side file at 8274s was claimed and became the authoritative file, while the in-library file at 8279s
+was judged the copy, a 5-second difference beyond the tolerance → cannot tell which is better. If the direction were fixed as "the copy takes over", the one deleted would be the file that fits the episode list exactly.
 
-第 2 档的活体原型：`05.太极两仪生四象.mp3` 与 `怡乐播客 - 005.身边那些灵异事.mp3` 字节数与时长
-完全相同（同一份音频，都是第 005 期，第 1 档裁不出），而节目单里的 05 期只有 2164s——前者是错身
-文件。同一轮里几份文件都指向同一个空集时，认领顺序也按这条：名字对得上节目单的先落位（`plan.ts`
-在主循环前按它稳定重排）。
+Live prototype for tier 2: `05.太极两仪生四象.mp3` and `怡乐播客 - 005.身边那些灵异事.mp3` have exactly the same byte count and duration
+(the same audio, both episode 005, so tier 1 cannot decide), while episode 05 in the episode list is only 2164s — the former is the wrongly named
+file. When several files in the same round all point to the same empty episode, the claim order follows this rule too: the one whose name matches the episode list lands first (`plan.ts`
+stably reorders by it before the main loop).
 
-比不出高下也给建议而不是问句：**"哪份才是这一集"没有第二个人能答得更好**，摊手只会把同一个问题
-攒到下一轮。安全边界在执行面而不在判定面——这两类动作都是**确认档**：
-`executePlan` 的 `losers:false`（定时轮走这条）一步都不动它们，只计入 pending，下一轮照旧出现在
-预览里；真删只能是用户在「将删清单」里看过"删这份、留那份"之后的显式 `execute`。
+When it cannot tell which is better it still gives a recommendation rather than a question: **no one else could answer "which one is this episode" better**, and throwing up one's hands only
+piles the same question onto the next round. The safety boundary is on the execution side, not the judgment side — both kinds of action are **confirm-tier**:
+`executePlan` with `losers:false` (which the scheduled round uses) does not touch them at all and only counts them toward pending, so they show up in the
+preview again next round; a real deletion can only be an explicit `execute` after the user has looked at "delete this one, keep that one" in the "to-be-deleted list".
 
-**`replace` 的方向别搞反**：删的是 `oldPath`（旧正主），留下的是 `src`——和 `delete-loser` 正好
-相反。执行顺序也是硬的：先 `remove` 旧的、再 `move` 新的（反过来同名必 403）；`remove` 失败就不
-搬了，错误行照记，下一轮重来。
+**Do not get the direction of `replace` backwards**: what is deleted is `oldPath` (the old authoritative file), and what stays is `src` — exactly the opposite
+of `delete-loser`. The execution order is firm too: `remove` the old one first, then `move` the new one (the other way round, the same name is guaranteed to hit a 403); if `remove` fails,
+the move is skipped, the error row is still recorded, and the next round retries.
 
-**完全没配上任何一集的文件**（花絮、疑似别的作品）不走这条路：判不了"重复"就没资格删，它去
-第二货架（或原地不动）。
+**Files that matched no episode at all** (extras, suspected other works) do not take this path: if "duplicate" cannot be established, they have no right to be deleted, and they go to the
+second shelf (or stay where they are).
 
-排错时看 `run_actions`（或响应里的 `ledger`）的 `basis` 字段：
+When troubleshooting, look at the `basis` field of `run_actions` (or of the `ledger` in the response):
 
-- `quality-upgrade:` / `quality-unknown:` / `name-authority:` / `authority-duration:` = 上表与阶梯，
-  路径是**被删的那份**；`quality-loser-of:` 是唯一的例外，路径指着**留下的那份**
-- `size-dup-of:<留下那份的路径>` = 字节数全等的硬重复，比同集择优更早、更硬的一档判据
-  （判据是"就是同一份文件"，不需要比质量），执行面不经「将删清单」预览。
-  **那一集是 `paid` 时 basis 不变、动作变**：降级成 `delete-loser`（确认档，定时轮不执行），
-  所以看到这条 basis 配 `delete-loser` 不是矛盾——是那道闸生效了
-- `authority:<leftKey>` = 匹配器以 `auto` 置信配上的正主
-- `same-episode-copy:<leftKey>` = 匹配器交出来的"这一集的其余份"（`losers`），唯一议题是替换
-- `ambiguous:<reason>:<leftKey>` = 匹配器判不出/没把握，出问句（`reason` ∈ `below-threshold` /
-  `no-margin` / `duration-contradiction` / `name-floor` / `low-confidence`）。**只按这个闭集分派，
-  绝不解析文案**
-- `redundant-free:<leftKey>` = 认领成立、但那一集 `needsSupply === false`（源站自己放得出）→ 网盘这份是
-  冗余，`delete-redundant` 直接删（不进确认档，定时轮照删）。**它没有"留下那份"的路径**：留下的
-  是源站自己。看到它配 `verdict: claimed`（或同集其余份的 `copy`）不是矛盾——筐说的是判定，
-  这一条恰恰是认领成立才走到的，变的只是处置
-- `relisted:<leftKey>` = 下架货架复核：源站重新上架了这一集（`paid`、本轮无人认领）→ 这份回流
-  付费货架。`shelf-copy-of:<正主路径>` = 复核认出它是那一集的另一份、正主已在付费货架 → 确认档。
-  两条都来自「下架货架每轮回头看」那一趟，账本在 `secondaryReview` 小节里
-- `decision:not-episode:<leftKey>` = 人裁过「不是这一集」，按"清单里没有它"走下架
-- `decision:prefer:<留下那份的路径>` = 第二货架上同集两份**机器比不出高下**、人裁过「留哪一份」。
-  动作与实测择优完全同构（`delete-loser` / `replace`，照样进「将删清单」等确认），变的只是依据——
-  账本上一眼看得出这一笔是人说的还是量出来的。**只在 `unknown` 那一格问人裁**：机器比得出高下时
-  不看它，否则就多了一条静默改写择优结果的路。决定存 `decisions` 表的 `prefer` kind，组合键是
-  **两个文件路径** `[留下的, 落选的]`——带两侧是为了让它在留下那份消失后自动失效，
-  单边的"这份是落选的"会在下一轮把仅存的一份也判掉，一条保护性的决定退化成删除依据
-- `no-duration-hit:<秒>s` = 谁都不认领它 → 下架货架
+- `quality-upgrade:` / `quality-unknown:` / `name-authority:` / `authority-duration:` = the table and ladder above,
+  and the path is **the one that was deleted**; `quality-loser-of:` is the only exception, with the path pointing at **the one that was kept**
+- `size-dup-of:<path of the one kept>` = a hard duplicate with an identical byte count, an earlier and harder criterion than same-episode best-of selection
+  (the criterion is "it is the same file", so no quality comparison is needed), and the execution side does not go through the "to-be-deleted list" preview.
+  **When that episode is `paid`, the basis stays and the action changes**: it is degraded to `delete-loser` (confirm tier, not executed by the scheduled round),
+  so seeing this basis paired with `delete-loser` is not a contradiction — that gate taking effect is exactly what it means
+- `authority:<leftKey>` = the authoritative file paired by the matcher with `auto` confidence
+- `same-episode-copy:<leftKey>` = the "remaining copies of this episode" handed over by the matcher (`losers`); the only issue is replacement
+- `ambiguous:<reason>:<leftKey>` = the matcher cannot decide / is not sure and raises a question (`reason` ∈ `below-threshold` /
+  `no-margin` / `duration-contradiction` / `name-floor` / `low-confidence`). **Dispatch only on this closed set,
+  never parse the message text**
+- `redundant-free:<leftKey>` = the claim holds, but that episode has `needsSupply === false` (the source site can supply it itself) → the netdisk copy is
+  redundant, and `delete-redundant` deletes it directly (it does not enter the confirm tier; the scheduled round deletes it as well). **It has no path for "the one kept"**: what is kept
+  is the source site itself. Seeing it paired with `verdict: claimed` (or with a `copy` among the remaining copies of the same episode) is not a contradiction — the bucket states the verdict,
+  and this basis is reached only when the claim holds; what changes is the disposition
+- `relisted:<leftKey>` = delisted-shelf recheck: the source site relisted this episode (`paid`, unclaimed this round) → this file flows back to the
+  paid shelf. `shelf-copy-of:<authoritative path>` = the recheck recognized it as another copy of that episode, with the authoritative file already on the paid shelf → confirm tier.
+  Both come from the "delisted shelf looks back each round" pass, and the ledger is in the `secondaryReview` section
+- `decision:not-episode:<leftKey>` = a person ruled "this is not that episode", and it goes to the delisted shelf as "it is not in the list"
+- `decision:prefer:<path of the one kept>` = on the second shelf, two copies of the same episode that **the machine cannot rank**, and a person ruled "which one to keep".
+  The actions are exactly isomorphic to measured best-of selection (`delete-loser` / `replace`, still entering the "to-be-deleted list" for confirmation); only the grounds change —
+  the ledger shows at a glance whether this entry was said by a person or measured. **A person's ruling is asked for only in the `unknown` cell**: when the machine can rank them,
+  it is not consulted, otherwise it would be one more path that silently rewrites the best-of result. The decision is stored in the `prefer` kind of the `decisions` table, with a composite key of
+  **two file paths** `[kept, dropped]` — both sides are included so that it automatically becomes invalid once the kept file disappears;
+  a one-sided "this one is the dropped one" would, in the next round, judge the sole remaining file as well, degrading a protective decision into grounds for deletion
+- `no-duration-hit:<seconds>s` = nobody claims it → delisted shelf
 
-### 三个真实案例（2026-07-25，怡乐播客绑定）
+### Three real cases (2026-07-25, 怡乐播客 (Yile Podcast) binding)
 
-| 症状 | 卡在哪 | 修法 | 结果 |
+| Symptom | Where it is stuck | Fix | Result |
 |---|---|---|---|
-| 左 `瓜瓜乐-中元聊聊恐怖片` / 右 `中元聊恐怖片.mp3` | 左侧多了节目名前缀，相似度不够 | `titleStrip` 加 `^瓜瓜乐\s*[-–—·]\s*` | 3 集收编 |
-| 左 `787.二十七探悬疑案件` / 右 `787.…_0603111423【…】.mp3` | 号对上了，尾巴的时间戳把相似度拉到 0.6 以下 | `titleStrip` 加 `_\d{10}` | 1 集收编 |
-| 左 `53.财克印、印克食伤` / 右 `52.财克印、印克食伤.mp3` | **编号错位 1**，标题一模一样 | 任何 `titleStrip` 都救不了 → **时长档** | 收编 |
+| Left `瓜瓜乐-中元聊聊恐怖片` / right `中元聊恐怖片.mp3` | The left side has an extra show-name prefix, so similarity is not enough | Add `^瓜瓜乐\s*[-–—·]\s*` to `titleStrip` | 3 episodes absorbed |
+| Left `787.二十七探悬疑案件` / right `787.…_0603111423【…】.mp3` | The numbers match, but the timestamp at the tail pulls similarity below 0.6 | Add `_\d{10}` to `titleStrip` | 1 episode absorbed |
+| Left `53.财克印、印克食伤` / right `52.财克印、印克食伤.mp3` | **Numbering off by 1**, the titles are identical | No `titleStrip` can save it → **duration tier** | Absorbed |
 
-前两类是"名字里多了或少了点什么"，`titleStrip` 能修。**第三类是名字本身就错了，只有内容能救**
-——那就是时长档在干的事（见上）。
+The first two kinds are "the name has something extra or something missing", which `titleStrip` can fix. **The third kind is that the name itself is wrong, and only the content can save it**
+— that is exactly what the duration tier does (see above).
 
-## 多季影视归档
+## Multi-season TV archiving
 
-TMDb 剧集绑定（`left.kind:'tmdb' && media:'tv'`）的归档器不进认领货架根，落点按季分：
-`tv-<id>/S<nn>/`（季号取匹配器判给这一集的 leftKey，两位补零）。改名与判重也换了判据：
+The archiver for a TMDb series binding (`left.kind:'tmdb' && media:'tv'`) does not go into the claim shelf root; the destination is split by season:
+`tv-<id>/S<nn>/` (the season number is taken from the leftKey the matcher assigned to this episode, zero-padded to two digits). Renaming and duplicate detection use different criteria too:
 
-- **文件名前缀**：只给判成 `auto` 的认领加 `S03E14 - ` 前缀，原文件名原样跟在后面，绝不把
-  标题写进文件名（和谐规避）。已经带着**正确**前缀的不再改；带**错误**前缀的（名字写
-  S03E14、引擎判给它 S03E15）不改名，出 `pending`（`evidence-conflict`）——名字和引擎打架
-  时不许机器单方面改写证据，交人裁。
-- **同一集怎么判**：配上集的文件身份键是匹配器给的 leftKey（`tmdb:<id>:S03E14`），跨季永不
-  撞名（S02 与 S03 都叫「第7期」互不影响）。没配上集的文件原地不动，只能和**同一目录**里同样
-  没配上的文件比字节全等（`delete-dup`），永远不参与 `delete-loser`/`replace`——落选副本必须
-  是「引擎说这两份是同一集」才算，机器不会因为文件名撞了就替它们排位。
-- **和同步走同一条季分区路**：多季绑定先按叶子文件夹定季（嵌套干净名 → 播出日期 → 结构指纹 →
-  绑定上的 LLM 缓存 → LLM，`resolveFolderSeasons`），再**每季单独**匹配（`matchBySeasonResolved`）。归档器
-  **绝不**把所有季的清单和所有文件夹的文件混进一锅裁决——那会把第 2 季（2025）和第 3 季（2026）
-  同期号、同标题的文件判成同一集（活体一轮 52/128 行错判，21 条 replace + 2 条 delete-loser 全
-  是跨季）。判季时看的是**未过滤**的目录清单（季号常年只写在 `.zip`/`.nfo` 名字里），匹配时仍只
-  看媒体文件；判不出季的文件夹整段不参与匹配、原地不动，账本行 `season-unresolved:<dir>`，也不
-  计入目录级熔断。
-- **同集副本质量比不出（`incomparable`）→ 对照卡，不自动删也不换正主**：两份时长都知道且差出
-  容差 = 它们不是同一份内容，出 `pending`（`pendingKind:'replace'`，账本 basis `incomparable-copy:`），
-  等人看一眼是不是同一集的另一版。季目录里每份正主都带 `SxxExx - ` 前缀，"名字与集标题一致"
-  这一档在这里恒站在正主那边，照它裁就成了**只按名字下删除令**（活体：加前缀之后
-  「第1期纯享版」被判成第 1 期上的落选副本，一轮 10 条）；而追更循环是 `losers:true` 无人值守跑的。
-  平手（`tie`）不受影响，照旧走判据阶梯删副本。
-- **「纯享」剪辑是另一条播放线，进自己的货架**：文件名里带「纯享」的那些不是任何一集，落
-  `tv-<id>/纯享/S<nn>/`，**不加 `SxxExx - ` 前缀**（前缀是"这是第几集"的断言），账本 verdict
-  `offline`、basis `pure-cut:S<nn>`。这条**顶掉落选副本那一路**：引擎判成同集 loser 的纯享文件
-  不再走 `delete-loser`/`replace`/对照卡，直接上纯享货架——纯享不是正片的副本，拿两份差着十几
-  分钟的东西比质量本来就答错了问题。两个例外必须记住：**引擎把它认成某一集的正主**（有的节目
-  就把纯享版当正片列进节目单）时它就是那一集，照常走 `S<nn>/`；**季号答不出来**（文件夹判不出
-  季、又不是谁的 loser）时不搬，照旧留在 `season-unresolved` 那一行。季号来源两个，leftKey 优先
-  （引擎的结论比文件夹强），其次是文件夹的季归属。计数上它是 `movePureCut` 一格，**不在
-  `moveClaimed` 里**——那个目录住在认领货架里面，但装的不是剧集。空目录清理把 `纯享/` 与它下面的
-  `S<nn>/` 当归档结构留着，同季目录。
-- **整轮撤销**：改名（`rename`）与移动一样先记溯源，一轮里的全部动作共享一个 `run_id`；
-  `POST /api/netdisk/reconcile/undo-run {runId}` 按 rowid 倒序撤回（移回 / 改名改回 / 重建
-  目录），删除类动作跳过并计数（回收站里的文件不会被这条路自动捞回）。
+- **File name prefix**: only claims judged `auto` get the `S03E14 - ` prefix, with the original file name left unchanged right after it; the
+  title is never written into the file name (to avoid takedown triggers). A file that already carries the **correct** prefix is not changed again; one carrying a **wrong** prefix (the name says
+  S03E14, the engine assigned it S03E15) is not renamed and produces a `pending` (`evidence-conflict`) — when the name and the engine disagree,
+  the machine may not unilaterally rewrite the evidence; it goes to a person.
+- **How the same episode is judged**: the identity key of a file matched to an episode is the matcher's leftKey (`tmdb:<id>:S03E14`), which never
+  collides across seasons (S02 and S03 both having an "episode 7" do not affect each other). Files not matched to an episode stay where they are, and can only be compared for byte-for-byte equality with other unmatched files in the **same directory**
+  (`delete-dup`); they never take part in `delete-loser`/`replace` — a dropped copy must be
+  one where "the engine says these two are the same episode", and the machine does not rank them just because their file names collide.
+- **It takes the same season-partition path as sync**: a multi-season binding first decides the season by leaf folder (clean nested name → air date → structural fingerprint →
+  the LLM cache on the binding → LLM, `resolveFolderSeasons`), and then matches **each season separately** (`matchBySeasonResolved`). The archiver
+  **never** mixes all seasons' lists and all folders' files into one adjudication — that would judge files with the same issue number and the same title in season 2 (2025) and season 3 (2026)
+  to be the same episode (in one live round 52/128 rows were misjudged, and all 21 replace + 2 delete-loser
+  were cross-season). When judging the season it looks at the **unfiltered** directory listing (the season number is often written only in the names of `.zip`/`.nfo` files), while matching still looks
+  only at media files; a folder whose season cannot be judged takes no part in matching and stays where it is, with the ledger row `season-unresolved:<dir>`, and it is not
+  counted toward the directory-level circuit breaker either.
+- **Same-episode copy quality not comparable (`incomparable`) → comparison card, neither auto-delete nor swap the authoritative file**: both durations are known and differ by more than
+  the tolerance = they are not the same content, which produces a `pending` (`pendingKind:'replace'`, ledger basis `incomparable-copy:`),
+  waiting for a person to look at whether it is another version of the same episode. Every authoritative file in a season directory carries the `SxxExx - ` prefix, so the "name agrees with the episode title"
+  tier always sides with the authoritative file here, and ruling by it would amount to **issuing a deletion order based on the name alone** (live: after the prefix was added,
+  "第1期纯享版" ("Episode 1 pure-cut edition") was judged a dropped copy of episode 1, 10 entries in one round); and the follow loop runs unattended with `losers:true`.
+  A tie (`tie`) is unaffected and still goes through the criterion ladder to delete the copy.
+- **"纯享" ("pure-cut") edits are a separate playback line and go to their own shelf**: files whose names contain "纯享" are not any episode, and
+  land in `tv-<id>/纯享/S<nn>/`, **without the `SxxExx - ` prefix** (the prefix is an assertion of "this is which episode"), with ledger verdict
+  `offline` and basis `pure-cut:S<nn>`. This **overrides the dropped-copy path**: a pure-cut file the engine judged a same-episode loser
+  no longer goes through `delete-loser`/`replace`/comparison card and goes straight to the pure-cut shelf — a pure-cut is not a copy of the main episode, and comparing quality between two things that differ by a dozen
+  minutes was asking the wrong question to begin with. Two exceptions must be remembered: **when the engine recognizes it as the authoritative file of some episode** (some shows
+  list the pure-cut version in the episode list as the main episode) it is that episode and goes to `S<nn>/` as usual; **when the season number cannot be determined** (the folder's season cannot be judged,
+  and it is nobody's loser) it is not moved and stays on the `season-unresolved` row. There are two sources for the season number, with leftKey taking priority
+  (the engine's conclusion outranks the folder), followed by the folder's season attribution. In the counts it is its own `movePureCut` slot and is **not in
+  `moveClaimed`** — that directory sits inside the claim shelf but holds no episodes. Empty-directory cleanup keeps `纯享/` and the `S<nn>/` beneath it as
+  archive structure, the same as season directories.
+- **Whole-round undo**: renaming (`rename`) records provenance first, just like moving, and all actions in one round share a single `run_id`;
+  `POST /api/netdisk/reconcile/undo-run {runId}` reverts them in reverse rowid order (move back / rename back / recreate
+  directories); deletion-type actions are skipped and counted (files in the recycle bin are not automatically fished back by this path).
 
-排错手册补三条：
+Three more entries for the troubleshooting manual:
 
-| 症状 | 修法 |
+| Symptom | Fix |
 |---|---|
-| 文件搬进季目录后 `rightFile` 断了 | 追更循环每轮归档之后自动 resync 一轮；手动执行完之后点一次「同步」 |
-| 改名撞了目标目录里已有的同名文件 | 降级 `swap-hold`，不改名，等下一轮占位者被清走后再改 |
-| 归档删空了分享子目录 | 只删本轮真的把文件搬空的那个分享子目录，带 `.nfo` 之类残留文件的不删 |
+| `rightFile` broke after a file was moved into a season directory | The follow loop automatically resyncs one round after each archiving round; after a manual execute, click "Sync" once |
+| A rename collided with an existing file of the same name in the target directory | Degraded to `swap-hold`: no rename; wait until the occupant is cleared out in a later round, then rename |
+| Archiving emptied out a share subdirectory | Only the share subdirectory that this round actually emptied is deleted; ones with leftover files such as `.nfo` are kept |
 
-## 人工兜底
+## Manual fallback
 
-规则修不了的，直接钉配对：
+When rules cannot fix it, pin the pairing directly:
 
 ```
 PATCH /api/netdisk/mappings/<id>/entries/<leftKey>        {"rightFile": "...", "status": "corrected"}
-POST  /api/netdisk/mappings/<id>/entries/<leftKey>/reset  释放人工订正，回到自动规则
+POST  /api/netdisk/mappings/<id>/entries/<leftKey>/reset  Release the manual correction, back to the automatic rules
 ```
 
-`corrected` 的配对**在 sync / spec apply / rebind 时都会被钉住不动**——改规则不会冲掉你的
-人工修正，换目录（rebind 走指纹认亲）也会被继承。
+`corrected` pairings are **pinned during sync / spec apply / rebind** — changing rules does not wash away your
+manual corrections, and they are inherited when the directory is changed (rebind recognizes by fingerprint).
 
-## 听一段网盘音频（`netdisk_transcribe`）
+## Listening to a piece of netdisk audio (`netdisk_transcribe`)
 
-待决卡问的是"这份文件到底是不是那一集"。判据都用尽还是分不出时，有一条**取新证据**的路：
-`netdisk_transcribe` 这个 MCP 工具取这份文件**头尾各两分钟**的转写（按时长比例切字节，VBR 也准）
-交给对话里的 agent，它读完自己判，判完用 `reconcile_decide` 落账。
+A pending-decision card asks "is this file actually that episode?". When every criterion has been exhausted and it still cannot be told, there is a path that **fetches new evidence**:
+the MCP tool `netdisk_transcribe` fetches the transcript of **the first and last two minutes** of the file (bytes are cut in proportion to duration, which is accurate for VBR too)
+and hands it to the agent in the conversation, which reads it, makes the call itself, and records it with `reconcile_decide`.
 
-**它是一个独立原语，只吃一个绝对 AList 路径。** 对话侧其它转成文字/转写的工具（`extract` /
-`transcribe` / `get_conversions`）都按 item id 取数，而网盘散文件压根没有 item id——这条是唯一
-听得到它的路。代码：形状层 `src/mcp/netdisk-transcribe.ts`，策略与缓存 `src/netdisk/reconcile/
-sample-audio.ts`，切片与转写 `identity-probe.ts`。
+**It is a standalone primitive and takes only one absolute AList path.** The other speech-to-text/transcription tools on the conversation side (`extract` /
+`transcribe` / `get_conversions`) all fetch data by item id, and loose netdisk files have no item id at all — this is the only
+way to listen to them. Code: the shape layer is `src/mcp/netdisk-transcribe.ts`, the policy and cache are in `src/netdisk/reconcile/
+sample-audio.ts`, and slicing and transcription are in `identity-probe.ts`.
 
-- **只支持 mp3/aac**，且要知道时长（两道门：`sliceable.ts` 和探时长那一步）。mp4/m4a/mkv 的
-  索引（moov/cues）不在切片里，切一段出来转写是空的——那会被读成"这段没人说话"，比没有结论
-  更糟，所以**一次网络都不发**，直接答 `{status:'unsupported', reason}`。
-  **这条路对影视整个不成立**：影视的文件基本都是 mkv/mp4，那些待决卡只能人自己看。
-- **窗口是 120 秒，不是 30 秒**：实测头 16 秒是片头音乐、尾 30 秒是纯片尾曲，30 秒两头都不够。
-- **窗口可调但封顶**（`clampWindowS`，上限 300 秒）。整集几十分钟**不许全转**——转写全文会把
-  整轮对话顶爆，而且是真金白银的 ASR 钱。这个上限是硬的：模型从 schema 里看得见这个参数，
-  一个劝得动的上限等于没有上限。
-- **默认采样策略住在工具里，不交给模型**：听哪一段是确定性问题（开头判身份、结尾判完不完整），
-  不是需要判断的取舍。
-- **头尾两段并行取**。分阶段耗时（`probe.timing` 的 `fetchMs`/`transcribeMs`）因此是**各自耗时
-  之和，不是墙钟**——拿它当墙钟读会得出"总和大于总时长"的怪数字。
-- **一份采样按文件缓存**（netdisk.db 的 `audio_samples` 表）。key 首选 AList 的 driver 侧对象 id
-  （夸克即 fid），取不到才退成「字节数:路径」。**这条不是省事，是必须的**：整理的本职就是把
-  文件从来源目录搬上货架，拿路径当 key 的话每一份被判过的文件搬完之后都要重付一次转写钱。
-  命中还要**复核字节数**——key 撞了就会端出一份别的文件的转写，而它读起来毫无破绽。退成路径档
-  时日志里有一行，"缓存好像没生效"就照它查。
-- **回执自己说清"这只是采样"**（`sampledOnly` + `coverage` + 每段的 `truncated`）。不说的后果是
-  模型拿两分钟概括整集、或者把"开头没提到 X"答成"整集没有 X"，而没有任何一处会报错。
-  某一段没人说话时回执里给的是一句人话的 `note`，不是一个空串：**"结尾没人说话"本身就是证据**，
-  当成取数失败吞掉就把它变没了。
-- **结论要引转写里的原话**。这条链路后面接的是认领或下架，一个无法核对的结论比没有结论更糟。
-- **结尾完整性**（收尾语 vs 戛然而止）是这套取证最有价值的一格：它分得开"这份被截断了"和
-  "节目单时长登记得不准"，而两者处置正好相反。**盲区是多集合辑**：这类文件尾部常是纯静音
-  （实测 120 秒 -91dB，拼接填充），转写如实返回空——而静音分不开"正常收尾"和"截断"。时长比
-  节目单大出量级 + 尾段没人说话同时出现时，别拿结尾下结论，那份文件大概率含多集。
-- **转写走 `transcribe` 那条梯子**（Groq 打头，217× 实时，两段 120 秒窗口约 1 秒）。**别绕过
-  梯子自己 new 一个后端 client**：绕过去那版两段窗口要 20–40 秒，还据此推出了"只有一路所以
-  必须串行"，把十来张卡算成了十分钟——一个接线错误长成一条架构结论。
-- **一次听一份，别扫整个目录**：冷调一次下载约 10 MB、跑两次 ASR。真要判一批就挑那几份卡住的。
+- **Only mp3/aac are supported**, and the duration must be known (two gates: `sliceable.ts` and the duration-probing step). The index (moov/cues) of mp4/m4a/mkv
+  is not in the slice, so a slice cut out for transcription comes back empty — which would be read as "nobody speaks in this segment", worse than having no
+  conclusion, so **no network request is made at all** and the tool answers directly `{status:'unsupported', reason}`.
+  **This path does not hold for movies and TV at all**: their files are almost all mkv/mp4, and those pending cards can only be looked at by a person.
+- **The window is 120 seconds, not 30 seconds**: measured, the first 16 seconds are the intro music and the last 30 seconds are pure end-credits song, so 30 seconds is not enough at either end.
+- **The window is adjustable but capped** (`clampWindowS`, upper limit 300 seconds). Transcribing a whole episode of several dozen minutes is **not allowed** — the full transcript would blow up the
+  entire conversation, and it costs real ASR money. This cap is hard: the model can see this parameter in the schema,
+  and a cap that can be talked around is no cap.
+- **The default sampling policy lives in the tool, not with the model**: which segment to listen to is a deterministic question (the start decides identity, the end decides completeness),
+  not a trade-off that requires judgment.
+- **The head and tail segments are fetched in parallel.** The per-stage timings (`fetchMs`/`transcribeMs` in `probe.timing`) are therefore **the sum of the individual durations,
+  not wall-clock time** — reading them as wall-clock time yields the odd result of "the total is larger than the total duration".
+- **A sample is cached per file** (the `audio_samples` table in netdisk.db). The key prefers AList's driver-side object id
+  (the fid for Quark), and falls back to "byte count:path" only when that is unavailable. **This is not a convenience, it is a necessity**: the whole job of organizing is to move
+  files from the source directory onto the shelf, so with the path as the key, every file already judged would have to pay for transcription again after being moved.
+  A hit must also **recheck the byte count** — a key collision would serve up another file's transcript, and it would read flawlessly.
+  When it falls back to the path tier, there is a line in the log; if "the cache seems not to work", investigate by it.
+- **The receipt states by itself that "this is only a sample"** (`sampledOnly` + `coverage` + a `truncated` flag per segment). Without that, the consequence is
+  that the model summarizes a whole episode from two minutes, or answers "X is not mentioned at the start" as "X is not in the whole episode", and nothing anywhere raises an error.
+  When a segment has no speech, the receipt gives a human-readable `note`, not an empty string: **"nobody speaks at the end" is itself evidence**,
+  and swallowing it as a fetch failure makes it vanish.
+- **Conclusions must quote the exact words from the transcript.** What follows this chain is a claim or a delisting, and a conclusion that cannot be checked is worse than no conclusion.
+- **Ending completeness** (a closing remark vs an abrupt stop) is the most valuable cell of this evidence-gathering: it tells apart "this file was truncated" from
+  "the duration in the episode list was registered inaccurately", and the two call for opposite handling. **The blind spot is multi-episode compilations**: the tail of such files is often pure silence
+  (measured: 120 seconds at -91dB, concatenation padding), and the transcript honestly returns empty — but silence cannot tell "normal ending" from "truncation". When a duration larger than
+  the episode list by an order of magnitude and a tail segment with no speech occur together, do not draw a conclusion from the ending; that file very likely contains several episodes.
+- **Transcription goes through the `transcribe` ladder** (Groq first, 217× real time, about 1 second for two 120-second windows). **Do not bypass
+  the ladder and new up a backend client yourself**: the version that bypassed it took 20–40 seconds for the two windows, and from that it deduced "there is only one path,
+  so it must be serial", which turned a dozen cards into ten minutes — a wiring error grew into an architectural conclusion.
+- **Listen to one file at a time; do not sweep a whole directory**: one cold call downloads about 10 MB and runs ASR twice. If you really need to judge a batch, pick only the few that are stuck.
 
-### 落决定的分层判据在工具描述里
+### The tiered criteria for recording a decision are in the tool description
 
-整理面板是**只读状态面**（覆盖率/待决卡/证据展示），唯一的动作是「让 AI 整理」——把带 show
-上下文的一句话送进对话列，取证（`netdisk_transcribe`）、裁决（`reconcile_decide`）与执行
-（`reconcile_execute`）都在那边进行。两条硬边界：
+The organize panel is a **read-only status surface** (coverage / pending cards / evidence display); its only action is "Have the AI organize" — it sends a one-line message carrying the show
+context into the conversation column, and evidence gathering (`netdisk_transcribe`), adjudication (`reconcile_decide`) and execution
+(`reconcile_execute`) all happen over there. Two hard boundaries:
 
-- **取证和落决定是两步。** 取证只读，一个决定都不写；落决定是另一次调用。中间留这一眼不是怕它
-  判错（认领是匹配层的钉子可以取消，挪去下架是搬运不是删除，都撤得回来），是因为一次落二十多张
-  时，提示词哪里让它系统性地偏了，要到下一轮看见文件全跑错地方才发现。
-- **无人环不开（全自动采纳不做）。** 门槛不是"撤不撤得回来"——两种结论都只写决定账本、都撤得
-  回来；门槛是**证据到不了**：带引文只保证"这话它真说过"，保证不了"引对了话、判对了集"，
-  且对合辑文件头部匹配证明不了整份归属。对话裁决保住了人在环里：硬证据（字节级副本、时长秒级
-  吻合）agent 直接落、事后报一句，其余摆好证据等用户答——分层判据的**唯一真相源是
-  `reconcile_decide` 的工具描述**，别在提示词或文档里另抄一份。
+- **Gathering evidence and recording a decision are two steps.** Gathering evidence is read-only and writes no decision at all; recording a decision is a separate call. The look in between is not there out of fear that it
+  would judge wrongly (a claim is a pin in the match layer and can be cancelled, and moving to the delisted shelf is relocation, not deletion; both can be undone), but because when twenty-odd cards are recorded at once,
+  if the prompt skews it systematically somewhere, you only find out in the next round when you see the files have all gone to the wrong place.
+- **The unattended loop stays closed (full auto-adoption is not built).** The bar is not "whether it can be undone" — both kinds of conclusion write only to the decision ledger and can both be
+  undone; the bar is that **the evidence does not reach**: a quote only guarantees "it really did say that", not "the right words were quoted and the right episode was judged",
+  and matching the head of a compilation file cannot prove the attribution of the whole file. Adjudication in the conversation keeps a person in the loop: for hard evidence (a byte-level copy, a duration match to the second)
+  the agent records directly and reports afterwards in a sentence, and for the rest it lays out the evidence and waits for the user to answer — the **single source of truth for the tiered criteria is
+  the tool description of `reconcile_decide`**; do not copy another version into prompts or documents.
 
-**「证据到不了」是量出来的，不是推出来的**（2026-08-24，发发大王首批 5 张卡）：66 个文件里
-**有音频参照的 61 个全被匹配器自动认掉**，5 张卡全落在节目单 `paid: true`、**根本没有音频**
-那 116 条上——待决卡只在这个死角产生，而声学指纹在这里没有可比对的另一半，听头尾是唯一证据。
-5 张里 3 张是 3 小时以上的多集合辑（文件 12245s vs 节目单 4824s），尾部实测是 **120 秒纯静音**
-（ffprobe 有效 120s mp3、volumedetect −91dB），而静音尾巴分不开"正常收尾"和"拼接填充"。
-**这不是管线的病**：切片 / ASR / probe / verdict 逐层验过每层都诚实，`ending: no-speech` 是
-如实读数——是 `ending` 这一格在合辑上没有分辨力。所以 `duration-collision` 这类卡**永远不进
-自动**：自动采纳会把"这份文件含多集"整个遮掉，而那正是人答卡时该看见的东西。
-（推论：靠铺量攒样本来放开门槛的价值也存疑——攒出来的大头就是这类"只能看头部"的卡。）
+**"The evidence does not reach" was measured, not inferred** (2026-08-24, the first 5 cards of 发发大王 (Fafa Dawang)): of 66 files,
+**all 61 that had an audio reference were auto-claimed by the matcher**, and all 5 cards fell on the 116 entries in the episode list with `paid: true` and **no audio at all**
+— pending cards arise only in this dead corner, where acoustic fingerprinting has no other half to compare against, and listening to the head and tail is the only evidence.
+3 of the 5 were multi-episode compilations of over 3 hours (file 12245s vs episode list 4824s), and the tail measured as **120 seconds of pure silence**
+(ffprobe valid 120s mp3, volumedetect −91dB), and a silent tail cannot tell "normal ending" from "concatenation padding".
+**This is not a disease of the pipeline**: slicing / ASR / probe / verdict were each verified layer by layer and every layer is honest, and `ending: no-speech` is
+a truthful reading — it is the `ending` cell that has no discriminating power on compilations. So cards like `duration-collision` **never enter
+auto**: auto-adoption would mask entirely that "this file contains several episodes", which is exactly what a person should see when answering the card.
+(Corollary: the value of relaxing the bar by piling up volume to accumulate samples is also doubtful — the bulk of what accumulates is exactly these "only the head can be looked at" cards.)
 
-**多候选的卡没有"按候选选择"的表单**——这正是裁决进对话的理由之一：例外的正确动作
-（"认第一个候选、顺带识别第三个是它的字节级副本"）装不进设计时定死的按钮集合，对话里一句话就落
-（spec `2026-08-24-conversational-reconcile` §1）。多候选是常态不是边角：实测占 怡楽 8 张里 5 张、
-春典 18 张里 3 张（都是 2–3 个候选，2026-08-01）。
+**Cards with several candidates have no "choose per candidate" form** — this is one of the reasons adjudication moves into the conversation: the right action for an exception
+("claim the first candidate, and also recognize that the third is its byte-level copy") does not fit into a set of buttons fixed at design time, while one sentence in the conversation records it
+(spec `2026-08-24-conversational-reconcile` §1). Multiple candidates are the norm, not an edge case: measured, they account for 5 of 8 cards for 怡楽 (Yile) and
+3 of 18 cards for 春典 (Chundian) (all 2–3 candidates, 2026-08-01).
 
-### AI 建议 vs 人最终选择（对照账本）
+### AI suggestion vs the person's final choice (comparison ledger)
 
-**这张表只读得到历史数据**：AI 那半截的写入方已经没有了（判读在对话里做），所以它不再长新行；
-人那半截照旧由写决定那一步（`ReconcileService.setIsEpisode`/`setNotEpisode`）回填，存量里还没答
-的行仍答得上。它当初存在的理由——给自动采纳一个准确率底数——仍然成立，只是底数已经封存。
+**This table can only read historical data**: the writer of the AI half no longer exists (the judgment is done in the conversation), so it no longer grows new rows;
+the person half is still backfilled by the step that writes the decision (`ReconcileService.setIsEpisode`/`setNotEpisode`), and rows still unanswered in the existing data can still be answered. The reason it
+originally existed — to give auto-adoption an accurate-rate base — still holds, but the base is now sealed.
 
-- **撤回不写账本**：账本问的是"他当时选了什么"，后来撤掉不改变当时那一次的选择。
-- **同一份文件连着来好几发否定时**，落在 AI 自己那一集上的那一发说了算——它是唯一一发真正在
-  否定这条建议。先到先占的话，AI 指的那一集排在后面时，一次真实的分歧会被记成"没法比"。
-- **四格互斥且穷尽**（一致 / 分歧 / 答了但没法比 / 还没答，相加 = 可比总数）。三格版本必然把
-  "没法比"并进某一格，一致率就虚高了——而虚高的准确率正是这套机制最不该产出的东西。
-- 读它：`GET /api/netdisk/reconcile/suggestions`（见 `docs/API.md`）。
+- **Revocation does not write to the ledger**: the ledger asks "what did they choose at the time", and a later revocation does not change the choice made then.
+- **When several negations come in a row for the same file**, the one that lands on the episode the AI itself named decides — it is the only one that truly
+  negates this suggestion. With first-come-first-served, when the episode the AI pointed to is ordered later, a real disagreement would be recorded as "not comparable".
+- **The four cells are mutually exclusive and exhaustive** (agree / disagree / answered but not comparable / not yet answered, which add up to the total comparable). A three-cell version inevitably folds
+  "not comparable" into one of the cells, which inflates the agreement rate — and an inflated accuracy rate is exactly what this mechanism should least produce.
+- To read it: `GET /api/netdisk/reconcile/suggestions` (see `docs/API.md`).
 
-## 轮末裁决
+## End-of-round adjudication
 
-追更轮归档之后、或手动调 `reconcile_adjudicate`，把归档待定卡与本轮判成 `pending` 的追更候选打包
-问一次模型，结论过代码闸（`src/netdisk/adjudicate/gate.ts` 的 `admitDecision`）后落决策账本，
-过闸的归档卡立刻重新归档一次、过闸的追更候选直接转存。**模型不删文件**——它只能回答
-「这份文件是不是那一集」，落下去的只有 `is-episode`/`not-episode` 两种决定；删除仍只走归档器
-现有的代码闸。实现见 `src/netdisk/adjudicate/`（`cards.ts` 造卡、`prompt.ts` 系统提示词与解析、
-`gate.ts` 代码闸、`service.ts` 主体）；权威设计见
-`internal design record`。
+After the follow-loop round archives, or when `reconcile_adjudicate` is called manually, the pending archive cards and the follow candidates judged `pending` this round are packaged and
+put to the model once; the conclusions pass through the code gate (`admitDecision` in `src/netdisk/adjudicate/gate.ts`) and are then recorded in the decision ledger,
+archive cards that pass the gate are immediately re-archived once, and follow candidates that pass are saved directly. **The model does not delete files** — it can only answer
+"is this file that episode", and only two decisions are recorded, `is-episode`/`not-episode`; deletion still goes only through the archiver's
+existing code gates. For the implementation see `src/netdisk/adjudicate/` (`cards.ts` builds the cards, `prompt.ts` holds the system prompt and parsing,
+`gate.ts` is the code gate, and `service.ts` is the main body); for the authoritative design see
+`internal design record`.
 
-- **只问三档 pending**：`evidence-conflict`、`duration-collision`、`no-duration`（`replace`/
-  `season-unresolved`/`suspect-dir` 熔断的一概不问，仍归人）；追更那一路加一档
-  `follow-candidate`（分享里有货但置信度不够自动转存的文件）。
-- **节流**：同一绑定这批卡的指纹（路径 + 类型 + 候选 leftKey 排序后取哈希）与上次相同、距上次
-  不足 7 天 → 不再问，落一次 `skipped:'same cards'`。一次最多 40 张卡、一次模型调用。
-- **`no-duration` 卡的候选量级取决于季长度，不是固定的**：这类卡没有任何 leftKey 信号（没有
-  `conflictsWith`/`collidesWith`），唯一敢用的收窄是文件名自带的「第N期」——只留标题期号相同的
-  清单条目；文件名没有期号、或收窄后一个候选都不剩，这张卡本任务就不造（v1 不问，不是造一张
-  模型只能瞎猜的空卡）。一部剧季越长（如日更综艺一季上百期），同一期号在不同季之间撞车的候选
-  也可能不止一条——季一致性另有一道闸（`Card.dirSeason` vs 候选的季号），但那道闸只在装配方
-  传了 `seasonOfDir` 时生效；轮末裁决器目前没有接这个信号（`ReconcileService.previewBinding`
-  不导出它），期号闸是眼下唯一真正兜底的那道。
-- **审计**：每条模型结论（含被拒收的、`unsure` 的）都写一行 `ai_suggestions`（见上一节）。
-- **撤回**：按 `note` 前缀 `llm:<runId>` 整批撤（`reconcile_revoke_adjudication` /
-  `DecisionStore.revokeByNotePrefix`），不牵动人工那些决定；追更候选已经转存的文件不受影响，
-  撤销只是让那一集重新回到待认领状态。
+- **Only three pending tiers are asked**: `evidence-conflict`, `duration-collision`, `no-duration` (those tripped by the `replace`/
+  `season-unresolved`/`suspect-dir` circuit breakers are never asked and still go to a person); the follow path adds one more tier,
+  `follow-candidate` (files in a share that has stock but whose confidence is not enough for automatic saving).
+- **Throttling**: if the fingerprint of this batch of cards for the same binding (a hash of path + type + sorted candidate leftKeys) is the same as last time and it has been
+  less than 7 days since then → do not ask again, and record one `skipped:'same cards'`. At most 40 cards and one model call per run.
+- **The candidate count of a `no-duration` card depends on the season length; it is not fixed**: this kind of card has no leftKey signal at all (no
+  `conflictsWith`/`collidesWith`), and the only narrowing it dares to use is the "第N期" ("issue N") that the file name carries — keep only list entries with the same title issue number;
+  if the file name has no issue number, or no candidate is left after narrowing, this task does not build the card (v1 does not ask, rather than building an empty card
+  the model can only guess at). The longer a show's season (for example a daily variety show with a hundred-plus issues in one season), the more than one candidate may collide on the same issue number across
+  different seasons — there is another gate for season consistency (`Card.dirSeason` vs the candidate's season number), but that gate takes effect only when the assembler
+  passes `seasonOfDir`; the end-of-round adjudicator does not currently wire this signal (`ReconcileService.previewBinding`
+  does not export it), so the issue-number gate is currently the only one that truly backstops.
+- **Audit**: every model conclusion (including rejected ones and `unsure` ones) writes a row to `ai_suggestions` (see the previous section).
+- **Revocation**: revoke a whole batch by the `note` prefix `llm:<runId>` (`reconcile_revoke_adjudication` /
+  `DecisionStore.revokeByNotePrefix`), without touching the human decisions; files already saved for follow candidates are unaffected,
+  and the revocation only returns that episode to the unclaimed state.
 
-## 共享认集层
+## The shared episode-recognition layer
 
-"看懂一个文件名 = 认出它是哪一集"这件事有两个用处：绑定匹配（本文档的匹配引擎）和归档器
-（`src/netdisk/reconcile/`，散文件搬哪/删哪/待定的三向分流）。两边共享的是**规则数据**，不是同一个
-清洗函数——这是有意的，不是没做完：
+"Understanding a file name = recognizing which episode it is" has two uses: binding matching (the matching engine of this document) and the archiver
+(`src/netdisk/reconcile/`, the three-way routing of loose files into move / delete / pending). What the two share is **rule data**, not the same
+cleaning function — this is deliberate, not unfinished:
 
-- 绑定匹配要给标题相似度打分（bigram 重合度），**不能剥标点**——标点一剥，相似度就失真，
-  两个本不相干的标题也可能撞出高分。
-- 归档器要精确分组（同一个 key 才算同一集），**必须剥标点剥到底**——留一个逗号，两个原本
-  同一集的文件名就会分进两个 key，被当成两集处理。
+- Binding matching has to score title similarity (bigram overlap) and **must not strip punctuation** — once punctuation is stripped, the similarity is distorted,
+  and two unrelated titles can collide into a high score.
+- The archiver needs exact grouping (the same key means the same episode) and **must strip punctuation all the way** — leave one comma, and two file names that were
+  the same episode would be split into two keys and treated as two episodes.
 
-两种输出的要求互斥，天生不能共用一条清洗管线：
+The requirements of the two outputs are mutually exclusive, so by nature they cannot share a single cleaning pipeline:
 
 ```
-认文件名规则 ── 手工指定（最高，人裁过的机器不许翻案）——两处各管各，不合并
-             ├─ 本剧定制（存在绑定的 MatchSpec 里，是数据不是代码，两边共享）
-             └─ 通用清洗（两套实现，各自的输出要求不同，见上）
+Recognition rules for file names ── manually specified (highest; what a person has ruled the machine may not overturn) — the two sides each manage their own, not merged
+             ├─ Per-show customization (stored in the binding's MatchSpec, data rather than code, shared by both sides)
+             └─ Generic cleaning (two implementations, whose output requirements differ, see above)
 ```
 
-真正统一的只有两件事：
+Only two things are truly unified:
 
-1. **通用常量 `EXT`**（扩展名并集，含 `opus`）——现在只在 `src/netdisk/identity.ts` 定义，
-   `match-spec.ts` 的 `stripper()`/`canonName` 从那里 `import`，**别各自维护一份副本**。
-2. **本剧规则作为数据**：`identityRulesFromSpec()`（`src/netdisk/match-spec.ts`）把一个
-   绑定的 `MatchSpec` 抽成 `{titleStrip, epNumRegex}`（各 stage 的 `titleStrip` 去重并集、
-   `epnum` stage 的 `epNumRegex`；**`solo` 与 `duration` 两档不参与**——尤其是隐式补进来的
-   时长档，它的 `titleStrip` 若并进来会让归档器的分组 key 整体漂移、`decisions` 表的人工
-   豁免全部失联），归档器的 `makeIdentity()`（`src/netdisk/identity.ts`）
-   拿它当参数——一处配置（绑定的 `matchSpec`），归档器跟着受益，不用在归档器那边另写一遍。
+1. **The generic constant `EXT`** (the union of extensions, including `opus`) — defined only in `src/netdisk/identity.ts`,
+   and `stripper()`/`canonName` in `match-spec.ts` `import` it from there; **do not each maintain a copy**.
+2. **Per-show rules as data**: `identityRulesFromSpec()` (`src/netdisk/match-spec.ts`) extracts a
+   binding's `MatchSpec` into `{titleStrip, epNumRegex}` (the de-duplicated union of each stage's `titleStrip`, and
+   the `epNumRegex` of the `epnum` stage; **the `solo` and `duration` tiers do not take part** — especially the implicitly added
+   duration tier, whose `titleStrip`, if merged in, would make the archiver's grouping keys drift wholesale and cut off all of the manual
+   exemptions in the `decisions` table), and the archiver's `makeIdentity()` (`src/netdisk/identity.ts`)
+   takes it as a parameter — one configuration (the binding's `matchSpec`), and the archiver benefits along with it, with no need to write it again on the archiver side.
 
-**归档器怎么接上这份规则**：`ReconcileShowConfig.bindingId`（`src/netdisk/reconcile/
-service.ts:19`）指向一个权威绑定，`ReconcileService.identityFor()`
-（`service.ts:183`）用它取该绑定的 `matchSpec`、喂给 `identityRulesFromSpec()`，再造出
-`makeIdentity()`。**给绑定加一条 `titleStrip`，归档器的默认规则跟着变**——但只在归档器
-没有显式覆盖该字段时成立，见下一段。
+**How the archiver is wired to this rule data**: `ReconcileShowConfig.bindingId` (`src/netdisk/reconcile/
+service.ts:19`) points to an authoritative binding, and `ReconcileService.identityFor()`
+(`service.ts:183`) uses it to fetch that binding's `matchSpec`, feed it to `identityRulesFromSpec()`, and build
+`makeIdentity()`. **Adding a `titleStrip` to the binding changes the archiver's default rules with it** — but this holds only when the archiver
+has no explicit override for that field; see the next paragraph.
 
-`ReconcileShowConfig.identity`（`service.ts:27`）是显式覆盖口，**逐字段替换、不是合并**：
-`titleStrip: show.identity?.titleStrip ?? rules.titleStrip`，`epNumRegex` 同理——覆盖了哪个
-字段，那个字段就完全不再看绑定的规则，只有没覆盖的字段还借绑定的。这是刻意的选择：如果
-改成两边取并集，绑定侧任何时候加一条新 `titleStrip`，都会静默混进已覆盖字段的规则里，改变
-归档器产出的 key——而 `netdisk.db` 的 `decisions` 表的人工豁免正是按这个 key 存的，key
-一漂，豁免就失联。替换语义放弃了"绑定改一条规则、归档器自动跟上"这点便利，换的是"归档器的
-key 不会被绑定侧的改动意外扰动"。
+`ReconcileShowConfig.identity` (`service.ts:27`) is the explicit override, which **replaces field by field, and does not merge**:
+`titleStrip: show.identity?.titleStrip ?? rules.titleStrip`, and likewise for `epNumRegex` — whichever
+field is overridden no longer looks at the binding's rule at all, and only fields not overridden still borrow from the binding. This is a deliberate choice: if it
+were changed to a union of both sides, any new `titleStrip` added on the binding side at any time would silently mix into the rules of an overridden field and change the keys
+the archiver produces — and the manual exemptions in the `decisions` table of `netdisk.db` are stored by exactly this key, so
+once the key drifts, the exemptions are cut off. Replace semantics gives up the convenience of "change a rule on the binding and the archiver follows automatically", and gets in return that "the archiver's
+keys are not accidentally disturbed by changes on the binding side".
 
-现状：怡乐 show 的 `identity` 覆盖**两个字段都设了**——`titleStrip:
-["^怡[乐楽樂](?:播客|电台)?\s*[-–—·]\s*"]` + `epNumRegex: "^(\d{3})\."`。**这意味着对怡乐这个 show，绑定侧改
-`titleStrip` 完全不会传到归档器**——两个字段都被覆盖口整个接管，"借绑定规则"这条路径对它
-形同虚设；只有新建一个 show、且不填 `identity`（或只填其中一个字段）时，"改绑定、归档器
-自动跟上"才成立。**这不是"本该消灭却没消灭"，而且别去消灭它**：把这条前缀规则加进怡乐绑定的
-`matchSpec.titleStrip`（让绑定匹配也共享它）会产生 2 条新配对且**都是错配**——`878.五十谈身边灵异事` 被剥掉前缀后配上了完全不同集号的 `137.十谈身边灵异事.mp3`
-（剥前缀让重复副本的文件名掉进弱信号的 `title` 档，bigram 相似度把它们错误地凑成一对）。
-排查确认那 11 个 `怡乐播客 - NNN` 形态的孤儿文件对应的集号在左侧全部已经配给别的文件，是
-真实冗余副本、留作孤儿是对的——不是"漏收编"。所以这条前缀规则只留在归档器的
-`identity` 覆盖口，绑定的 `matchSpec` 未动。
+Current state: the `identity` override of the 怡乐 (Yile) show **sets both fields** — `titleStrip:
+["^怡[乐楽樂](?:播客|电台)?\s*[-–—·]\s*"]` + `epNumRegex: "^(\d{3})\."`. **This means that for the Yile show, changing the binding side's
+`titleStrip` never reaches the archiver at all** — both fields are taken over wholesale by the override, and the "borrow the binding's rules" path is
+a dead letter for it; "change the binding and the archiver follows automatically" holds only when a new show is created and `identity` is left unfilled (or only one of its fields is filled). **This is not "should have been eliminated but was not", and do not try to eliminate it**: adding this prefix rule to the Yile binding's
+`matchSpec.titleStrip` (so that binding matching shares it too) would produce 2 new pairings and **both are wrong pairings** — with the prefix stripped, `878.五十谈身边灵异事` is paired with the completely different episode number `137.十谈身边灵异事.mp3`
+(stripping the prefix drops the file names of duplicate copies into the weak-signal `title` tier, where bigram similarity wrongly puts them together as a pair).
+The investigation confirmed that the episode numbers corresponding to those 11 orphan files of the `怡乐播客 - NNN` form are all already paired to other files on the left, so they are
+genuinely redundant copies, and leaving them as orphans is correct — they are not "missed absorptions". So this prefix rule stays only in the archiver's
+`identity` override, and the binding's `matchSpec` is untouched.
 
-**decisions key 会跟着认集规则漂**：改一条 `titleStrip`/`epNumRegex` 就可能改变认集函数
-产出的 key，`decisions` 表（exempt/tombstone）按 key 存的记录会跟着漂移、失联。2026-07-25
-的怡乐迁移因为 `identity` 覆盖口逐字复刻了老规则，产出的 key 没有漂——`decisions` 表
-未做任何迁移，preview 前后动作清单逐条比对完全一致（数量、动作、豁免全部相同）。**这不是
-"改规则永远安全"**：下次改动如果规则本身变了（不是像这次这样原样迁移），要预期 key 漂移、
-需要相应迁移 `decisions` 表。
+**The decisions key drifts along with the recognition rules**: changing a single `titleStrip`/`epNumRegex` may change the key the recognition function
+produces, and records in the `decisions` table (exempt/tombstone) stored by key drift along and are cut off. In the Yile migration of 2026-07-25,
+because the `identity` override replicated the old rules verbatim, the keys produced did not drift — the `decisions` table
+needed no migration, and the action lists before and after the preview matched entry by entry (counts, actions, and exemptions were all identical). **This is not
+"changing rules is always safe"**: if a future change alters the rules themselves (rather than migrating them as-is like this time), expect key drift and
+a corresponding migration of the `decisions` table.
 
-## 按季分文件夹、文件裸到只剩集号
+## Per-season folders, files bare down to just the episode number
 
-`stripper()` 递归列目录拿到的 `name` 带完整相对子路径，但比较前会先 `.replace(/^.*\//, '')` 砍到只
-剩 basename——**目录名对 `fileRegex` 永远不可见**。真实案例（进击的巨人，2026-07-25）：网盘按季分
-文件夹、文件本身裸到只剩集号（`进击的巨人 S01/进击的巨人24.mp4`），`season-episode` 默认的双捕获组
-`fileRegex` 读不到季号，DEFAULT 全灭。
+The `name` obtained by `stripper()` listing directories recursively carries the full relative subpath, but before comparison it is first cut with `.replace(/^.*\//, '')` down to just
+the basename — **directory names are never visible to `fileRegex`**. Real case (进击的巨人 (Attack on Titan), 2026-07-25): the netdisk is split into per-season
+folders, and the files themselves are bare down to just the episode number (`进击的巨人 S01/进击的巨人24.mp4`); the default two-capture-group
+`fileRegex` of `season-episode` cannot read the season number, so DEFAULT is wiped out entirely.
 
-`fileRegex` 支持只写**一个**捕获组（只取集号）：右侧文件匹配到时第 2 组恒为 `undefined`，`stage` 据此
-整档退化成"纯按集号分桶、左侧丢弃季号只比集号"。这只在右侧数据已经是单季纯净集合时安全——两条路
-都满足：
+`fileRegex` supports writing just **one** capture group (taking only the episode number): when a right-side file matches, group 2 is always `undefined`, and `stage` accordingly
+degrades the whole tier into "bucket purely by episode number, discarding the left side's season number and comparing only the episode number". This is safe only when the right-side data is already a pure single-season set — either of two paths
+satisfies that:
 
-1. **多季 tv 绑定走 `matchBySeason`**（`season-resolve.ts`，同步入口已自动接）：左右两侧先按季拆分
-   （结构指纹 / 嵌套干净名 / LLM 兜底判文件夹归哪季），每季独立跑一遍匹配管线，天然纯净。
-2. **`dirPath` 本身收窄到单季子目录**的绑定同样安全——目录里只有那一季的文件。
+1. **A multi-season tv binding goes through `matchBySeason`** (`season-resolve.ts`, already wired automatically into the sync entry): left and right are first split by season
+   (structural fingerprint / nested clean name / LLM fallback to decide which season a folder belongs to), and each season runs the matching pipeline independently, so it is pure by construction.
+2. **A binding whose `dirPath` itself is narrowed to a single-season subdirectory** is likewise safe — the directory holds only that season's files.
 
-`fileRegex` 里两种写法混用（同一正则某些文件匹配出第 2 组、某些没匹配出）不受支持，会按最后一次
-命中的口径统一处理，写规则时保证捕获组数量一致。
+Mixing the two forms in one `fileRegex` (the same regex matching group 2 for some files and not for others) is not supported, and is handled uniformly by the convention of the last
+hit; when writing rules, keep the number of capture groups consistent.
 
-**裸期号≠裸集号：`期` ≠ `集` 的季，裸数字后面不能再跟"期"。** 综艺常按"一期多集"编号
-（TMDb `E01`=第1期上、`E02`=第1期下……），网盘按"期"命名（`第3期上：….mkv`）。这一季的
-权威标题（`SpecLeft.title`）里只要出现过"第N期上/中/下"或"第N期（一）"（括号段号，喜剧之王
-单口季这类）的形状，`season-episode` 的裸集号兜底档就会把正则收紧成"数字后面不能跟`期`"，好让
-"第3期上"这类文件让位给更精确的 `episode-part`（第N期上/下、第N期（一）、第N期四 都归它），"第4期纯享版"这类既配不上期号
-复合键、也不该被裸集号档误吃的文件则保持孤儿。没有这个形状的季（标题只有"第N期"、没有任何
-段号）维持原样，裸期号本来就等于集号。判据实现见 `season-resolve.ts` 的 `withBareEpisodeTail`。
+**A bare issue number ≠ a bare episode number: in a season where `期` ≠ `集` ("issue" ≠ "episode"), a bare number must not be followed by "期".** Variety shows are often numbered as "one issue, several episodes"
+(TMDb `E01` = issue 1 part 1, `E02` = issue 1 part 2, ...), while the netdisk names them by issue (`第3期上：….mkv`). As soon as the authoritative titles (`SpecLeft.title`) of this season
+contain the shape "第N期上/中/下" ("issue N, part 1/2/3") or "第N期（一）" ("issue N (one)", a parenthesized part number, as in the stand-up seasons of 喜剧之王 (King of Comedy)), the bare-episode-number fallback tier of `season-episode` tightens the regex to "the digits must not be followed by `期`", so that
+files like "第3期上" yield to the more precise `episode-part` (第N期上/下, 第N期（一）, 第N期四 all belong to it), while files like "第4期纯享版" ("issue 4 pure-cut edition"), which neither match the issue-number
+composite key nor should be wrongly swallowed by the bare-episode-number tier, stay orphans. A season without this shape (titles only "第N期" with no
+part number at all) is unchanged, since a bare issue number is simply the episode number. The criterion is implemented in `withBareEpisodeTail` in `season-resolve.ts`.
 
-**归档器还有一道独立的闸（`reconcile/plan.ts` 的 `qiConflict`）**：刻 `SxxExx - ` 前缀之前，文件名的
-「第N期」与清单这一集标题的「第M期」都在场却不相等、或文件名写着纯享而清单那一集（标题带期号）
-不是纯享 → 出 `evidence-conflict` 卡，不搬不改名。前缀是唯一会把引擎结论写进盘上文件名的地方，
-错号一旦刻上就成了下一轮最强的证据；分享者的期号和 TMDb 的期号两个都在场时，机器不替它们二选一。
+**The archiver also has an independent gate (`qiConflict` in `reconcile/plan.ts`)**: before stamping the `SxxExx - ` prefix, if both the file name's
+"第N期" and the list entry's title "第M期" are present but unequal, or the file name says 纯享 ("pure-cut") while the list entry (whose title carries an issue number)
+is not pure-cut → it raises an `evidence-conflict` card, with no move and no rename. The prefix is the only place that writes the engine's conclusion into the file name on disk,
+and once a wrong number is stamped it becomes the strongest evidence for the next round; when both the sharer's issue number and TMDb's issue number are present, the machine does not choose between them.
 
-## 季归属怎么判的（`season-resolve.ts`）
+## How the season attribution is judged (`season-resolve.ts`)
 
-多季 tv 绑定（季数 > 1）先过这一层，再进匹配器——这是"按季分文件夹"一节说的"右侧数据
-已经是单季纯净集合"是怎么来的。判据**有序**、命中即停：
+A multi-season tv binding (more than one season) passes through this layer first and only then enters the matcher — this is how the "right-side data
+is already a pure single-season set" of the "Per-season folders" section comes about. The criteria are **ordered** and stop at the first hit:
 
-1. **嵌套干净名**（`nestedCleanNameSeason`）——文件夹名（含子路径，由近及远扫）里字面写着的
-   `第N季`/`Sxx`。字面标注最硬，放最前。
-2. **播出日期**（`airDateSeason`）——文件名里的日期（`2026.08.14` / `20260814` / `2026-08-14`）落进
-   哪一季的播出区间（TMDb 每集 airDate 的最早/最晚，尾部放宽 14 天给上传延迟）。要带日期的文件占
-   "像一集"文件的一半以上、且超过一半落进**同一季**、没有第二季分到任何一份，才判。它排在结构
-   指纹与缓存前面：文件数 == 某季集数是巧合级的证据（追更往一个第 2 季的分享目录里补两集，目录
-   恰好 20 个视频 = 第 1 季集数，整目录被判成第 1 季），缓存里又可能躺着上一轮 LLM 空手而归的
-   `null`；日期不会撒谎。综艺的分享目录常是乱码名 + 只装最近几期（文件数对不上任何一季），这一档
-   是它们唯一能自动定季的路。
-3. **结构指纹**（`structuralSeasonMatch`）——文件夹里"像一集"的文件数唯一命中某季的真实集数。
-   没有字面标注、文件名也没日期时的兜底档。
-4. **缓存** —— 上次 LLM 兜底判过的答案（`set.llmSeasonCache`，持久化在绑定上），文件夹没改名
-   就不重新问模型。
-5. **LLM 语义兜底**——前面各档都判不出时批量问一次（同一绑定所有待判文件夹一次问完）。它只拿到
-   目录名、子目录树和杂项文件名，**不拿一集一集的文件名**——一个乱码名、无子目录、无杂项的目录
-   在它眼里是空的，答不出很正常，别指望它。
+1. **Nested clean name** (`nestedCleanNameSeason`) — a literal `第N季`/`Sxx` ("season N") written in the folder name (including subpaths, scanned from nearest to farthest).
+   A literal label is the hardest evidence, so it goes first.
+2. **Air date** (`airDateSeason`) — which season's air-date range the date in the file names (`2026.08.14` / `20260814` / `2026-08-14`) falls into
+   (the earliest/latest TMDb airDate of each episode, with the tail relaxed by 14 days for upload delay). It decides only when the files carrying dates make up more than half of the
+   "episode-like" files, more than half of those fall into **the same season**, and no second season is assigned any of them. It sits ahead of the structural
+   fingerprint and the cache: file count == some season's episode count is coincidence-grade evidence (when following adds two episodes to a share directory of season 2, the directory
+   happens to have exactly 20 videos = the episode count of season 1, and the whole directory is judged season 1), and the cache may hold a `null` from a previous round when the LLM came back empty-handed;
+   dates do not lie. Variety shows' share directories are often garbled names holding only the latest few issues (the file count matches no season), and this tier
+   is the only way they can have their season determined automatically.
+3. **Structural fingerprint** (`structuralSeasonMatch`) — the number of "episode-like" files in the folder uniquely hits some season's real episode count.
+   The fallback tier when there is no literal label and the file names have no dates either.
+4. **Cache** — the answer from the last LLM fallback judgment (`set.llmSeasonCache`, persisted on the binding); if the folder has not been renamed,
+   the model is not asked again.
+5. **LLM semantic fallback** — when none of the earlier tiers can decide, ask once in a batch (all pending folders of the same binding in one question). It receives only the
+   directory name, the subdirectory tree, and miscellaneous file names, **not the episode-by-episode file names** — a directory with a garbled name, no subdirectories, and no miscellaneous files
+   looks empty to it, and it is entirely normal that it cannot answer; do not count on it.
 
-**真实回归（进击的巨人，2026-07-25）**：老顺序是结构指纹在前。网盘把 S03 拆成
-`进击的巨人 S03/进击的巨人 S03 part1`（12 个文件）+ `.../part2`（10 个文件），part1 的文件数
-（12）恰好等于 S02 的真实集数——结构指纹把它误判成季 2，12 个文件整段并错季，S03E01-E12
-因此全数 `missing`（两边同名文件 `进击的巨人01.mp4` 等让 `reduceByQuality` 消歧不出，先到的
-季 2 自己文件赢先手）。已把嵌套干净名调到结构指纹前面修复——字面季号比"文件数量凑巧相等"
-是更硬的证据。
+**Real regression (进击的巨人 (Attack on Titan), 2026-07-25)**: the old order had the structural fingerprint first. The netdisk split S03 into
+`进击的巨人 S03/进击的巨人 S03 part1` (12 files) + `.../part2` (10 files), and the file count of part1
+(12) happened to equal the real episode count of S02 — the structural fingerprint misjudged it as season 2, so the 12 files were wholesale merged into the wrong season, and S03E01-E12
+all became `missing` (same-name files on both sides such as `进击的巨人01.mp4` made `reduceByQuality` unable to disambiguate, and the file of season 2 that arrived first
+won the first move). This was fixed by moving the nested clean name ahead of the structural fingerprint — a literal season number is
+harder evidence than "the file counts happen to be equal".
 
-**残留局限**：各档（含缓存）都判不出的文件夹归 `null`，文件整段留作 orphan——不会去猜。
-`最终季`/`完结篇` 这类没有字面 `Sxx`/`第N季`、文件数又凑不上任何一季真实集数的文件夹，
-LLM 也可能保守拒答（真实案例：进击的巨人 4K 典藏版目录下"进击的巨人最终季 Part.1"
-文件夹，16 个文件，任何一季集数都对不上，LLM 判了 `null`）。这类残留**不值得为了自动化
-硬造启发式**（"最终季→最高季号"这种映射对这一部合理，但可能撞上其他作品的例外用法，
-风险大于收益）——直接走人工兜底（见下）。
+**Residual limitation**: a folder that no tier (including the cache) can decide is assigned `null`, and its files are wholesale left as orphans — it does not guess.
+For folders such as `最终季`/`完结篇` ("final season" / "finale") that have no literal `Sxx`/`第N季` and whose file count matches no season's real episode count,
+the LLM may also conservatively decline to answer (real case: the "进击的巨人最终季 Part.1" folder under the 进击的巨人 4K collector's edition directory,
+with 16 files, matching no season's episode count, which the LLM judged `null`). This kind of residue **is not worth forcing a heuristic
+for the sake of automation** (a mapping such as "final season → highest season number" is reasonable for this one title, but may hit exceptional usage in other works,
+and the risk outweighs the benefit) — go straight to the manual fallback (see below).
 
-## 已知局限
+## Known limitations
 
-**跨 part 绝对编号 + 描述性文件名无解，走人工兜底。** 上一节提到的"进击的巨人最终季 Part.1/
-Part.2"：季号判不出之外，就算判出来了，文件名形如
-`[SRENIX] Attack on Titan The Final Season - 08 [BD HEVC 2160P FLAC].mkv`——数字后面跟着长串
-画质/编码描述，不是"trailing 数字"，`fileRegex` 抠不出干净的集号；且 part1/part2 用的是跨 part
-连续的绝对编号（part1: 1-16 → 该季 E01-16，part2: 17-28 → E17-28），offset 换算不是正则能表达
-的东西。这类**没有活体核实偏移量是否处处对得上**（存在漏第几集、命名不规则的风险），不值得
-为一个绑定定制正则——直接读文件夹里的编号连续性人工核对、`PATCH` 钉死。
+**Cross-part absolute numbering + descriptive file names has no solution; go to the manual fallback.** The "进击的巨人最终季 Part.1/
+Part.2" mentioned in the previous section: besides the season number being undeterminable, even if it were determined, the file names look like
+`[SRENIX] Attack on Titan The Final Season - 08 [BD HEVC 2160P FLAC].mkv` — the number is followed by a long string of
+quality/encoding descriptions, so it is not a "trailing number", and `fileRegex` cannot extract a clean episode number; moreover part1/part2 use absolute numbering continuous across parts
+(part1: 1-16 → E01-16 of that season, part2: 17-28 → E17-28), and the offset conversion is not something a regex can express.
+For this kind, **there has been no live verification that the offsets line up everywhere** (there is a risk of missing episodes and irregular naming), so it is not worth
+a custom regex for a single binding — read the numbering continuity in the folder, check it manually, and pin it with `PATCH`.
 
-**编号错位：文件名规则无解，交给时长档。** 网盘的编号可能整体错位或个别错位
-（`455.现代版木仓下留人` 实为源站的 `454.现代版枪下留人`——编号错 1 + 标题改字避审同时失灵）。
-文件名的任何规则都救不了这类，**时长档（见上）就是为它加的**；两侧都拿不到时长时仍然无解，
-走人工兜底。
+**Misaligned numbering: file-name rules have no solution; hand it to the duration tier.** Numbering on the netdisk may be misaligned as a whole or in individual files
+(`455.现代版木仓下留人` is actually the source site's `454.现代版枪下留人` — numbering off by 1, and the title with a character altered to evade review, failing at the same time).
+No rule on file names can save this kind; **the duration tier (see above) was added precisely for it**; when neither side can obtain a duration it is still unsolvable,
+and you go to the manual fallback.
 
-**共享 `EXT` 含 `opus`，所以绑定匹配的 `canonName` 把 `x.mp3` 和 `x.opus` 收成同一个规范名。**
-同时持有这两种格式的绑定，`coverage.right.total` 因此比按扩展名分开数少 1、少一个 orphan——
-去重更准，但排查覆盖率数字对不上早期记录时要想到这一条。
+**The shared `EXT` includes `opus`, so the binding matching's `canonName` collapses `x.mp3` and `x.opus` into the same canonical name.**
+For a binding that holds both formats, `coverage.right.total` is therefore 1 lower than counting by extension separately, with one orphan fewer —
+dedup is more accurate, but keep this in mind when investigating coverage numbers that do not match earlier records.
 
-**`EXT` 是双向共享的，归档器那侧也认视频扩展名（`mkv/mp4/ts/…`）——这一侧能漂 `decisions`
-表的 key。** 扩展名是不是在 `EXT` 里，决定它被整段剥掉还是留在分组键里（`PUNCT` 只剥掉那个点，
-`mkv` 三个字母会留下）——**同一个文件在两种口径下的分组键不一样**，键一漂，之前对它存的
-豁免/墓碑就认不出它了。今天没事：怡乐是纯音频，`netdisk.db` 的 `decisions` 表里没有任何带视频
-扩展名的 key。但**给归档器接一个含视频文件的 show 之前**，先按这条查一遍现存 key，别让用户
-"不再提醒"的决定悄悄失效。**键前面还有一段货架 id**（`fileKeyOf(shelfId, path)`，见上面
-「决定键带着货架 id」）：查现存 key 时按 `openlist:` 前缀之后那一段读，货架 id 本身不参与这条漂移。
+**`EXT` is shared in both directions, so the archiver side also recognizes video extensions (`mkv/mp4/ts/…`) — and this side can drift the keys of the `decisions`
+table.** Whether an extension is in `EXT` decides whether it is stripped off whole or stays in the grouping key (`PUNCT` strips only the dot, and
+the three letters `mkv` remain) — **the same file gets different grouping keys under the two conventions**, and once the key drifts, the exemptions/tombstones previously stored for it
+can no longer recognize it. Fine today: Yile is pure audio, and the `decisions` table in `netdisk.db` has no key with a video
+extension. But **before connecting a show that contains video files to the archiver**, check the existing keys against this point first, so that the user's
+"do not remind me again" decisions do not silently stop working. **The key also has a shelf id in front** (`fileKeyOf(shelfId, path)`, see "Decision keys carry the shelf id" above):
+when checking existing keys, read the part after the `openlist:` prefix; the shelf id itself does not take part in this drift.
 
-**两套清洗管线的步骤顺序不同，同一条 `titleStrip` 规则可能一边生效一边不生效。**
-`makeIdentity`（归档器）先剥 `【水印】`/括号噪音，再套调用方的 `titleStrip`；`stripper()`
-（绑定匹配）没有这道预清洗，直接套 `titleStrip`。如果某绑定的 `titleStrip` 只写了一条锚在
-开头的前缀规则（如 `^怡乐播客\s*-\s*`）、没写水印规则，遇到 `【整理】怡乐播客 - 186.x.mp3`
-这种水印排在最前面的文件名：归档器因为先剥了水印，前缀规则能锚上开头、正常剥掉；绑定匹配
-没有预清洗，前缀规则被水印顶在中间，锚不上、不生效。今天没炸是因为
-`DEFAULT_TITLE_STRIP[0]` 恰好就是水印规则、绑定通常继承它——但这是巧合，不是保证，写
-per-binding `titleStrip` 时如果打算完全替换而不是在 DEFAULT 基础上追加，要留意这个顺序差。
+**The two cleaning pipelines run their steps in different orders, so the same `titleStrip` rule may take effect on one side and not on the other.**
+`makeIdentity` (the archiver) first strips `【水印】` ("watermark") / bracket noise and then applies the caller's `titleStrip`; `stripper()`
+(binding matching) has no such pre-cleaning and applies `titleStrip` directly. If a binding's `titleStrip` has only one prefix rule anchored at
+the start (such as `^怡乐播客\s*-\s*`) and no watermark rule, then for a file name like `【整理】怡乐播客 - 186.x.mp3`
+with the watermark placed first: the archiver strips the watermark first, so the prefix rule can anchor at the start and strip normally; binding matching
+has no pre-cleaning, so the prefix rule is pushed into the middle by the watermark, cannot anchor, and does not take effect. It has not blown up so far because
+`DEFAULT_TITLE_STRIP[0]` happens to be the watermark rule and bindings usually inherit it — but that is coincidence, not a guarantee; when writing a
+per-binding `titleStrip`, if you intend to replace it entirely rather than append on top of DEFAULT, watch for this order difference.
 
-**时长档已经上线（2026-07-30），本节讲它的剩余边界。** 时长从"判下架的兜底证据"提升成了
-判身份的主锚（用法见上面「时长档」一节），接一个新节目需要的先验从"一套命名正则"降成了
-"节目单带时长"。还没覆盖到的：
+**The duration tier is live, and this section covers its remaining boundaries.** Duration has been promoted from "fallback evidence for judging delisting" to
+the main anchor for judging identity (usage is in the "duration tier" section above), and the prior needed to connect a new show has dropped from "a set of naming regexes" to
+"an episode list that carries durations". What is still not covered:
 
-- **TMDb 侧仍无时长**，剧集/电影绑定拿不到锚，仍然纯靠文件名。TMDb 的 `runtime` 只到分钟、
-  且是全剧近似值，对 1s 容差等于没有。
-- **首轮探测有预算**（一次 sync 200 次新探测）。填不满的那部分不是"错"，只是那几集这一轮
-  走文件名链；归档器每晚也在填同一份缓存，几轮之后收敛。
-- `paid`（三态，见上面「付费货架 = `paid` ∧ 匹配器认领」）随 `durationS` 一起进了 `SpecLeft`。
-  **认集这条路上没有任何判定层读它**——匹配层不读（带不带它配对结果一模一样），归档器判
-  "这是哪一集"时也不读（读了就是第二个判定脑）。读它的只有认领结论定下之后的**处置**那一侧。
-  它进匹配层是为了让「节目单 → 匹配层」这一步不丢信息、并进运行账本。
-  订阅流那支永远知道 `paid`（读得出就是 `false`）；TMDb 那支天然 `undefined`。
+- **The TMDb side still has no duration**, so TV/movie bindings get no anchor and still rely purely on file names. TMDb's `runtime` is only to the minute
+  and is an approximate value for the whole series, which is as good as nothing against a 1s tolerance.
+- **The first-round probing has a budget** (200 new probes per sync). The part that cannot be filled is not "wrong"; those episodes just
+  go through the file-name chain this round; the archiver also fills the same cache every night, so it converges after a few rounds.
+- `paid` (three-state, see "Paid shelf = `paid` ∧ claimed by the matcher" above) entered `SpecLeft` together with `durationS`.
+  **No judgment layer on the episode-recognition path reads it** — the match layer does not (the pairing result is identical with or without it), and the archiver does not read it
+  when judging "which episode is this" (reading it would make a second judging brain). Only the **disposition** side, after the claim conclusion has been settled, reads it.
+  It entered the match layer so that the "episode list → match layer" step loses no information and is carried into the run ledger.
+  The subscription-stream branch always knows `paid` (if readable it is `false`); the TMDb branch is naturally `undefined`.
 
-**清洗规则只有两套（本节上面那两处），谁都不许再造第三套——别把 `displayTitle` 接进来。**
-`displayTitle`（`packages/alist/normalizer.ts`）的分享者前缀正则是**写死的通用启发式**
-（`^.{1,12}?\s*[-–—·]\s*(?=\d{3}[.．])`：前缀 ≤12 字且后跟三位数字），命不中的节目会出现
-「一处认得出前缀、另一处认不出」这种前后不一致，凭空给用户多一堆要裁的噪音。它只服务内容/
-显示层（`alistNormalizer` 与 adapter）。要按本 show 规则拿干净标题，用 `makeTitleClean()`
-（`identity.ts`）——**与分组键 `makeIdentity()` 同一份 `titleStrip` 数据源**。
+**There are only two cleaning rule sets (the two above in this section), and nobody may create a third — do not wire `displayTitle` in.**
+The sharer-prefix regex of `displayTitle` (`packages/alist/normalizer.ts`) is a **hard-coded generic heuristic**
+(`^.{1,12}?\s*[-–—·]\s*(?=\d{3}[.．])`: a prefix of ≤12 characters followed by three digits), and for shows it does not hit there would be an
+inconsistency of "recognized as a prefix in one place and not in another", creating a pile of noise out of thin air for the user to adjudicate. It serves only the content/
+display layer (`alistNormalizer` and the adapter). To get a clean title by this show's rules, use `makeTitleClean()`
+(`identity.ts`) — **it uses the same `titleStrip` data source as the grouping key `makeIdentity()`**.

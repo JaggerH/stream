@@ -159,8 +159,6 @@ form: [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md). Contribution workflow:
 
 ## Documentation
 
-Most documents under `docs/` are currently written in Chinese.
-
 | Document | What it answers |
 |---|---|
 | [cli/README.md](cli/README.md) | The full user guide: install, first stream, capabilities, connecting an agent |

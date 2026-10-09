@@ -631,7 +631,7 @@ not a parallel implementation.
     two cross-season files both named `第7期` ("Episode 7") naturally do not collide. Files not matched to an episode stay in place and only perform byte-identical dedupe within the **same directory**
     (`delete-dup`), and never participate in `delete-loser`/`replace` -- a losing copy only counts if the engine identified it as the same
     episode. The reconciler and binding sync **use the same season-partitioned matching path** (first decide the season by leaf folder, then match each season separately;
-    see "multi-season video archive" in `docs/MATCHING.md`) -- a single pot of adjudication would judge cross-season same-period files as the same episode. File names
+    see "Multi-season TV archiving" in `docs/MATCHING.md`) -- a single pot of adjudication would judge cross-season same-period files as the same episode. File names
     containing `纯享` ("pure version") are another playback line, not that episode: they go into `tv-<id>/纯享/S<nn>/`, with no numbering prefix,
     and do not go through the losing-copy path either (unless the engine recognizes one as the rightful copy of a certain episode, in which case it is that episode).
     Renames (`rename` action), like moves, record provenance first. All actions in one round share one `run_id` and can be undone as a whole round
@@ -708,7 +708,7 @@ One round (`FollowService.runOnce`) proceeds in order:
    write them to the decision ledger; archive cards that pass the gate immediately rerun archive, and follow candidates that pass the gate are saved directly to the shelf. If the adjudicator is not assembled
    (`deps.adjudicate` structural-type injection is absent) -> skip, and it does not count as a fault. Results are recorded in `follow_runs.adjudicated`
    (`{runId, asked, applied, rejected, unsure, failed?}`); if anything is accepted, sync one more round to recognize newly landed / newly adjudicated
-   files. See the "end-of-round adjudication" section in `docs/MATCHING.md`.
+   files. See the "End-of-round adjudication" section in `docs/MATCHING.md`.
 8. **Notification**: one `follow.round` event, `dedupeKey: follow:<setId>`; rounds with zero missing episodes and zero errors send nothing. If files were saved
    but none were recognized in any round (Quark is still moving / file names do not expose episode numbers), the title truthfully says `转存了 N 个文件，还没认出集` ("saved N files, but no episode recognized yet"),
    and this kind of round does not count as no-result. If archive moved or deleted things, the notification adds `归档：搬 N · 删 M · 改名 K` ("archive: moved N · deleted M · renamed K"); if gated, it adds

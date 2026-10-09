@@ -18,7 +18,7 @@ import { NetdiskBindings } from '../netdisk/NetdiskBindings.tsx'
 /** 面板要的那几格：名字、说明来源，以及后端标的 `role`（`/api/packages` 出线）。 */
 export type PluginConfigTarget = Partial<PluginSummary> & { id: string; name: string; role?: PackageRole }
 
-/** Per-plugin config panel. **按 `role` 分支，不按包 id**（`docs/PACKAGE.md`「宿主与包的边界」：
+/** Per-plugin config panel. **按 `role` 分支，不按包 id**（`docs/PACKAGE.md` "The host/package boundary"：
  *  前端不按站分支）。`role: 'netdisk-base'`（宿主的网盘底座）是内置托管的：一块只读实例状态
  *  （凭证由 Stream 接管，用户没什么要填）+ 网盘挂载 + 网盘绑定。其余包给一段只读的「配置从哪来」说明。
  *

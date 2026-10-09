@@ -70,7 +70,7 @@ export type RawOrNestedMember = {
  *  wholesale, so dropping this would silently unsubscribe the stream's existing sources.
  *
  *  `{plugin:'alist', source:'alist-audio'}` 是宿主网盘底座的离线成员——领域模型，不是按站分支
- *  （`docs/PACKAGE.md`「宿主与包的边界」豁免栏）。前端的**分支**一律按 `/api/packages` 的 `role`。 */
+ *  （`docs/PACKAGE.md` "The host/package boundary"豁免栏）。前端的**分支**一律按 `/api/packages` 的 `role`。 */
 export function buildNetdiskMountMembers(stream: StreamLike, path: string): StreamCreate['members'] {
   return [...streamRawMembers(stream), { plugin: 'alist', source: 'alist-audio', params: { path } }]
 }

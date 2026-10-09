@@ -39,7 +39,7 @@ const BOOT_TIMEOUT_MS = 90_000
 let child: ChildProcess | undefined
 
 /**
- * 隔离三件套，少一件都会伤到别人（`docs/DEVELOPMENT.md`「另起一份后端做冒烟」）：
+ * 隔离三件套，少一件都会伤到别人（`docs/DEVELOPMENT.md` "Start a Separate Backend for Smoke Tests/Verification"）：
  * 端口、data dir、**`packages_dir` 指空目录**——不指的话这份后端的 standby 管家会 `adopt()`
  * 用户正在跑的容器，退出时把它们 stop 掉，而活体那份的 cell 还记着 awake，再也不会拉回来。
  */
