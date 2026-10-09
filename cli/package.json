@@ -15,6 +15,7 @@
     "bin/stream.mjs",
     "resources/",
     "README.md",
+    "README.zh-CN.md",
     "LICENSE",
     "NOTICE",
     "THIRD-PARTY-NOTICE"

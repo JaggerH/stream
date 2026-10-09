@@ -15,7 +15,9 @@ import { HELP } from './cli.ts'
  *  2. npm 元数据必须声明仓库入口；否则读者只能看到孤立的安装说明，无法继续查文档或贡献。
  */
 const root = resolve(import.meta.dirname, '../..')
-const readme = readFileSync(join(root, 'cli/README.md'), 'utf8')
+// 两种语言各一份，随包一起出货；判据要在每一份里都留着——只钉英文那份，中文那份烂了没人喊。
+const READMES = ['cli/README.md', 'cli/README.zh-CN.md'] as const
+const readmes = READMES.map((rel) => [rel, readFileSync(join(root, rel), 'utf8')] as const)
 
 describe('对外那两张脸（npm README / --help）', () => {
   // 四步各自的判据。这些字符串就是读者遇到麻烦时唯一能敲的东西。
@@ -29,14 +31,16 @@ describe('对外那两张脸（npm README / --help）', () => {
     ['skill 怎么装进自己的 agent', '/api/skills'],
   ]
 
-  it.each(JUDGEMENTS)('README 里还留着「%s」的判据（%s）', (_why, needle) => {
-    expect(readme).toContain(needle)
-  })
+  describe.each(readmes)('%s', (_rel, readme) => {
+    it.each(JUDGEMENTS)('README 里还留着「%s」的判据（%s）', (_why, needle) => {
+      expect(readme).toContain(needle)
+    })
 
-  // 这一条是被真实事故换来的：不给频道归属的流，本次会话在调度里、重启后就没了，
-  // 而**没有任何一处会喊**。README 少了这句，用户只会看到"我订的流不见了"。
-  it('README 说清了建流要带 channel_id', () => {
-    expect(readme).toContain('channel_id')
+    // 这一条是被真实事故换来的：不给频道归属的流，本次会话在调度里、重启后就没了，
+    // 而**没有任何一处会喊**。README 少了这句，用户只会看到"我订的流不见了"。
+    it('README 说清了建流要带 channel_id', () => {
+      expect(readme).toContain('channel_id')
+    })
   })
 
   it('--help 也是自包含的：四步都在，且指得出完整指南在哪', () => {
@@ -49,6 +53,6 @@ describe('对外那两张脸（npm README / --help）', () => {
     expect(pkg.repository).toEqual({ type: 'git', url: 'git+https://github.com/JaggerH/stream.git' })
     expect(pkg.homepage).toBe('https://github.com/JaggerH/stream#readme')
     // README 必须在出货清单里——它是外人唯一看得到的那份文档。
-    expect(pkg.files).toContain('README.md')
+    for (const rel of READMES) expect(pkg.files).toContain(rel.replace('cli/', ''))
   })
 })

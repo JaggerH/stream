@@ -214,6 +214,27 @@ item，成功和白跑在 runner 的回执里一字不差，所以端点跑完�
   在用户自己的 Chrome 里、用他的账号建一把真 key，建 key 不幂等。
   活体验收步骤在 `docs/AGENT-TOOLING.md` §5.1。
 
+## Ad filtering (fold, don't delete)
+
+Item-level, deterministic, opt-in. Add an `ad_filter` block to `config.yaml`:
+```yaml
+ad_filter:
+  keywords: [推广, 赞助, 恰饭, sponsored]   # vs title + body + source category tags
+  domains:  [taobao.com, jd.com]            # vs item urls; also matches subdomains
+```
+Keywords also match the source's own `category` tags (RSSHub `item.category`) — the
+high-precision signal: v2ex's 推广 node flags promos there even when the title looks
+innocent. Caveat: broad topic words (`广告`) substring-match *news about* advertising
+on news feeds — prefer ad-specific phrases and lean on category.
+On ingest each item is checked; a match sets `muted: { reason: 'ad', rule }` on the
+`StreamItem` (the matched rule is kept so the routing is explainable). Muted items are
+**folded into a dedicated 广告 channel** in the sidebar (below the channel list) —
+they still land in the read model and are kept out of All Latest and every stream view,
+but one click on 广告 shows them. Nothing is dropped, so a false positive is fully
+recoverable. A canonical default rule set ships built-in (`src/content/ad-rules.default.ts`);
+config rules extend it. Classifier: `src/content/ad-filter.ts`; the channel is a
+client-side virtual view (`app/src/lib/items.ts`, `ADS_CHANNEL`).
+
 ## Channel
 
 A Channel (UI 里就叫「频道」) is what a user (or agent)

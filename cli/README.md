@@ -1,27 +1,33 @@
 # Stream
 
-**让你的 AI 探一次路，Stream 把这条路记下来——之后定时跑、不花 token、能进桌面 app，坏了再叫 AI 来修。**
+**English** | [简体中文](https://github.com/JaggerH/stream/blob/main/cli/README.zh-CN.md)
 
-今天的 agent（Claude Code / Codex / OpenClaw / 豆包）都能替你操作浏览器和电脑，但同一件事做第二遍，
-它不比第一遍便宜、也不比第一遍稳。Stream 把 agent 跑通的那条路固化成一份 **recipe**——不是提示词，
-是一份可执行的数据——然后由本机的调度器按时重放：在你**自己登录着的 Chrome** 里、在**桌面客户端**
-（微信 / QQ / 券商）里，不经模型、不花 token，锁屏了也照跑，每一次都有回执。网站改版了，重放会在
-断言那一步停下、把现场落盘、再把 agent 叫回来修。
+**Let your AI find the way once. Stream writes the route down — then replays it on a schedule, with
+no tokens spent, inside desktop apps too, and calls the AI back only when it breaks.**
 
-它同时是一个自托管的**收件箱**：小红书 / B 站 / 抖音 / 播客 / 网盘 / RSS 借你自己的登录态汇进来，
-整个收件箱开放给 AI（MCP）。所有数据都在你自己机器上。
+Today's agents (Claude Code / Codex / OpenClaw / Doubao) can all drive a browser and a computer for
+you, but doing the same thing a second time is no cheaper and no more reliable than the first.
+Stream freezes the route an agent got working into a **recipe** — not a prompt, but executable
+data — and the local scheduler replays it on time: in **your own logged-in Chrome**, in **desktop
+clients** (WeChat / QQ / brokerage apps), with no model in the loop and no tokens spent, even with
+the screen locked, with a receipt every time. When a site changes, the replay stops at the failing
+assertion, saves the scene to disk, and calls the agent back to fix it.
 
-## 你需要哪一种 Stream？
+It is also a self-hosted **inbox**: Xiaohongshu / Bilibili / Douyin / podcasts / netdisks / RSS
+flow in using your own login state, and the whole inbox is open to AI over MCP. All data stays on
+your machine.
 
-| 路 | 你是谁 | 怎么装 |
+## Which Stream do you need?
+
+| Path | You are | How to install |
 |---|---|---|
-| **① 贴一段话给你的 agent** | 已经在用 Claude Code / Codex / OpenClaw | 把下面那段提示词丢给它，它自己装、自己接上 |
-| **② 装了直接用** | 想要一个收件箱 + 定时跑的东西，不一定有 agent | `npm i -g @streamapp/stream && stream`，打开 <http://127.0.0.1:8900> |
-| **③ 从源码跑** | 要改代码、写 RSSHub 路由 | 仓库 README 的 Setup 一节 |
+| **① Paste a prompt to your agent** | Already using Claude Code / Codex / OpenClaw | Hand it the prompt below; it installs and connects itself |
+| **② Install and use** | Want an inbox plus things that run on a schedule, with or without an agent | `npm i -g @streamapp/stream && stream`, then open <http://127.0.0.1:8900> |
+| **③ Run from source** | Changing the code, writing RSSHub routes | [“From source” in the repository README](https://github.com/JaggerH/stream#from-source) |
 
-### ① 贴给你的 agent
+### ① Paste to your agent
 
-把这段话原样贴进 Claude Code / Codex / OpenClaw：
+Paste this as-is into Claude Code / Codex / OpenClaw:
 
 ```text
 Install Stream with `npm i -g @streamapp/stream`, start it with `stream`, verify
@@ -31,109 +37,124 @@ skills with `curl -s -X POST 127.0.0.1:8900/api/skills/install`. If the browser 
 connected (`/api/browser-capability` is not "ready"), walk me through loading it.
 ```
 
-装完 agent 多了一组 `stream_*` / `cdp_*` / `run_action_recipe` 工具和一批 `stream-` 前缀的 skill。
-agent 跑通的动作 recipe 之后不需要它在场：下面「跑一条 recipe，不经 agent」那一节的命令行就是
-交给调度中心的那句话。
+Afterwards the agent has a set of `stream_*` / `cdp_*` / `run_action_recipe` tools and a batch of
+`stream-`-prefixed skills. An action recipe the agent got working no longer needs the agent
+present: the command line under “Run a recipe without an agent” below is exactly what you hand to
+the scheduler.
 
-### ② 装了直接用
-
-```bash
-npx @streamapp/stream                    # 试一下
-npm i -g @streamapp/stream && stream     # 长期用
-```
-
-需要 **Node 20+**（`node -v` 查；没有就去 <https://nodejs.org> 装 LTS，Windows 上
-`winget install OpenJS.NodeJS.LTS` 也行）。**除了 Node 别的什么都不用装**——不需要 git、不需要
-Docker、不需要 Python 或编译器（原生依赖有预编译包）。
-开箱这一次是 96 个包 / 230MB / 十几秒。
-
-装完打开 <http://127.0.0.1:8900>。
-
-```
-stream [--port <n>] [--data <dir>]        起后端
-stream mcp                                给 agent 用的 stdio 入口（后端没起就替你起一份）
-stream add <包名>                          装一个能力 / recipe 包
-stream update [<包名>…] [--yes]            把内置 / 已装的包更到 npm 最新版（多了副作用要 --yes）
-stream restart [--force]                  重启后端（装 / 更 / 卸完有待重启项会问一句；
-                                          脚本里用 --restart / --no-restart 跳过那一问）
-stream recipe run <id> [--param 名字=值]… [--yes]
-                                          从命令行跑一条动作 recipe
-
-  --port, -p <n>   监听端口（默认 8900）
-  --data <dir>     数据目录（默认 ~/.stream）
-```
-
-- **数据全在 `~/.stream`**：删掉它就是重置；卸载 = 删掉它 + `npm rm -g @streamapp/stream`。
-- **只有一个端口**：前端、`/api/*`、`/ws`、插件全走 8900 这一扇门。
-- **大件用到才装**，不占开箱体积：RSSHub 在第一次跑到 RSSHub 源时装（约 400MB，43~147 秒，
-  看机器和网络）。
-- **`stream restart` 在前台档会把后端脱离终端**：前台 `stream` 起的后端重启时是自己再起一份、
-  旧的退出，新的那份不再挂在你的终端上——Ctrl-C 够不着它了，要停它按端口找 pid
-  （`lsof -i :8900` / `ss -ltnp`）。systemd 或 `stream mcp` 养着的后端没有这一层变化。
-
-### 跑一条 recipe，不经 agent
+### ② Install and use
 
 ```bash
-stream recipe run qq-send --param contact=张三 --param message=到了     # 只打印它会做什么
-stream recipe run qq-send --param contact=张三 --param message=到了 --yes  # 真跑
+npx @streamapp/stream                    # try it
+npm i -g @streamapp/stream && stream     # keep it
 ```
 
-不带 `--yes` 只回执"会做什么"（目标应用 / 目标站点 / 参数），退出码 2，什么都不执行。退出码：
-0 做成 · 1 跑了但没读到落地回执 · 2 用法或参数 · 3 没正常收尾（**动作可能已做了一部分**，先核
-目标应用）· 4 环境（没连 Stream Desktop / Chrome 扩展 / 要登录）· 5 够不着后端。`--json` 时
-stdout 只有一份 JSON。
+Requires **Node 20+** (`node -v`; if missing, install the LTS from <https://nodejs.org>, or
+`winget install OpenJS.NodeJS.LTS` on Windows). **Nothing else to install** — no git, no Docker, no
+Python or compiler (native dependencies ship prebuilt). The out-of-box install is 96 packages /
+230 MB / a dozen seconds.
 
-**要定时**：在 <http://127.0.0.1:8900> 的调度中心建一条任务，命令填 `stream`、参数填
-`recipe run qq-send --param contact=张三 --param message=到了 --yes`（不经 shell，参数逐个给）。
-从此它不需要任何 agent 在场；跑没跑成看任务的运行记录，退出码非 0 就是红。
+Then open <http://127.0.0.1:8900>.
+
+```
+stream [--port <n>] [--data <dir>]        start the backend
+stream mcp                                stdio entry for agents (starts a backend if none is up)
+stream add <package>                      install a capability / recipe package
+stream update [<package>…] [--yes]        update built-in / installed packages to npm latest
+                                          (new side effects need --yes)
+stream restart [--force]                  restart the backend (after install / update / remove it
+                                          asks when a restart is pending; in scripts use
+                                          --restart / --no-restart to skip the question)
+stream recipe run <id> [--param name=value]… [--yes]
+                                          run an action recipe from the command line
+
+  --port, -p <n>   listening port (default 8900)
+  --data <dir>     data directory (default ~/.stream)
+```
+
+- **All data lives in `~/.stream`**: delete it to reset; uninstall = delete it +
+  `npm rm -g @streamapp/stream`.
+- **One port only**: the web UI, `/api/*`, `/ws`, and plugins all go through 8900.
+- **Big pieces install on first use**, not out of the box: RSSHub installs the first time an RSSHub
+  source runs (about 400 MB, 43–147 s depending on machine and network).
+- **`stream restart` detaches a foreground backend from the terminal**: a backend started by a
+  foreground `stream` restarts by launching a new copy and exiting the old one, and the new copy is
+  no longer attached to your terminal — Ctrl-C cannot reach it, so stop it by finding the pid on
+  the port (`lsof -i :8900` / `ss -ltnp`). A backend kept by systemd or by `stream mcp` does not
+  change in this way.
+
+### Run a recipe without an agent
+
+```bash
+stream recipe run qq-send --param contact=Alice --param message="on my way"        # only prints what it would do
+stream recipe run qq-send --param contact=Alice --param message="on my way" --yes  # actually runs
+```
+
+Without `--yes` it only reports what it would do (target app / target site / parameters), exits
+with code 2, and executes nothing. Exit codes: 0 done · 1 ran but no landing receipt was read ·
+2 usage or parameters · 3 did not finish cleanly (**the action may be partly done** — check the
+target app first) · 4 environment (Stream Desktop / the Chrome extension not connected / login
+required) · 5 backend unreachable. With `--json`, stdout carries exactly one JSON document.
+
+**To schedule it**: create a task in the scheduling center at <http://127.0.0.1:8900>, with command
+`stream` and arguments `recipe run qq-send --param contact=Alice --param message="on my way" --yes`
+(no shell involved; arguments are passed one by one). From then on no agent has to be present;
+whether it ran is in the task's run history, and a non-zero exit code is red.
 
 ---
 
-## 上手：五步，每步都有判据
+## Getting started: five steps, each with a check
 
-下面每一步都给了一条能跑的命令和一个该看到的答案。**判据不过就别往下走**——这条链路上每一种
-坏法都是安静的（采到游客态数据、流不排班、能力显示可用但一跑就失败），往下走只会把一个静默的
-失败带到更远的地方。
+Every step below gives a command you can run and the answer you should see. **If a check fails, do
+not move on** — every failure mode on this path is silent (guest-level data, a stream that never
+gets scheduled, a capability that shows as available but fails when run), and moving on only
+carries a silent failure further.
 
-### 1. 把 Chrome 扩展装上 —— 不装的后果是静默的
+### 1. Install the Chrome extension — skipping it fails silently
 
-采集**借你自己浏览器的登录态**（Stream 不自带浏览器，也不碰你的密码）。没有扩展，小红书 / B 站 /
-抖音这类站点只能拿到游客看得见的东西——**不报错，只是采得少、采得浅**。
+Harvesting **borrows the login state of your own browser** (Stream ships no browser and never
+touches your passwords). Without the extension, sites like Xiaohongshu / Bilibili / Douyin only
+return what a guest can see — **no error, just less and shallower content**.
 
-打开 <http://127.0.0.1:8900> 首次会引导你装。手动装：
+Opening <http://127.0.0.1:8900> for the first time walks you through it. To do it by hand:
 
 ```bash
 curl -s -X POST 127.0.0.1:8900/api/extension/materialize    # → {"dir":"…/.stream/extension"}
 ```
 
-拿那个 `dir` 去 Chrome：`chrome://extensions` → 打开右上角**开发者模式** → **加载已解压的扩展程序**
-→ 选那个目录。（Chrome 从 137 起移除了 `--load-extension`，命令行装不了，GUI 是唯一的路。）
+Take that `dir` to Chrome: `chrome://extensions` → turn on **Developer mode** (top right) →
+**Load unpacked** → pick that directory. (Chrome removed `--load-extension` in 137, so there is no
+command-line install; the GUI is the only way.)
 
-扩展连后端之前要经 **Stream Desktop** 的本机进程（可执行文件叫 `stream-desktop`）拿一把钥匙。
-后端启动时自己把它登记进 Chrome 并拉起，
-不用你装别的；启动日志里有一行 `[stream-desktop] host-agent → <路径>` 就是登记成功。
-**Windows 与 macOS 都有这个小程序**（Linux 上后端会记一行 warn，扩展配不上，采集只有游客态）。
-mac 上它只做配对——扩展照常拿到钥匙、采集带得上登录态；**驱动原生桌面窗口那部分只有 Windows 有**。
+Before it can connect to the backend, the extension gets a key from the local **Stream Desktop**
+process (the executable is `stream-desktop`). The backend registers it with Chrome and launches it
+on startup — nothing extra to install; a startup log line `[stream-desktop] host-agent → <path>`
+means registration succeeded. **Windows and macOS both have this helper** (on Linux the backend
+logs a warning, the extension cannot pair, and harvesting is guest-level only). On macOS it only
+does the pairing — the extension still gets its key and harvesting carries your login state;
+**driving native desktop windows is Windows-only**.
 
-**判据**（唯一可信的那个，别看 Chrome 里的图标）：
+**Check** (the only trustworthy one — ignore the icon in Chrome):
 
 ```bash
 curl -s 127.0.0.1:8900/api/browser-capability     # → {"state":"ready","connected":true,…}
 ```
 
-- `"never-seen"` = 从没连上过 → 还没装，或者装在了另一个 Chrome 上。
-- `"disconnected"` = 装过、现在没连 → 点一下扩展图标叫醒它（Chrome 会让它休眠，后端重启后尤其）。
+- `"never-seen"` = never connected → not installed yet, or installed in a different Chrome.
+- `"disconnected"` = installed, not connected right now → click the extension icon to wake it
+  (Chrome puts it to sleep, especially after a backend restart).
 
-### 2. 订第一条流 —— 记得给它一个频道
+### 2. Subscribe your first stream — remember to give it a channel
 
-先找源：
+Find a source first (source descriptions are mostly Chinese, so search in Chinese — `播客` means
+“podcast”):
 
 ```bash
 curl -s -G 127.0.0.1:8900/api/sources --data-urlencode "q=播客"
 ```
 
-`members[].source` 填它回的 `id`（**真正必须对的是这一个**），`plugin` 填它的 `adapter`
-（`rsshub` / `replay` / `builtin` …）：
+Put the `id` it returns into `members[].source` (**this is the one that has to be right**), and its
+`adapter` (`rsshub` / `replay` / `builtin` …) into `plugin`:
 
 ```bash
 curl -s -X POST 127.0.0.1:8900/api/streams -H 'content-type: application/json' -d '{
@@ -148,160 +169,196 @@ curl -s -X POST 127.0.0.1:8900/api/streams -H 'content-type: application/json' -
 }'
 ```
 
-**`channel_id` 不是可选的讲究**：一条不属于任何频道的流，这次会话在调度里、**重启之后就没了**
-（开机只装载被某个频道引用的流）。要绑就在建流这一句里绑，别建完再补。频道用
-`curl -s 127.0.0.1:8900/api/channels` 看，开箱自带四个（`default-timeline` / `default-audio` /
-`default-video` / `default-tasks`）。
+**`channel_id` is not an optional nicety**: a stream that belongs to no channel is scheduled for
+this session and **gone after a restart** (boot only loads streams referenced by some channel).
+Bind it in this same request, not afterwards. List channels with
+`curl -s 127.0.0.1:8900/api/channels`; four ship out of the box (`default-timeline` /
+`default-audio` / `default-video` / `default-tasks`).
 
-**判据**：
+**Check**:
 
 ```bash
 curl -s -X POST 127.0.0.1:8900/api/streams/my-podcast/refresh   # → {"fetched":961,"written":961}
 ```
 
-`fetched: 0` **不是**"没有新内容"。常见成因：那个 `source` 在本机解析不到、参数不对、缺登录态、
-或者那条源坏了。去 `curl -s "127.0.0.1:8900/api/debug/log?channel=harvest"` 看这一轮的分阶段
-结论——**日志里连一条这个源的记录都没有，就是根本没跑到它**，而不是跑了没结果。
+`fetched: 0` does **not** mean “nothing new”. Usual causes: that `source` does not resolve on this
+machine, wrong parameters, missing login state, or the source is broken. Look at
+`curl -s "127.0.0.1:8900/api/debug/log?channel=harvest"` for this round's per-stage verdict —
+**if the log has not a single record for this source, it never ran at all**, rather than ran and
+found nothing.
 
-### 3. 打开需要钥匙的能力（转写 / 认字 / 摘要）
+### 3. Turn on capabilities that need a key (transcription / OCR / summaries)
 
-先问它现在缺什么：
+First ask what is missing:
 
 ```bash
 curl -s 127.0.0.1:8900/api/conversion-kinds
-# extract 那一行的 branches: {"stt":false,"ocr":true,"article":true}   ← stt 缺钥匙
+# the extract row's branches: {"stt":false,"ocr":true,"article":true}   ← stt is missing a key
 ```
 
-要语音转文字就配一把 Groq 的 key。**Stream 可以替你去申请**——它在你自己的 Chrome 里打开厂商
-控制台、用你**已经登录**的账号建一把新 key，写进本地配置（不经过任何第三方）。
+Speech-to-text needs a Groq key. **Stream can request one for you** — it opens the vendor console
+in your own Chrome, creates a new key with the account you are **already logged in to**, and
+writes it to local config (no third party involved).
 
-> **前提：先在那个 Chrome 里登录 <https://console.groq.com>**（Groq 支持用 Google 账号登录，免费额度
-> 够用）。这一步用的就是你现成的登录态——没登录的话它会停在登录页，这不是失败，是缺前提。
-
+> **Prerequisite: log in to <https://console.groq.com> in that Chrome first** (Groq supports Google
+> sign-in, and the free tier is enough). This step uses your existing login state — if you are not
+> logged in it stops at the login page, which is a missing prerequisite, not a failure.
 
 ```bash
 curl -s -X POST 127.0.0.1:8900/api/source-runtime-config/provision \
   -H 'content-type: application/json' \
   -d '{"pluginId":"builtin","sourceId":"groq-whisper","params":{"name":"stream-auto-7f3a"}}'
-# → secrets.apiKey.configured: true            实测约 17 秒
+# → secrets.apiKey.configured: true            about 17 s measured
 ```
 
-自己去 <https://console.groq.com/keys> 拿一把、用 `PUT /api/source-runtime-config` 填进去也行。
-**配完不用重启**，下一次问就变了：
+Getting one yourself at <https://console.groq.com/keys> and filling it in with
+`PUT /api/source-runtime-config` works too. **No restart needed** — the next query has changed:
 
 ```bash
 curl -s 127.0.0.1:8900/api/conversion-kinds     # branches.stt → true
 ```
 
-转写一集：
+Transcribe an episode:
 
 ```bash
 curl -s -X POST 127.0.0.1:8900/api/conversions -H 'content-type: application/json' \
      -d '{"kind":"extract","item":"<item id>"}'      # → {"id":"cv_…","status":"running"}
-curl -s 127.0.0.1:8900/api/conversions/cv_…          # 轮到 status:"done"，result.text 就是文字稿
+curl -s 127.0.0.1:8900/api/conversions/cv_…          # poll until status:"done"; result.text is the transcript
 ```
 
-一小时的播客约 4~5 分钟（取媒体和重编码占大头，真正的识别只要几十秒）。
+A one-hour podcast takes about 4–5 minutes (fetching and re-encoding the media dominate;
+recognition itself takes tens of seconds).
 
-### 4. 接一个对话宿主（可选）
+### 4. Connect a chat host (optional)
 
-Stream 自己没有对话，用你已有的 agent。三步，第三步才是可选的：
+Stream has no chat of its own; use the agent you already have. Three steps, and only the third is
+optional:
 
-**一、装 Stream。** 第 1 步已经做完了（`npm i -g @streamapp/stream && stream`）。
-**装了它就有电脑操作**——用户自己那个已登录的 Chrome，加上原生桌面窗口。
+**One — install Stream.** Already done (`npm i -g @streamapp/stream && stream`).
+**Installing it gives you computer use** — your own logged-in Chrome, plus native desktop windows.
 
-**二、宿主那边配一行，指向 Stream。**
+**Two — one line on the host side, pointing at Stream.**
 
 ```bash
-claude mcp add stream -- stream mcp      # Codex 是 config.toml 的 mcp_servers 一行
+claude mcp add stream -- stream mcp      # for Codex it is one mcp_servers entry in config.toml
 ```
 
-`stream mcp` 是一层 stdio 壳：它探一次本机的后端，在场就整面转发到 `/api/mcp`，不在场就先把
-后端拉起来再转发。**这一行此后不用再改**——往 Stream 里加多少能力，工具都从同一个口出去。
+`stream mcp` is a stdio shim: it probes the local backend once, forwards everything to `/api/mcp`
+if it is up, and starts it first if it is not. **This line never needs to change again** — however
+many capabilities you add to Stream, the tools come out of the same door.
 
-**三、想要更多能力就往里加：**
+**Three — add more capabilities when you want them:**
 
 ```bash
-stream add @streamapp/netdisk      # 网盘：验分享 / 转存 / 直链 / 跳转
-stream remove @streamapp/netdisk   # 不想要了
+stream add @streamapp/netdisk      # netdisk: verify shares / save / direct links / redirects
+stream remove @streamapp/netdisk   # no longer wanted
 ```
 
-能力包是 Stream 包的一格槽位（`package.json#stream.capability`），装进 `<dataDir>/recipes/`
-后由后端在**自己进程里**挂上——登录态不出这个进程。界面上的「组件」页里点装是同一条路。
-**装完要重启后端才生效**（安装那一刻只落盘），装上了没有的话先重启再排查。
+A capability package fills one slot of a Stream package (`package.json#stream.capability`). It is
+installed into `<dataDir>/recipes/` and mounted by the backend **in its own process** — login state
+never leaves that process. Installing from the “Components” page in the UI is the same path.
+**A backend restart is required for it to take effect** (installing only writes to disk); if it
+does not show up, restart before investigating.
 
-再往下：第 5 节把 Stream 的 skill 装给你的 agent（MCP 给工具，skill 给"什么时候用哪个"）。
-
-#### DSH 用户多一样：Stream UI bundle
-
-DSH 装上它之后整张脸就是 Stream（内容流 + 对话）。它也读第 5 节装的那批 skill（同一个
-`~/.agents/skills/` 目录）：
+Content-search and download adapters are not included in a new install by default; install them
+explicitly when you want them:
 
 ```bash
-npm i -g @deepseek-ai/dsh@0.2.0-rc.2   # 引擎版本要对得上：这份 bundle 按 0.2.0 的客户端模块表构建
-# 装进已经带 web 界面的那个 profile（$DSH_HOME/profiles/web）——bundle 关掉的是 web-app 的整页壳，
-# 新建的空 profile 里没有它可关。想单独留一个 profile 给 Stream：先 cp -r profiles/web profiles/stream，再把下面的 web 换成 stream。
+stream add @streamapp/bt0
+stream add @streamapp/btbtla
+stream add @streamapp/1lou
+stream add @streamapp/zuna
+stream add @streamapp/toubiec
+stream add @streamapp/shooter
+stream add @streamapp/iqiyi
+```
+
+They are still ordinary Stream packages — leaving them out by default only keeps the release from
+choosing content sources on the user's behalf; install, review, and removal all go through the same
+`stream add` / `stream remove` path.
+
+Next: step 5 installs Stream's skills into your agent (MCP gives the tools, skills give “when to
+use which”).
+
+#### One extra for DSH users: the Stream UI bundle
+
+With it installed, DSH's whole face becomes Stream (content feed + chat). It also reads the skills
+installed in step 5 (the same `~/.agents/skills/` directory):
+
+```bash
+npm i -g @deepseek-ai/dsh@0.2.0-rc.2   # engine version must match: this bundle is built against 0.2.0's client module table
+# Install into the profile that already has the web UI ($DSH_HOME/profiles/web) — the bundle switches off
+# web-app's full-page shell, and a freshly created empty profile has none to switch off. To keep a separate
+# profile for Stream: cp -r profiles/web profiles/stream first, then replace `web` below with `stream`.
 dsh plugin --profile web add @streamapp/dsh-plugin-stream-ui
-dsh web                                                          # 单独的 profile 就是 dsh --profile stream
+dsh web                                                          # with a separate profile: dsh --profile stream
 ```
 
-这份 bundle 是**唯一**要装进 DSH profile 的东西；能力包一律装进 Stream，DSH 那边一个字都不用改。
-Stream 后端照常跑着就行（`stream`），那张页在本机哪个口上都不用告诉它——本机来源默认可信。
-后端和 DSH 不在同一台机器时才需要登记：`STREAM_TRUSTED_ORIGINS=http://<那台机器>:<口> stream`。
+This bundle is the **only** thing that goes into a DSH profile; capability packages always go into
+Stream, and nothing on the DSH side changes. Just keep the Stream backend running (`stream`); the
+page does not need to be told which local port it is on — local origins are trusted by default.
+Registration is only needed when the backend and DSH are on different machines:
+`STREAM_TRUSTED_ORIGINS=http://<that machine>:<port> stream`.
 
-> **模型是你自己的**：在 DSH 的「设置 - 模型」页配 provider；Stream 不参与。
-> **前面三步都不依赖它**——收集、采集、转写都不用模型。
+> **The model is yours**: configure the provider on DSH's “Settings – Models” page; Stream is not
+> involved. **The first three steps do not depend on it** — collecting, harvesting, and
+> transcription use no model.
 
-### 接给别的 AI 客户端（MCP）
+### Connecting other AI clients (MCP)
 
-不走 `stream mcp` 也行：后端跑着就直接用 HTTP 这一档 `http://127.0.0.1:8900/api/mcp`
-（设了 `api_token` 才需要 `Authorization: Bearer …`）。不想让后端常驻就用 stdio 那一档，
-客户端按需拉起进程。三条路的工具集一样。
+You can skip `stream mcp`: with the backend running, use the HTTP transport directly at
+`http://127.0.0.1:8900/api/mcp` (`Authorization: Bearer …` is only needed if you set `api_token`).
+If you would rather not keep a backend running, use the stdio transport and let the client start
+the process on demand. The tool set is the same either way.
 
-### 5. 把 Stream 的 skill 装进你自己的 agent（Claude Code / Codex）
+### 5. Install Stream's skills into your own agent (Claude Code / Codex)
 
-上一步给的是**工具**，这一步给的是**手艺**——什么时候用哪个、按什么顺序、什么算数。
+The previous step gave **tools**; this one gives **craft** — when to use which, in what order, and
+what counts as done.
 
 ```bash
 curl -s -X POST 127.0.0.1:8900/api/skills/install
 ```
 
-它把随包出货的 skill 刷进 `~/.stream/skills/`，再从 `~/.claude/skills/`（Claude Code）和
-`~/.agents/skills/`（Codex）**链接**过去。是链接不是拷贝——升级之后两边同时变新。
+It refreshes the skills shipped with the package into `~/.stream/skills/`, then **links** them from
+`~/.claude/skills/` (Claude Code) and `~/.agents/skills/` (Codex). Links, not copies — after an
+upgrade both sides are current at once.
 
-**判据**：
+**Check**:
 
 ```bash
-curl -s 127.0.0.1:8900/api/skills      # hosts[].landings[].mode 都是 "link"
+curl -s 127.0.0.1:8900/api/skills      # every hosts[].landings[].mode is "link"
 ```
 
-Claude Code 里敲 `/stream-` 看得到它们，Codex 里是 `$stream-`。名字一律带 `stream-` 前缀，
-**不会顶掉你自己的同名 skill**；那个位置已经有别的东西就跳过并说明。撤销用
-`POST /api/skills/uninstall`（只删它自己建的那些）。`mode` 报 `"copy"` 说明这台机器建不出
-符号链接——功能一样，但升级后要再跑一次 install。
+Type `/stream-` in Claude Code to see them, `$stream-` in Codex. Every name carries the `stream-`
+prefix, so **they never replace a skill of yours with the same name**; if something else already
+sits at that location it is skipped and reported. Undo with `POST /api/skills/uninstall` (removes
+only what it created). A `mode` of `"copy"` means this machine cannot create symlinks — it works
+the same, but run install again after upgrading.
 
 ---
 
-## 出问题时先跑这几句
+## When something is wrong, run these first
 
-**以副作用为准，不要以"应该好了"为准**——每一种坏法都是安静的。
+**Go by side effects, not by “it should be fine now”** — every failure mode is silent.
 
-| 问 | 命令 | 绿的样子 |
+| Question | Command | What green looks like |
 |---|---|---|
-| 后端活着吗 | `curl -s 127.0.0.1:8900/api/health` | `{"ok":true}` |
-| 采集的手在不在 | `curl -s 127.0.0.1:8900/api/browser-capability` | `"state":"ready"` |
-| 这条流在调度里吗 | `curl -s 127.0.0.1:8900/api/streams` | 看得到你建的那个 id |
-| 它真采到东西了吗 | `POST /api/streams/<id>/refresh` | `fetched > 0` **且** `written > 0` |
-| 这个能力现在能用吗 | `curl -s 127.0.0.1:8900/api/conversion-kinds` | 那条的 `available` / `branches.*` 为 true |
-| 我自己写的 recipe 装载了吗 | `curl -s 127.0.0.1:8900/api/recipes/local` | `ok: true`（`dir` 就是该往哪写；没装载会带 `error` 原文） |
+| Is the backend alive? | `curl -s 127.0.0.1:8900/api/health` | `{"ok":true}` |
+| Is the harvesting hand there? | `curl -s 127.0.0.1:8900/api/browser-capability` | `"state":"ready"` |
+| Is this stream scheduled? | `curl -s 127.0.0.1:8900/api/streams` | the id you created is listed |
+| Did it actually harvest anything? | `POST /api/streams/<id>/refresh` | `fetched > 0` **and** `written > 0` |
+| Is this capability usable now? | `curl -s 127.0.0.1:8900/api/conversion-kinds` | its `available` / `branches.*` is true |
+| Did my own recipe load? | `curl -s 127.0.0.1:8900/api/recipes/local` | `ok: true` (`dir` is where to write; if not loaded it carries the original `error`) |
+| Why can this not be done? | MCP tool `capability_status` | it tells apart “key missing and I can request it” / “key missing and only the user can get it” / “not a missing key at all” |
 
-三个最容易误判的地方：
+The three easiest things to misjudge:
 
-- **`fetched: 0` 不等于「没有新内容」**（见第 2 步）。
-- **建流不带 `channel_id`**：这次能跑，重启后消失。
-- **「配好了」不等于「能用了」**：判据是那条能力自己的自述（`/api/conversion-kinds`），
-  不是配置那一格的 `configured`。
+- **`fetched: 0` does not mean “nothing new”** (see step 2).
+- **Creating a stream without `channel_id`**: it runs this time and disappears after a restart.
+- **“Configured” does not mean “usable”**: the check is the capability's own self-report
+  (`/api/conversion-kinds`), not the `configured` flag on the config slot.
 
 ---
 
-MIT · 数据全在本机，不上传任何地方。
+Apache-2.0 · All data stays on your machine; nothing is uploaded anywhere.

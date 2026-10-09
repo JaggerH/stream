@@ -372,6 +372,49 @@ conversion；这个 kind 仍受理 API/MCP 的直接调用（唯一的生产触�
 「把正文给我」，怎么取归后端判）；读取统一走 `get_conversions(item?, kind?, limit?, expand?)`
 ——不带 `item` 是轻量索引，带 `item` 返回该 item 的正文。
 
+## 订阅一条流（`POST /api/streams`）
+
+A Stream references sources and may fan-out. The stream persists in `data/stream.db`:
+
+```jsonc
+{
+  "id": "my-movies",                  // the stream's identity; 409 if it already exists
+  "label": "豆瓣观影",                 // display name
+  "strategy": "fanout",               // fanout | exclusive — no default, always send it
+  "members": [                        // each member is { plugin, source, params }
+    { "plugin": "rsshub", "source": "movie-douban-playing", "params": {} },
+    { "plugin": "rsshub", "source": "movie-douban-weekly",  "params": {} }  // fan-out; cross-source dupes collapse
+  ],
+  "cadence_seconds": 1800,
+  "options": {}                       // required, may be empty — see below
+}
+```
+
+Every key above is **required** (`options` may be `{}`, but the field itself must be present).
+Two optional ones: `channel_id` (bind the new stream to a channel in the same request — do it here,
+not in a follow-up PATCH; a stream no channel references is not loaded after a restart) and
+`contract`. Anything else is **rejected with 400** listing the accepted names — a misspelled field
+is never silently dropped.
+
+- **`plugin` + `source`** — `plugin` is the owning package's id (`packages/<id>/package.json`
+  `stream.id`), `source` is an entry id from that package's `manifests.yaml`. The pair is joined
+  into `<plugin>:<source>` and looked up in the registry, which falls back to the bare `source`
+  name, so `source` is what actually has to be right. A source collected by recipe in your own
+  logged-in Chrome belongs to the `replay` plugin
+  (e.g. `{ "plugin": "replay", "source": "lizhi-user", "params": { "id": "…" } }`).
+- **`options`** — the free-JSON home of a stream's side fields: `vault_subdir` (defaults to the
+  stream `id`), `mode`, `ad_filter`, `harvest`. No schema, no migrations.
+- **`"strategy": "exclusive"`** — for a feed reachable through several backends: `members` become
+  an ordered ladder and only the first **healthy** one is harvested (a per-source health ledger
+  marks dead/degraded backends; a `browser`/`browser-page` member can be the last rung).
+  `pnpm doctor` shows each source's health; see `docs/PACKAGE.md` §9.
+
+Over MCP the equivalent is **`subscribe_source`** (give it a source id and params; it derives the
+id/vault_subdir and upserts, so re-subscribing the same source+params lands on the same stream).
+`stream_subscribe` is the low-level variant for hand-authoring a whole stream; it takes its own
+shape (`{id, description, sources:[{source_id, params}], cadence_seconds, vault_subdir}`) and
+assigns no channel.
+
 ## 手动重新抓取（Refresh）
 
 采集平时由调度器按 cadence 跑；这两个端点是「现在就抓一次」的手动入口，跑的是**真实持久化 tick**
