@@ -1153,6 +1153,12 @@ different -- only the content itself remains unchanged.** Identity lands on two 
 This rule was beaten out by live verification: when duration was used as a check, two playlists sharing dozens of songs caused songs around four minutes long to fold into each other,
 and one fold grew to 22 items. **Duration is never identity.**
 
+**Duration alone nominates a candidate only when both items are at least five minutes long** (`durationAloneMinS`). Short clips
+collide on duration by chance -- in a pool of 170 short videos a 19-second clip matches about ten -- and every candidate costs one audio
+fetch, which for Douyin means opening the work page in the user's browser. Measured: 263 fingerprints on media under five minutes
+produced zero folds; the shortest pair ever folded by fingerprint is 15 minutes. Below the threshold a pair still becomes a candidate
+through the same link or a similar-enough title; a short clip reposted under an unrelated title is not recognised.
+
 **Getting text has a cost** (transcription measured average 16s, slowest 142s), so:
 
 - The check moves to a **background worker**, not the hot harvest path;
@@ -1162,6 +1168,9 @@ and one fold grew to 22 items. **Duration is never identity.**
   This gate opens after sampled transcription lands.
 - **"Cannot decide" and "not similar" must stay separate**: the former remains in the pending-review queue waiting for text; the latter leaves the queue. If they are collapsed into one,
   items waiting for text are treated as already checked and are never revisited.
+- **Only text that is on its way is worth waiting for.** A pair stays queued while an `extract` or fingerprint job is queued or running.
+  A job that ended in error (a deleted work is the typical case) is an answer, not a delay: neither source queues it again, and the pair
+  leaves the queue. Do not re-queue on error -- each attempt fetches the media again, and the result is the same.
 
 **Author does not participate in the judgment.** The same piece of content is the same piece of content, and who posted it does not change that fact: a reposting account's copy and the original author's copy
 should naturally be gathered together. After folding, "source" has only **one** remaining use: **seeing which Source consistently publishes first among homogeneous content**

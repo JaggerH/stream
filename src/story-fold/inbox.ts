@@ -82,6 +82,17 @@ export interface InboxProfile {
   textThreshold: number
   /** 候选生成用的时长容差（秒）。**只用来缩候选，不参与结论。** */
   durationToleranceS: number
+  /**
+   * 两条都至少这么长，「时长接近」才单独算得上线索（秒）。
+   *
+   * 时长的区分力随长度涨：一小时的节目秒数撞上几乎只能是同一份录音，十几秒的短视频撞上是常态
+   * ——170 条短视频的池子里，一条 19 秒的会撞上 10 条。短内容只凭时长进候选，每条候选都要付
+   * 一次取音频（抖音是在用户浏览器里开一次作品页）。实测 5 分钟以下的媒体做过 263 次指纹、
+   * 并上 0 对；并上的最短一对是 15 分钟。
+   *
+   * 代价：短视频被换了一个毫不相似的标题再搬运，这里认不出来（同链接、标题够像的照常进候选）。
+   */
+  durationAloneMinS: number
   /** 候选生成用的标题相似度下限。同上：只决定"值不值得取文本比一比"。 */
   candidateTitleThreshold: number
 }
@@ -90,6 +101,7 @@ export interface InboxProfile {
 export const INBOX_PROFILE: InboxProfile = {
   textThreshold: 0.55,
   durationToleranceS: 1,
+  durationAloneMinS: 300,
   candidateTitleThreshold: 0.35,
 }
 
@@ -109,6 +121,7 @@ function crossStream(a: IndexRow, b: IndexRow): boolean {
  * 因为漏掉的那一对永远不会被再看一眼；而放宽的代价只是多取一次文本（多半还是白拿的正文）。
  *
  * 时长和标题都在这里，也只在这里。它们的作用是把"要比的对"从全库缩到个位数。
+ * 时长这条入口只对够长的内容开（`durationAloneMinS`）；短内容要靠同链接或标题够像。
  */
 export function worthChecking(a: IndexRow, b: IndexRow, profile: InboxProfile): boolean {
   if (!crossStream(a, b)) return false
@@ -117,7 +130,8 @@ export function worthChecking(a: IndexRow, b: IndexRow, profile: InboxProfile): 
   const durClose =
     a.durationS !== undefined &&
     b.durationS !== undefined &&
-    Math.abs(a.durationS - b.durationS) <= profile.durationToleranceS
+    Math.abs(a.durationS - b.durationS) <= profile.durationToleranceS &&
+    Math.min(a.durationS, b.durationS) >= profile.durationAloneMinS
   return durClose || titleSim(a.titleFold, b.titleFold) >= profile.candidateTitleThreshold
 }
 

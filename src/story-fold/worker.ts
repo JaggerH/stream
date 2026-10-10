@@ -150,9 +150,10 @@ export class StoryFoldWorker {
           store.settle(itemId)
           return 'folded'
         }
+        let onTheWay = false
         for (const who of verdict.who) {
           const got = await this.ensureText(who)
-          if (got === 'pending') waiting = true
+          if (got === 'pending') onTheWay = true
         }
         // 取完再判一次：这一对的文本可能刚好都到位了。
         a = store.row(row.itemId)!
@@ -160,7 +161,9 @@ export class StoryFoldWorker {
         if (!fresh) continue
         verdict = sameStoryInbox(a, fresh, this.profile)
         if (verdict.kind === 'need-text') {
-          waiting = true
+          // **只有文本还在路上才值得等。** 取不到（没有可转写的媒体、取过但失败）是这一对的
+          // 结论——判不了；留在队列里只会每轮回来再问一遍同样的答案。
+          if (onTheWay) waiting = true
           continue
         }
       }

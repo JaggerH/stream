@@ -10,7 +10,6 @@ import { extractTrackRef } from '../../audio/index.ts'
 import { pluginIdForDescriptor } from '../../registry/seal.ts'
 import { COOKIE_SNAPSHOT_MAX_AGE_MS } from './auth.ts'
 import type { RuntimeConfigResolver } from './runtime-config.ts'
-import type { ConversionsDomain } from './conversions.ts'
 import type { AdRules } from '../../content/ad-filter.ts'
 import type { Item } from '../../content/types.ts'
 import type { StreamItem } from '../../types.ts'
@@ -60,18 +59,25 @@ export interface SchedulingConfig {
   track?: TrackFn
   trackSync?: TrackSyncFn
   onDebug?: (entry: DebugEntry) => void
+  /**
+   * 「刚入账了一批新条目，叫醒归堆后台工」（bootstrap 递 `() => kernel.conversions?.storyFoldWorker.kick()`）。
+   * **经 config 传，不走 inject、也不能在这里读 `ctx.conversions`**：worker 住转换域，比本域晚挂，
+   * inject 它会把装配序倒过来；而 Cordis 不允许绕过 inject 惰性取服务（`cannot get property
+   * "conversions" without inject`）。缺席 → 不叫，归堆等它自己的兜底巡检。
+   */
+  kickStoryFold?: () => void
 }
 
 /**
  * 采集调度这一域：**「什么时候去采、采回来给谁」**。
  *
  * 装配序上它排在 Provider 执行面之后——`onItemPersisted` 要富化队列、`castNames` 那条腿要
- * `videoDetails`，两样都住 `ctx.provider`。**三个跨域引用一律调用时才从 ctx 取**，不在装配期
+ * `videoDetails`，两样都住 `ctx.provider`。**跨域引用一律调用时才解引用**，不在装配期
  * 解构成快照：
  *  - `ctx.provider.videoDetails` / `videoEnrich` —— 同一棵树上的邻居，inject 保证已挂。
- *  - `ctx.conversions.storyFoldWorker` —— 转换域**比本域晚挂**（它不在 inject 里，也不能在：
- *    那会把装配序倒过来）。所以这一格是 optional 读：归堆只是呈现层的附加能力，转换域还没挂
- *    的那个窗口里 kick 一下没人接，也不该让一轮采集出错。
+ *  - 归堆后台工（住转换域，**比本域晚挂**）—— 不在 inject 里，所以 `ctx` 上够不着它；
+ *    叫醒它走 `config.kickStoryFold`。归堆只是呈现层的附加能力，转换域还没挂的那个窗口里
+ *    kick 一下没人接，也不该让一轮采集出错。
  *
  * 句柄：scheduler 每条流一条链式 `setTimeout`（内部 Map），`stop()` 清干净。**两个 effect，
  * 注册顺序有语义**——见 `apply` 末尾那段。
@@ -145,11 +151,11 @@ export const schedulingPlugin = {
       // 同质内容归堆：跨平台搬运的收成一堆。它自己吞异常（`StoryFoldRecorder.record`），
       // 这里不兜底也不 await——归堆是呈现层的附加能力，没有资格影响一轮采集。
       // 归堆：这一跳**只记账 + 排队**，判据（要文本，可能要转写）在后台 worker 里跑。
-      // worker 住转换域，那一域比本域晚挂——所以这里是**调用时**才去 ctx 取的 optional 读，
-      // 不是装配期解引用（那会拿到 undefined 并把它冻死）。
+      // worker 住转换域，那一域比本域晚挂——叫醒它的口由 bootstrap 经 config 递进来
+      // （见 `SchedulingConfig.kickStoryFold`），调用时才解引用。
       storyFold: new StoryFoldRecorder({
         store: storyFoldStore,
-        onQueued: () => (ctx.conversions as ConversionsDomain | undefined)?.storyFoldWorker.kick(),
+        onQueued: () => config.kickStoryFold?.(),
       }),
       // 采集落库即富化（视频频道的流）——见 VideoEnrichQueue 头注：富化早就写好了，但唯一触发点是
       // "有人点开了详情页"，所以没被点开过的作品永远没有封面/中文名。**调用时**从 provider 域取

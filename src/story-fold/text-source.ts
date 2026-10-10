@@ -43,6 +43,9 @@ export function makeFoldTextSource(deps: FoldTextSourceDeps): TextSource {
       }
       // ② 正在跑 / 排队中 → 下一轮再来。
       if (done && (done.status === 'queued' || done.status === 'running')) return 'pending'
+      // 取过了但失败（作品已删除是典型）——再排也是同样的结果，而每排一次媒体都要重新取一遍
+      // （抖音 = 在用户浏览器里再开一次作品页）。重试归 runner，与 fp-source 同一条规矩。
+      if (done?.status === 'error') return null
 
       const item = deps.itemOf(itemId)
       if (!item) return null

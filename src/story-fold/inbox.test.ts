@@ -88,9 +88,27 @@ describe('sameStoryInbox —— 判据是文本', () => {
 
 describe('worthChecking —— 只缩范围，不下结论', () => {
   const a = row({ itemId: 'a', streamId: 's1', title: '谁在操纵舆情 观澜介绍', durationS: 96 })
+  const long = row({ itemId: 'a', streamId: 's1', title: '谁在操纵舆情 观澜介绍', durationS: 2410 })
 
-  it('时长接近 → 值得取文本比一比', () => {
-    expect(worthChecking(a, row({ itemId: 'b', streamId: 's2', title: '毫不相干的标题', durationS: 97 }), INBOX_PROFILE)).toBe(true)
+  it('够长的内容时长接近 → 值得比一比（标题毫不相干也算）', () => {
+    expect(worthChecking(long, row({ itemId: 'b', streamId: 's2', title: '毫不相干的标题', durationS: 2411 }), INBOX_PROFILE)).toBe(true)
+  })
+
+  // 活体：一条 19 秒的收藏，凭"也是 19–20 秒"拉来 10 条毫不相干的新闻短片，每条都要开一次
+  // 作品页取音频。5 分钟以下的媒体做过 263 次指纹，一次都没并上。
+  it('**短内容只凭时长接近不算候选**——几十秒的视频撞时长是常态，不是线索', () => {
+    expect(worthChecking(a, row({ itemId: 'b', streamId: 's2', title: '毫不相干的标题', durationS: 97 }), INBOX_PROFILE)).toBe(false)
+    const short = row({ itemId: 'a', streamId: 's1', title: '戴尔PC跑Linux开发iOS', durationS: 19 })
+    expect(worthChecking(short, row({ itemId: 'b', streamId: 's2', title: '法国马赛发生骚乱', durationS: 20 }), INBOX_PROFILE)).toBe(false)
+  })
+
+  it('短内容标题够像 → 照样是候选（时长门槛不挡标题这条入口）', () => {
+    expect(worthChecking(a, row({ itemId: 'b', streamId: 's2', title: '谁在操纵舆情：观澜', durationS: 97 }), INBOX_PROFILE)).toBe(true)
+  })
+
+  it('一长一短恰好都落在门槛两侧 → 按短的那条算', () => {
+    const justUnder = row({ itemId: 'a', streamId: 's1', title: '甲', durationS: 299 })
+    expect(worthChecking(justUnder, row({ itemId: 'b', streamId: 's2', title: '乙丙丁', durationS: 300 }), INBOX_PROFILE)).toBe(false)
   })
 
   it('没有时长但标题够像 → 也值得（纯文字内容唯一的入口）', () => {

@@ -120,8 +120,8 @@ describe('StoryFoldRecorder — 入库那一跳只记账', () => {
 describe('StoryFoldWorker — 判据在后台，看的是文本', () => {
   it('两条转写几乎一样 → 并；标题差得再远也不影响', async () => {
     const { rec, worker, store } = rig({ a: SPEECH, b: `${SPEECH} 记得点赞关注` })
-    rec.record([item({ id: 'a', stream: 's1', title: '原标题', dur: 96 })])
-    rec.record([item({ id: 'b', stream: 's2', title: '平台改写过的完全不同的说法', dur: 96 })])
+    rec.record([item({ id: 'a', stream: 's1', title: '原标题', dur: 960 })])
+    rec.record([item({ id: 'b', stream: 's2', title: '平台改写过的完全不同的说法', dur: 960 })])
     await worker.runOnce()
     const [ga, gb] = [store.membership('a'), store.membership('b')]
     expect(ga?.groupId).toBe(gb?.groupId) // 一堆
@@ -130,8 +130,8 @@ describe('StoryFoldWorker — 判据在后台，看的是文本', () => {
 
   it('**时长一样但内容不同 → 不并**（这正是活体误折过的那一类）', async () => {
     const { rec, worker, store } = rig({ a: SPEECH, b: OTHER })
-    rec.record([item({ id: 'a', stream: 's1', title: '甲歌', dur: 226 })])
-    rec.record([item({ id: 'b', stream: 's2', title: '乙歌', dur: 226 })])
+    rec.record([item({ id: 'a', stream: 's1', title: '甲歌', dur: 2260 })])
+    rec.record([item({ id: 'b', stream: 's2', title: '乙歌', dur: 2260 })])
     await worker.runOnce()
     expect(store.membership('b')).toBeUndefined()
     expect(store.pendingCount()).toBe(0) // 判完了，不是悬着
@@ -169,6 +169,20 @@ describe('StoryFoldWorker — 判据在后台，看的是文本', () => {
     rec.record([item({ id: 'b', stream: 's2', title: '同一条内容', dur: 96 })])
     for (let i = 0; i < 6; i++) await worker.runOnce()
     expect(store.pending(20, 5)).toHaveLength(0)
+  })
+
+  // 活体：候选是一条已被作者删除的视频，文本永远取不到。旧行为把它当"还在等"，
+  // 于是每轮巡检都回来再问一遍文本源（= 再排一次转写 = 再开一次作品页），问满 5 轮才罢休。
+  it('**候选的文本取不到（不是在路上）→ 当场判完**，不留在队列里一轮轮重问', async () => {
+    const { rec, worker, store, src } = rig({ a: SPEECH })
+    rec.record([item({ id: 'a', stream: 's1', title: '同一条内容', dur: 960 })])
+    store.index(indexRowOf(item({ id: 'b', stream: 's2', title: '同一条内容', dur: 960 })))
+    const stats = await worker.runOnce()
+    expect(stats.deferred).toBe(0)
+    expect(store.pendingCount()).toBe(0)
+    const asked = src.calls.length
+    await worker.runOnce()
+    expect(src.calls.length).toBe(asked)
   })
 
   it('同链接不用等文本，当场就并', async () => {

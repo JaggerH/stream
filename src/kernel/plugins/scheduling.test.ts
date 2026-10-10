@@ -129,6 +129,46 @@ describe('schedulingPlugin', () => {
     expect(calls).toEqual(['stop', 'shutdownAdapters'])
   })
 
+  /**
+   * 接缝 5：**入库后叫醒归堆后台工**。worker 住转换域，比本域晚挂；本域不能读 `ctx.conversions`
+   * ——Cordis 对没写进 inject 的服务是**抛错**不是给 undefined，而归堆那一跳的异常被调用方兜住，
+   * 只留一行日志。断了的症状：每轮采集一行「归堆失败」，归堆只能等自己的兜底巡检。
+   */
+  it('新条目入账后经 config 递进来的口叫醒归堆后台工，且不抛', async () => {
+    const { kernel } = await mountUpToProvider()
+    let kicks = 0
+    await kernel.plugin(schedulingPlugin, {
+      vaultRoot: join(tmpdir(), 'stream-scheduling-vault'),
+      vaultEnabled: false,
+      runtimeConfigFor: () => ({}),
+      kickStoryFold: () => { kicks++ },
+    })
+    const scheduler = kernel.scheduling.scheduler as unknown as {
+      opts: { storyFold: { record: (items: unknown[]) => void } }
+    }
+    const item = {
+      id: 'kick-1', stream_id: 's1', source_type: 'rsshub-bridge', source_route: '/x',
+      fetched_at: '2026-08-13T00:00:00Z', timestamp: '2026-08-13T00:00:00Z', title: '甲', raw: {},
+    }
+    expect(() => scheduler.opts.storyFold.record([item])).not.toThrow()
+    expect(kicks).toBe(1)
+    await quiesceKernel(kernel)
+  })
+
+  it('没递叫醒口（转换域不在的搭法）→ 入账照常，不抛', async () => {
+    const { kernel } = await mountUpToProvider()
+    await mountScheduling(kernel)
+    const scheduler = kernel.scheduling.scheduler as unknown as {
+      opts: { storyFold: { record: (items: unknown[]) => void } }
+    }
+    const item = {
+      id: 'kick-2', stream_id: 's1', source_type: 'rsshub-bridge', source_route: '/x',
+      fetched_at: '2026-08-13T00:00:00Z', timestamp: '2026-08-13T00:00:00Z', title: '甲', raw: {},
+    }
+    expect(() => scheduler.opts.storyFold.record([item])).not.toThrow()
+    await quiesceKernel(kernel)
+  })
+
   /** inject 表达的依赖：provider 域不在树上时本域干脆不激活（`onItemPersisted` 要富化队列）。 */
   it('provider 不在树上时不激活', async () => {
     const root = mkdtempSync(join(tmpdir(), 'stream-scheduling-bare-'))

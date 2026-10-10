@@ -30,7 +30,7 @@ import type { CanonicalBrowserRecipe } from './replay/recipe.ts'
 import { netdiskPlugin } from './kernel/plugins/netdisk.ts'
 import { applyCollectionPolicy } from './store/collection-policy.ts'
 import { searchFanoutPlugin, type SearchFanoutService } from './kernel/plugins/search-fanout.ts'
-import { conversionsPlugin } from './kernel/plugins/conversions.ts'
+import { conversionsPlugin, type ConversionsDomain } from './kernel/plugins/conversions.ts'
 import { agentPlugin, type AgentDomain } from './kernel/plugins/agent.ts'
 import { schedulingPlugin, type SchedulingDomain } from './kernel/plugins/scheduling.ts'
 import { makeResolveDownload } from './audio/resolve-download.ts'
@@ -611,6 +611,8 @@ export async function bootstrap(
     track: opts.track,
     trackSync: opts.trackSync,
     onDebug: opts.onDebug,
+    // 归堆后台工住转换域（下面才挂）：从根 kernel 现取，同 adapters 域那条 `intervention` 的先例。
+    kickStoryFold: () => (kernel.conversions as ConversionsDomain | undefined)?.storyFoldWorker.kick(),
   })
   // 只解下游装配还要用的那两格（搜索扇出的两个 thunk、agent 域的 service 与 readSource）。
   // 其余三格（baseAdRules / health / lastHarvestAt）只有 serve.ts 要，它直接读内核。
@@ -666,7 +668,7 @@ export async function bootstrap(
     onDebug: opts.onDebug,
   })
   // 归堆的后台工（`storyFoldWorker`）住本域。采集调度域比它早挂，那边的
-  // `StoryFoldRecorder.onQueued` **调用时**才从 `ctx.conversions` 取它——前向 `let` 已删。
+  // `StoryFoldRecorder.onQueued` 经上面递的 `kickStoryFold` **调用时**才从根 kernel 取它。
 
   // 对话 / 搜索 agent / 意图跟踪整域进内核（`src/kernel/plugins/agent.ts`）：会话库 + 心愿单 +
   // llm.chat 端点解析 + 摘要 prompt 状态面 + 三条网页搜索腿的梯子 + search agent + 意图服务 +
