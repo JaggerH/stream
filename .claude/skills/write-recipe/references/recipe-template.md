@@ -230,8 +230,11 @@ Use when you must DRIVE the logged-in page (call its request client, read a `win
     //   `{ items: [], pending: true, cursor }` 并声明 "pendingField": "pending"——runner 只推进
     //   cursor、不进 harvest、不计空页。不声明的话等待页会被 assert 判成 malformed，连两页就 drift。
     //   页面**自己说**这一趟失败了（「出了点问题，请稍后重试」，最好带上站方错误码）：回
-    //   `{ items: [], siteError: '<码>：<原话>' }` 并声明 "siteErrorField": "siteError"——以 `siteError`
-    //   收尾，不判 drift、不问 AI 认页面、不进冷却；动作档回 `site-error`，调用方自己决定重不重试。
+    //   `{ items: [], siteError: { message, code, retry, retryAfterMs } }` 并声明 "siteErrorField": "siteError"
+    //   ——以 `siteError` 收尾，不判 drift、不问 AI 认页面。`retry` 是你对这个站点错误码的判断：
+    //   `now` 随机抖动（默认；直接给一个字符串也算这档）/ `later` 限流·额度用完（facility 照
+    //   `retryAfterMs` 冷却，站点给了恢复时刻就一定填）/ `never` 再跑也不会成（内容被拒）。
+    //   范例：packages/doubao/doubao-image（失败时读消息里的错误码 + 查额度接口拿窗口结束时刻）。
     //   直接 throw 的话会被当成 drift：源进隔离账本，失败现场还会被拿去问 AI「这是哪个页面」。
     //   只在**读到了站方的失败回执**时填；结构对不上照旧 throw（那才是 drift）。
     // Tier-B alternatives: { "kind": "scroll", "dwell_s": [3,6], "maxTimes": 40, "noProgressStop": 6 }

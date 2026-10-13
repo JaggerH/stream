@@ -254,8 +254,17 @@ After the whole run, blocked / drift is judged (including "not a single item" �
 returns a value there (the site's own failure receipt — an error code, "something went wrong, try again later"), the run ends as
 `siteError`: not drift (the recipe is fine, so `RepairLedger` must not isolate it), no state-graph lookup and no Broker hand-off
 (the page is a perfectly ordinary page that happens to show an error — asking "which page is this" produces one identical proposal
-per failure), and no facility cooldown (the site did not ask us to wait). Action recipes surface it as status `site-error`;
-retrying is the caller's call (`/v1/images/generations` retries it twice).
+per failure). The value carries the recipe's verdict on what to do next — only the recipe knows the site's error codes:
+
+| `retry` | Meaning | Engine | Action result |
+|---|---|---|---|
+| `now` (also a bare string, and any unrecognized value) | random blip; the same params usually work on the next run | nothing | `site-error`, `retry:'now'` |
+| `later` | rate limit / overload / quota used up | facility cooldown for `retryAfterMs` exactly (`FacilityCooldown.siteSaysWait`, no strike, no block-ledger entry); without a duration it falls back to the block backoff | `site-error`, `retry:'later'`, `retryAfterSec` |
+| `never` | retrying cannot help (content refused) | nothing | `site-error`, `retry:'never'` |
+
+While the facility is cooling, an action call runs nothing and answers `wait` with `retryAfterSec` (our own rate limiter
+answers the same way) — it never surfaces as a bare error. `/v1/images/generations` retries only `now` (twice) and turns
+`later` / `wait` into HTTP 429 with `Retry-After`; do not wait out minutes-to-hours inside a request.
 
 **Handing to the Broker is a side channel, not handling** (`handOffVerdict`): for scene capture (`captureBrowserScene`,
 `src/replay/scene.ts`), each item is independent best-effort; if it cannot be captured, skip it; if it cannot be asked, do not throw —

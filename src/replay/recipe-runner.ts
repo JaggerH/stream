@@ -85,9 +85,42 @@ class EvaluateDriftError extends Error {
  * 隔离一份没坏的 recipe，还会拿现场去问 AI「这是哪个页面」），**不进冷却**（站点没让我们等）。
  */
 class SiteReportedError extends Error {
-  constructor(message: string) {
-    super(message)
+  constructor(readonly report: SiteErrorReport) {
+    super(report.message)
     this.name = 'SiteReportedError'
+  }
+}
+
+/**
+ * 站点报的这一趟失败，连同 recipe 对它的判断：**下一步该怎么办只有 recipe 知道**（它认得这个站的
+ * 错误码），引擎和调用方照着这份判断走，不各自去猜。
+ * - `now`：随机抖动，同参马上再跑多半就成（豆包 `710082003`）。认不出的新码也归这档。
+ * - `later`：限流 / 过载 / 额度用完——facility 进冷却，`retryAfterMs` 有就照它，没有就按冷却自己的退避。
+ * - `never`：重试也不会成（内容被拒）；再跑只是白烧额度。
+ */
+export interface SiteErrorReport {
+  message: string
+  code?: string
+  retry: 'now' | 'later' | 'never'
+  retryAfterMs?: number
+}
+
+/**
+ * `siteErrorField` 读到的值 → 报告。字符串是最简写法（= `retry:'now'`）；对象形状不认的字段
+ * 原样丢掉、`retry` 不认就退回 `now`——这是 recipe 作者写的数据，写歪一个字段不该把一次
+ * 站点报错升级成别的失败。
+ */
+function toSiteErrorReport(v: unknown): SiteErrorReport | undefined {
+  if (v == null || v === '' || v === false) return undefined
+  if (typeof v !== 'object') return { message: String(v), retry: 'now' }
+  const o = v as Record<string, unknown>
+  const retry = o.retry === 'later' || o.retry === 'never' ? o.retry : 'now'
+  const after = Number(o.retryAfterMs)
+  return {
+    message: typeof o.message === 'string' && o.message ? o.message : JSON.stringify(o).slice(0, 200),
+    ...(o.code != null && o.code !== '' ? { code: String(o.code) } : {}),
+    retry,
+    ...(retry === 'later' && Number.isFinite(after) && after > 0 ? { retryAfterMs: Math.round(after) } : {}),
   }
 }
 
@@ -109,6 +142,8 @@ export interface RecipeRunOutcome {
   extract?: string
   /** 失败时的现场（见 FailureScene）。成功的运行不带。 */
   scene?: FailureScene
+  /** 只在 `outcome:'siteError'` 时有：站点报了什么、recipe 判它该怎么重试。 */
+  siteError?: SiteErrorReport
 }
 
 export interface RecipeRunnerOptions {
@@ -501,8 +536,8 @@ async function runEvaluateStep(ctx: StepContext, step: EvaluateStep, index: numb
     } catch (e) {
       throw new EvaluateDriftError(e instanceof Error ? e.message : String(e))
     }
-    const siteError = step.siteErrorField == null ? undefined : getPath(body, step.siteErrorField)
-    if (siteError != null && siteError !== '' && siteError !== false) throw new SiteReportedError(String(siteError))
+    const siteError = step.siteErrorField == null ? undefined : toSiteErrorReport(getPath(body, step.siteErrorField))
+    if (siteError) throw new SiteReportedError(siteError)
     const pending = step.pendingField != null && !!getPath(body, step.pendingField)
     if (!pending) {
       const { fresh } = observers.offer({ items: getPath(body, step.itemsAt) })
@@ -1107,7 +1142,8 @@ export class RecipeRunner {
       // persistent tab parked on the target page for the next lease
       await restore(async (fn) => { await fn().catch(() => {}) })
       if (scene) this.onFailureScene?.(recipe.sourceId, { ...scene, reason, trace })
-      return withExtract({ outcome, items: observers.items(), trace, reason, timing: probe.timings(), scene })
+      const siteError = error instanceof SiteReportedError ? { siteError: error.report } : {}
+      return withExtract({ outcome, items: observers.items(), trace, reason, timing: probe.timings(), scene, ...siteError })
     } finally {
       await observers.stop()
       this.onLiveDone?.(recipe.sourceId)

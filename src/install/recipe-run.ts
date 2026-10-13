@@ -78,6 +78,7 @@ const EXIT: Record<string, number> = {
   'unsupported-kind': 2,
   'no-desktop': 4,
   'no-browser': 4,
+  wait: 4,
   'needs-login': 4,
 }
 

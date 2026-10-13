@@ -70,6 +70,20 @@ describe('recipe-runner 的介入闸', () => {
     expect(rr.got).toHaveLength(0)
   })
 
+  it('siteError 可以是对象：retry / retryAfterMs / code 原样带出；写歪的 retry 退回 now', async () => {
+    const run = (v: unknown) => new RecipeRunner().run({
+      ...recipe,
+      steps: [{ kind: 'evaluate' as const, call: '(c,n)=>c', itemsAt: 'items', siteErrorField: 'siteError' }],
+      observers: [],
+    }, {}, fakeDriver({ currentUrl: async () => 'https://x.test/', evalJson: async () => ({ items: [], siteError: v }) }))
+    const later = await run({ message: '额度用完', code: 'quota', retry: 'later', retryAfterMs: 3_600_000 })
+    expect(later.outcome).toBe('siteError')
+    expect(later.siteError).toEqual({ message: '额度用完', code: 'quota', retry: 'later', retryAfterMs: 3_600_000 })
+    expect((await run({ message: 'x', retry: 'soon' })).siteError).toEqual({ message: 'x', retry: 'now' })
+    // 时长只对 later 有意义；now 带了也丢掉，免得下游误当成要等
+    expect((await run({ message: 'x', retry: 'now', retryAfterMs: 5 })).siteError).toEqual({ message: 'x', retry: 'now' })
+  })
+
   it('siteErrorField 声明了但这一页没值 → 照常收尾', async () => {
     const siteErr = {
       ...recipe,

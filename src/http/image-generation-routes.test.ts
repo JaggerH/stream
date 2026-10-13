@@ -160,6 +160,35 @@ describe('POST /v1/images/generations', () => {
     expect(blocked).toBe(1)
   })
 
+  it('站点说要等（site-error + later）或 facility 冷却中（wait）→ 不重跑，回 429 + Retry-After', async () => {
+    let runs = 0
+    const later = harness({
+      runAction: async () => {
+        runs++
+        return { status: 'site-error', sourceId: 'doubao-image', reason: '生图额度用完', retry: 'later', retryAfterSec: 3600 }
+      },
+    })
+    const res = await later.post({ model: 'doubao-image', prompt: 'a wok' })
+    expect(res.status).toBe(429)
+    expect(res.headers.get('Retry-After')).toBe('3600')
+    expect((await res.json()).error).toMatchObject({ type: 'rate_limit_exceeded' })
+    expect(runs).toBe(1)
+
+    const wait = harness({ runAction: async () => ({ status: 'wait', sourceId: 'doubao-image', reason: '冷却中', retryAfterSec: 90 }) })
+    const res2 = await wait.post({ model: 'doubao-image', prompt: 'a wok' })
+    expect(res2.status).toBe(429)
+    expect(res2.headers.get('Retry-After')).toBe('90')
+  })
+
+  it('站点报错且 retry:never → 一次就失败，不白烧额度', async () => {
+    let runs = 0
+    const { post } = harness({
+      runAction: async () => { runs++; return { status: 'site-error', sourceId: 'doubao-image', reason: '内容被拒', retry: 'never' } },
+    })
+    expect((await post({ model: 'doubao-image', prompt: 'a wok' })).status).toBe(502)
+    expect(runs).toBe(1)
+  })
+
   it('dewatermarks only the items the recipe flagged watermarked (fell back to preview)', async () => {
     const { post } = harness({
       runAction: async () => ({ status: 'done', sourceId: 'doubao-image', items: [WATERMARKED[0], ITEMS[1]] }),

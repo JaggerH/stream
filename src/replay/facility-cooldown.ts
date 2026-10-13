@@ -68,6 +68,15 @@ export function forHumans(because: string, max = 40): string {
   return head.length > max ? `${head.slice(0, max)}…` : head
 }
 
+/** 站点给的等待可能是几小时（额度窗口），按秒报「还剩约 14400s」没人读得懂。 */
+export function waitForHumans(ms: number): string {
+  const s = Math.ceil(ms / 1000)
+  if (s < 90) return `${s}s`
+  const m = Math.round(s / 60)
+  if (m < 120) return `${m} 分钟`
+  return `${Math.floor(m / 60)} 小时 ${m % 60} 分钟`
+}
+
 export class CoolingDownError extends EnvironmentUnavailableError {
   /**
    * **自报分类**（`DeclaresFailureCategory`），别让 `classifyError` 去嗅探这条消息。
@@ -82,9 +91,13 @@ export class CoolingDownError extends EnvironmentUnavailableError {
     readonly facility: string,
     readonly remainingMs: number,
     readonly because: string,
+    /** 站点自己说了要等多久（`siteSaysWait`），不是我们被挡了在猜——措辞跟着变，剩余时间是准的。 */
+    readonly siteSaid = false,
   ) {
     super(
-      `"${facility}" 正在冷却（刚被站点拦下：${forHumans(because)}），还剩约 ${Math.ceil(remainingMs / 1000)}s，这次不去打它`,
+      siteSaid
+        ? `"${facility}" 正在等站点放行（站点说：${forHumans(because)}），还剩约 ${waitForHumans(remainingMs)}，到点之前这次不去打它`
+        : `"${facility}" 正在冷却（刚被站点拦下：${forHumans(because)}），还剩约 ${Math.ceil(remainingMs / 1000)}s，这次不去打它`,
     )
     this.name = 'CoolingDownError'
   }
@@ -97,6 +110,8 @@ interface Entry {
   strikes: number
   /** 最近一次被拦的原因，说给上层听 */
   because: string
+  /** 这段等待是站点明说的（`siteSaysWait`），不是撞墙后的退避 */
+  siteSaid?: boolean
 }
 
 /**
@@ -142,6 +157,19 @@ export class FacilityCooldown {
     this.entries.set(facility, { until: this.now() + waitMs, strikes, because })
   }
 
+  /**
+   * 站点**自己说了**要等（限流 / 额度用完，recipe 报 `siteError` 且 `retry:'later'`）。
+   *
+   * 和 `blocked` 分开，因为它们知道的不一样：`blocked` 是我们被挡了、不知道要等多久，只能翻倍去试；
+   * 这里站点给了准时刻（豆包额度窗口的 `end_time`），照它等，**不加 strike、不进台账**——台账学的是
+   * "撞墙之后多久凉"，把一个站点明说的额度窗口喂进去会把那份学习带偏。没给时刻就退回 `blocked`。
+   */
+  siteSaysWait(facility: string, because: string, retryAfterMs?: number): void {
+    if (!retryAfterMs || retryAfterMs <= 0) return this.blocked(facility, because)
+    const prev = this.entries.get(facility)
+    this.entries.set(facility, { until: this.now() + retryAfterMs, strikes: prev?.strikes ?? 0, because, siteSaid: true })
+  }
+
   /** 跑成了一次 → 清零，并给台账上还开着的那条 episode 封口（拿到恢复时间的上界）。 */
   cleared(facility: string): void {
     this.ledger?.recovered(facility)
@@ -154,6 +182,6 @@ export class FacilityCooldown {
     if (!e) return
     const remaining = e.until - this.now()
     if (remaining <= 0) return // 到点了：留着 strikes（连着被拦要接着翻倍），只是不再拦
-    throw new CoolingDownError(facility, remaining, e.because)
+    throw new CoolingDownError(facility, remaining, e.because, !!e.siteSaid)
   }
 }

@@ -462,6 +462,7 @@ describe('SessionRecipeExecutor — 退让闸门', () => {
   function harness(cooldown: {
     assertReady(f: string): void
     blocked(f: string, why: string): void
+    siteSaysWait(f: string, why: string, ms?: number): void
     cleared(f: string): void
   }, order: string[]) {
     const sessions = new RecipeSessionManager(() => managerTransport(async () => {
@@ -475,7 +476,7 @@ describe('SessionRecipeExecutor — 退让闸门', () => {
     const order: string[] = []
     const exec = harness({
       assertReady: () => { throw new Error('"demo" 正在冷却') },
-      blocked: () => {}, cleared: () => {},
+      blocked: () => {}, siteSaysWait: () => {}, cleared: () => {},
     }, order)
     await expect(exec.execute(recipe, {})).rejects.toThrow('正在冷却')
     expect(order).not.toContain('newTab')
@@ -491,7 +492,7 @@ describe('SessionRecipeExecutor — 退让闸门', () => {
       sessions, transportFor,
       { run: async () => ({ outcome: 'needsLogin', items: [], trace: [], reason: '撞上 /sorry' }) } as never,
       undefined, undefined,
-      { assertReady: () => {}, blocked: (f, why) => blocked.push(`${f}:${why}`), cleared: () => {} },
+      { assertReady: () => {}, blocked: (f, why) => blocked.push(`${f}:${why}`), siteSaysWait: () => {}, cleared: () => {} },
     )
     const out = await exec.execute(recipe, {})
     expect(out.outcome).toBe('needsLogin')
@@ -510,11 +511,33 @@ describe('SessionRecipeExecutor — 退让闸门', () => {
       sessions, transportFor,
       { run: async () => ({ outcome: 'challenged', items: [], trace: [], reason: '站方弹了验证码' }) } as never,
       undefined, undefined,
-      { assertReady: () => {}, blocked: (f, why) => blocked.push(`${f}:${why}`), cleared: () => {} },
+      { assertReady: () => {}, blocked: (f, why) => blocked.push(`${f}:${why}`), siteSaysWait: () => {}, cleared: () => {} },
     )
     const out = await exec.execute(recipe, {})
     expect(out.outcome).toBe('challenged')
     expect(blocked).toEqual(['demo:站方弹了验证码'])
+  })
+
+  it('站点报错：只有 retry:later 才退让，且照站点给的时长等、不排空预算；now / never 一概不碰冷却', async () => {
+    const run = (siteError: unknown) => {
+      const told: Array<{ f: string; why: string; ms?: number }> = []
+      const drained: string[] = []
+      const sessions = new RecipeSessionManager(() => managerTransport(async () => ({
+        page: { evaluate: async () => undefined as never }, rawPage: { tabId: 3 }, close: async () => {},
+      })))
+      const exec = new SessionRecipeExecutor(
+        sessions, transportFor,
+        { run: async () => ({ outcome: 'siteError', items: [], trace: [], reason: 'x', siteError }) } as never,
+        undefined,
+        { take: async () => {}, drainBudget: (f) => { drained.push(f); return 1 } },
+        { assertReady: () => {}, blocked: () => { throw new Error('站点报错不该走撞墙那条') }, siteSaysWait: (f, why, ms) => told.push({ f, why, ms }), cleared: () => {} },
+      )
+      return exec.execute(recipe, {}).then(() => ({ told, drained }))
+    }
+    expect(await run({ message: '额度用完', retry: 'later', retryAfterMs: 3_600_000 }))
+      .toEqual({ told: [{ f: 'demo', why: '额度用完', ms: 3_600_000 }], drained: [] })
+    expect(await run({ message: '抖了一下', retry: 'now' })).toEqual({ told: [], drained: [] })
+    expect(await run({ message: '内容被拒', retry: 'never' })).toEqual({ told: [], drained: [] })
   })
 
   it('跑成一次 → 清账（站点已经不生气了，没有理由还留着）', async () => {
@@ -526,7 +549,7 @@ describe('SessionRecipeExecutor — 退让闸门', () => {
       sessions, transportFor,
       { run: async () => ({ outcome: 'ok', items: [], trace: [] }) } as never,
       undefined, undefined,
-      { assertReady: () => {}, blocked: () => {}, cleared: (f) => cleared.push(f) },
+      { assertReady: () => {}, blocked: () => {}, siteSaysWait: () => {}, cleared: (f) => cleared.push(f) },
     )
     await exec.execute(recipe, {})
     expect(cleared).toEqual(['demo'])
@@ -545,7 +568,7 @@ describe('SessionRecipeExecutor — 退让闸门', () => {
       { run: async () => ({ outcome: 'needsLogin', items: [], trace: [], reason: '撞上 /sorry' }) } as never,
       undefined,
       { take: async () => {}, drainBudget: (f) => { drained.push(f); return 97 } },
-      { assertReady: () => {}, blocked: (f, _why, ctx) => blocked.push({ f, spentLastHour: ctx?.spentLastHour }), cleared: () => {} },
+      { assertReady: () => {}, blocked: (f, _why, ctx) => blocked.push({ f, spentLastHour: ctx?.spentLastHour }), siteSaysWait: () => {}, cleared: () => {} },
     )
     await exec.execute(recipe, {})
     expect(drained).toEqual(['demo'])
@@ -562,7 +585,7 @@ describe('SessionRecipeExecutor — 退让闸门', () => {
       { run: async () => ({ outcome: 'needsLogin', items: [], trace: [], reason: 'x' }) } as never,
       undefined,
       { take: async () => {} },
-      { assertReady: () => {}, blocked: (_f, _why, ctx) => blocked.push({ spentLastHour: ctx?.spentLastHour }), cleared: () => {} },
+      { assertReady: () => {}, blocked: (_f, _why, ctx) => blocked.push({ spentLastHour: ctx?.spentLastHour }), siteSaysWait: () => {}, cleared: () => {} },
     )
     await exec.execute(recipe, {})
     expect(blocked).toEqual([{ spentLastHour: undefined }])

@@ -6,6 +6,8 @@ import type { DesktopRecipe } from '../replay/desktop-recipe.ts'
 import type { DesktopDriver } from '../replay/desktop-driver.ts'
 import type { SeeResolver } from '../replay/desktop-see.ts'
 import { HostRelayDisconnected, HostAbortedByUser } from '../http/host-relay.ts'
+import { CoolingDownError } from '../replay/facility-cooldown.ts'
+import { RateLimitedError } from '../replay/facility-rate-limit.ts'
 import { mkdtempSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -398,6 +400,28 @@ describe('run_action_recipe —— 浏览器档', () => {
     })
     expect(r.status).toBe('site-error')
     expect(r.reason).toBe('ai_creation_res_code=710082003')
+    expect(r.retry).toBe('now')
+
+    const later = await runActionRecipe(makeDeps({
+      recipe: browserAction(),
+      runBrowser: (async () => OUT('siteError', { reason: '额度用完', siteError: { message: '额度用完', retry: 'later', retryAfterMs: 3_600_500 } })) as never,
+    }), { sourceId: 'dfcf-login', params: {}, confirmed: true })
+    expect(later).toMatchObject({ status: 'site-error', retry: 'later', retryAfterSec: 3601 })
+  })
+
+  it('冷却中 / 被我们自己限速 → wait + retryAfterSec，不以裸异常冒出去', async () => {
+    const cooling = await runActionRecipe(makeDeps({
+      recipe: browserAction(),
+      runBrowser: (async () => { throw new CoolingDownError('doubao', 125_000, '额度用完', true) }) as never,
+    }), { sourceId: 'dfcf-login', params: {}, confirmed: true })
+    expect(cooling).toMatchObject({ status: 'wait', retryAfterSec: 125 })
+    expect(cooling.reason).toContain('额度用完')
+
+    const limited = await runActionRecipe(makeDeps({
+      recipe: browserAction(),
+      runBrowser: (async () => { throw new RateLimitedError('doubao', 30_000) }) as never,
+    }), { sourceId: 'dfcf-login', params: {}, confirmed: true })
+    expect(limited).toMatchObject({ status: 'wait', retryAfterSec: 30 })
   })
 
   it('output.files：base64 落盘、回执里换成路径；没装配 artifactsDir 则整条报错，不退回把 base64 留在结果里', async () => {

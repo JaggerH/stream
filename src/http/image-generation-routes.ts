@@ -44,6 +44,8 @@ interface ActionResult {
   runId?: string
   reason?: string
   items?: Record<string, string>[]
+  retry?: 'now' | 'later' | 'never'
+  retryAfterSec?: number
 }
 interface ActionRunView {
   status: string
@@ -131,7 +133,11 @@ function makeDefaultDewatermark(target: () => string | null): (png: Uint8Array) 
  */
 const SITE_ERROR_RETRIES = 2
 
-/** 跑 recipe 到落定；站点自己报错就按 `SITE_ERROR_RETRIES` 重跑。回 items 或抛（带最后一次的 reason）。 */
+/**
+ * 跑 recipe 到落定。站点报错按 recipe 给的 `retry` 走：只有 `now`（随机抖动）在这里重跑，最多
+ * `SITE_ERROR_RETRIES` 次；`later`（限流 / 额度用完）和 facility 冷却中（`wait`）抛 `RetryLater`，
+ * 由路由回 429 + `Retry-After`——**这里不干等**，几分钟到几小时的等待该交回客户端；`never` 直接失败。
+ */
 async function generate(
   deps: Parameters<typeof generateOnce>[0],
   sourceId: string,
@@ -142,8 +148,8 @@ async function generate(
     try {
       return await generateOnce(deps, sourceId, params)
     } catch (e) {
-      if (!(e instanceof SiteErrorAttempt) || attempt >= SITE_ERROR_RETRIES) {
-        if (reasons.length) throw new Error(`${(e as Error).message}（此前 ${reasons.length} 次同样是站点报错：${reasons.join('；')}）`)
+      if (!(e instanceof SiteErrorAttempt) || e.retry !== 'now' || attempt >= SITE_ERROR_RETRIES) {
+        if (reasons.length) throw withMessage(e, `${(e as Error).message}（此前 ${reasons.length} 次同样是站点报错：${reasons.join('；')}）`)
         throw e
       }
       reasons.push(e.reason)
@@ -151,8 +157,22 @@ async function generate(
   }
 }
 
+/** 改一条错误的消息但保住它的类型——`RetryLater` 要一路活到路由里去换 429。 */
+function withMessage(e: unknown, message: string): Error {
+  if (e instanceof Error) {
+    e.message = message
+    return e
+  }
+  return new Error(message)
+}
+
 class SiteErrorAttempt extends Error {
-  constructor(readonly reason: string, message: string) { super(message); this.name = 'SiteErrorAttempt' }
+  constructor(readonly reason: string, readonly retry: 'now' | 'never', message: string) { super(message); this.name = 'SiteErrorAttempt' }
+}
+
+/** 站点说要等 / facility 在冷却：回 429 + `Retry-After`（秒），客户端照着等，不在这条连接上干耗。 */
+export class RetryLater extends Error {
+  constructor(message: string, readonly retryAfterSec?: number) { super(message); this.name = 'RetryLater' }
 }
 
 /** 跑 recipe 到落定：`running` 就按 runId 轮询。回 items 或抛（带 recipe 的 reason）。 */
@@ -182,9 +202,13 @@ async function generateOnce(
       if (deps.now() > until) throw new Error(`${sourceId} ${RUN_WAIT_MS / 1000}s 内没跑完（runId ${runId}）`)
     }
   }
+  if (result.status === 'wait') {
+    throw new RetryLater(`${sourceId} 这会儿在等：${result.reason ?? '冷却中'}`, result.retryAfterSec)
+  }
   if (result.status === 'site-error') {
     const why = result.reason ?? '站点报错'
-    throw new SiteErrorAttempt(why, `${sourceId} 站点这一趟自己报错了：${why}`)
+    if (result.retry === 'later') throw new RetryLater(`${sourceId} 站点说要等：${why}`, result.retryAfterSec)
+    throw new SiteErrorAttempt(why, result.retry === 'never' ? 'never' : 'now', `${sourceId} 站点这一趟自己报错了：${why}`)
   }
   if (result.status !== 'done') throw new Error(`${sourceId} 失败（${result.status}）：${result.reason ?? '没有更多信息'}`)
   const items = (result.items ?? []).filter((it) => it.url)
@@ -276,6 +300,11 @@ export function mountImageGenerationRoutes(app: Hono, deps: ImageGenerationRoute
       try {
         items = await batch.promise
       } catch (e) {
+        // 要等的那一档按 OpenAI 的限流形状回：429 + `Retry-After`，客户端 SDK 自己就会照着退避。
+        if (e instanceof RetryLater) {
+          if (e.retryAfterSec) c.header('Retry-After', String(e.retryAfterSec))
+          return c.json(oaError(e.message, 'rate_limit_exceeded'), 429)
+        }
         return c.json(oaError((e as Error).message, 'server_error'), 502)
       }
       mine = items.slice(from, from + nRaw)

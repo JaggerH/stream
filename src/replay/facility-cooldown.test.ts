@@ -101,6 +101,38 @@ describe('FacilityCooldown — 被拦之后先别去打', () => {
     }
   })
 
+  it('站点明说要等（siteSaysWait）→ 照它给的时长等，不加码、不进台账，说法是「站点说」不是「被拦下」', () => {
+    const t = { ms: 0 }
+    const ledgerCalls: string[] = []
+    const cd = new FacilityCooldown({ now: () => t.ms }, {
+      blocked: () => { ledgerCalls.push('blocked') }, recovered: () => {}, learn: () => ({ baseMs: 60_000, capMs: 1_800_000 }),
+    } as never)
+    cd.siteSaysWait('doubao', '生图额度用完（5 小时窗口）', 3 * 3_600_000)
+    t.ms = 3 * 3_600_000 - 1_000
+    let err: CoolingDownError | undefined
+    try { cd.assertReady('doubao') } catch (e) { err = e as CoolingDownError }
+    expect(err).toBeInstanceOf(CoolingDownError)
+    expect(err!.message).toContain('站点说：生图额度用完')
+    expect(err!.message).not.toContain('拦下')
+    expect(err!.message).not.toContain('再试')
+    t.ms = 3 * 3_600_000 + 1
+    expect(() => cd.assertReady('doubao')).not.toThrow()
+    expect(ledgerCalls).toEqual([])
+    // 几小时的等待按小时报，别报成「还剩约 10800s」
+    cd.siteSaysWait('doubao', '额度用完', 3 * 3_600_000 + 20 * 60_000)
+    expect(() => cd.assertReady('doubao')).toThrow('3 小时 20 分钟')
+  })
+
+  it('站点说要等、却没给时长 → 退回撞墙那套退避（不是不等）', () => {
+    const t = { ms: 0 }
+    const cd = at(t)
+    cd.siteSaysWait('doubao', '限流了')
+    t.ms = 59_000
+    expect(() => cd.assertReady('doubao')).toThrow(CoolingDownError)
+    t.ms = 60_001
+    expect(() => cd.assertReady('doubao')).not.toThrow()
+  })
+
   it('给人看的那句话里不许出现原始报错和 JS 栈', () => {
     // 活体里这句话真的长成过：一句人话后面拖着英文报错 + `at <anonymous>:1:1569`。
     // 原文不是不要了——它留在 `because` 字段上给排错用，只是不进面向人的提示。

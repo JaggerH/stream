@@ -38,6 +38,8 @@ import { isCanonicalBrowserRecipe, type CanonicalBrowserRecipe, type Recipe } fr
 import type { EventInput } from '../events/store.ts'
 import type { DesktopDriver } from '../replay/desktop-driver.ts'
 import type { SeeResolver } from '../replay/desktop-see.ts'
+import { CoolingDownError } from '../replay/facility-cooldown.ts'
+import { RateLimitedError } from '../replay/facility-rate-limit.ts'
 import type { RecipeRunOutcome } from '../replay/recipe-runner.ts'
 import { runDesktopRecipe, type OverrideSource } from '../replay/desktop-runner.ts'
 import { HostRelayDisconnected, HostRelayTimeout, HostSessionQueueTimeout, HostAbortedByUser, INTERACTIVE_SESSION_WAIT_MS } from '../http/host-relay.ts'
@@ -70,13 +72,21 @@ export type ActionRecipeStatus =
   | 'no-browser'
   | 'needs-login'
   | 'blocked'
-  /** 站点这一趟自己报错了（recipe 的 `siteErrorField`）：recipe 没坏、登录没坏，同样的参数再跑一次
-   *  多半就成。和 `blocked` 分开，是因为下一步相反——这一档值得自动重试，`blocked` 不该。 */
+  /** 站点这一趟自己报错了（recipe 的 `siteErrorField`）：recipe 没坏、登录没坏。下一步看 `retry`：
+   *  `now` 同参马上再跑多半就成；`later` 要等 `retryAfterSec`（facility 已进冷却，提前调会回 `wait`）；
+   *  `never` 再跑也不会成。和 `blocked` 分开，是因为 `blocked` 不该自动重试。 */
   | 'site-error'
+  /** **一步都没跑**：这个 facility 在冷却（站点刚说过要等 / 刚把我们拦下）或撞上了我们自己的限速。
+   *  `retryAfterSec` 之后再调。和 `site-error` 分开——这次连标签都没开，不是关于站点这一次的结论。 */
+  | 'wait'
 
 export interface ActionRecipeResult {
   status: ActionRecipeStatus
   sourceId: string
+  /** 只在 `site-error`：recipe 对这次站点报错的判断（见 `SiteErrorReport.retry`）。 */
+  retry?: 'now' | 'later' | 'never'
+  /** `site-error`+`later` 或 `wait` 时：多少秒之后再调。站点没给时长时 `site-error` 不带它。 */
+  retryAfterSec?: number
   /** 说清为什么是这个状态 / 下一步该干什么。needs-confirmation 时说"确认后会做什么"；
    *  失败态时说清是哪一类失败。 */
   reason?: string
@@ -450,7 +460,20 @@ async function executeBrowserAction(
   notify?: (input: EventInput) => void,
   artifactsDir?: string,
 ): Promise<ActionRecipeResult> {
-  const outcome = await runBrowser(recipe, stringParams)
+  let outcome: RecipeRunOutcome
+  try {
+    outcome = await runBrowser(recipe, stringParams)
+  } catch (e) {
+    // 冷却 / 限速在开标签之前就拦下了：一步没跑。落成带 `retryAfterSec` 的 `wait`，别让它以一条
+    // 裸异常冒到 run 的 error 里——那样调用方（模型）只看到「出错了」，不知道这是在等、要等多久。
+    if (e instanceof CoolingDownError) {
+      return { status: 'wait', sourceId, reason: e.message, retryAfterSec: Math.ceil(e.remainingMs / 1000) }
+    }
+    if (e instanceof RateLimitedError) {
+      return { status: 'wait', sourceId, reason: `${recipe.session.facility} 这会儿调得太密，我们自己在限速`, retryAfterSec: Math.ceil(e.retryAfterMs / 1000) }
+    }
+    throw e
+  }
   const files = recipe.output.files
   if (outcome.outcome === 'ok' && files && Object.keys(files).length > 0) {
     if (!artifactsDir) {
@@ -497,8 +520,16 @@ async function executeBrowserAction(
       return { status: 'blocked', sourceId, reason: outcome.reason ?? '站方风控挑战——登录态没坏，等冷却过去再试' }
     case 'cancelled':
       return { status: 'blocked', sourceId, reason: outcome.reason ?? '这次运行被取消了' }
-    case 'siteError':
-      return { status: 'site-error', sourceId, reason: outcome.reason ?? '站点这一趟自己报错了，稍后重试' }
+    case 'siteError': {
+      const se = outcome.siteError
+      return {
+        status: 'site-error',
+        sourceId,
+        reason: outcome.reason ?? '站点这一趟自己报错了',
+        retry: se?.retry ?? 'now',
+        ...(se?.retryAfterMs ? { retryAfterSec: Math.ceil(se.retryAfterMs / 1000) } : {}),
+      }
+    }
     default:
       // blocked / drift：动作没能确认执行成功。带上 recipe 自己的 reason，别吞掉。
       return { status: 'blocked', sourceId, reason: outcome.reason ?? '动作没能确认执行成功' }

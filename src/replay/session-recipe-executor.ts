@@ -72,6 +72,7 @@ export class SessionRecipeExecutor {
     private readonly cooldown?: {
       assertReady(facility: string): void
       blocked(facility: string, because: string, ctx?: { spentLastHour?: number }): void
+      siteSaysWait(facility: string, because: string, retryAfterMs?: number): void
       cleared(facility: string): void
     },
     /**
@@ -201,6 +202,12 @@ export class SessionRecipeExecutor {
     if (outcome.outcome === 'needsLogin') this.blockedBy(facility, outcome.reason ?? '撞上登录墙/拦截页')
     else if (outcome.outcome === 'challenged') this.blockedBy(facility, outcome.reason ?? '站方风控挑战')
     else if (outcome.outcome === 'ok') this.cooldown?.cleared(facility)
+    // 站点自己报的失败：只有 recipe 判成 `later`（限流 / 额度用完）才退让——`now` 是随机抖动，
+    // 退让只会把下一次本来能成的调用挡掉；`never` 跟站点高不高兴无关。**不排空小时预算**：
+    // 那是撞墙之后防"冷却一过照原速接着撞"的，站点给了准时刻就照时刻等。
+    else if (outcome.outcome === 'siteError' && outcome.siteError?.retry === 'later') {
+      this.cooldown?.siteSaysWait(facility, outcome.siteError.message, outcome.siteError.retryAfterMs)
+    }
     return outcome
   }
 
