@@ -66,6 +66,7 @@ import { toTracks } from '../lib/audioTrack.ts'
 import { autoPlaysDetailMedia } from '../lib/openDetail.ts'
 import { detailBundle } from './detailBundle.ts'
 import { askChatSink } from '../lib/askExtract.ts'
+import { firstUrlIn, isEditableTarget, resolvePastedLink } from '../lib/pasteLink.ts'
 import { movieBundle, type MovieBundle } from './movieBundle.ts'
 import { publishThemeToFrame } from './embedTheme.ts'
 
@@ -357,6 +358,36 @@ export function StreamPanel({ onWidthChange, onItemContext }: {
       if (toUnmount !== undefined) queueMicrotask(() => toUnmount.unmount())
     }
   }, [detail])
+
+  // 在面板上 Ctrl+V 一条链接 → 打开它的详情（链接 → Item 的两路见 lib/pasteLink.ts 头注）。
+  // 听的是整页 `paste`：面板里的列表/卡片不是可聚焦元素，粘贴事件落在 body 上，挂在面板根上
+  // 收不到。光标在任何输入框里（包括宿主的对话框）一律放行——那是普通粘贴。
+  // 序号挡的是"连贴两次、先贴的那条后回来"：只认最后一次粘贴。
+  const [pasting, setPasting] = useState(false)
+  const pasteSeqRef = useRef(0)
+  useEffect(() => {
+    const onPaste = (e: ClipboardEvent) => {
+      if (isEditableTarget(e.target)) return
+      const text = e.clipboardData?.getData('text/plain') ?? ''
+      if (text.trim() === '') return
+      e.preventDefault()
+      const url = firstUrlIn(text)
+      if (url === null) {
+        toast.error('粘贴的内容里没有链接')
+        return
+      }
+      const seq = ++pasteSeqRef.current
+      setPasting(true)
+      void resolvePastedLink(LOCAL, url).then((r) => {
+        if (seq !== pasteSeqRef.current) return
+        setPasting(false)
+        if ('error' in r) toast.error(`这条链接没打开：${r.error}`)
+        else setDetail({ item: r.item, mediaIndex: 0, autoPlay: false })
+      })
+    }
+    document.addEventListener('paste', onPaste)
+    return () => document.removeEventListener('paste', onPaste)
+  }, [])
 
   // 播客队列的生产者：播点中的这条，并把当前这批里的音频条目按列表顺序排在它后面
   // （自动续播 nextTrack 就沿着用户看到的顺序走）。语义与 App.tsx 的 playPodcastFrom 同一份。
@@ -740,6 +771,11 @@ export function StreamPanel({ onWidthChange, onItemContext }: {
             </div>
           ) : null}
         </>
+      ) : null}
+      {pasting ? (
+        <div data-testid="panel-paste-loading" className="absolute inset-0 z-10 flex items-center justify-center bg-background/80 text-sm text-muted-foreground">
+          正在读取链接…
+        </div>
       ) : null}
       {/* 一整条 Stream 的抓取设置（周期/策略/网盘绑定）是一整页，配置分页里塞不下，盖上来。
           `absolute inset-0` 而不是 Radix 的 Sheet：Sheet 会 portal 到 DSH 的 body 上去，

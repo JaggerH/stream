@@ -160,6 +160,28 @@ export interface Enrichment {
   cursor?: string | null
 }
 
+/** `GET /api/links/recognize` 的回答（镜像后端 `src/links/recognize.ts` 的 LinkRef）。 */
+export interface LinkRef {
+  /** 认领所依据的地址——短链已展开时是展开后的那一个。 */
+  url: string
+  package: string
+  platform: string
+  kind?: string
+  id?: string
+}
+
+/** `GET /api/media/from-url` 的回答（镜像后端 `src/http/fetch-url.ts` 的 FetchUrlResult）。 */
+export interface FetchUrlResult {
+  platform: string
+  title?: string
+  author?: string
+  author_avatar?: string
+  media: Array<{ kind: 'video' | 'image'; url: string; poster?: string; duration_s?: number; download_url?: string }>
+  text?: string
+  /** 抓取本身失败（认领了却没取到 / 不是支持的来源）时的原话。 */
+  error?: string
+}
+
 /** Per-source diagnostics from one aggregated video search (drives the timing panel). */
 export interface VideoSourceTiming {
   /** source slug — matches Release.source / ShowSeason.source */

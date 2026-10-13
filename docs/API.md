@@ -1014,6 +1014,10 @@ All four endpoints first ask whether the follow service exists — not assembled
   and the host does not know any site. Links hitting a package's `shortHosts` are expanded before recognition (only hosts declared by that package are hit, `redirect:manual`, max 3 hops,
   5 seconds each hop), and at that point `url` is the expanded address; expansion failure recognizes the original link, and the reason goes to the DebugBox `links` Channel. It only claims, and does not dispatch
   or grab content — media grabbing is `GET /api/media/from-url` (dispatches `content.enrich` by the recognized `<platform>-link`).
+* **Paste-to-open (panel)** is the frontend consumer of both: pressing Ctrl+V on the panel outside any input takes the first link
+  out of the pasted text, recognizes it, and opens a Detail. A claimed link is fetched through `from-url` with the expanded `url`, and a failed fetch is reported,
+  never downgraded to page-text extraction (a platform page extracts as a login wall). An unclaimed link tries `from-url` for direct media,
+  then opens as a `link` item whose Detail extracts the page text itself. See `app/src/lib/pasteLink.ts`.
 ## Radar (URL → Candidate Sources)
 
 * **GET `/api/radar?input=<url>`** — parses a pasted-in address into candidate Sources that can consume it (RSSHub catalog +

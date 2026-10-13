@@ -3,6 +3,8 @@ import type {
   BrowserCapabilitySnapshot,
   ExtensionInstallOutcome,
   Enrichment,
+  FetchUrlResult,
+  LinkRef,
   StatusInfo,
   Item,
   ItemSnapshot,
@@ -633,6 +635,13 @@ export const api = {
     }
     return get<Enrichment>(c, `/api/enrich?${q.toString()}`)
   },
+  /** 「这条链接是谁的」：已装的包认领了就回 LinkRef（短链已展开），没人认领回 null。不抓内容。 */
+  recognizeLink: (c: Connection, url: string) =>
+    get<LinkRef | null>(c, `/api/links/recognize?url=${encodeURIComponent(url)}`),
+  /** 「给我这条链接的内容」：认领它的包现取（标题/作者/媒体/正文），没人认领只认图片视频直链。
+   *  失败不抛，回 `{ error }`——镜像后端 `src/http/fetch-url.ts` 的 FetchUrlResult。 */
+  mediaFromUrl: (c: Connection, url: string) =>
+    get<FetchUrlResult>(c, `/api/media/from-url?url=${encodeURIComponent(url)}`),
   /** merged multi-platform Discovery feed (xhs + douyin, …). `{ refresh:true }` forces
    *  a server-side re-harvest (the UI refresh button); otherwise served from the SWR cache. */
   /**
