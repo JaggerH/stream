@@ -59,6 +59,7 @@ describe('itemFromFetched', () => {
     })
     expect(item.content?.archetype).toBe('video')
     expect(item.title).toBe('一条视频')
+    expect(item.source_label).toBe('douyin') // 来源徽章显示平台，不是内部的 stream_id
   })
 })
 

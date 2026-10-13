@@ -41,14 +41,15 @@ export function isEditableTarget(target: EventTarget | null): boolean {
   return target instanceof HTMLElement && target.isContentEditable === true
 }
 
-function shell(url: string, title: string, content: Item['content']): Item {
+/** `label` 进 `source_label`：详情头上那枚来源徽章读它，缺了会退到 `stream_id`（一个内部名）。 */
+function shell(url: string, title: string, label: string, content: Item['content']): Item {
   const now = new Date().toISOString()
-  return { id: `paste:${url}`, stream_id: 'paste', type: 'post', title, url, content, timestamp: now, fetched_at: now }
+  return { id: `paste:${url}`, stream_id: 'paste', source_label: label, type: 'post', title, url, content, timestamp: now, fetched_at: now }
 }
 
 /** 没人认领的网页：`link` 原型，详情打开时自己抽正文。 */
 export function linkItem(url: string): Item {
-  return shell(url, url, { archetype: 'link', media: [{ kind: 'link', url }] })
+  return shell(url, url, new URL(url).hostname, { archetype: 'link', media: [{ kind: 'link', url }] })
 }
 
 /** 包现取回来的那一份 → 详情要的 `Item`。原型按媒体形状定：有视频是视频，有图是图集，否则是文字。 */
@@ -60,7 +61,7 @@ export function itemFromFetched(url: string, r: FetchUrlResult): Item {
   const firstLine = r.text?.split('\n').find((l) => l.trim() !== '')?.trim()
   const title = r.title?.trim() || firstLine || url
   return {
-    ...shell(url, title, { archetype, title: r.title, text: r.text, media }),
+    ...shell(url, title, r.platform, { archetype, title: r.title, text: r.text, media }),
     author: r.author,
     author_avatar: r.author_avatar,
   }
