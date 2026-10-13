@@ -180,8 +180,15 @@ export class RssHubAdapter implements Adapter {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const data = (await this.request(route)) as any
     await this.refreshCatalogIfStale()
+    // pkg.request() returns JSON even for non-2xx responses. An error envelope is
+    // a failed harvest, never an authoritative empty collection.
+    if (data?.error != null) {
+      const message = typeof data.error === 'string' ? data.error : data.error.message
+      throw new Error(`[rsshub] ${route}: ${typeof message === 'string' ? message : 'request failed'}`)
+    }
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const items = (data?.item ?? data?.items ?? []) as any[]
+    const items = data?.item ?? data?.items
+    if (!Array.isArray(items)) throw new Error(`[rsshub] ${route}: invalid feed (expected item array)`)
     const title = typeof data?.title === 'string' ? data.title : undefined
     return { items: stampFeedFields(items, data), title }
   }

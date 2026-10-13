@@ -2022,9 +2022,14 @@ from three places. The order is in
 
 | Tier | What it is | Who uses it | Needs tsx? |
 |---|---|---|---|
-| development checkout | The **TypeScript source** of `RSSHUB_PKG` (by default the adjacent git clone) | Source form. When writing RSSHub routes locally, changes must run immediately, so **the checkout wins whenever it is present** | Yes (.ts + tsconfig `@/*` paths) |
+| development checkout | The **TypeScript source** selected by `RSSHUB_PKG` | Source form. When writing RSSHub routes locally, changes must run immediately, so **an explicitly configured checkout wins whenever it is present** | Yes (.ts + tsconfig `@/*` paths) |
 | `<dataDir>/rsshub/` | Prebuilt ESM `dist-lib/pkg.mjs` | Distribution install. **The first time an RSSHub Source is reached, Stream itself runs `npm install` there** (`src/rsshub-install.ts`) | No |
 | npm package `rsshub` | Same as above | Used if someone installed a copy next to us themselves | No |
+
+Checkout workers use the checkout's own `tsconfig.json` for internal aliases (an explicit
+`RsshubClient.tsconfigPath` takes precedence). `RssHubAdapter` requires an `item` or `items`
+array and throws on RSSHub's `{ error: { message } }` response, so failed requests cannot
+replace a collection with an empty snapshot. An explicit empty array remains a valid feed.
 
 **RSSHub is intentionally not a dependency of the distribution package**: through
 `@jocmp/mercury-parser` it drags in two `github:` dependencies, and npm must spawn git to

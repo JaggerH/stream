@@ -18,6 +18,7 @@ import { Worker } from 'node:worker_threads'
 import { existsSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
+import { dirname, join } from 'node:path'
 import { appendRsshubWorkerLog } from './rsshub-worker-log'
 import { installedRsshubEntry } from './rsshub-install.ts'
 
@@ -133,9 +134,8 @@ export function execArgvForEntry(entry: URL | string): string[] {
   return String(entry).endsWith('.ts') ? ['--import', 'tsx'] : []
 }
 
-// Our own tsconfig — its `paths` map `@/*` → the RSSHub checkout, which is how RSSHub's internal
-// `@/config` etc. resolve. tsx in the main process auto-finds this from cwd; a spawned worker does
-// NOT, so we hand it the path explicitly via TSX_TSCONFIG_PATH or `@/` imports fail to resolve.
+// Workers need an explicit tsconfig. A checkout owns its aliases; the host config
+// is only the fallback for fixtures and prebuilt packages.
 const DEFAULT_TSCONFIG = fileURLToPath(new URL('../tsconfig.json', import.meta.url))
 
 interface Pending {
@@ -178,7 +178,7 @@ export class RsshubClient {
   private readonly fixedPkgSource?: RsshubPkgSource
   private readonly resolveDeps: RsshubResolveDeps
   private readonly execArgv: string[]
-  private readonly tsconfigPath: string
+  private readonly tsconfigPath?: string
 
   constructor(opts: RsshubClientOptions = {}) {
     this.entry = opts.entry ?? defaultEntry()
@@ -186,7 +186,7 @@ export class RsshubClient {
     this.fixedPkgSource = opts.pkgSource
     this.resolveDeps = opts.resolveDeps ?? {}
     this.execArgv = opts.execArgv ?? execArgvForEntry(this.entry)
-    this.tsconfigPath = opts.tsconfigPath ?? DEFAULT_TSCONFIG
+    this.tsconfigPath = opts.tsconfigPath
   }
 
   /**
@@ -234,6 +234,9 @@ export class RsshubClient {
   private ensureWorker(): Worker {
     if (this.worker) return this.worker
     const { pkgPath, pkgSource } = this.resolveNow()
+    const checkoutConfig = join(dirname(dirname(pkgPath)), 'tsconfig.json')
+    const tsconfigPath = this.tsconfigPath ??
+      (pkgSource === 'checkout' && existsSync(checkoutConfig) ? checkoutConfig : DEFAULT_TSCONFIG)
     const w = new Worker(this.entry, {
       execArgv: this.execArgv,
       workerData: { pkgPath, pkgSource },
@@ -246,7 +249,7 @@ export class RsshubClient {
       stderr: true,
       env: {
         ...process.env,
-        TSX_TSCONFIG_PATH: this.tsconfigPath,
+        TSX_TSCONFIG_PATH: tsconfigPath,
         // Stream is RSSHub's only caller and owns scheduling + its own CacheLayer. RSSHub ships two
         // cache layers on by default (CACHE_TYPE=memory): a 5min route cache and a 1h content cache
         // whose stale CDN urls come back dead. '' is RSSHub's documented off switch. Overridable if

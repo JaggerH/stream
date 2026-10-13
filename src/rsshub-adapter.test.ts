@@ -181,6 +181,28 @@ describe('rsshub adapter route resolution', () => {
  * 构建产物，不在 npm tarball 里（活体 2026-09-04，win-test：`0 RSSHub catalog sources`）。
  * 现在它由 adapter 在一次真的取数之后顺手重取——那时 worker 已经热着。
  */
+describe('RSSHub feed response validation', () => {
+  const manifest = mk({ route: '/example/feed' })
+  const adapterFor = (response: unknown) => new RssHubAdapter({
+    resolveDeps: { resolvePackage: () => '/fixture/rsshub.mjs' },
+    request: async () => response,
+  })
+
+  it('rejects an RSSHub error response instead of reporting an empty collection', async () => {
+    await expect(adapterFor({ error: { message: 'No headers based on this input can be generated.' } })
+      .fetch({}, manifest)).rejects.toThrow(/No headers based on this input/)
+  })
+
+  it.each([null, {}, { title: 'feed' }, { item: {} }])('rejects a response without an item array: %j', async (response) => {
+    await expect(adapterFor(response).fetch({}, manifest)).rejects.toThrow(/invalid feed/)
+  })
+
+  it('accepts an explicitly empty feed', async () => {
+    await expect(adapterFor({ title: 'empty feed', item: [] }).fetch({}, manifest))
+      .resolves.toEqual({ title: 'empty feed', items: [] })
+  })
+})
+
 describe('取数之后顺手刷长尾目录', () => {
   const ok = { resolvePackage: () => '/fixture/rsshub.mjs' }
   const manifest = mk({ route: '/lizhi/user/:id', id: 'x' })
