@@ -124,6 +124,42 @@ describe('POST /v1/images/generations', () => {
     expect(await res.json()).toEqual({ error: { message: '@streamapp/doubao/doubao-image 失败（needs-login）：豆包要重新登录', type: 'server_error' } })
   })
 
+  it('站点自己报错（site-error）→ 同参再跑，成了就 200', async () => {
+    let runs = 0
+    const { post } = harness({
+      runAction: async () => {
+        runs++
+        return runs < 3
+          ? { status: 'site-error', sourceId: 'doubao-image', reason: '豆包这一轮生图失败（ai_creation_res_code=710082003）' }
+          : { status: 'done', sourceId: 'doubao-image', items: ITEMS }
+      },
+    })
+    const res = await post({ model: 'doubao-image', prompt: 'a wok' })
+    expect(res.status).toBe(200)
+    expect(runs).toBe(3)
+  })
+
+  it('site-error 重试用完 → 502，消息带上每一次的站方原因；别的失败不重试', async () => {
+    let runs = 0
+    const { post } = harness({
+      runAction: async () => {
+        runs++
+        return { status: 'site-error', sourceId: 'doubao-image', reason: `code=71008200${runs}` }
+      },
+    })
+    const res = await post({ model: 'doubao-image', prompt: 'a wok' })
+    expect(res.status).toBe(502)
+    expect(runs).toBe(3)
+    const msg = (await res.json()).error.message as string
+    expect(msg).toContain('code=710082003')
+    expect(msg).toContain('code=710082001')
+
+    let blocked = 0
+    const other = harness({ runAction: async () => { blocked++; return { status: 'blocked', sourceId: 'doubao-image', reason: 'x' } } })
+    expect((await other.post({ model: 'doubao-image', prompt: 'a wok' })).status).toBe(502)
+    expect(blocked).toBe(1)
+  })
+
   it('dewatermarks only the items the recipe flagged watermarked (fell back to preview)', async () => {
     const { post } = harness({
       runAction: async () => ({ status: 'done', sourceId: 'doubao-image', items: [WATERMARKED[0], ITEMS[1]] }),

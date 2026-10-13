@@ -79,13 +79,27 @@ class EvaluateDriftError extends Error {
   }
 }
 
+/**
+ * 页面**自己说**这一趟失败了（`evaluate` 步的 `siteErrorField` 有值）：recipe 一步没走错、登录态
+ * 好好的，是站点那边这一次没办成。外层翻成 `siteError`——**不进 drift**（那会让 `RepairLedger`
+ * 隔离一份没坏的 recipe，还会拿现场去问 AI「这是哪个页面」），**不进冷却**（站点没让我们等）。
+ */
+class SiteReportedError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'SiteReportedError'
+  }
+}
+
 export interface RecipeRunOutcome {
   /** `unavailable` = 环境没就绪（浏览器没连），**recipe 一步都没跑**——不是关于源的判断。
    *  和 `blocked`（站点拦了我们）严格分开：把前者当后者，用户关一晚电脑就会让所有源变红。 */
   /** `challenged` = 站方的风控挑战（验证码遮罩之类）。和 `needsLogin` 严格分开：**登录态好好的**，
    *  用户什么都不用做，等 facility 冷却即可；判成 needsLogin 会把人支去白登录一次，判成 `drift`
    *  更糟——三次就被 `RepairLedger` 静默隔离（见 `SiteChallengeError`）。 */
-  outcome: 'ok' | 'needsLogin' | 'challenged' | 'blocked' | 'drift' | 'cancelled' | 'unavailable'
+  /** `siteError` = 页面自己报了这一趟失败（站方错误码 / 「出了点问题，请稍后重试」），见
+   *  `SiteReportedError`。recipe 没坏、登录没坏、不用冷却；重试是调用方的事。 */
+  outcome: 'ok' | 'needsLogin' | 'challenged' | 'blocked' | 'drift' | 'cancelled' | 'unavailable' | 'siteError'
   items: MappedItem[]
   trace: ActionTrace[]
   reason?: string
@@ -487,6 +501,8 @@ async function runEvaluateStep(ctx: StepContext, step: EvaluateStep, index: numb
     } catch (e) {
       throw new EvaluateDriftError(e instanceof Error ? e.message : String(e))
     }
+    const siteError = step.siteErrorField == null ? undefined : getPath(body, step.siteErrorField)
+    if (siteError != null && siteError !== '' && siteError !== false) throw new SiteReportedError(String(siteError))
     const pending = step.pendingField != null && !!getPath(body, step.pendingField)
     if (!pending) {
       const { fresh } = observers.offer({ items: getPath(body, step.itemsAt) })
@@ -1009,6 +1025,7 @@ export class RecipeRunner {
       let reason = error instanceof Error ? error.message : String(error)
       let outcome: RecipeRunOutcome['outcome'] =
         opts.signal?.aborted || reason === 'recipe cancelled' ? 'cancelled'
+        : error instanceof SiteReportedError ? 'siteError'
         : error instanceof ChallengedError ? 'challenged'
         : error instanceof WalledError ? 'needsLogin'
         // 死路是**站方让我们停**，不是我们写错了：走 challenged 那条（等冷却），绝不进 drift。

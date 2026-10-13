@@ -48,6 +48,41 @@ const collecting = (): RepairRunner & { got: StateProposal[] } => {
 }
 
 describe('recipe-runner 的介入闸', () => {
+  it('页面自己报了失败（siteErrorField 有值）→ siteError，不交 AI 认页面、不判 drift', async () => {
+    // 豆包生图 2026-10-13：回复只写「出了点问题，请稍后重试」，状态图认不出那张会话页，
+    // 于是每次失败都去问一遍 AI「这是哪个页面」，攒了 25 条一样的提议。
+    const rr = collecting()
+    const siteErr = {
+      ...recipe,
+      steps: [{ kind: 'evaluate' as const, call: '(c,n)=>c', itemsAt: 'items', cursorField: 'cursor', pendingField: 'pending', siteErrorField: 'siteError', maxPages: 8 }],
+      observers: [],
+    }
+    const pages: Record<string, unknown> = {
+      '""': { items: [], pending: true, cursor: '1' },
+      '"1"': { items: [], siteError: '豆包这一轮生图失败（ai_creation_res_code=710082003）', cursor: '' },
+    }
+    const out = await new RecipeRunner().run(siteErr, {}, fakeDriver({
+      currentUrl: async () => 'https://x.test/chat/1',
+      evalJson: async (expr) => pages[expr.match(/\)\((""|"[^"]*")/)![1]!] ?? { items: [], cursor: '' },
+    }), { repairRunner: rr })
+    expect(out.outcome).toBe('siteError')
+    expect(out.reason).toContain('710082003')
+    expect(rr.got).toHaveLength(0)
+  })
+
+  it('siteErrorField 声明了但这一页没值 → 照常收尾', async () => {
+    const siteErr = {
+      ...recipe,
+      steps: [{ kind: 'evaluate' as const, call: '(c,n)=>c', itemsAt: 'items', siteErrorField: 'siteError' }],
+      observers: [],
+      output: { itemsAt: 'items', dedupeBy: 'id', targetCount: 1, mapping: { guid: 'id' } },
+    }
+    const out = await new RecipeRunner().run(siteErr, {}, fakeDriver({
+      evalJson: async () => ({ items: [{ id: 'a' }], siteError: '' }),
+    }))
+    expect(out.outcome).toBe('ok')
+  })
+
   it('整趟判 blocked 且状态图认不出 → proposeState 一次，带 scene 与 known', async () => {
     const rr = collecting()
     const out = await new RecipeRunner().run(recipe, {}, boom(['.article']), { repairRunner: rr })

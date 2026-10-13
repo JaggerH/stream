@@ -70,6 +70,9 @@ export type ActionRecipeStatus =
   | 'no-browser'
   | 'needs-login'
   | 'blocked'
+  /** 站点这一趟自己报错了（recipe 的 `siteErrorField`）：recipe 没坏、登录没坏，同样的参数再跑一次
+   *  多半就成。和 `blocked` 分开，是因为下一步相反——这一档值得自动重试，`blocked` 不该。 */
+  | 'site-error'
 
 export interface ActionRecipeResult {
   status: ActionRecipeStatus
@@ -494,6 +497,8 @@ async function executeBrowserAction(
       return { status: 'blocked', sourceId, reason: outcome.reason ?? '站方风控挑战——登录态没坏，等冷却过去再试' }
     case 'cancelled':
       return { status: 'blocked', sourceId, reason: outcome.reason ?? '这次运行被取消了' }
+    case 'siteError':
+      return { status: 'site-error', sourceId, reason: outcome.reason ?? '站点这一趟自己报错了，稍后重试' }
     default:
       // blocked / drift：动作没能确认执行成功。带上 recipe 自己的 reason，别吞掉。
       return { status: 'blocked', sourceId, reason: outcome.reason ?? '动作没能确认执行成功' }

@@ -21,7 +21,7 @@ import { RecipeBlockedError } from '../../replay/session-recipe-executor.ts'
 import type { RepairLedger } from '../../replay/repair-ledger.ts'
 import type { RepairRunner } from '../../replay/repair-runner.ts'
 import { isCanonicalBrowserRecipe } from '../../replay/recipe.ts'
-import { EnvironmentUnavailableError } from '../../failure.ts'
+import { EnvironmentUnavailableError, type DeclaresFailureCategory } from '../../failure.ts'
 import { sessionPrecheck } from '../../auth/session-precheck.ts'
 
 /**
@@ -86,6 +86,19 @@ export class SiteChallengeError extends Error {
 }
 
 /**
+ * 站点自己报了这一趟失败（recipe 的 `siteErrorField`，见 `RecipeRunOutcome` 的 `siteError`）。
+ * 自报 `unknown`：它不是 drift（recipe 没坏）、不是 auth、也不是被拦——按消息正文去嗅会被
+ * 站方文案里碰巧出现的词带偏（同 `classifyError` 对 `SiteChallengeError` 那条注释）。
+ */
+export class SiteReportedFailure extends Error implements DeclaresFailureCategory {
+  readonly failureCategory = 'unknown' as const
+  constructor(readonly sourceId: string, reason: string) {
+    super(`${sourceId}：站点这一趟自己报错了（recipe 没坏）：${reason}`)
+    this.name = 'SiteReportedFailure'
+  }
+}
+
+/**
  * 把毫秒说成人话。**下限故意是「1 分钟内」而不是"约 0 分钟"**：冷却最短一档是 60s，
  * 直接四舍五入成分钟会在第一档就说出"约 0 分钟后重试"——一句自我否定的话。
  */
@@ -112,6 +125,7 @@ export function sessionOutcomeToItems(
     case 'drift': throw new ReplayDriftError(result.reason ?? 'session recipe drift', 0)
     case 'blocked': throw new RecipeBlockedError(result.reason ?? 'recipe blocked')
     case 'cancelled': throw new Error(result.reason ?? 'recipe cancelled')
+    case 'siteError': throw new SiteReportedFailure(sourceId, result.reason ?? '站点报错')
     // 抛的是带标记的错误而不是返回空数组：空数组会被当成"采到了 0 条"（进而 blocked / 记 health），
     // 而这里的真相是"没采"。调度侧靠这个类型把本轮跳过。
     case 'unavailable': throw new EnvironmentUnavailableError(result.reason ?? 'harvest environment unavailable')

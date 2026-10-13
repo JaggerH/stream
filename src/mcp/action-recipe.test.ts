@@ -391,6 +391,15 @@ describe('run_action_recipe —— 浏览器档', () => {
     expect(runBrowser).toHaveBeenCalledOnce()
   })
 
+  it('站点自己报错（siteError）→ site-error，不并进 blocked，原因原样带出', async () => {
+    const runBrowser = vi.fn(async () => OUT('siteError', { reason: 'ai_creation_res_code=710082003' }))
+    const r = await runActionRecipe(makeDeps({ recipe: browserAction(), runBrowser: runBrowser as never }), {
+      sourceId: 'dfcf-login', params: {}, confirmed: true,
+    })
+    expect(r.status).toBe('site-error')
+    expect(r.reason).toBe('ai_creation_res_code=710082003')
+  })
+
   it('output.files：base64 落盘、回执里换成路径；没装配 artifactsDir 则整条报错，不退回把 base64 留在结果里', async () => {
     const recipe = browserAction()
     recipe.output = { ...recipe.output, mapping: { guid: 'guid', format: 'format', file: 'data' }, files: { file: { extFrom: 'format' } } }

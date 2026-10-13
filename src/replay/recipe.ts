@@ -908,6 +908,13 @@ export type RecipeStep = RecipeAction | {
    */
   pendingField?: string
   /**
+   * dot-path 到「站点自己说这一趟失败了」的说明（带站方错误码最好）。有值（非空串 / 非 false）
+   * 就以 `siteError` 收尾：**不判 drift、不问 AI 认页面、不进冷却**——页面明说「出了点问题，
+   * 请稍后重试」时，recipe 没坏，换个结论会去修一份好的 recipe。只在 call 读到了站方的失败
+   * 回执时填；页面结构对不上照旧抛（那才是 drift）。
+   */
+  siteErrorField?: string
+  /**
    * 动作前的闸门，和动作步骤上的 `settle` 同一契约（见 `StepSettle`）。
    * 这一步不操作页面、只调站点自己的 JS，所以**通常没必要声明它**——收下它只是因为
    * 「所有 step 都过同一道闸门」比「这一类是例外」少一条要记的规则，不声明就是零代价的空操作。

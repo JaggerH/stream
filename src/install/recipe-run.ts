@@ -71,6 +71,7 @@ interface ActionResult {
 const EXIT: Record<string, number> = {
   done: 0,
   blocked: 1,
+  'site-error': 1,
   'not-found': 2,
   'not-action': 2,
   'invalid-params': 2,

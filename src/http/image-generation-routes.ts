@@ -124,8 +124,39 @@ function makeDefaultDewatermark(target: () => string | null): (png: Uint8Array) 
     })
 }
 
-/** 跑 recipe 到落定：`running` 就按 runId 轮询。回 items 或抛（带 recipe 的 reason）。 */
+/**
+ * 站点自己报错（`site-error`）时再跑几次。豆包生图 2026-10-13 活体：一下午约一半的轮次回
+ * 「出了点问题，请稍后重试」（`ai_creation_res_code=710082003`），同一个 prompt 隔几分钟重发就出图，
+ * 失败与发送间隔、额度都无关——就是站点那边随机失败。不重试的话画布那头每两次点击白一次。
+ */
+const SITE_ERROR_RETRIES = 2
+
+/** 跑 recipe 到落定；站点自己报错就按 `SITE_ERROR_RETRIES` 重跑。回 items 或抛（带最后一次的 reason）。 */
 async function generate(
+  deps: Parameters<typeof generateOnce>[0],
+  sourceId: string,
+  params: { prompt: string; images?: string },
+): Promise<Record<string, string>[]> {
+  const reasons: string[] = []
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await generateOnce(deps, sourceId, params)
+    } catch (e) {
+      if (!(e instanceof SiteErrorAttempt) || attempt >= SITE_ERROR_RETRIES) {
+        if (reasons.length) throw new Error(`${(e as Error).message}（此前 ${reasons.length} 次同样是站点报错：${reasons.join('；')}）`)
+        throw e
+      }
+      reasons.push(e.reason)
+    }
+  }
+}
+
+class SiteErrorAttempt extends Error {
+  constructor(readonly reason: string, message: string) { super(message); this.name = 'SiteErrorAttempt' }
+}
+
+/** 跑 recipe 到落定：`running` 就按 runId 轮询。回 items 或抛（带 recipe 的 reason）。 */
+async function generateOnce(
   deps: {
     runAction: NonNullable<ImageGenerationRoutesDeps['runAction']>
     actionRun: ImageGenerationRoutesDeps['actionRun']
@@ -150,6 +181,10 @@ async function generate(
       if (view.status === 'error') throw new Error(`${sourceId} 没有正常收尾：${view.error ?? '未知'}`)
       if (deps.now() > until) throw new Error(`${sourceId} ${RUN_WAIT_MS / 1000}s 内没跑完（runId ${runId}）`)
     }
+  }
+  if (result.status === 'site-error') {
+    const why = result.reason ?? '站点报错'
+    throw new SiteErrorAttempt(why, `${sourceId} 站点这一趟自己报错了：${why}`)
   }
   if (result.status !== 'done') throw new Error(`${sourceId} 失败（${result.status}）：${result.reason ?? '没有更多信息'}`)
   const items = (result.items ?? []).filter((it) => it.url)
