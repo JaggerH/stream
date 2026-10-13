@@ -817,6 +817,14 @@ means running its Plugin's machinery:
 - **adapter** (`packages/<id>/adapter.ts`, handed to the host by the package's `activate(ctx)`;
   only shared/core adapters stay in `src/adapters/`) — maps the facility's API to raw Stream
   items, dispatching on `params.mode`.
+  - **Cleaning step (RSSHub adapter, `cleanFeedItems` in `src/rsshub-adapter.ts`).** RSSHub hands
+    back the whole page the site author meant people to see; Stream wants only the item itself.
+    The difference is stripped here, before the item leaves the adapter, so every consumer
+    (`body_text`/`body_html`, the normalizer, the vault, intent judging, folding) sees clean text.
+    Only **site-agnostic** rules live here (today: "previous / next post" navigation blocks such as
+    `上一篇：<a>…</a>` — left in, intent judging reads the neighbouring item's product and marks an
+    unrelated post as relevant). A rule that holds for one site only is site knowledge and belongs
+    to that site's package, not here.
 - **normalizer** (`src/content/<id>.ts`, registered in `src/content/normalize.ts`) — normalizes raw
   adapter output into the display model. Normalizers run **at ingest** and the normalized result
   is stored; changing a normalizer only affects newly harvested items.

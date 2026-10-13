@@ -203,6 +203,43 @@ describe('RSSHub feed response validation', () => {
   })
 })
 
+describe('清洗层：剥掉站点的上一篇/下一篇导航', () => {
+  const manifest = mk({ route: '/example/feed' })
+  const adapterFor = (response: unknown) => new RssHubAdapter({
+    resolveDeps: { resolvePackage: () => '/fixture/rsshub.mjs' },
+    request: async () => response,
+  })
+  // 0818团 详情页原样（2026-10-13 活体）：正文末尾两段导航，各带一个邻居线报的标题。
+  // 不剥的话，下游按正文判相关性时读到的是邻居的商品——「运动短裤」被判成「金典鲜奶好价」。
+  const body =
+    '<p>SKYHAND 运动短裤，自辩按需<br>从足迹加购，16</p>\n' +
+    '<p>\n</p>\n' +
+    '<p>上一篇：<a href="http://www.0818tuan.com/xbhd/2759773.html">伊利金典鲜牛奶 208ml*6瓶，凑后11.58</a></p>\n' +
+    '<p>下一篇：<a href="http://www.0818tuan.com/xbhd/2759775.html">良品铺子 牛肉脆片22g*10袋</a></p>\n'
+
+  it('removes prev/next nav blocks from description', async () => {
+    const { items } = await adapterFor({ item: [{ title: 'SKYHAND 运动短裤', description: body }] }).fetch({}, manifest)
+    const d = (items[0] as { description: string }).description
+    expect(d).toContain('SKYHAND 运动短裤')
+    expect(d).not.toMatch(/上一篇|下一篇|金典|良品铺子/)
+  })
+
+  it('cleans content.html and content.text too', async () => {
+    const { items } = await adapterFor({
+      item: [{ title: 't', content: { html: body, text: 'SKYHAND 运动短裤 上一篇：伊利金典鲜牛奶 下一篇：良品铺子' } }],
+    }).fetch({}, manifest)
+    const c = (items[0] as { content: { html: string; text: string } }).content
+    expect(c.html).not.toMatch(/金典|良品铺子/)
+    expect(c.text).toBe('SKYHAND 运动短裤')
+  })
+
+  it('leaves 上一篇 alone when it is prose, not a nav block', async () => {
+    const prose = '<p>接着上一篇：我们继续聊抽纸怎么买最划算。</p>'
+    const { items } = await adapterFor({ item: [{ title: 't', description: prose }] }).fetch({}, manifest)
+    expect((items[0] as { description: string }).description).toBe(prose)
+  })
+})
+
 describe('取数之后顺手刷长尾目录', () => {
   const ok = { resolvePackage: () => '/fixture/rsshub.mjs' }
   const manifest = mk({ route: '/lizhi/user/:id', id: 'x' })

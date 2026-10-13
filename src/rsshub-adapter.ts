@@ -190,8 +190,49 @@ export class RssHubAdapter implements Adapter {
     const items = data?.item ?? data?.items
     if (!Array.isArray(items)) throw new Error(`[rsshub] ${route}: invalid feed (expected item array)`)
     const title = typeof data?.title === 'string' ? data.title : undefined
-    return { items: stampFeedFields(items, data), title }
+    return { items: stampFeedFields(cleanFeedItems(items), data), title }
   }
+}
+
+/**
+ * 清洗层：RSSHub 给的是**站点作者想让人看到的整页**，我们要的是**这一条内容本身**。两者之差
+ * 在这里剥掉，下游（入库、intent 判相关、归堆、摘要）只见干净正文。
+ *
+ * 这里只放**站点无关**的通用规则；只对某一个站成立的规则不进这里（那是站点知识，归包）。
+ *
+ * 现有规则：
+ * - **上一篇/下一篇导航**。CMS 详情页常在正文末尾带两段导航，各含邻居条目的标题。活体
+ *   （0818团，2026-10-13）：50 条里 48 条带它，intent 按正文判相关时读到邻居的商品，
+ *   「运动短裤」被判成「金典鲜奶好价」。只剥**整段就是"标签：一个链接/一行字"**的块，
+ *   正文里顺嘴提到的「接着上一篇：…」不动。
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function cleanFeedItems(items: any[]): any[] {
+  for (const it of items) {
+    if (!it || typeof it !== 'object') continue
+    if (typeof it.description === 'string') it.description = stripNavHtml(it.description)
+    if (it.content && typeof it.content === 'object') {
+      if (typeof it.content.html === 'string') it.content.html = stripNavHtml(it.content.html)
+      if (typeof it.content.text === 'string') it.content.text = stripNavText(it.content.text)
+    }
+  }
+  return items
+}
+
+const NAV_LABEL = '(?:上一篇|下一篇|上一条|下一条|上一则|下一则)'
+const NAV_BLOCK_HTML = new RegExp(
+  `<(p|div|li|span)\\b[^>]*>\\s*${NAV_LABEL}\\s*[:：]\\s*(?:<a\\b[^>]*>[\\s\\S]*?</a>|[^<]*)\\s*</\\1>`,
+  'g',
+)
+/** 纯文本里只认**尾巴**上的导航：前面得有正文、前面隔着空白，一直到结尾。 */
+const NAV_TAIL_TEXT = new RegExp(`(?<=\\S)\\s+${NAV_LABEL}\\s*[:：][\\s\\S]*$`)
+
+function stripNavHtml(html: string): string {
+  return html.replace(NAV_BLOCK_HTML, '')
+}
+
+function stripNavText(text: string): string {
+  return text.replace(NAV_TAIL_TEXT, '')
 }
 
 /** A single-author feed (one creator's dynamics on a video platform, one site's articles, one iqiyi album) has
