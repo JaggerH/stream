@@ -49,7 +49,9 @@ function shell(url: string, title: string, label: string, content: Item['content
 
 /** 没人认领的网页：`link` 原型，详情打开时自己抽正文。 */
 export function linkItem(url: string): Item {
-  return shell(url, url, new URL(url).hostname, { archetype: 'link', media: [{ kind: 'link', url }] })
+  const host = new URL(url).hostname
+  // 作者那格缺了详情同样退到 `stream_id`；普通网页没有作者，站名是最接近的那个。
+  return { ...shell(url, url, host, { archetype: 'link', media: [{ kind: 'link', url }] }), author: host }
 }
 
 /** 包现取回来的那一份 → 详情要的 `Item`。原型按媒体形状定：有视频是视频，有图是图集，否则是文字。 */
@@ -62,7 +64,7 @@ export function itemFromFetched(url: string, r: FetchUrlResult): Item {
   const title = r.title?.trim() || firstLine || url
   return {
     ...shell(url, title, r.platform, { archetype, title: r.title, text: r.text, media }),
-    author: r.author,
+    author: r.author || r.platform,
     author_avatar: r.author_avatar,
   }
 }
