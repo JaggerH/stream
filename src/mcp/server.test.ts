@@ -142,6 +142,28 @@ describe('MCP server (real client over InMemoryTransport)', () => {
     expect(text(r)).toContain('"title"')
   })
 
+  /**
+   * Live-read items are never stored, so the only way `extract` can resolve their ids is the
+   * snapshot the tool boundary feeds. Without the hand-over, reading a collection and then asking
+   * for one video's text answers "item not found".
+   */
+  it('stream_read hands its items to rememberItems so extract can address them', async () => {
+    const seen: unknown[][] = []
+    const items = [{ id: 'live-1', title: 't' }]
+    const server = createMcpServer(
+      { read: async () => items } as unknown as StreamService,
+      { ...noTier, rememberItems: (got) => { seen.push(got) } },
+    )
+    const [clientT, serverT] = InMemoryTransport.createLinkedPair()
+    await server.connect(serverT)
+    const c = new Client({ name: 'test', version: '0' })
+    await c.connect(clientT)
+    const r = await c.callTool({ name: 'stream_read', arguments: { id: 'any' } })
+    expect(text(r)).toContain('live-1')
+    expect(seen).toEqual([items])
+    await c.close()
+  })
+
   it('exposes streams + topics resources', async () => {
     const uris = (await client.listResources()).resources.map((r) => r.uri).sort()
     expect(uris).toEqual(['stream://streams', 'stream://topics'])

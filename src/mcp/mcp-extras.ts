@@ -198,7 +198,8 @@ export function buildMcpExtras(boot: McpExtrasDeps): McpExtras {
   const lane = new InteractiveLane('mcp', null, boot.extRelay)
 
   // 现搜结果的瞬时快照(extract 句柄第三命名空间,spec 2026-08-23-purchase-evidence-deepread)。
-  // 喂入点就在这里——content_search 工具经这层包装天然吃到。price_search 不喂(比价条目无正文可深读)。
+  // 喂入点就在这里——content_search 工具经这层包装天然吃到，stream_read 经 `rememberItems` 吃到。
+  // price_search 不喂(比价条目无正文可深读)。
   const searchSnapshot = makeSearchSnapshot()
   // extract 窄回执的压缩腿(spec 2026-08-24-extract-narrow-receipt)——门槛/缓存/兜底全在
   // extract-digest.ts 里,这里只接线。
@@ -267,6 +268,8 @@ export function buildMcpExtras(boot: McpExtrasDeps): McpExtras {
 
   const base = {
     contentSearch: (q: string) => boot.contentSearch(q).then(feedSnapshot),
+    // stream_read 现拉回来的条目同样不落库、同样要被 extract 指到——同一份快照，同一个咽喉。
+    rememberItems: (items: unknown[]) => { feedSnapshot(items as { id?: unknown }[]) },
     // 搜索结果分档判据来自清单 categories；闭包每次调用都走 `boot.registry.get`，热重载换组跟得上。
     isCommunitySource: communityByCategory(boot.registry),
     // 「这件事为什么做不了、谁能修」。判据全在 capability-gaps.ts，这里只接三个读口——

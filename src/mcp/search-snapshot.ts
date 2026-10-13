@@ -1,15 +1,16 @@
 import type { StoredItem } from '../item-store.ts'
 
 /**
- * 现搜结果的瞬时快照——extract 句柄的第三命名空间。
+ * 现搜 / 现拉结果的瞬时快照——extract 句柄的第三命名空间。
  * 权威设计:docs/superpowers/specs/2026-08-23-purchase-evidence-deepread-design.md §2.1。
  *
- * content_search 的结果**不落库**,而深读(转写/OCR)的唯一入口 extract 只认句柄。这里把
- * "模型刚看到的那批搜索结果"按 item.id 留一份完整原件(slim 之前的),TTL 内可被 extractImpl
- * 指到。不落库、不持久:重启后模型重新搜一遍是可接受代价。
+ * content_search 和 stream_read 的结果都**不落库**,而深读(转写/OCR)的唯一入口 extract 只认句柄。
+ * 这里把"模型刚看到的那批条目"按 item.id 留一份完整原件(slim 之前的),TTL 内可被 extractImpl
+ * 指到。不落库、不持久:重启后模型重新搜 / 重新拉一遍是可接受代价。
  *
- * 喂入点在 MCP 边界(mcp-extras 包 contentSearch 的那一层)——**单一咽喉**,不用各处记得喂。
- * price_search 不喂(比价条目没有可深读的正文)。
+ * 喂入点在 MCP 边界(mcp-extras 的 `feedSnapshot`:包 contentSearch 的那一层 + stream_read 的
+ * `rememberItems`)——**单一咽喉**,不用各处记得喂。price_search 不喂(比价条目没有可深读的正文)。
+ * 用户粘贴的一条作品链接也走这条路:用该平台「单条作品」的源 stream_read 一次,回来的条目就能 extract。
  */
 export const SEARCH_SNAPSHOT_TTL_MS = 30 * 60_000
 export const SEARCH_SNAPSHOT_CAP = 500

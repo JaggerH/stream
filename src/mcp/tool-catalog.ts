@@ -55,6 +55,13 @@ export interface McpExtras {
   /** cross-platform content retrieval over the user's configured searchable sources;
    *  when present, exposes content_search (the same core behind HTTP /api/content/search) */
   contentSearch?: (q: string, opts?: { nsfw?: boolean }) => Promise<unknown[]>
+  /**
+   * Keep live-fetched items addressable by `extract` for the snapshot TTL. `stream_read` items
+   * are never stored, yet their ids are exactly what the model holds when it wants the text —
+   * without this an `extract` on a just-read item answers "item not found" (the same gap
+   * `content_search` had; same snapshot, see search-snapshot.ts).
+   */
+  rememberItems?: (items: unknown[]) => void
   /** 搜索结果分档（社区平台 / 网页搜索）的判据：manifest `categories` 含 `social-media` 就是
    *  社区档，由 `communityByCategory(registry)` 造、每次调用现查 registry。**必填、没有默认**：
    *  `content_search` / `price_search` 的瘦身层靠它排序，漏了它全部结果判成 web 档、排序等于
@@ -369,9 +376,15 @@ export function toolCatalog(service: StreamServiceLike, extras: McpExtras): Tool
       description:
         'FETCH LIVE from a Stream id (every source in that Stream is pulled again, right now) OR from a single source id with ad-hoc params. Either way this is a live network fetch: nothing is read from what Stream already collected, and nothing is stored. ' +
         '**Do not use it to answer "what is in my timeline / what did I already collect"** — it re-runs the harvest instead of reading the inbox, so it is slow (a busy Stream means one fetch per member source) and it can return items the user has never seen while missing older ones they have. ' +
-        'Examples: stream_read({id:"reddit-sub", params:{subreddit:"selfhosted"}}) direct-fetches the reddit-sub source; stream_read({id:"my-tech"}) re-fetches every source of that subscribed Stream. Source direct-fetch returns normalized items. Params are validated against the source schema; invalid params throw before any fetch.',
+        'Examples: stream_read({id:"reddit-sub", params:{subreddit:"selfhosted"}}) direct-fetches the reddit-sub source; stream_read({id:"my-tech"}) re-fetches every source of that subscribed Stream. Source direct-fetch returns normalized items. Params are validated against the source schema; invalid params throw before any fetch. ' +
+        'To get the TEXT of a returned item (a video is transcribed), call `extract` with its `id` — the items are not stored, but stay addressable there for ~30 minutes after this read. ' +
+        'This is also how you read ONE work the user pasted a link to: find the platform\'s single-item source (stream_sources, the one that takes a link / work id), stream_read it, then `extract` the item it returns.',
       schema: { id: z.string(), params: z.record(z.string(), z.unknown()).optional() },
-      run: ({ id, params }) => service.read(id as string, (params as Record<string, unknown>) ?? {}),
+      run: async ({ id, params }) => {
+        const items = await service.read(id as string, (params as Record<string, unknown>) ?? {})
+        extras.rememberItems?.(items)
+        return items
+      },
     },
     {
       name: 'stream_unsubscribe',
@@ -625,7 +638,7 @@ export function toolCatalog(service: StreamServiceLike, extras: McpExtras): Tool
     entries.push({
       name: 'extract',
       description:
-        "Get an item's text content. Input: `item` is a HANDLE, and it has three namespaces — (1) an inbox item id; (2) the id of a hit you just got back from content_search, which is NOT in the inbox but stays addressable here for ~30 minutes; (3) a netdisk-bound movie/episode key `tmdb:<id>` or `tmdb:<id>:SxxExx`, which is not an item at all — that is the only way to read a netdisk-bound episode. The backend picks how by itself (speech-to-text for video/audio, OCR for images/PDF, article fetch for links, or the post's own text) — you do not choose. Served from a persistent cache: a second call returns the cached text without re-running (no re-charge). Returns {status: running|done|error, result?: {text, format: markdown|plain, branch, detail?}}. `detail.segments` (a timed transcript) exists only for the speech branch, and is stripped when the result comes back digested (see below). This call WAITS for the work to finish (up to ~90s) rather than returning early, so a settled answer is normally the first thing you get back — do not call it again to poll unless the answer itself tells you to. " +
+        "Get an item's text content. Input: `item` is a HANDLE, and it has three namespaces — (1) an inbox item id; (2) the id of an item you just got back from content_search or stream_read, which is NOT in the inbox but stays addressable here for ~30 minutes; (3) a netdisk-bound movie/episode key `tmdb:<id>` or `tmdb:<id>:SxxExx`, which is not an item at all — that is the only way to read a netdisk-bound episode. The backend picks how by itself (speech-to-text for video/audio, OCR for images/PDF, article fetch for links, or the post's own text) — you do not choose. Served from a persistent cache: a second call returns the cached text without re-running (no re-charge). Returns {status: running|done|error, result?: {text, format: markdown|plain, branch, detail?}}. `detail.segments` (a timed transcript) exists only for the speech branch, and is stripped when the result comes back digested (see below). This call WAITS for the work to finish (up to ~90s) rather than returning early, so a settled answer is normally the first thing you get back — do not call it again to poll unless the answer itself tells you to. " +
         'The cache is matched on the item alone, NOT on the options: a cached result comes back even if you now ask for diarize. So when the user asks to 重跑 / 重新取一次 / 重新识别发言人 (re-run, redo, extract it again, identify the speakers this time), pass rerun:true — otherwise nothing at all happens and no error is reported. ' +
         'For a VIDEO there is a SECOND layer the transcript does not carry: the text ON SCREEN (slides, news banners, burned-in subtitles, chart numbers), often the bulk of the content while the transcript is a scrap. It is extracted automatically and arrives here — you never call another tool for it. This layer is slow and heavy-tailed (seconds to many minutes), so the call waits for it too. If it is STILL running when the answer comes back, that means minutes more: DO NOT call extract again to poll it — tell the user the on-screen text is still being extracted and let them come back to it. You then get either the transcript plus `on_screen_text: {status: "running"}` (when the transcript stands on its own), or `status: "running"` with `waiting_for: "on_screen_text"` AND NO RESULT (when the content is essentially all on screen) — in that second case you have nothing to summarize, so do not try. When it is ready it comes back as `on_screen_text.text` (timestamped) beside the transcript — any summary of the video must cover BOTH. ' +
         'Long texts (>4000 chars) ALWAYS come back as a DIGEST — sourced bullet points instead of the full body — with `digested: true`, `full_text_chars`, and a `next_step`. Pass `focus` (one line: what you are looking for) to aim the digest. There is no full-text switch here: the user reads the full text on the card, and when YOUR task itself requires the complete text (e.g. translating a whole transcript), read it via get_conversions({item}). ',
