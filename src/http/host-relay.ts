@@ -105,7 +105,7 @@ const sessionContext = new AsyncLocalStorage<symbol>()
 
 /**
  * Command/response pairer over one host-agent WS connection. Routes purely by `id`; knows
- * nothing about UIA or recipe semantics. Single-connection assumption (one host, one agent).
+ * nothing about UIA or recipe semantics. One relay per device; the registry (`host-registry.ts`) holds one per `deviceId`.
  * Failure semantics — disconnect / timeout / latest-connection-wins — mirror ExtRelay.
  */
 export class WsHostRelay implements HostRelay {
