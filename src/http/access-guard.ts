@@ -143,11 +143,21 @@ export function parseTrustedOrigins(raw: string | undefined): string[] {
  * 就是"这台机器现在没有别的设备够得着的地址"。
  */
 /** `http://<ipv4>:<port>` for every non-internal IPv4 interface, i.e. where a LAN device can reach us. */
+/**
+ * Whether another device on the LAN could reach us at this IPv4 address. `198.18.0.0/15` is the
+ * RFC 2544 benchmarking range, which proxy TUN adapters (Clash and the like) use for their virtual
+ * interface. It is never a real LAN, so a phone given that address cannot connect.
+ */
+export function isLanReachable(addr: string): boolean {
+  const [a, b] = addr.split('.').map(Number)
+  return !(a === 198 && (b === 18 || b === 19))
+}
+
 export function lanBaseUrls(port: string): string[] {
   const out: string[] = []
   for (const addrs of Object.values(networkInterfaces())) {
     for (const a of addrs ?? []) {
-      if (a.family !== 'IPv4' || a.internal) continue
+      if (a.family !== 'IPv4' || a.internal || !isLanReachable(a.address)) continue
       out.push(`http://${a.address}:${port}`)
     }
   }

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { lanBaseUrls, lanUrls, isLoopbackAddress, authorizeAccess, isTrustedHost, isTrustedOrigin, parseTrustedOrigins } from './access-guard.ts'
+import { lanBaseUrls, lanUrls, isLanReachable, isLoopbackAddress, authorizeAccess, isTrustedHost, isTrustedOrigin, parseTrustedOrigins } from './access-guard.ts'
 
 const TOKEN = 'a'.repeat(64)
 
@@ -140,6 +140,15 @@ describe('parseTrustedOrigins', () => {
     const [origin] = parseTrustedOrigins('http://127.0.0.1:3000/')
     expect(isTrustedOrigin({ origin: 'http://127.0.0.1:3000', hostHeader: '127.0.0.1:8900', extraOrigins: [origin!] })).toBe(true)
   })
+})
+
+it('a TUN fake-IP (198.18.0.0/15) is not a LAN address a phone can reach', () => {
+  expect(isLanReachable('10.9.8.21')).toBe(true)
+  expect(isLanReachable('192.168.1.5')).toBe(true)
+  expect(isLanReachable('198.18.0.1')).toBe(false)
+  expect(isLanReachable('198.19.255.254')).toBe(false)
+  expect(isLanReachable('198.20.0.1')).toBe(true)
+  expect(isLanReachable('198.17.0.1')).toBe(true)
 })
 
 it('lanBaseUrls lists http://<ipv4>:<port> without a token, and lanUrls appends the token to each', () => {
