@@ -52,7 +52,7 @@ describe('harvestPlugin', () => {
     const { kernel } = await mount()
     const h = kernel.harvest
     for (const key of [
-      'extRelay', 'hostRelay', 'browserCapability', 'harvestBrowser', 'extLauncher', 'desktopDriver', 'makeSee',
+      'extRelay', 'hostRelays', 'browserCapability', 'harvestBrowser', 'extLauncher', 'desktopDriver', 'makeSee',
       'transport', 'recipeSessions', 'feedLedger', 'sessionRecipes', 'ensureHarvestBrowser',
       'pageLook', 'pageShot', 'pageAct', 'closeFacilityTabs', 'reapIdleLanes', 'claimedTabs',
       'focusLoginTab',
@@ -135,13 +135,14 @@ describe('harvestPlugin', () => {
     await quiesceKernel(kernel)
   })
 
-  // 接缝 4：desktopDriver 按 `hostRelay.connected` **现判**，不是启动那一刻的快照。
-  // 快照化的症状是：agent 后来连上了，桌面这一档却一直报「不可用」。
-  it('desktopDriver 每次现判 hostRelay.connected', async () => {
+  // 接缝 4：desktopDriver 每次现判注册表里有没有桌面设备，不是启动那一刻的快照。
+  it('desktopDriver 每次现判是否有桌面设备在线', async () => {
     const { kernel } = await mount()
     const h = kernel.harvest
     expect(h.desktopDriver()).toBeUndefined()
-    Object.defineProperty(h.hostRelay, 'connected', { get: () => true, configurable: true })
+    h.hostRelays.connect({ send: () => {} } as any, {
+      deviceId: 'desktop:pc', platform: 'windows', name: 'PC', agentVersion: '0.1.0', ops: ['ensureApp'],
+    } as any)
     expect(h.desktopDriver()).toBeDefined()
     await quiesceKernel(kernel)
   })
@@ -180,11 +181,13 @@ describe('harvestPlugin', () => {
     const h = kernel.harvest
     const capturedWaitMs: number[] = []
     // 替换 withSession 以拦截 waitMs 参数
-    h.hostRelay.withSession = vi.fn(async (fn, opts) => {
+    const relay = h.hostRelays.connect({ send: () => {} } as any, {
+      deviceId: 'desktop:pc', platform: 'windows', name: 'PC', agentVersion: '0.1.0', ops: ['ensureApp'],
+    } as any)
+    relay.withSession = vi.fn(async (fn: any, opts: any) => {
       capturedWaitMs.push(opts?.waitMs ?? 180_000)
-      // 执行实际逻辑
       return fn()
-    })
+    }) as typeof relay.withSession
     // Mock makeDesktopDriver 返回一个 mock driver，ensureApp 返回进程未启动
     const mockDriver = {
       ensureApp: vi.fn(async () => ({ running: false, started: false })),
@@ -192,7 +195,6 @@ describe('harvestPlugin', () => {
     vi.spyOn(DesktopDriver, 'makeDesktopDriver').mockReturnValue(mockDriver as any)
     // 模拟 extRelay 未连接但 hostRelay 已连接的情况
     Object.defineProperty(h.extRelay, 'connected', { value: false, writable: true, configurable: true })
-    Object.defineProperty(h.hostRelay, 'connected', { value: true, writable: true, configurable: true })
     // ensureApp 返回 running: false 会导致快速抛错
     await expect(h.ensureHarvestBrowser()).rejects.toThrow()
     // 验证至少一次 withSession 调用用的是短上界（20_000ms）

@@ -19,8 +19,9 @@ async function start(helloTimeoutMs = 2000) {
   server = createServer()
   const registry = new HostRelayRegistry()
   attachHostRelay(server, registry, { token: TOKEN, log: () => {}, helloTimeoutMs })
-  await new Promise<void>((r) => server.listen(0, '127.0.0.1', r))
-  const url = `ws://127.0.0.1:${(server.address() as AddressInfo).port}/api/host`
+  const srv = server
+  await new Promise<void>((r) => srv.listen(0, '127.0.0.1', r))
+  const url = `ws://127.0.0.1:${(srv.address() as AddressInfo).port}/api/host`
   return { registry, url }
 }
 

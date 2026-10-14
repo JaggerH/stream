@@ -8,7 +8,8 @@ import type { InterventionService } from './intervention.ts'
 import type { DebugEntry } from '../../debug.ts'
 import type { EventInput } from '../../events/store.ts'
 import { ExtRelay, ExtRelayDisconnected } from '../../http/ext-relay.ts'
-import { WsHostRelay, INTERACTIVE_SESSION_WAIT_MS } from '../../http/host-relay.ts'
+import { INTERACTIVE_SESSION_WAIT_MS } from '../../http/host-relay.ts'
+import { HostRelayRegistry } from '../../http/host-registry.ts'
 import { BrowserCapabilityStore } from '../../browser/capability-store.ts'
 import { discoverChromeCandidates, nodeDiscoverFs } from '../../browser/discover-chrome.ts'
 import { harvestBrowserStatus, type HarvestBrowserStatus } from '../../browser/harvest-browser.ts'
@@ -47,7 +48,7 @@ export interface HarvestService {
   /** extension CDP transport 中继单例；serve.ts 用 attachExtRelay 把它挂到 `/api/ext`。 */
   extRelay: ExtRelay
   /** host-desktop Engine 中继单例；serve.ts 用 attachHostRelay 把它挂到 `/api/host`。 */
-  hostRelay: WsHostRelay
+  hostRelays: HostRelayRegistry
   /** 「这台机器装过 Chrome + 扩展吗」的落盘缓存。 */
   browserCapability: BrowserCapabilityStore
   /** 「采集用哪个 Chrome」：列候选 / 选一个。 */
@@ -58,7 +59,7 @@ export interface HarvestService {
   /** ext-cdp ReplayLauncher over that relay — `launch(url).rawPage.evalExpr` 供临时求值。 */
   extLauncher: ReturnType<typeof makeExtensionLauncher>
   /** 原生窗口驱动。**没连 Stream Desktop 时返回 undefined**——调用方据此报「桌面这一档不可用」，
-   *  而不是静默降级。**每次调用现判 `hostRelay.connected`**，不是启动那一刻的快照。 */
+   *  而不是静默降级。**每次调用现判注册表里有没有桌面设备**，不是启动那一刻的快照。 */
   desktopDriver: () => DesktopDriver | undefined
   /**
    * 桌面 recipe 的识别层工厂——**一趟 recipe 一个实例**（`modelCalls` 的预算归一趟，见
@@ -192,13 +193,16 @@ export const harvestPlugin = {
       ...(config.notify && { onNotify: config.notify }),
     })
     const extLauncher = makeExtensionLauncher(extRelay, { onDebug: config.onDebug })
-    // host-desktop Engine 中继：单连接（宿主上一个 automation agent）。serve.ts 用 attachHostRelay 把
-    // /api/host 挂到 http server。无 agent 连接时 desktopDriver 返 undefined → kind:'desktop' source
-    // 以 miss 落档（不抛）：前置条件不在就是 miss，不是故障。
-    const hostRelay = new WsHostRelay({ sessionWaitMs: config.hostSessionWaitMs })
+    // host-desktop Engine 中继：每台设备一条（`hello` 报身份），serve.ts 用 attachHostRelay 把
+    // /api/host 挂到 http server。没有桌面设备在线时 desktopDriver 返 undefined → kind:'desktop'
+    // source 以 miss 落档（不抛）：前置条件不在就是 miss，不是故障。
+    const hostRelays = new HostRelayRegistry({ sessionWaitMs: config.hostSessionWaitMs })
     // 原生窗口驱动的**唯一构造点**：adapter（kind:'desktop' source）与 cdp_* 的 desktop/app 两档
-    // 共用它。两处各建一份会让"agent 连没连"出现两个答案。
-    const desktopDriver = () => (hostRelay.connected ? makeDesktopDriver(hostRelay) : undefined)
+    // 共用它。两处各建一份会让"有没有桌面设备"出现两个答案。
+    const desktopDriver = () => {
+      const dev = hostRelays.deviceFor('desktop')
+      return dev ? makeDesktopDriver(dev.relay, dev.ops) : undefined
+    }
     // 识别层的**唯一构造点**，和上面那个 driver 同一个理由：两个调用方（采集 adapter 与
     // run_action_recipe）各建一份，缓存目录和 model 预算就会出现两个答案。
     const makeSee = (driver: DesktopDriver, sourceId: string): SeeResolver =>
@@ -479,8 +483,9 @@ export const harvestPlugin = {
      */
     const ensureHarvestBrowser = async (): Promise<void> => {
       if (extRelay.connected) return
-      if (hostRelay.connected) {
-        const driver = makeDesktopDriver(hostRelay)
+      const dev = hostRelays.deviceFor('desktop')
+      if (dev) {
+        const driver = makeDesktopDriver(dev.relay, dev.ops)
         const spec = harvestBrowserSpec()
         // 等扩展自己连上来（onStartup → startExtCdp）。给足一次冷启动，但不无限等：等不到就按
         // "这一轮没跑"处理，比挂在这里好——挂住会拖垮整个调度轮次。
@@ -493,7 +498,7 @@ export const harvestPlugin = {
         // 限制排队等待时间——采集轮次不该被前一趟 recipe 的会话租约卡住。这里只是唤起浏览器进程，
         // 是整个 ensureHarvestBrowser 的一部分，不是单独的工作单元——不需要等默认的 180s。
         // 等不到就按"这轮没跑"处理，下一轮再试。
-        const first = await hostRelay.withSession(
+        const first = await dev.relay.withSession(
           () => driver.ensureApp(spec),
           { waitMs: INTERACTIVE_SESSION_WAIT_MS }
         ).catch(() => undefined)
@@ -510,7 +515,7 @@ export const harvestPlugin = {
           //
           // 只在这条分支上 force，不是每轮都 force——后者等于每次采集都在用户桌面上弹窗口。
           // 同样限制排队等待时间——这是 best-effort 操作，不该被无关的租约卡住。
-          const forced = await hostRelay.withSession(
+          const forced = await dev.relay.withSession(
             () => driver.ensureApp({ ...spec, force: true }),
             { waitMs: INTERACTIVE_SESSION_WAIT_MS }
           ).catch(() => undefined)
@@ -552,7 +557,7 @@ export const harvestPlugin = {
     }
     ctx.provide('harvest', {
       extRelay,
-      hostRelay,
+      hostRelays,
       browserCapability,
       harvestBrowser,
       extLauncher,

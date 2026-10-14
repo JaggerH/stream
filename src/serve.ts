@@ -1056,7 +1056,7 @@ const apiToken = config.api_token || loadOrCreateApiToken(dirname(config.item_db
   // is internal, the shipped binary is `stream-desktop`).
   // Nothing connected → kind:'desktop' sources decline as a miss.
   kernel.effect(() => {
-    const wss = attachHostRelay(server as unknown as Server, harvest.hostRelay, { token: extToken })
+    const wss = attachHostRelay(server as unknown as Server, harvest.hostRelays, { token: extToken })
     return () => closeRelayServer(wss)
   })
   // 外部事件源子进程的收信端 at /api/event-source（Spec 1 只装端点，spawn/看护留 Spec 2）。
