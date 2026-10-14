@@ -50,8 +50,17 @@ class Overlay(private val service: AccessibilityService, private val onStop: () 
             }
         }
         if (Looper.myLooper() === Looper.getMainLooper()) { apply.run(); return }
+        // updateViewLayout only schedules a relayout; the new touchable region reaches the input
+        // system a frame or two later. Release the worker after two frames plus a margin, so the
+        // injected tap does not land on the banner before the flag takes effect.
         val done = CountDownLatch(1)
-        main.post { try { apply.run() } finally { done.countDown() } }
+        main.post {
+            try { apply.run() } catch (e: RuntimeException) { done.countDown(); return@post }
+            val choreographer = android.view.Choreographer.getInstance()
+            choreographer.postFrameCallback {
+                choreographer.postFrameCallback { main.postDelayed({ done.countDown() }, 32) }
+            }
+        }
         done.await(500, TimeUnit.MILLISECONDS)
     }
 

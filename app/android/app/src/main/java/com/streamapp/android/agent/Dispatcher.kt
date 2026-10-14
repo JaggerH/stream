@@ -120,6 +120,10 @@ class Dispatcher(private val device: Device) {
             }
             device.sleep(200)
         }
+        if (device.foregroundPackage() == pkg) {
+            scope = Scope(pkg, null)
+            return true
+        }
         throw AgentError("blocked-by-os: 启动 $pkg 后它没有到前台。可能是系统拦住了后台弹出界面：到 设置 → 应用 → Stream → 其他权限 打开「后台弹出界面」")
     }
 

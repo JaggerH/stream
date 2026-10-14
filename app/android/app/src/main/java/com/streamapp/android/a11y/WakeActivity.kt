@@ -22,6 +22,12 @@ class WakeActivity : Activity() {
         })
     }
 
+    // singleInstance: a launch while it is still alive arrives here, not in onCreate.
+    override fun onNewIntent(intent: android.content.Intent?) {
+        super.onNewIntent(intent)
+        createdAt = SystemClock.uptimeMillis()
+    }
+
     companion object {
         /** `uptimeMillis` of the latest creation; lets the waker tell whether the OS let it start. */
         @Volatile var createdAt = 0L
