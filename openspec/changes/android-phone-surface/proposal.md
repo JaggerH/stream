@@ -32,8 +32,9 @@ Two ways to reach an Android phone were measured on 2026-10-14:
   code. The app exchanges that code for its own device token. Tokens can be revoked one at a time.
   The phone never holds the shared extension/desktop token.
 - **Mobile op additions.** `press` gains `Back` and `Home`, and a `launchApp` op opens an app by
-  package name. Ops the phone cannot do (`readText` OCR, `findImage`, `moveMouse`, `nudge`) answer
-  "unsupported", following the path old desktop agents already take.
+  package name. Each agent declares its op set when it connects. Ops the phone cannot do
+  (`readText` OCR, `findImage`, `moveMouse`, `nudge`) are simply not declared, and the driver
+  rejects them before sending.
 
 Out of scope for this change: remote or cloud phones, choosing among several phones, on-device OCR,
 app-store distribution, and phones that have a lock-screen credential.
@@ -56,5 +57,6 @@ app-store distribution, and phones that have a lock-screen credential.
 - Panel: a device list, a pairing QR code and token revocation.
 - New `app/android/` Gradle project. The dev machine needs a JDK and Android cmdline-tools again
   (about 1–2 GB).
-- Stream Desktop (Rust) sends the device-identity handshake; old agents without it are treated as the
-  default desktop device.
+- **Breaking:** the relay moves to `host-relay.v2` with a mandatory `hello` that declares the
+  agent's op set. Stream Desktop (Rust) must be updated together with the backend, and v1 agents are
+  refused with an "update Stream Desktop" message.

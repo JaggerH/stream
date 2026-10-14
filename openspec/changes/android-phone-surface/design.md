@@ -55,7 +55,7 @@ The Android app implements the existing op table. Mapping:
 | `screenshot` / `captureWindow` | `takeScreenshot` (API 30+) → PNG |
 | `focusApp` / `ensureApp` / `launchApp` | launch intent for the package |
 | `status` | text on the takeover overlay |
-| `readText`, `findImage`, `moveMouse`, `nudge`, `readElements` icons | reply `unsupported`; the driver already treats absence as "this agent has no such op" |
+| `readText`, `findImage`, `moveMouse`, `nudge`, `readElements` | not declared in `hello.ops`; the driver fails them as `unsupported-op` before sending |
 
 Node refs are stable for the lifetime of one tree snapshot. A ref used after the tree changed fails
 loudly as `stale-ref`, so the runner re-finds the node instead of acting on a recycled one.
@@ -66,14 +66,21 @@ mode either way. adb stays a developer tool for installing and debugging the app
 
 ### D2. Multi-device relay, keyed by device id
 
-The first frame after the upgrade is `{type:'hello', deviceId, platform:'windows'|'macos'|'android',
-name, agentVersion}`. A `HostRelayRegistry` holds one `WsHostRelay` per `deviceId`. Each relay keeps
+The subprotocol becomes `host-relay.v2`, with no v1 compatibility. Stream Desktop ships inside the
+backend bundle, so agent and backend upgrade together. A v1 offer is refused with a message that names
+the fix ("Stream Desktop is too old — update it"), so a stale agent cannot quietly degrade.
+
+The first frame after the upgrade MUST be `{type:'hello', deviceId, platform:'windows'|'macos'|'android',
+name, agentVersion, ops: string[]}`. A connection whose first frame is anything else is closed.
+`ops` is the agent's declared op set. The driver checks it before sending, so an op the device does
+not support fails fast at the driver as `unsupported-op`, without a round trip. The driver's existing
+"old agent does not know this op" fallbacks (e.g. `nudge` → `false`, `readText` → `null` on unknown
+op) are removed. A platform that genuinely lacks an op simply does not declare it. A `HostRelayRegistry` holds one `WsHostRelay` per `deviceId`. Each relay keeps
 today's per-connection semantics: "latest wins" now applies per device, plus the session lease and
 abort epoch. Two recipes on the same device still serialize. A phone and a PC do not block each other.
 
-A Stream Desktop build without `hello` is registered as `deviceId: 'desktop-default'`, platform
-`desktop`, so existing installs keep working untouched. For matching recipes, `windows` and `macos`
-both count as the `desktop` platform; recipes that need one OS keep using their existing app match.
+For matching recipes, `windows` and `macos` both count as the `desktop` platform. Recipes that need one
+OS keep using their existing app match.
 
 `hostRelay.connected` and the single `desktopDriver()` become
 `driverFor(platform): DesktopDriver | undefined`. When no device of the platform is online, the run
@@ -142,19 +149,21 @@ through `scripts/qrun.sh` like cargo.
   screenshot calls and backs off, and does not return an error.
 - **OEM background killing beats the checklist.** → The heartbeat makes the failure visible within
   one interval instead of at the next scheduled run.
-- **The relay refactor touches Stream Desktop's path.** → Old agents map to `desktop-default`, and the
-  existing host-relay tests run against the registry unchanged.
+- **The relay refactor breaks old Stream Desktop builds on purpose.** → The v1 refusal names the fix.
+  Agent and backend ship in one bundle. On a dev machine, kill the old agent before replacing the exe.
 
 ## Migration Plan
 
-1. Registry and `hello` in the backend; Stream Desktop sends `hello`. Behavior for a single desktop
-   agent is unchanged.
+1. `host-relay.v2`: registry, mandatory `hello` with declared ops in the backend, and Stream Desktop
+   sends it. Old-agent fallbacks are removed from the driver. Ships as one bundle with the new
+   Stream Desktop.
 2. Pairing endpoints, device tokens and the panel device list.
 3. The Android app: connection, pairing, the op table and the overlay.
 4. A recipe `platform` field plus Android app match and keys.
 5. Measure the four delivery apps with the app installed on the REDMI K80.
 
-Rollback: steps 1–4 are additive. With no device paired, the backend behaves as it does today.
+Rollback: step 1 is a protocol break and rolls back as a pair (backend and Stream Desktop together).
+Steps 2–4 are additive.
 
 ## Open Questions
 
