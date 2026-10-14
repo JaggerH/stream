@@ -23,6 +23,9 @@
             android:exported="false"
             android:excludeFromRecents="true"
             android:showWhenLocked="true"
+            android:taskAffinity=""
+            android:noHistory="true"
+            android:launchMode="singleInstance"
             android:turnScreenOn="true"
             android:theme="@android:style/Theme.Translucent.NoTitleBar" />
     </application>

@@ -42,18 +42,42 @@ class AndroidDevice(private val ctx: Context, private val onStop: () -> Unit) : 
         val km = ctx.getSystemService(KeyguardManager::class.java)
         val pm = ctx.getSystemService(PowerManager::class.java)
         if (km.isKeyguardLocked && km.isDeviceSecure) throw AgentError("device-locked: 锁屏有密码，Stream 解不开；这台手机要去掉锁屏密码才能无人值守")
-        if (wake?.isHeld != true) {
+        val lock = wake ?: run {
             @Suppress("DEPRECATION")
-            wake = pm.newWakeLock(PowerManager.SCREEN_BRIGHT_WAKE_LOCK or PowerManager.ACQUIRE_CAUSES_WAKEUP, "stream:op")
+            pm.newWakeLock(PowerManager.SCREEN_BRIGHT_WAKE_LOCK or PowerManager.ACQUIRE_CAUSES_WAKEUP, "stream:op")
+                .also { it.setReferenceCounted(false); wake = it }
         }
         // Held for 2 minutes after the latest op, then the screen may sleep again.
-        wake?.acquire(120_000)
+        lock.acquire(120_000)
         if (!pm.isInteractive || km.isKeyguardLocked) {
+            val before = WakeActivity.createdAt
             ctx.startActivity(Intent(ctx, WakeActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-            val deadline = System.currentTimeMillis() + 3_000
-            while ((km.isKeyguardLocked || !pm.isInteractive) && System.currentTimeMillis() < deadline) Thread.sleep(100)
-            if (km.isKeyguardLocked) throw AgentError("device-locked: 锁屏没能解开")
+            val started = waitFor(1_500) { WakeActivity.createdAt != before }
+            if (!started && km.isKeyguardLocked) {
+                // The OS may have refused the background activity; a non-secure keyguard also yields to a swipe.
+                val s = screenSize()
+                try {
+                    swipe(s.w / 2, s.h * 85 / 100, s.w / 2, s.h * 35 / 100, 300)
+                } catch (e: AgentError) { /* judged by the keyguard state below */ }
+            }
+            waitFor(if (started) 3_000 else 1_500) { !km.isKeyguardLocked && pm.isInteractive }
+            if (km.isKeyguardLocked) {
+                if (!started && WakeActivity.createdAt == before) {
+                    throw AgentError("blocked-by-os: 系统拦住了 Stream 从后台弹出界面，解不开锁屏。到 设置 → 应用 → Stream → 其他权限，打开「后台弹出界面」和「锁屏显示」")
+                }
+                throw AgentError("device-locked: 锁屏没能解开")
+            }
+            if (!pm.isInteractive) throw AgentError("device-locked: 屏幕没能点亮")
         }
+    }
+
+    private fun waitFor(ms: Long, cond: () -> Boolean): Boolean {
+        val end = System.currentTimeMillis() + ms
+        while (System.currentTimeMillis() < end) {
+            if (cond()) return true
+            Thread.sleep(50)
+        }
+        return cond()
     }
 
     override fun windows(): List<WindowInfo> = svc().windows
@@ -61,7 +85,14 @@ class AndroidDevice(private val ctx: Context, private val onStop: () -> Unit) : 
         .mapNotNull { w ->
             val root = w.root ?: return@mapNotNull null
             val pkg = root.packageName?.toString() ?: return@mapNotNull null
-            WindowInfo(w.id.toString(), pkg, w.title?.toString() ?: pkg, w.isActive)
+            if (pkg == ctx.packageName) return@mapNotNull null
+            WindowInfo(w.id.toString(), pkg, w.title?.toString() ?: pkg, w.isFocused || w.isActive)
+        }
+
+    override fun windowBounds(windowId: String): Rect? =
+        svc().windows.firstOrNull { it.id.toString() == windowId }?.let { w ->
+            val r = android.graphics.Rect().also { w.getBoundsInScreen(it) }
+            Rect(r.left, r.top, r.width(), r.height())
         }
 
     override fun windowRoot(windowId: String): UiNode? =
@@ -105,21 +136,44 @@ class AndroidDevice(private val ctx: Context, private val onStop: () -> Unit) : 
         infoOf(node).performAction(AccessibilityNodeInfo.AccessibilityAction.ACTION_IME_ENTER.id)
 
     override fun tap(x: Int, y: Int, longPress: Boolean) =
-        gesture(Path().apply { moveTo(x.toFloat(), y.toFloat()) }, if (longPress) 600 else 60)
+        gesture(Path().apply { moveTo(x.coerceAtLeast(0).toFloat(), y.coerceAtLeast(0).toFloat()) }, if (longPress) 600 else 60)
 
     override fun swipe(x1: Int, y1: Int, x2: Int, y2: Int, durationMs: Long) =
-        gesture(Path().apply { moveTo(x1.toFloat(), y1.toFloat()); lineTo(x2.toFloat(), y2.toFloat()) }, durationMs)
+        gesture(Path().apply {
+            moveTo(x1.coerceAtLeast(0).toFloat(), y1.coerceAtLeast(0).toFloat())
+            lineTo(x2.coerceAtLeast(0).toFloat(), y2.coerceAtLeast(0).toFloat())
+        }, durationMs)
 
     private fun gesture(path: Path, durationMs: Long) {
+        syncOverlay()
         val done = CountDownLatch(1)
         val ok = AtomicBoolean(false)
-        val g = GestureDescription.Builder().addStroke(GestureDescription.StrokeDescription(path, 0, durationMs)).build()
-        val sent = svc().dispatchGesture(g, object : AccessibilityService.GestureResultCallback() {
-            override fun onCompleted(d: GestureDescription) { ok.set(true); done.countDown() }
-            override fun onCancelled(d: GestureDescription) { done.countDown() }
-        }, null)
-        if (!sent || !done.await(durationMs + 3_000, TimeUnit.MILLISECONDS) || !ok.get()) {
-            throw AgentError("gesture-failed: 系统没执行这次手势（被别的手势打断，或无障碍服务失去了手势权限）")
+        val g = try {
+            GestureDescription.Builder().addStroke(GestureDescription.StrokeDescription(path, 0, durationMs)).build()
+        } catch (e: IllegalArgumentException) {
+            throw AgentError("gesture-failed: 手势参数不合法（${e.message}）")
+        }
+        // The banner would swallow a tap that lands under it.
+        overlay?.passThrough(true)
+        try {
+            val sent = svc().dispatchGesture(g, object : AccessibilityService.GestureResultCallback() {
+                override fun onCompleted(d: GestureDescription) { ok.set(true); done.countDown() }
+                override fun onCancelled(d: GestureDescription) { done.countDown() }
+            }, null)
+            if (!sent || !done.await(durationMs + 3_000, TimeUnit.MILLISECONDS) || !ok.get()) {
+                throw AgentError("gesture-failed: 系统没执行这次手势（被别的手势打断，或无障碍服务失去了手势权限）")
+            }
+        } finally {
+            overlay?.passThrough(false)
+        }
+    }
+
+    /** Drop the banner when the service it was built on is gone or replaced. */
+    private fun syncOverlay() {
+        if (StreamAccessibilityService.instance !== overlayFor) {
+            overlay?.dispose()
+            overlay = null
+            overlayFor = null
         }
     }
 
@@ -132,29 +186,59 @@ class AndroidDevice(private val ctx: Context, private val onStop: () -> Unit) : 
         if (wait > 0) Thread.sleep(wait)
         val done = CountDownLatch(1)
         val out = AtomicReference<Any>()
+        val abandoned = AtomicBoolean(false)
         svc().takeScreenshot(Display.DEFAULT_DISPLAY, ctx.mainExecutor, object : AccessibilityService.TakeScreenshotCallback {
-            override fun onSuccess(s: AccessibilityService.ScreenshotResult) { out.set(s); done.countDown() }
+            override fun onSuccess(s: AccessibilityService.ScreenshotResult) {
+                if (abandoned.get()) { s.hardwareBuffer.close(); return }
+                out.set(s); done.countDown()
+                // The waiter may have given up between the check and the set.
+                if (abandoned.get() && out.getAndSet(null) != null) s.hardwareBuffer.close()
+            }
             override fun onFailure(code: Int) { out.set(code); done.countDown() }
         })
         lastShotAt = System.currentTimeMillis()
-        if (!done.await(5, TimeUnit.SECONDS)) throw AgentError("gesture-failed: 截图超时")
+        if (!done.await(5, TimeUnit.SECONDS)) {
+            abandoned.set(true)
+            (out.getAndSet(null) as? AccessibilityService.ScreenshotResult)?.hardwareBuffer?.close()
+            throw AgentError("gesture-failed: 截图超时")
+        }
         val r = out.get()
         if (r is Int) {
             if (r == AccessibilityService.ERROR_TAKE_SCREENSHOT_SECURE_WINDOW) throw AgentError("secure-window: 当前画面禁止截图（支付、密码页）")
             throw AgentError("gesture-failed: 截图失败，系统错误码 $r")
         }
         val shot = r as AccessibilityService.ScreenshotResult
-        val hw = Bitmap.wrapHardwareBuffer(shot.hardwareBuffer, shot.colorSpace)
-            ?: throw AgentError("gesture-failed: 截图缓冲读不出来")
-        val bmp = hw.copy(Bitmap.Config.ARGB_8888, false)
-        shot.hardwareBuffer.close()
-        val bytes = ByteArrayOutputStream().also { bmp.compress(Bitmap.CompressFormat.JPEG, 80, it) }.toByteArray()
-        return Shot(bytes, Rect(0, 0, bmp.width, bmp.height), ctx.resources.displayMetrics.density.toDouble())
+        val buffer = shot.hardwareBuffer
+        var hw: Bitmap? = null
+        var bmp: Bitmap? = null
+        try {
+            hw = Bitmap.wrapHardwareBuffer(buffer, shot.colorSpace)
+                ?: throw AgentError("gesture-failed: 截图缓冲读不出来")
+            bmp = hw.copy(Bitmap.Config.ARGB_8888, false)
+                ?: throw AgentError("gesture-failed: 截图缓冲读不出来")
+            if (isAllBlack(bmp)) throw AgentError("secure-window: 画面是全黑的，当前页面禁止截图（支付、密码页）或屏幕没亮")
+            val bytes = ByteArrayOutputStream().also { bmp.compress(Bitmap.CompressFormat.JPEG, 80, it) }.toByteArray()
+            return Shot(bytes, Rect(0, 0, bmp.width, bmp.height), ctx.resources.displayMetrics.density.toDouble())
+        } finally {
+            buffer.close()
+            hw?.recycle()
+            bmp?.recycle()
+        }
+    }
+
+    /** A secure window comes back as a black frame rather than an error on some ROMs. */
+    private fun isAllBlack(bmp: Bitmap): Boolean {
+        for (iy in 0 until 16) for (ix in 0 until 16) {
+            val p = bmp.getPixel((ix * (bmp.width - 1)) / 15, (iy * (bmp.height - 1)) / 15)
+            if (android.graphics.Color.red(p) > 8 || android.graphics.Color.green(p) > 8 || android.graphics.Color.blue(p) > 8) return false
+        }
+        return true
     }
 
     override fun screenSize(): Rect = ctx.resources.displayMetrics.let { Rect(0, 0, it.widthPixels, it.heightPixels) }
 
     override fun status(text: String?) {
+        syncOverlay()
         val s = StreamAccessibilityService.instance ?: return
         if (overlayFor !== s) { overlay = Overlay(s, onStop); overlayFor = s }
         overlay?.show(text)

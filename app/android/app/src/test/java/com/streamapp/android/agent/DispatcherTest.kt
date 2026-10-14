@@ -132,7 +132,50 @@ class DispatcherTest {
         call("scopeWindow", """{"match":{"process":"com.sankuai.meituan"}}""")
         dev.launchMakesForeground = "me.ele"
         call("focusApp", """{"match":{"process":"me.ele"}}""")
-        assertTrue(assertThrows(AgentError::class.java) { call("find", """{"query":{"role":"Button"}}""") }.message!!.startsWith("no-scope:"))
+        // The scope is now me.ele (which has no window yet), not the old meituan window.
+        val msg = assertThrows(AgentError::class.java) { call("find", """{"query":{"role":"Button"}}""") }.message!!
+        assertTrue(msg, msg.startsWith("no-window-match:") && msg.contains("me.ele"))
+    }
+
+    @Test fun scopeSurvivesTheAppReplacingItsWindow() {
+        call("scopeWindow", """{"match":{"process":"com.sankuai.meituan"}}""")
+        call("find", """{"query":{"role":"Button"}}""")
+        dev.wins = mutableListOf(WindowInfo("7", "com.sankuai.meituan", "美团", true))
+        dev.roots.remove("1")
+        dev.roots["7"] = FakeNode("FrameLayout", children = listOf(FakeNode("Button", "新页面")))
+        @Suppress("UNCHECKED_CAST")
+        assertEquals(listOf("新页面"), (map(call("find", """{"query":{"role":"Button"}}"""))["elements"] as List<Map<String, Any?>>).map { it["name"] })
+    }
+
+    @Test fun scopedAppWithNoWindowFailsLoudly() {
+        call("scopeWindow", """{"match":{"process":"com.sankuai.meituan"}}""")
+        dev.wins = mutableListOf()
+        val msg = assertThrows(AgentError::class.java) { call("find", """{"query":{"role":"Button"}}""") }.message!!
+        assertTrue(msg, msg.startsWith("no-window-match:") && msg.contains("com.sankuai.meituan"))
+    }
+
+    @Test fun scopePrefersTheForegroundWindowOfTheApp() {
+        dev.wins = mutableListOf(WindowInfo("1", "com.sankuai.meituan", "美团", false), WindowInfo("2", "com.sankuai.meituan", "美团", true))
+        dev.roots["2"] = FakeNode("FrameLayout", children = listOf(FakeNode("Button", "前台")))
+        // Two windows match: scopeWindow itself refuses, so scope by title first, then check re-resolve prefers foreground.
+        call("focusApp", """{"match":{"process":"com.sankuai.meituan"}}""")
+        @Suppress("UNCHECKED_CAST")
+        assertEquals(listOf("前台"), (map(call("find", """{"query":{"role":"Button"}}"""))["elements"] as List<Map<String, Any?>>).map { it["name"] })
+    }
+
+    @Test fun scrollUsesTheScopedWindowBoundsWithoutSnapshotting() {
+        call("scopeWindow", """{"match":{"process":"com.sankuai.meituan"}}""")
+        dev.bounds["1"] = Rect(0, 100, 1000, 1000)
+        dev.roots.remove("1")
+        call("scroll", """{"dir":"down","amount":1}""")
+        assertTrue(dev.log.toString(), "swipe 500,800->500,400" in dev.log)
+    }
+
+    @Test fun focusAppThatNeverComesToTheFrontIsBlockedByOs() {
+        dev.fg = "com.android.launcher"
+        val msg = assertThrows(AgentError::class.java) { call("focusApp", """{"match":{"process":"me.ele"}}""") }.message!!
+        assertTrue(msg, msg.startsWith("blocked-by-os:") && msg.contains("me.ele"))
+        assertEquals(25, dev.log.count { it == "sleep 200" })
     }
 
     @Test fun aKeyTheSystemRefusesFails() {

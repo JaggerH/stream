@@ -10,6 +10,8 @@ interface Device {
     fun windows(): List<WindowInfo>
     /** Root of the window with this id, or null if it is gone. */
     fun windowRoot(windowId: String): UiNode?
+    /** Screen bounds of the window with this id without snapshotting its tree, or null if it is gone. */
+    fun windowBounds(windowId: String): Rect?
     fun foregroundPackage(): String?
     /** `package/activityClass` of the foreground window, or `package` when the activity is unknown. */
     fun foregroundComponent(): String

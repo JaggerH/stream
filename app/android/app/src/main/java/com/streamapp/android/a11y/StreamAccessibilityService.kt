@@ -15,6 +15,7 @@ class StreamAccessibilityService : AccessibilityService() {
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent) {
+        if (event.packageName?.toString() == packageName) return // the banner and WakeActivity are not "the foreground"
         if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
             val pkg = event.packageName?.toString() ?: return
             val cls = event.className?.toString() ?: ""

@@ -13,6 +13,8 @@ class FakeDevice : Device {
     override fun ensureAwake() { if (locked) throw AgentError("device-locked: 锁屏有密码，Stream 解不开"); log += "awake" }
     override fun windows() = wins.toList()
     override fun windowRoot(windowId: String) = roots[windowId]
+    var bounds = mutableMapOf<String, Rect>()
+    override fun windowBounds(windowId: String): Rect? = bounds[windowId]
     override fun foregroundPackage() = fg
     override fun foregroundComponent() = (fg ?: "") + "/.Main"
     override fun launch(packageName: String): Boolean { log += "launch $packageName"; launchMakesForeground?.let { fg = it }; return true }

@@ -15,7 +15,10 @@ private val NO_WAKE = setOf("status", "sleep", "windows", "url")
  * window and the current ref snapshot. Ops run one at a time, so it needs no locking.
  */
 class Dispatcher(private val device: Device) {
-    private var scope: String? = null
+    /** The app (and optional title substring) the agent limited itself to. An Activity change
+     *  replaces the window, so the scope is re-resolved against `windows()` on every use. */
+    private data class Scope(val process: String, val title: String?)
+    private var scope: Scope? = null
     private val refs = RefTable<UiNode>()
 
     fun dispatch(op: String, args: JSONObject): Any? {
@@ -24,8 +27,9 @@ class Dispatcher(private val device: Device) {
         return when (op) {
             "windows" -> device.windows().map { it.toMap() }
             "scopeWindow" -> {
-                val w = resolveWindow(obj(args, "match"))
-                scope = w.id
+                val match = obj(args, "match")
+                val w = resolveWindow(match)
+                scope = Scope(w.process, if (match.has("title")) match.getString("title") else null)
                 mapOf("window" to w.toMap())
             }
             "focusApp" -> mapOf("ok" to focusApp(str(obj(args, "match"), "process")))
@@ -90,14 +94,15 @@ class Dispatcher(private val device: Device) {
     }
 
     private fun find(q: A11yQuery): Map<String, Any?> {
-        val root = scopedRoot()
+        val win = scopedWindow()
+        val root = device.windowRoot(win.id) ?: throw AgentError("no-window-match: 限定的窗口已经不在了，重新 scopeWindow")
         val hits = findAll(root, q)
         val ids = refs.snapshot(hits)
         val els = hits.mapIndexed { i, n ->
             mapOf("ref" to ids[i], "role" to n.role, "name" to n.name, "className" to n.className, "rect" to n.rect.toMap())
         }
         val out = mutableMapOf<String, Any?>("elements" to els)
-        if (hits.isEmpty() && device.windows().none { it.id == scope && it.foreground }) {
+        if (hits.isEmpty() && !win.foreground) {
             out["unbuilt"] = "a11y-unbuilt: 限定的窗口不在前台，空结果不可采信"
         }
         return out
@@ -107,19 +112,19 @@ class Dispatcher(private val device: Device) {
         // The old scope belongs to whatever app was in front; never let a later find search it.
         scope = null
         device.launch(pkg)
-        val deadline = System.currentTimeMillis() + 5_000
-        while (true) {
+        // Bounded by attempts (25 x 200 ms), not by the wall clock.
+        repeat(25) {
             if (device.foregroundPackage() == pkg) {
-                device.windows().firstOrNull { it.process == pkg && it.foreground }?.let { scope = it.id }
+                scope = Scope(pkg, null)
                 return true
             }
-            if (System.currentTimeMillis() >= deadline) return false
             device.sleep(200)
         }
+        throw AgentError("blocked-by-os: 启动 $pkg 后它没有到前台。可能是系统拦住了后台弹出界面：到 设置 → 应用 → Stream → 其他权限 打开「后台弹出界面」")
     }
 
     private fun scroll(dir: String, amount: Int) {
-        val area = scope?.let { device.windowRoot(it)?.rect } ?: device.screenSize()
+        val area = scope?.let { device.windowBounds(scopedWindow().id) } ?: device.screenSize()
         val x = area.centerX
         val hi = area.y + area.h * 7 / 10
         val lo = area.y + area.h * 3 / 10
@@ -137,7 +142,7 @@ class Dispatcher(private val device: Device) {
     private fun settle(args: JSONObject, via: String): Map<String, Any?> {
         val expect = args.optJSONObject("expect") ?: return mapOf("via" to via)
         device.sleep(300)
-        val root = scope?.let { device.windowRoot(it) }
+        val root = scope?.let { runCatching { device.windowRoot(scopedWindow().id) }.getOrNull() }
             ?: device.windows().firstOrNull { it.foreground }?.let { device.windowRoot(it.id) }
         val hit = root != null && findAll(root, A11yQuery.from(expect)).isNotEmpty()
         return mapOf("via" to via, "confirmed" to hit)
@@ -156,8 +161,18 @@ class Dispatcher(private val device: Device) {
         }
     }
 
+    /** The window the scope currently points at: among the app's windows, the foreground one, else the first. */
+    private fun scopedWindow(): WindowInfo {
+        val s = scope ?: throw AgentError("no-scope: 还没限定搜索范围，先 scopeWindow / focusApp")
+        val hits = device.windows().filter { w ->
+            w.process.equals(s.process, ignoreCase = true) && (s.title == null || w.title.contains(s.title))
+        }
+        return hits.firstOrNull { it.foreground } ?: hits.firstOrNull()
+            ?: throw AgentError("no-window-match: 限定的应用 ${s.process} 现在没有窗口")
+    }
+
     private fun scopedRoot(): UiNode {
-        val id = scope ?: throw AgentError("no-scope: 还没限定搜索范围，先 scopeWindow / focusApp")
+        val id = scopedWindow().id
         return device.windowRoot(id) ?: throw AgentError("no-window-match: 限定的窗口已经不在了，重新 scopeWindow")
     }
 
