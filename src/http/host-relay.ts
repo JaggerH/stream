@@ -3,6 +3,7 @@ import type { Server } from 'node:http'
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { tokenEqual } from './secrets.ts'
 import type { HostRelay, HostOp } from '../replay/desktop-driver.ts'
+import { parseHello, type HostRelayRegistry } from './host-registry.ts'
 
 /**
  * The `/api/host` relay — the backend end of the `host-desktop` Engine. It pairs the
@@ -14,7 +15,9 @@ import type { HostRelay, HostOp } from '../replay/desktop-driver.ts'
  */
 
 /** WS subprotocol name. Client offers [HOST_RELAY_PROTOCOL, token]; server echoes only the name. */
-export const HOST_RELAY_PROTOCOL = 'host-relay.v1'
+export const HOST_RELAY_PROTOCOL = 'host-relay.v2'
+/** The previous protocol. It is refused with a message naming the fix, never accepted. */
+export const STALE_HOST_PROTOCOL = 'host-relay.v1'
 
 /** A fake socket only needs `send` — so tests exercise WsHostRelay without a real WebSocket. */
 export interface HostSocket {
@@ -404,18 +407,20 @@ export function verifyHostUpgrade(
 }
 
 /**
- * Mount the `/api/host` WS endpoint on the existing node http server, feeding a WsHostRelay.
- * Mirrors attachExtRelay: loopback binding is only the first layer, so the handshake enforces
- * verifyHostUpgrade (reject http(s) origin + subprotocol-borne shared token). Each new
- * connection: connect(socket) (supersede old, audit-log); message → handleMessage;
- * close/error → disconnect. A ~20s WS ping keeps the connection warm.
+ * Mount the `/api/host` WS endpoint and feed a {@link HostRelayRegistry}.
+ *
+ * Handshake order: (1) a `host-relay.v1` offer gets **426** with a message that names the fix. A
+ * stale agent must not look like a token problem or like a backend that is down. (2) Then
+ * `verifyHostUpgrade` checks the origin and the token. (3) After the upgrade, the **first frame must
+ * be a `hello`** within `helloTimeoutMs`. Anything else closes with 4001. Only then is the device
+ * registered and frames routed to its relay. A ~20s WS ping keeps the connection warm.
  */
 export function attachHostRelay(
   server: Server,
-  relay: WsHostRelay,
-  opts: { token: string; path?: string; log?: (line: string) => void },
+  registry: HostRelayRegistry,
+  opts: { token: string; path?: string; log?: (line: string) => void; helloTimeoutMs?: number },
 ): WebSocketServer {
-  const { token, path = '/api/host', log = console.log } = opts
+  const { token, path = '/api/host', log = console.log, helloTimeoutMs = 5_000 } = opts
   const wss = new WebSocketServer({
     noServer: true,
     handleProtocols: (protocols: Set<string>) =>
@@ -424,6 +429,19 @@ export function attachHostRelay(
   server.on('upgrade', (req, socket, head) => {
     const pathname = new URL(req.url ?? '', 'http://localhost').pathname
     if (pathname !== path) return // not our path: leave for other WSS upgrade listeners
+    const offered = String(req.headers['sec-websocket-protocol'] ?? '')
+      .split(',')
+      .map((s) => s.trim())
+    if (offered.includes(STALE_HOST_PROTOCOL) && !offered.includes(HOST_RELAY_PROTOCOL)) {
+      const body = `Stream Desktop is too old — update it (this backend speaks ${HOST_RELAY_PROTOCOL})`
+      log(`[host-relay] refused a ${STALE_HOST_PROTOCOL} agent — ${body}`)
+      socket.write(
+        `HTTP/1.1 426 Upgrade Required\r\nContent-Type: text/plain; charset=utf-8\r\n` +
+          `Content-Length: ${Buffer.byteLength(body)}\r\nConnection: close\r\n\r\n${body}`,
+      )
+      socket.destroy()
+      return
+    }
     const ok = verifyHostUpgrade(
       { origin: req.headers.origin, protocolHeader: req.headers['sec-websocket-protocol'] },
       token,
@@ -437,7 +455,11 @@ export function attachHostRelay(
     wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req))
   })
   wss.on('connection', (socket) => {
-    relay.connect(socket)
+    let deviceId: string | null = null
+    const helloTimer = setTimeout(() => {
+      if (deviceId === null) socket.close(4001, 'expected hello')
+    }, helloTimeoutMs)
+    helloTimer.unref?.()
     const ping = setInterval(() => {
       try {
         socket.ping()
@@ -445,10 +467,27 @@ export function attachHostRelay(
         /* ping throws once the socket closes; the close handler cleans up */
       }
     }, 20_000)
-    socket.on('message', (data) => relay.handleMessage(data.toString()))
+    socket.on('message', (data) => {
+      const raw = data.toString()
+      if (deviceId !== null) {
+        registry.devices().find((d) => d.hello.deviceId === deviceId)?.relay.handleMessage(raw)
+        return
+      }
+      const hello = parseHello(raw)
+      if (!hello) {
+        log('[host-relay] first frame was not a hello — closing')
+        socket.close(4001, 'expected hello')
+        return
+      }
+      clearTimeout(helloTimer)
+      deviceId = hello.deviceId
+      registry.connect(socket, hello)
+      log(`[host-relay] device connected ${hello.deviceId} (${hello.platform}, ${hello.name}, v${hello.agentVersion}, ${hello.ops.length} ops)`)
+    })
     const teardown = () => {
+      clearTimeout(helloTimer)
       clearInterval(ping)
-      relay.disconnect(socket)
+      if (deviceId !== null) registry.disconnect(socket, deviceId)
     }
     socket.on('close', teardown)
     socket.on('error', teardown)
