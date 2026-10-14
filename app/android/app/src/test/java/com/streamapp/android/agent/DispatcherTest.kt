@@ -1,0 +1,138 @@
+package com.streamapp.android.agent
+
+import org.json.JSONObject
+import org.junit.Assert.*
+import org.junit.Before
+import org.junit.Test
+
+class DispatcherTest {
+    private lateinit var dev: FakeDevice
+    private lateinit var d: Dispatcher
+    private val search = FakeNode("Button", "搜索", rect = Rect(100, 200, 50, 40))
+    private val input = FakeNode("EditText", "搜索商家或商品", text = "")
+
+    private fun call(op: String, args: String = "{}") = d.dispatch(op, JSONObject(args))
+    @Suppress("UNCHECKED_CAST") private fun map(v: Any?) = v as Map<String, Any?>
+
+    @Before fun setUp() {
+        dev = FakeDevice()
+        dev.roots["1"] = FakeNode("FrameLayout", children = listOf(input, search), rect = Rect(0, 0, 1080, 2400))
+        d = Dispatcher(dev)
+    }
+
+    @Test fun declaresExactlyTheSixteenOps() {
+        assertEquals(
+            setOf("windows", "scopeWindow", "focusApp", "find", "invoke", "setValue", "type", "clearInput", "click", "scroll", "press", "readSubtree", "screenshot", "url", "sleep", "status"),
+            ANDROID_OPS.toSet(),
+        )
+        assertEquals(16, ANDROID_OPS.size)
+    }
+
+    @Test fun findNeedsAScope() {
+        val e = assertThrows(AgentError::class.java) { call("find", """{"query":{"role":"Button"}}""") }
+        assertTrue(e.message!!.startsWith("no-scope:"))
+    }
+
+    @Test fun scopeThenFindThenInvoke() {
+        call("scopeWindow", """{"match":{"process":"COM.SANKUAI.MEITUAN"}}""")
+        val found = map(call("find", """{"query":{"role":"Button","name":"搜索"}}"""))
+        @Suppress("UNCHECKED_CAST") val els = found["elements"] as List<Map<String, Any?>>
+        assertEquals(1, els.size)
+        assertEquals("Button", els[0]["role"])
+        assertEquals(mapOf("x" to 100, "y" to 200, "w" to 50, "h" to 40), els[0]["rect"])
+        assertFalse(found.containsKey("unbuilt"))
+        val out = map(call("invoke", """{"ref":"${els[0]["ref"]}"}"""))
+        assertEquals(mapOf("via" to "invoke"), out)
+        assertTrue("click 搜索" in dev.log)
+    }
+
+    @Test fun aRefFromAnOlderFindIsStale() {
+        call("scopeWindow", """{"match":{"process":"com.sankuai.meituan"}}""")
+        @Suppress("UNCHECKED_CAST") val ref = (map(call("find", """{"query":{"role":"Button"}}"""))["elements"] as List<Map<String, Any?>>)[0]["ref"]
+        call("find", """{"query":{"role":"EditText"}}""")
+        assertThrows(StaleRefException::class.java) { call("invoke", """{"ref":"$ref"}""") }
+    }
+
+    @Test fun expectAddsConfirmedAndItsAbsenceDoesNot() {
+        call("scopeWindow", """{"match":{"process":"com.sankuai.meituan"}}""")
+        @Suppress("UNCHECKED_CAST") val ref = (map(call("find", """{"query":{"role":"Button"}}"""))["elements"] as List<Map<String, Any?>>)[0]["ref"]
+        assertEquals(mapOf("via" to "invoke", "confirmed" to true), map(call("invoke", """{"ref":"$ref","expect":{"role":"EditText"}}""")))
+        @Suppress("UNCHECKED_CAST") val ref2 = (map(call("find", """{"query":{"role":"Button"}}"""))["elements"] as List<Map<String, Any?>>)[0]["ref"]
+        assertEquals(mapOf("via" to "invoke", "confirmed" to false), map(call("invoke", """{"ref":"$ref2","expect":{"name":"不存在"}}""")))
+    }
+
+    @Test fun emptyResultInABackgroundWindowCarriesUnbuilt() {
+        dev.wins = mutableListOf(WindowInfo("1", "com.sankuai.meituan", "美团", false))
+        call("scopeWindow", """{"match":{"process":"com.sankuai.meituan"}}""")
+        val r = map(call("find", """{"query":{"role":"Switch"}}"""))
+        assertTrue((r["unbuilt"] as String).startsWith("a11y-unbuilt:"))
+    }
+
+    @Test fun ambiguousAndMissingWindows() {
+        dev.wins = mutableListOf(WindowInfo("1", "p", "A", true), WindowInfo("2", "p", "B", false))
+        assertTrue(assertThrows(AgentError::class.java) { call("scopeWindow", """{"match":{"process":"p"}}""") }.message!!.startsWith("ambiguous-window:"))
+        assertTrue(assertThrows(AgentError::class.java) { call("scopeWindow", """{"match":{"process":"q"}}""") }.message!!.startsWith("no-window-match:"))
+        assertEquals("2", map(call("scopeWindow", """{"match":{"process":"p","title":"B"}}"""))["window"].let { (it as Map<*, *>)["id"] })
+    }
+
+    @Test fun typeAppendsToTheFocusedInput() {
+        dev.focused = FakeNode("EditText", "框", text = "麦")
+        assertEquals(mapOf("via" to "value"), map(call("type", """{"text":"当劳"}""")))
+        assertTrue("setText 框=麦当劳" in dev.log)
+    }
+
+    @Test fun messageDeliveryIsRefused() {
+        assertTrue(assertThrows(AgentError::class.java) { call("type", """{"text":"x","deliver":"message"}""") }.message!!.startsWith("unsupported-deliver:"))
+    }
+
+    @Test fun clickTapsTheCentreAndRightIsLongPress() {
+        call("click", """{"rect":{"x":100,"y":200,"w":50,"h":40}}""")
+        call("click", """{"rect":{"x":0,"y":0,"w":10,"h":10},"button":"right"}""")
+        assertTrue("tap 125,220 long=false" in dev.log)
+        assertTrue("tap 5,5 long=true" in dev.log)
+    }
+
+    @Test fun scrollDownSwipesUpOverTheScreen() {
+        call("scroll", """{"dir":"down","amount":1}""")
+        assertTrue("swipe 540,1680->540,720" in dev.log)
+    }
+
+    @Test fun pressMapsKeys() {
+        call("press", """{"key":"Back"}""")
+        call("press", """{"key":"Home"}""")
+        assertEquals(listOf("back", "home"), dev.log.filter { it == "back" || it == "home" })
+        assertTrue(assertThrows(AgentError::class.java) { call("press", """{"key":"Escape"}""") }.message!!.startsWith("unsupported-key:"))
+    }
+
+    @Test fun screenshotIsBase64Jpeg() {
+        val r = map(call("screenshot"))
+        assertEquals("AQID", r["base64"])
+        assertEquals(mapOf("x" to 0, "y" to 0, "w" to 1080, "h" to 2400), r["window"])
+        assertEquals(2.75, r["scale"])
+    }
+
+    @Test fun lockedDeviceFailsBeforeActing() {
+        dev.locked = true
+        assertTrue(assertThrows(AgentError::class.java) { call("click", """{"rect":{"x":0,"y":0,"w":2,"h":2}}""") }.message!!.startsWith("device-locked:"))
+        assertFalse(dev.log.any { it.startsWith("tap") })
+        assertEquals(emptyMap<String, Any?>(), map(call("status", """{"text":"下单中"}""")))
+    }
+
+    @Test fun focusAppWaitsForForeground() {
+        dev.fg = "com.android.launcher"
+        dev.launchMakesForeground = "me.ele"
+        dev.wins = mutableListOf(WindowInfo("9", "me.ele", "饿了么", true))
+        assertEquals(mapOf("ok" to true), call("focusApp", """{"match":{"process":"me.ele"}}"""))
+    }
+
+    @Test fun unknownOpAndMissingArg() {
+        assertEquals("unknown op: readText", assertThrows(AgentError::class.java) { call("readText") }.message)
+        assertEquals("missing arg: ref", assertThrows(AgentError::class.java) { call("invoke") }.message)
+    }
+
+    @Test fun urlAndSleep() {
+        assertEquals("com.sankuai.meituan/.Main", call("url"))
+        assertNull(call("sleep", """{"ms":20}"""))
+        assertTrue("sleep 20" in dev.log)
+    }
+}
