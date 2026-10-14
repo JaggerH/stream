@@ -1,6 +1,6 @@
 {
   "name": "@streamapp/stream",
-  "version": "0.0.28",
+  "version": "0.0.29",
   "description": "Stream — a self-hostable information-flow layer: many sources into one inbox, exposed to AI over MCP",
   "repository": {
     "type": "git",
@@ -89,9 +89,9 @@
     "capabilities/desktop/src/host-agent/binary.ts 的 DESKTOP_CONTROL_PLATFORMS。"
   ],
   "optionalDependencies": {
-    "@streamapp/desktop-win32-x64": "0.7.2",
-    "@streamapp/desktop-darwin-x64": "0.7.2",
-    "@streamapp/desktop-darwin-arm64": "0.7.2",
+    "@streamapp/desktop-win32-x64": "0.7.3",
+    "@streamapp/desktop-darwin-x64": "0.7.3",
+    "@streamapp/desktop-darwin-arm64": "0.7.3",
     "@ffmpeg-installer/win32-x64": "4.1.0",
     "@ffmpeg-installer/linux-x64": "4.1.0",
     "@ffmpeg-installer/darwin-x64": "4.1.0",

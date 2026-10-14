@@ -30,9 +30,9 @@
     "Rust 那侧真的重编时才发。两者绑成一个数会逼着每次都重发一次二进制。"
   ],
   "optionalDependencies": {
-    "@streamapp/desktop-win32-x64": "0.7.2",
-    "@streamapp/desktop-darwin-x64": "0.7.2",
-    "@streamapp/desktop-darwin-arm64": "0.7.2"
+    "@streamapp/desktop-win32-x64": "0.7.3",
+    "@streamapp/desktop-darwin-x64": "0.7.3",
+    "@streamapp/desktop-darwin-arm64": "0.7.3"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",
