@@ -17,7 +17,7 @@ only the previous connection of the same `deviceId`.
 - **THEN** the relay closes the socket with code 4001 and registers no device
 
 #### Scenario: a v1 agent is refused by name
-- **WHEN** an agent offers only `host-relay.v1`
+- **WHEN** an agent's offer includes `host-relay.v1`
 - **THEN** the upgrade is answered with HTTP 426 and a body saying Stream Desktop is too old
 
 ### Requirement: Declared op sets decide capability
