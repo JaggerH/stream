@@ -62,6 +62,11 @@ fun findAll(root: UiNode, q: A11yQuery): List<UiNode> {
 fun readSubtree(root: UiNode, spec: JSONObject): List<Map<String, String>> {
     val items = findAll(root, A11yQuery.from(spec.getJSONObject("itemQuery")))
     val fields = spec.getJSONObject("fields")
+    // A misspelt `read` would otherwise silently read the name.
+    for (field in fields.keys()) {
+        val read = fields.getJSONObject(field).optString("read")
+        require(read == "name" || read == "value") { "readSubtree: 字段 $field 的 read 必须是 name 或 value，收到「$read」" }
+    }
     return items.map { item ->
         fields.keys().asSequence().associateWith { field ->
             val f = fields.getJSONObject(field)

@@ -22,7 +22,7 @@ class RefTable<N> {
         val m = Regex("^g(\\d+)-(\\d+)$").matchEntire(ref)
             ?: throw StaleRefException("stale-ref: $ref is not a ref this agent issued")
         val (gen, idx) = m.destructured
-        if (gen.toInt() != generation) throw StaleRefException("stale-ref: $ref belongs to an older tree (now g$generation); find it again")
-        return nodes.getOrNull(idx.toInt()) ?: throw StaleRefException("stale-ref: $ref is out of range")
+        if (gen.toIntOrNull() != generation) throw StaleRefException("stale-ref: $ref belongs to an older tree (now g$generation); find it again")
+        return idx.toIntOrNull()?.let { nodes.getOrNull(it) } ?: throw StaleRefException("stale-ref: $ref is out of range")
     }
 }

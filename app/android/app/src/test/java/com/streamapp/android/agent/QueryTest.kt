@@ -64,4 +64,9 @@ class QueryTest {
         val spec = JSONObject("""{"itemQuery":{"role":"EditText"},"fields":{"v":{"read":"value"}},"dedupeBy":"v"}""")
         assertEquals(listOf(mapOf("v" to "公司")), readSubtree(t, spec))
     }
+
+    @Test fun aMisspeltReadIsRejected() {
+        val spec = JSONObject("""{"itemQuery":{"role":"EditText"},"fields":{"v":{"read":"vlaue"}},"dedupeBy":"v"}""")
+        assertThrows(IllegalArgumentException::class.java) { readSubtree(n("FrameLayout"), spec) }
+    }
 }

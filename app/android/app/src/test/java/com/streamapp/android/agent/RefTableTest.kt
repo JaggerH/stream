@@ -20,6 +20,7 @@ class RefTableTest {
 
     @Test fun garbageRefIsStaleNotACrash() {
         assertThrows(StaleRefException::class.java) { RefTable<String>().resolve("zzz") }
+        assertThrows(StaleRefException::class.java) { RefTable<String>().resolve("g99999999999-1") }
     }
 
     @Test fun refsAreUniqueAcrossSnapshots() {
