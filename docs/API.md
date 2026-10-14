@@ -143,6 +143,14 @@ The retrieval point is `GET /api/access-token`, and it **only answers local call
 so other devices cannot let themselves in by "opening the settings page once". It also returns `urls` (each local network interface's `http://<ip>:<port>/?token=...`),
 because a phone needs a clickable link, not a manually copied 64-bit hex string.
 
+**Pairing a phone**: a phone gets its own revocable token instead of the shared secret. Four routes:
+`POST /api/devices/pairing-code` mints a 6-digit, 5-minute, single-use code and answers **loopback callers only** (403 otherwise);
+`POST /api/devices/pair` (`{code, name}`) trades a valid code for `{deviceId: "android:<uuid>", deviceToken}` and is **exempt from the API access token**
+(the Host/Origin checks still apply; five failed attempts invalidate every outstanding code);
+`GET /api/devices` lists paired phones and online host agents; `DELETE /api/devices/:id` revokes a phone, forgetting its token and closing its live `/api/host` socket with 4003.
+Only `sha256(token)` is stored (`data/devices.json`, 0600). `/api/host` accepts the device token in place of the shared secret; a `hello.deviceId` that differs from the bound id closes the socket with 4003.
+The pairing-code response carries `qr`: one JSON string per LAN address, `{"stream":"pair","v":1,"backend":"http://<lan-ip>:<port>","code":"<6 digits>"}`, which the panel renders as QR codes.
+
 **The exempt routes** (registered **before** the gate, with their reasons documented in place): `/api/health`, `/api/ext/verify`,
 `/api/ext/relay-status`, `/api/ext/claimed-tabs`, `/api/ext/debug-log`, `/api/browser-capability[/diagnose]`.
 Their common property is "this is exactly what you need when you cannot connect / do not have a credential yet". The `/api/ext/*` routes have separate Origin gating.
