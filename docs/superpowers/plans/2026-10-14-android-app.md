@@ -18,7 +18,8 @@
 - Subprotocol `host-relay.v2`. The app offers `[host-relay.v2, <deviceToken>]`. Its first frame is `{type:'hello', deviceId, platform:'android', name, agentVersion, ops}`.
 - Declared ops (`ANDROID_OPS`, exactly these 16): `windows`, `scopeWindow`, `focusApp`, `find`, `invoke`, `setValue`, `type`, `clearInput`, `click`, `scroll`, `press`, `readSubtree`, `screenshot`, `url`, `sleep`, `status`. Not declared: `ensureApp`, `moveMouse`, `nudge`, `readText`, `readElements`, `findImage`.
 - Wire shapes are the ones `src/replay/desktop-driver.ts` unwraps: `find` → `{elements:[{ref,role,name,className,rect}], unbuilt?}`; actuation → `{via}` or `{via, confirmed}`; `screenshot` → `{base64, window, scale}` (JPEG); `windows` → `WindowInfo[]`; `scopeWindow` → `{window}`; `focusApp` → `{ok}`; `readSubtree` → `Record<string,string>[]`; `url` → string; `sleep` → `null`; `status` → `{}`.
-- Error strings start with a stable prefix, the same as the Rust agent: `missing arg:`, `unknown op:`, `stale-ref:`, `no-scope:`, `no-window-match:`, `ambiguous-window:`, `device-locked:`, `secure-window:`, `a11y-off:`, `unsupported-key:`, `unsupported-deliver:`, `not-editable:`, `action-failed:`, `gesture-failed:`.
+- Error strings start with a stable prefix, the same as the Rust agent: `missing arg:`, `unknown op:`, `stale-ref:`, `no-scope:`, `no-window-match:`, `ambiguous-window:`, `device-locked:`, `secure-window:`, `a11y-off:`, `unsupported-key:`, `unsupported-deliver:`, `not-editable:`, `action-failed:`, `gesture-failed:`, `blocked-by-os:` (the OS refused to start an activity from the background).
+- The scope is an app (package + optional title), re-resolved to that app's current window on every op: each Activity is its own window, so a window-id scope dies on the first navigation.
 - `confirmed` is three-state: present only when an `expect` was given. Never default it to `true`.
 - A node ref is valid for one tree snapshot. Using a ref from an older snapshot fails as `stale-ref:`; it never acts on a recycled node.
 - State frame: `{type:'state', a11yEnabled, screenOn, keyguardLocked, battery, charging}`, sent right after `hello`, every 30 s, and immediately when the accessibility service connects or disconnects.
@@ -2571,6 +2572,8 @@ One screen built in code (no layout XML, no AppCompat). Sections, top to bottom:
    - 电池不受限制: ✓ when `PowerManager.isIgnoringBatteryOptimizations(packageName)`; opens `Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS` with `package:` uri.
    - 自启动 (shown only when `Build.MANUFACTURER` equals `Xiaomi` ignoring case): state unknown (no API), button opens `ComponentName("com.miui.securitycenter", "com.miui.permcenter.autostart.AutoStartManagementActivity")`, falling back to `Settings.ACTION_APPLICATION_DETAILS_SETTINGS` when that throws `ActivityNotFoundException`.
    - 最近任务里锁定: text-only hint: `在最近任务里下拉 Stream 卡片加锁，防止被一键清理`.
+   - 后台弹出界面 / 锁屏显示 (shown only on Xiaomi): state unknown (no public API), hint `HyperOS 默认不让后台应用弹出界面，Stream 唤醒屏幕和打开外卖 App 都要用到`, button opens `ComponentName("com.miui.securitycenter", "com.miui.permcenter.permissions.PermissionsEditorActivity")` with extras `extra_pkgname` = packageName, falling back to `Settings.ACTION_APPLICATION_DETAILS_SETTINGS`.
+   - 受限制的设置: text-only hint shown while the accessibility service is off: `如果无障碍里 Stream 是灰的点不动：到 应用信息 → 右上角 ⋮ → 允许受限制的设置，再回来打开`. (Android 13+ restricts accessibility for apps installed from a browser.)
    - 锁屏: ✓ when `!KeyguardManager.isDeviceSecure`; when ✗ the hint reads `有锁屏密码时 Stream 无法在无人时操作手机`; button opens `Settings.ACTION_SECURITY_SETTINGS`.
 
 Refresh the checklist in `onResume`. When credentials exist, `onCreate` calls `RelayService.start(this)` so opening the app revives a killed service.
