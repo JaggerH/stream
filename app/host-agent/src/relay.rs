@@ -111,6 +111,16 @@ pub fn hello_frame(device_id: &str, platform: &str, name: &str, version: &str, o
     })
 }
 
+/// The ops this build can actually perform: every dispatched op, minus those a platform lacks
+/// (`nudge` is only implemented on Windows; elsewhere the trait default returns an error).
+pub fn declared_ops() -> Vec<&'static str> {
+    crate::protocol::OP_NAMES
+        .iter()
+        .copied()
+        .filter(|op| !(cfg!(not(windows)) && *op == "nudge"))
+        .collect()
+}
+
 /// This machine's hello. The device id is the host name, so it is stable across agent restarts and
 /// a reconnect is recognised as the same device (its session lease carries over).
 pub fn local_hello() -> serde_json::Value {
@@ -126,7 +136,7 @@ pub fn local_hello() -> serde_json::Value {
         platform,
         &host,
         env!("CARGO_PKG_VERSION"),
-        crate::protocol::OP_NAMES,
+        &declared_ops(),
     )
 }
 
@@ -200,7 +210,17 @@ mod tests {
     #[test]
     fn local_hello_declares_all_ops_and_a_desktop_id() {
         let v = local_hello();
-        assert_eq!(v["ops"].as_array().unwrap().len(), crate::protocol::OP_NAMES.len());
+        let ops: Vec<String> = v["ops"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|o| o.as_str().unwrap().to_string())
+            .collect();
+        assert_eq!(ops, declared_ops());
+        assert!(ops.iter().all(|o| crate::protocol::OP_NAMES.contains(&o.as_str())));
+        if cfg!(windows) {
+            assert_eq!(ops.len(), crate::protocol::OP_NAMES.len());
+        }
         assert!(v["deviceId"].as_str().unwrap().starts_with("desktop:"));
         assert!(matches!(v["platform"].as_str().unwrap(), "windows" | "macos"));
     }
