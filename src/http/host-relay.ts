@@ -454,6 +454,7 @@ export function attachHostRelay(
       return
     }
     let boundDevice: string | undefined
+    let deviceToken: string | undefined
     const shared = verifyHostUpgrade(
       { origin: req.headers.origin, protocolHeader: req.headers['sec-websocket-protocol'] },
       token,
@@ -462,7 +463,13 @@ export function attachHostRelay(
       const t = /^https?:\/\//i.test(req.headers.origin ?? '')
         ? null
         : offeredToken(req.headers['sec-websocket-protocol'], HOST_RELAY_PROTOCOL)
-      boundDevice = t ? deviceAuth?.(t) : undefined
+      try {
+        boundDevice = t ? deviceAuth?.(t) : undefined
+      } catch (e) {
+        log(`[host-relay] deviceAuth threw at upgrade — refusing: ${String(e)}`)
+        boundDevice = undefined
+      }
+      deviceToken = t ?? undefined
       if (!boundDevice) {
         log(`[host-relay] rejected upgrade (origin=${req.headers.origin ?? '<none>'})`)
         socket.write('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n')
@@ -470,12 +477,17 @@ export function attachHostRelay(
         return
       }
     }
-    wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req, boundDevice))
+    wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req, { boundDevice, deviceToken }))
   })
-  wss.on('connection', (socket, _req, boundDevice?: string) => {
+  wss.on('connection', (socket, _req, bound: { boundDevice?: string; deviceToken?: string } = {}) => {
+    const { boundDevice, deviceToken } = bound
     let deviceId: string | null = null
+    let closing = false
     const helloTimer = setTimeout(() => {
-      if (deviceId === null) socket.close(4001, 'expected hello')
+      if (deviceId === null) {
+        closing = true
+        socket.close(4001, 'expected hello')
+      }
     }, helloTimeoutMs)
     helloTimer.unref?.()
     const ping = setInterval(() => {
@@ -486,6 +498,7 @@ export function attachHostRelay(
       }
     }, 20_000)
     socket.on('message', (data) => {
+      if (closing) return
       const raw = data.toString()
       if (deviceId !== null) {
         registry.devices().find((d) => d.hello.deviceId === deviceId)?.relay.handleMessage(raw)
@@ -494,12 +507,34 @@ export function attachHostRelay(
       const hello = parseHello(raw)
       if (!hello) {
         log('[host-relay] first frame was not a hello — closing')
+        closing = true
         socket.close(4001, 'expected hello')
         return
       }
       if (boundDevice !== undefined && hello.deviceId !== boundDevice) {
         log(`[host-relay] device token for ${boundDevice} sent a hello for ${hello.deviceId} — closing`)
+        closing = true
         socket.close(4003, 'device id does not match its token')
+        return
+      }
+      if (boundDevice !== undefined) {
+        // Revocation can land between the upgrade and the hello; kick only reaches registered sockets.
+        let still: string | undefined
+        try {
+          still = deviceToken ? deviceAuth?.(deviceToken) : undefined
+        } catch (e) {
+          log(`[host-relay] deviceAuth threw at hello — closing: ${String(e)}`)
+        }
+        if (still !== boundDevice) {
+          log(`[host-relay] device token for ${boundDevice} no longer valid at hello — closing`)
+          closing = true
+          socket.close(4003, 'revoked')
+          return
+        }
+      } else if (hello.platform === 'android') {
+        log('[host-relay] shared secret claimed the android platform — closing')
+        closing = true
+        socket.close(4003, 'android devices must pair')
         return
       }
       clearTimeout(helloTimer)

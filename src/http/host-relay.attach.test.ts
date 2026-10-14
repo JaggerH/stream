@@ -184,4 +184,51 @@ describe('attachHostRelay device tokens', () => {
     registry.kick('android:k80', 4003, 'revoked')
     expect(await closed).toBe(4003)
   })
+  it('a device revoked between upgrade and hello cannot register', async () => {
+    const map: Record<string, string> = { 'dev-token': 'android:k80' }
+    const seen: string[] = []
+    const { registry, url } = await startWithDevices(map, seen)
+    const ws = new WebSocket(url, [HOST_RELAY_PROTOCOL, 'dev-token'])
+    await new Promise((r) => ws.on('open', r))
+    const closed = new Promise<number>((r) => ws.on('close', (code) => r(code)))
+    delete map['dev-token']
+    ws.send(JSON.stringify(phoneHello('android:k80')))
+    expect(await closed).toBe(4003)
+    expect(registry.devices()).toHaveLength(0)
+    expect(seen).toEqual([])
+  })
+
+  it('the shared secret cannot claim the android platform', async () => {
+    const { registry, url } = await start()
+    const ws = new WebSocket(url, [HOST_RELAY_PROTOCOL, TOKEN])
+    await new Promise((r) => ws.on('open', r))
+    const closed = new Promise<number>((r) => ws.on('close', (code) => r(code)))
+    ws.send(JSON.stringify(phoneHello('android:k80')))
+    expect(await closed).toBe(4003)
+    expect(registry.devices()).toHaveLength(0)
+  })
+
+  it('frames after a closing 4003 are ignored', async () => {
+    const { registry, url } = await startWithDevices({ 'dev-token': 'android:k80' })
+    const ws = new WebSocket(url, [HOST_RELAY_PROTOCOL, 'dev-token'])
+    await new Promise((r) => ws.on('open', r))
+    const closed = new Promise<number>((r) => ws.on('close', (code) => r(code)))
+    ws.send(JSON.stringify(phoneHello('android:wrong')))
+    ws.send(JSON.stringify(phoneHello('android:k80')))
+    expect(await closed).toBe(4003)
+    await new Promise((r) => setTimeout(r, 50))
+    expect(registry.devices()).toHaveLength(0)
+  })
+
+  it('a deviceAuth that throws is answered with 401', async () => {
+    const srv = createServer()
+    server = srv
+    attachHostRelay(srv, new HostRelayRegistry(), {
+      token: TOKEN, log: () => {}, deviceAuth: () => { throw new Error('boom') },
+    })
+    await new Promise<void>((r) => srv.listen(0, '127.0.0.1', r))
+    const ws = new WebSocket(`ws://127.0.0.1:${(srv.address() as AddressInfo).port}/api/host`, [HOST_RELAY_PROTOCOL, 'dev-token'])
+    const status = await new Promise<number>((r) => ws.on('unexpected-response', (_q, res) => r(res.statusCode ?? 0)))
+    expect(status).toBe(401)
+  })
 })
