@@ -10,7 +10,13 @@
     "name": "慢慢买",
     "tagline": "全网比价 · 关键词搜索",
     "facility": "manmanbuy",
-    "schemaVersion": 1
+    "schemaVersion": 1,
+    "_why_rateLimit": "**这是账号级的风控，代价落在用户本人身上。** 实测（2026-10-14，用户自己那个 Chrome、微信扫码登录的账号）：几分钟内对历史价页 `tool.manmanbuy.com/HistoryLowest.aspx` 打了约 25 次（两批 10 个并行 + 几次跳转），账号弹「您的频繁操作已经触发网站风控机制，请联系客服解除」，之后历史价一律查不出；解封当天再打 3 次查询又弹了一次。触发门槛没量出来，所以只能按「一个人手动一条条查」的量级给：一次一发（burst 1）、两发之间至少一分钟（perMinute 1）、一小时最多 10 发（perHour 10）。不给 maxWaitMs：历史价没有对话热路径，是低频后台活，宁可排队等。慢慢买自己存着约 9 个月的逐日价，晚几天查到不损失任何东西——别为了快调松这三个数。",
+    "rateLimit": {
+      "burst": 1,
+      "perMinute": 1,
+      "perHour": 10
+    }
   },
   "license": "Apache-2.0"
 }
