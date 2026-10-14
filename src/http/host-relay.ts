@@ -19,9 +19,10 @@ export const HOST_RELAY_PROTOCOL = 'host-relay.v2'
 /** The previous protocol. It is refused with a message naming the fix, never accepted. */
 export const STALE_HOST_PROTOCOL = 'host-relay.v1'
 
-/** A fake socket only needs `send` — so tests exercise WsHostRelay without a real WebSocket. */
+/** A fake socket only needs `send`; `close` lets the registry drop a revoked device. */
 export interface HostSocket {
   send(data: string): void
+  close?(code?: number, reason?: string): void
 }
 
 export class HostRelayDisconnected extends Error {
@@ -385,6 +386,13 @@ export class WsHostRelay implements HostRelay {
   }
 }
 
+/** The single non-protocol entry of a `Sec-WebSocket-Protocol` offer, which is the token. `null`
+ *  when the offer does not carry exactly one. */
+export function offeredToken(protocolHeader: string | undefined, protocol: string): string | null {
+  const rest = (protocolHeader ?? '').split(',').map((s) => s.trim()).filter((p) => p && p !== protocol)
+  return rest.length === 1 ? rest[0] : null
+}
+
 /**
  * WS upgrade auth (pure, unit-testable). Two gates:
  * 1. Origin must NOT be http(s):// — a web page origin is always rejected (holding the token
@@ -398,12 +406,8 @@ export function verifyHostUpgrade(
   protocol: string = HOST_RELAY_PROTOCOL,
 ): boolean {
   if (/^https?:\/\//i.test(info.origin ?? '')) return false
-  const offered = (info.protocolHeader ?? '')
-    .split(',')
-    .map((s) => s.trim())
-    .filter((p) => p && p !== protocol)
-  if (offered.length !== 1) return false
-  return tokenEqual(offered[0], token)
+  const t = offeredToken(info.protocolHeader, protocol)
+  return t !== null && tokenEqual(t, token)
 }
 
 /**
@@ -418,9 +422,16 @@ export function verifyHostUpgrade(
 export function attachHostRelay(
   server: Server,
   registry: HostRelayRegistry,
-  opts: { token: string; path?: string; log?: (line: string) => void; helloTimeoutMs?: number },
+  opts: {
+    token: string
+    deviceAuth?: (token: string) => string | undefined
+    onDeviceSeen?: (deviceId: string) => void
+    path?: string
+    log?: (line: string) => void
+    helloTimeoutMs?: number
+  },
 ): WebSocketServer {
-  const { token, path = '/api/host', log = console.log, helloTimeoutMs = 5_000 } = opts
+  const { token, deviceAuth, onDeviceSeen, path = '/api/host', log = console.log, helloTimeoutMs = 5_000 } = opts
   const wss = new WebSocketServer({
     noServer: true,
     handleProtocols: (protocols: Set<string>) =>
@@ -442,19 +453,26 @@ export function attachHostRelay(
       socket.destroy()
       return
     }
-    const ok = verifyHostUpgrade(
+    let boundDevice: string | undefined
+    const shared = verifyHostUpgrade(
       { origin: req.headers.origin, protocolHeader: req.headers['sec-websocket-protocol'] },
       token,
     )
-    if (!ok) {
-      log(`[host-relay] rejected upgrade (origin=${req.headers.origin ?? '<none>'})`)
-      socket.write('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n')
-      socket.destroy()
-      return
+    if (!shared) {
+      const t = /^https?:\/\//i.test(req.headers.origin ?? '')
+        ? null
+        : offeredToken(req.headers['sec-websocket-protocol'], HOST_RELAY_PROTOCOL)
+      boundDevice = t ? deviceAuth?.(t) : undefined
+      if (!boundDevice) {
+        log(`[host-relay] rejected upgrade (origin=${req.headers.origin ?? '<none>'})`)
+        socket.write('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n')
+        socket.destroy()
+        return
+      }
     }
-    wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req))
+    wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req, boundDevice))
   })
-  wss.on('connection', (socket) => {
+  wss.on('connection', (socket, _req, boundDevice?: string) => {
     let deviceId: string | null = null
     const helloTimer = setTimeout(() => {
       if (deviceId === null) socket.close(4001, 'expected hello')
@@ -479,9 +497,15 @@ export function attachHostRelay(
         socket.close(4001, 'expected hello')
         return
       }
+      if (boundDevice !== undefined && hello.deviceId !== boundDevice) {
+        log(`[host-relay] device token for ${boundDevice} sent a hello for ${hello.deviceId} — closing`)
+        socket.close(4003, 'device id does not match its token')
+        return
+      }
       clearTimeout(helloTimer)
       deviceId = hello.deviceId
       registry.connect(socket, hello)
+      if (boundDevice !== undefined) onDeviceSeen?.(boundDevice)
       log(`[host-relay] device connected ${hello.deviceId} (${hello.platform}, ${hello.name}, v${hello.agentVersion}, ${hello.ops.length} ops)`)
     })
     const teardown = () => {

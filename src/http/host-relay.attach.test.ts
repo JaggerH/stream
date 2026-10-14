@@ -127,3 +127,61 @@ describe('attachHostRelay (v2)', () => {
     expect(await closed).toBe(4001)
   })
 })
+
+async function startWithDevices(map: Record<string, string>, seen: string[] = []) {
+  const srv = createServer()
+  server = srv
+  const registry = new HostRelayRegistry()
+  attachHostRelay(srv, registry, {
+    token: TOKEN, log: () => {}, helloTimeoutMs: 2000,
+    deviceAuth: (t) => map[t],
+    onDeviceSeen: (id) => void seen.push(id),
+  })
+  await new Promise<void>((r) => srv.listen(0, '127.0.0.1', r))
+  const url = `ws://127.0.0.1:${(srv.address() as AddressInfo).port}/api/host`
+  return { registry, url }
+}
+const phoneHello = (deviceId: string) =>
+  ({ type: 'hello', deviceId, platform: 'android', name: 'K80', agentVersion: '0.1.0', ops: ['click'] })
+
+describe('attachHostRelay device tokens', () => {
+  it('a device token connects as its bound device and is reported as seen', async () => {
+    const seen: string[] = []
+    const { registry, url } = await startWithDevices({ 'dev-token': 'android:k80' }, seen)
+    const ws = new WebSocket(url, [HOST_RELAY_PROTOCOL, 'dev-token'])
+    await new Promise((r) => ws.on('open', r))
+    ws.send(JSON.stringify(phoneHello('android:k80')))
+    await until(() => registry.deviceFor('android') !== undefined)
+    expect(registry.deviceFor('android')?.hello.deviceId).toBe('android:k80')
+    expect(seen).toEqual(['android:k80'])
+    ws.close()
+  })
+
+  it('a device token claiming another device id is closed with 4003', async () => {
+    const { registry, url } = await startWithDevices({ 'dev-token': 'android:k80' })
+    const ws = new WebSocket(url, [HOST_RELAY_PROTOCOL, 'dev-token'])
+    await new Promise((r) => ws.on('open', r))
+    const closed = new Promise<number>((r) => ws.on('close', (code) => r(code)))
+    ws.send(JSON.stringify(phoneHello('android:someone-else')))
+    expect(await closed).toBe(4003)
+    expect(registry.devices()).toHaveLength(0)
+  })
+
+  it('an unknown token is refused with 401', async () => {
+    const { url } = await startWithDevices({})
+    const ws = new WebSocket(url, [HOST_RELAY_PROTOCOL, 'nope'])
+    const status = await new Promise<number>((r) => ws.on('unexpected-response', (_q, res) => r(res.statusCode ?? 0)))
+    expect(status).toBe(401)
+  })
+
+  it('kicking a device closes its socket with 4003', async () => {
+    const { registry, url } = await startWithDevices({ 'dev-token': 'android:k80' })
+    const ws = new WebSocket(url, [HOST_RELAY_PROTOCOL, 'dev-token'])
+    await new Promise((r) => ws.on('open', r))
+    ws.send(JSON.stringify(phoneHello('android:k80')))
+    await until(() => registry.devices().length === 1)
+    const closed = new Promise<number>((r) => ws.on('close', (code) => r(code)))
+    registry.kick('android:k80', 4003, 'revoked')
+    expect(await closed).toBe(4003)
+  })
+})

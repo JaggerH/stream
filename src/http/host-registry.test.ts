@@ -88,3 +88,16 @@ describe('HostRelayRegistry', () => {
     expect(d.ops.has('readText')).toBe(false)
   })
 })
+
+describe('HostRelayRegistry.kick', () => {
+  it('closes the live socket of that device only', () => {
+    const reg = new HostRelayRegistry()
+    const closed: Array<[number | undefined, string | undefined]> = []
+    const phone: HostSocket = { send: () => {}, close: (c, r) => void closed.push([c, r]) }
+    reg.connect(phone, hello({ deviceId: 'android:x', platform: 'android' }))
+    reg.connect(fakeSocket().socket, hello())
+    expect(reg.kick('android:x', 4003, 'revoked')).toBe(true)
+    expect(closed).toEqual([[4003, 'revoked']])
+    expect(reg.kick('android:nope', 4003, 'revoked')).toBe(false)
+  })
+})

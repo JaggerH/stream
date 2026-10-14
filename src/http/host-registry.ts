@@ -87,6 +87,15 @@ export class HostRelayRegistry {
     if (this.live.get(deviceId)?.socket === socket) this.live.delete(deviceId)
   }
 
+  /** Drop a device's live connection (revoked). Its pending ops fail as disconnected through the
+   *  socket's close handler. */
+  kick(deviceId: string, code: number, reason: string): boolean {
+    const l = this.live.get(deviceId)
+    if (!l) return false
+    l.socket.close?.(code, reason)
+    return true
+  }
+
   /** The device a recipe for `surface` runs on: the most recently connected one. */
   deviceFor(surface: HostSurface): HostDevice | undefined {
     let best: HostDevice | undefined
