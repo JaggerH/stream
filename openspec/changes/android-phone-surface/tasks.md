@@ -25,7 +25,16 @@ plans out of the change directory while the change is in the open phase).
 
 ## 3. Stream Android app
 
-Plan: `plans/03-android-app.md` (written after plan 2 lands)
+Plan: `docs/superpowers/plans/2026-10-14-android-app.md`
+
+- [ ] 3.1 Backend: device state frames, local op endpoint, APK route, panel badge
+- [ ] 3.2 Project skeleton, host-relay frames, build script
+- [ ] 3.3 Query engine and snapshot refs
+- [ ] 3.4 Op dispatcher over a device interface
+- [ ] 3.5 Accessibility service, device actions, takeover banner, wake
+- [ ] 3.6 Foreground relay service
+- [ ] 3.7 Pairing, setup checklist, start on boot
+- [ ] 3.8 Spec delta, cookbook, live check on the REDMI K80
 
 ## 4. Recipe platform field and Android vocabulary
 
