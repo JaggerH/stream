@@ -23,7 +23,7 @@ export interface ChromeSurfaceDeps {
   chromeShot: (tabId: number) => Promise<string | null>
   chromeAct: (action: LaneAction, confirmed?: boolean) => Promise<ActResult>
   /** find-or-open 一张标签（不 attach、不注入——所以 chrome://* 也开得了），回执带 title。 */
-  chromeOpen: (url: string, opts?: { ownWindow?: boolean }) => Promise<{ tabId: number; title: string; url: string; created: boolean }>
+  chromeOpen: (url: string) => Promise<{ tabId: number; title: string; url: string; created: boolean }>
   chromeTabs: () => Promise<Array<{ tabId: number; url: string; title: string; active?: boolean; openerTabId?: number }>>
   chromeCloseTab: (tabId: number) => Promise<void>
 }
@@ -105,7 +105,7 @@ export async function chromeActVerb(
     if (!spec.targetUrl) throw new Error(`chrome open needs targetUrl (the page to open)`)
     return {
       status: 'done',
-      result: await (spec.ownWindow ? deps.chromeOpen(spec.targetUrl, { ownWindow: true }) : deps.chromeOpen(spec.targetUrl)),
+      result: await deps.chromeOpen(spec.targetUrl),
     }
   }
   return deps.chromeAct({ ...spec, tabId: chromeTabId(a.address, 'act') }, a.confirmed)

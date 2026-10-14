@@ -131,7 +131,6 @@ function actDescription(has: (t: CdpTier) => boolean, tiers: readonly CdpTier[])
         ? 'Grouping does not make a `chrome://*` page drivable — the debugger still refuses it; to act on one, use the returned `title` to address the native window as `app:chrome.exe/<title>` (a Chrome window is titled "<tab title> - Google Chrome").'
         : 'Grouping does not make a `chrome://*` page drivable — the debugger still refuses it.',
       "`title` may come back empty if the page hadn't titled itself within ~2s. `domain` is unused by open — pass the target's hostname.",
-      "`ownWindow:true` opens the page in ITS OWN unfocused Chrome window instead (grouped there as \"Stream 独立窗\", still drivable, never raised). Use it for pages that must keep rendering while the user works — a background tab gets 0 animation frames, and a tab sharing the user's window gets pushed to the background the moment they switch tabs. It reuses only a tab previously opened this way (returned as-is with `created:false`, not activated, window not focused); the user's own tab on the same URL is ignored. The window still needs Chrome's native occlusion detection off to render while covered by other apps.",
     ]),
     has('desktop') && ACT_LAUNCH_BLOCK,
   ])
@@ -189,7 +188,6 @@ const actParams = (has: (t: CdpTier) => boolean): CdpParamSpec[] => [
   { name: 'expect', type: 'string', optional: true },
   { name: 'intent', type: 'enum', values: ['send', 'publish', 'purchase', 'delete', 'credential'], optional: true },
   { name: 'confirmed', type: 'boolean', optional: true },
-  { name: 'ownWindow', type: 'boolean', optional: true },
 ]
 
 /**

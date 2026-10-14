@@ -454,9 +454,8 @@ export class ExtRelay {
    * titled "<tab title> - Google Chrome", so `app:chrome.exe/<title>` addresses the very page
    * this returned.
    */
-  openTab(url: string, opts: { ownWindow?: boolean } = {}): Promise<{ tabId: number; title: string; url: string; created: boolean }> {
-    // ownWindow 只在为 true 时才铺进去（exactOptionalPropertyTypes，同本文件另两处）
-    return this.send('openTab', { op: 'openTab', url, ...(opts.ownWindow ? { ownWindow: true } : {}) }) as Promise<{
+  openTab(url: string): Promise<{ tabId: number; title: string; url: string; created: boolean }> {
+    return this.send('openTab', { op: 'openTab', url }) as Promise<{
       tabId: number
       title: string
       url: string

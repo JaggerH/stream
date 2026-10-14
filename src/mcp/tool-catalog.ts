@@ -1189,7 +1189,7 @@ export function toolCatalog(service: StreamServiceLike, extras: McpExtras): Tool
       name: 'cdp_act',
       description: cdpToolSpec('cdp_act').description,
       schema: cdpSchema('cdp_act'),
-      run: ({ target, kind, domain, ref, frame, selector, text, targetUrl, exe, args, x, y, px, paths, expression, expect, intent, confirmed, ownWindow }) =>
+      run: ({ target, kind, domain, ref, frame, selector, text, targetUrl, exe, args, x, y, px, paths, expression, expect, intent, confirmed }) =>
         cdpAct({
           target: target as string,
           kind: kind as ActionKind,
@@ -1209,7 +1209,6 @@ export function toolCatalog(service: StreamServiceLike, extras: McpExtras): Tool
           expect: expect as string | undefined,
           intent: intent as ActionIntent | undefined,
           confirmed: confirmed as boolean | undefined,
-          ownWindow: ownWindow as boolean | undefined,
         }),
     })
     entries.push({

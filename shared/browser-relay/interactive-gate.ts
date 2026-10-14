@@ -78,12 +78,6 @@ export interface ActionSpec {
   x?: number
   y?: number
   /**
-   * `kind:'open'`（chrome 档）开进**它自己的、不抢焦点的窗口**，而不是用户那扇窗里的一张标签。
-   * 给要一直跑着的页面（游戏、动画）：后台标签不出帧，而跟用户挤一扇窗就总会被挤到后台。
-   * 复用只认之前这样开出来的那张，找到了不切、不抬。机制见扩展 `openInOwnWindow` 头注。
-   */
-  ownWindow?: boolean
-  /**
    * 在哪个 **iframe** 里动手（chrome 档）：frame id（来自 `cdp_look({inventory:true})` 的
    * `frames` / 条目上的 `frame`），或 frame URL 的一段（包含匹配，命中多个就报错）。
    * 缺席 = 顶层文档；给了 `ref` 时不必给——编号全 tab 唯一，自己会找到所在的 frame。

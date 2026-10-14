@@ -114,8 +114,8 @@ describe('SW 醒来对账：只回收没人看的探针', () => {
   })
 })
 
-describe('独立窗组（openTab ownWindow）', () => {
-  // 主组里没有它、它在自己那扇窗的组里——醒来对账不能把它当成"被拖出去了"撤掉
+describe('别的窗里的组（adoptOpenedTab 在主组以外的窗里另建的组）', () => {
+  // 主组里没有它、它在别的窗的组里——醒来对账不能把它当成"被拖出去了"撤掉
   function withWindowGroup(windowLive: number[]) {
     const chrome = makeChrome({ groupId: 777, members: [[5, 'adopted'], [30, 'created']], live: [5] })
     ;(chrome._local.tabGroup as { windowGroups?: number[] }).windowGroups = [888]

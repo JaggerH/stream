@@ -23,9 +23,7 @@ export type Inbound =
   // `Cannot access a chrome:// URL`，而 tab 其实已经建出来了——留下一个没人管的空窗口）。
   // 新建的标签**照样入会话组**（用户自己早开着、被 find 命中的那张不动）：组是"这张标签是
   // Stream 开的"的归属与可见边界，不是"可不可被驱动"的判据。
-  // ownWindow:开进一扇**自己的、不抢焦点的窗口**（见 openInOwnWindow）——给要一直跑着、
-  // 又不能跟用户抢同一扇窗当前标签位的页面（游戏、动画：后台标签不出帧）。
-  | { id: number; op: 'openTab'; url: string; ownWindow?: boolean }
+  | { id: number; op: 'openTab'; url: string }
   | { id: number; op: 'subscribe'; tabId: number; domains: string[] }
   | { id: number; op: 'unsubscribe'; subscriptionId: number }
   | { id: number; op: 'list' } // 枚举会话组内 tab（AI 靠它认目标，不靠猜）
@@ -50,8 +48,9 @@ const LEDGER_CHECKED_KEY = 'tabGroupChecked'
 const STARTUP_GRACE_MS = 2000
 /** 会话标签组在标签栏上的名字 —— 用户认边界靠它。 */
 const GROUP_TITLE = 'Stream'
-/** 独立窗里那种组的名字。**必须和 GROUP_TITLE 不同**：浏览器重启后 findExistingGroup 按
- *  GROUP_TITLE 认领主组，同名的话可能认到独立窗那组，之后开的标签全被塞进那扇窗。 */
+/** 主组那扇窗以外的窗口里另建的组的名字（见 adoptOpenedTab）。**必须和 GROUP_TITLE 不同**：
+ *  浏览器重启后 findExistingGroup 按 GROUP_TITLE 认领主组，同名的话可能认到别的窗那组，
+ *  之后开的标签全被塞进那扇窗。 */
 const WINDOW_GROUP_TITLE = 'Stream 独立窗'
 const DEBUGGER_VERSION = '1.3'
 
@@ -285,15 +284,15 @@ type TabOrigin =
 function mayRemove(origin: TabOrigin): boolean {
   return origin !== 'adopted'
 }
-// windowGroups:独立窗（openInOwnWindow）里的组。标签组只能待在一扇窗里，所以一张开在自己
-// 窗口里的标签没法进主组，只能在那扇窗里另起一组；归属判据照旧是「在我们的组里」，只是组不止一个。
+// windowGroups:主组那扇窗以外的窗口里的组。标签组只能待在一扇窗里，所以我们的标签在别的
+// 窗口里开出的新标签没法进主组，只能在那扇窗里另起一组；归属判据照旧是「在我们的组里」，只是组不止一个。
 // popups:开在 popup 窗里的在册标签(被 Stream 自己的标签 `window.open(…,'popup')` 开出来的)。
 // popup 窗放不了标签组,也不能把标签挪出去,所以它们是"在册但不在组"的唯一一类——归属判据
 // 对它们退回"账本有 ∧ 浏览器里还在 ∧ 窗口仍是 popup"。
 type GroupState = { groupId: number | null; windowGroups: number[]; popups: Set<number>; members: Map<number, TabOrigin> }
 type GroupSnapshot = { groupId: number | null; windowGroups?: number[]; popups?: number[]; members: [number, TabOrigin][] }
 
-/** 这个 groupId 是不是我们的组（主组或某扇独立窗的组）。 */
+/** 这个 groupId 是不是我们的组（主组或某扇别的窗里的组）。 */
 function isOurGroup(g: GroupState, gid: number | undefined): boolean {
   return gid != null && gid !== -1 && (gid === g.groupId || g.windowGroups.includes(gid))
 }
@@ -330,7 +329,7 @@ async function hydrateGroup(): Promise<GroupState> {
 async function persistGroup(g: GroupState): Promise<void> {
   const snap: GroupSnapshot = {
     groupId: g.groupId,
-    ...(g.windowGroups.length ? { windowGroups: g.windowGroups } : {}), // 没开过独立窗就不写这格
+    ...(g.windowGroups.length ? { windowGroups: g.windowGroups } : {}), // 没有别的窗里的组就不写这格
     ...(g.popups.size ? { popups: [...g.popups] } : {}),
     members: [...g.members],
   }
@@ -704,8 +703,8 @@ async function isPopupWindow(windowId: number | undefined): Promise<boolean> {
  * 照样被兜底回收）。
  *
  * 放到哪：
- * - 与开启者同一扇普通窗 → 进开启者所在的那个组（主组或某扇独立窗的组）；
- * - 另一扇普通窗 → 在那扇窗里另建一组（名字同独立窗组），组只能待在一扇窗里；
+ * - 与开启者同一扇普通窗 → 进开启者所在的那个组（主组或某扇别的窗里的组）；
+ * - 另一扇普通窗 → 在那扇窗里另建一组（名字 WINDOW_GROUP_TITLE），组只能待在一扇窗里；
  * - popup 窗 → 放不了组，记进 `popups`，照样可驱动（见 GroupState 头注）。
  *
  * 收下之后往后端报一声 `tab-opened`：点击的回执靠它说出"这一下开了新标签 tabId=…"。
@@ -761,7 +760,7 @@ export function onTabCreated(tab: chrome.tabs.Tab): Promise<void> {
 chrome.tabs.onCreated?.addListener?.((tab) => void onTabCreated(tab))
 
 /**
- * 独立窗组的对账，返回这些组里现在活着的 tab。
+ * 别的窗里那些组的对账，返回这些组里现在活着的 tab。
  * - 浏览器里有、账本没有的组（浏览器重启作废了账本）→ 按名字认领，同主组的 findExistingGroup；
  * - 账本有、浏览器里已经没有 tab 的组（用户关了那扇窗）→ 从账本删掉；
  * - 组里有、账本没有的 tab → 认不出出身，一律 adopted（红线：绝不 remove）。
@@ -812,7 +811,7 @@ export async function reconcileOnWake(): Promise<void> {
         .map((t: { id?: number }) => t.id)
         .filter((id): id is number => id != null),
     )
-    // 独立窗里的成员不在主组，但也是活的——①别把它们当"拖出去了"撤掉，②也别把它们塞回主组
+    // 别的窗里的成员不在主组，但也是活的——①别把它们当"拖出去了"撤掉，②也别把它们塞回主组
     const inMain = new Set(live)
     for (const id of windowLive) live.add(id)
     // popup 窗里的在册标签不在任何组里——还活着（且窗口仍是 popup）就算 live，否则按撤销处理。
@@ -1040,42 +1039,6 @@ async function createUnfocusedFullscreenWindow(url: string): Promise<number | nu
   }
   const win = await chrome.windows.create({ focused: false, url, ...bounds }).catch(() => undefined)
   return win?.tabs?.[0]?.id ?? null
-}
-
-/**
- * 把一个页面开进**它自己的窗口**，并让它照样可驱动。返回 tabId。
- *
- * **为什么要单独一扇窗**：后台标签不出帧（`visibilityState=hidden`、rAF 0 帧）。跟用户挤在同一扇
- * 窗里的页面，用户一切到别的标签它就停；要让它跑，只能把它切回当前标签——Chrome 切标签会顺手
- * 把整扇窗拉到前面，打断用户（2026-09-28 实测：Cocos 游戏被同窗的其他标签挤到后台，一帧不出）。
- * 自己一扇窗里它永远是当前标签；窗口被别的程序盖住时要出帧，另需 Chrome 关掉遮挡检测
- * （`--disable-features=CalculateNativeWinOcclusion` 或 chrome://flags 同名开关）。
- *
- * **为什么另起一组**：标签组只能待在一扇窗里——`chrome.tabs.group` 把标签编进主组会把它**搬回**
- * 主组那扇窗。所以在新窗里另建一组（名字 WINDOW_GROUP_TITLE），记进 windowGroups；拖出 = 撤销
- * 这条规矩照旧成立。
- *
- * 造窗 `focused:false`，建完**不**抬窗——这正是它存在的意义。
- */
-async function openInOwnWindow(url: string): Promise<number> {
-  const tabId = await createUnfocusedFullscreenWindow(url)
-  if (tabId == null) throw new Error(`failed to open ${url} in its own window`)
-  await withOwned((o) => o.add(tabId)) // 出身=自建（close 时才 remove 得掉）
-  const run = groupQueue.then(async () => {
-    const g = await hydrateGroup()
-    const { windowId } = await chrome.tabs.get(tabId)
-    const gid = await chrome.tabs.group({ tabIds: [tabId], createProperties: { windowId } })
-    await nameGroup(gid, WINDOW_GROUP_TITLE)
-    if (!g.windowGroups.includes(gid)) g.windowGroups.push(gid)
-    g.members.set(tabId, 'created')
-    await persistGroup(g)
-  })
-  groupQueue = run.then(
-    () => {},
-    () => {},
-  )
-  await run
-  return tabId
 }
 
 /**
@@ -1398,16 +1361,6 @@ async function dispatchInner(msg: Inbound, marks: HopMarks = {}): Promise<{ id: 
           // chrome:// 依旧驱动不了，那是 chrome:// 自身的限制——真去 attach 时它会诚实报错；
           // 要动这类页得走原生窗口那一档（app:chrome.exe/<title>，回执里的 title 就是这座桥）。
           const all = await chrome.tabs.query({})
-          if (msg.ownWindow) {
-            // 独立窗档只复用**我们自己开在独立窗里的**那张：命中了就原样回（不切、不抬——它本来
-            // 就是那扇窗的当前标签）；用户自己开着的同址标签不算，它在用户的窗里，正是要避开的那种。
-            const g = await hydrateGroup()
-            const mine = all.find(
-              (t) => t.id != null && sameUrl(t.url ?? '', msg.url) && g.members.has(t.id) && g.windowGroups.includes(t.groupId ?? -1),
-            )
-            if (mine?.id != null) return { id: msg.id, result: await openReceipt(mine.id, false) }
-            return { id: msg.id, result: await openReceipt(await openInOwnWindow(msg.url), true) }
-          }
           const hit = all.find((t) => t.id != null && sameUrl(t.url ?? '', msg.url))
           if (hit?.id != null) {
             // 命中的是**用户自己的**标签：只切过去，不拽进会话组——把它编入组等于替他做了

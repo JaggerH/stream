@@ -144,13 +144,10 @@ cdp_act({ target:'chrome', kind:'open', domain:'<hostname>', targetUrl:'<url>' }
 `cdp_look({target:'chrome', url})` 同级，而后者从来不设门；`goto` 的跨站门管的是"把一个**已有**
 tab 劫持到别的站"，那是另一件事。（`domain` 这条路用不上，随手传目标的 hostname 即可。）
 
-**要一直跑着的页面（游戏、动画、要截图的渲染页）加 `ownWindow:true`**：开进一扇**自己的、不抢焦点的
-窗口**（标签栏上是一个叫「Stream 独立窗」的组），照样可驱动，之后再喊同一个网址只回那张、不切不抬。
-为什么：后台标签 `visibilityState=hidden`、rAF 0 帧——跟用户挤在一扇窗里，用户一切标签它就停，
-而把它切回来会连窗口一起抬到用户眼前。**别用"切回来 + 抬窗"去救一个不出帧的页面**，给它单开一扇窗。
-窗口被别的程序盖住也要出帧，还得 Chrome 关掉遮挡检测（chrome://flags 的 Calculate window
-occlusion on Windows = Disabled，或启动参数 `--disable-features=CalculateNativeWinOcclusion`）。
-判据用页内 1 秒 rAF 计数，别用 `visibilityState` 立刻读。
+**要出帧才看得到的页面（游戏、动画、要截图的渲染页），截图前先抬到前台**：后台标签、最小化或被锁屏的窗口
+`visibilityState=hidden`、rAF 0 帧，截出来是黑的。用同一网址再发一次 `kind:'open'`——命中已开着的那张就把它
+切成当前标签并抬窗——确认页内 1 秒 rAF 计数 > 0 再截。别为它另开一扇窗：多出来的窗口会变成 Chrome 的
+"最近活动窗口"，用户之后从别处打开的页面会落进那扇窗里。
 
 **它不挂 debugger、不注入脚本**——好处是 `chrome://*` 这类**特权页开得了**。
 `cdp_look({target:'chrome', url})` 是「开 + attach + eval」焊死的一件事，对特权页会在 attach

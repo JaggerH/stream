@@ -759,7 +759,7 @@ export function buildMcpExtras(boot: McpExtrasDeps): McpExtras {
     // and revocable there); a tab that was already open is the user's and is only activated.
     // The receipt's title is what turns an extension tabId into a native-window address
     // (`app:chrome.exe/<title>`), so the two address spaces meet here.
-    chromeOpen: (url: string, opts?: { ownWindow?: boolean }) => boot.extRelay.openTab(url, opts),
+    chromeOpen: (url: string) => boot.extRelay.openTab(url),
     chromeTabs: () => boot.extRelay.list(),
     // Finish with a tab. Closing is a COMMAND (the AI sends it when a round is done; the user
     // can just as well close the tab by hand — the two don't conflict), never a forced cleanup
