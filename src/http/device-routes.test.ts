@@ -75,6 +75,7 @@ describe('device routes', () => {
     const res = await app.request(`/api/devices/${encodeURIComponent(r.deviceId)}`, { method: 'DELETE' })
     expect(res.status).toBe(204)
     expect(closed).toEqual([4003])
+    expect(registry.devices()).toHaveLength(0)
     expect(store.deviceForToken(r.deviceToken)).toBeUndefined()
     expect((await app.request(`/api/devices/${encodeURIComponent(r.deviceId)}`, { method: 'DELETE' })).status).toBe(404)
   })

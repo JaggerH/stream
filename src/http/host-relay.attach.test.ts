@@ -230,6 +230,37 @@ describe('attachHostRelay device tokens', () => {
     expect(registry.devices()).toHaveLength(0)
   })
 
+  it('a device token cannot register as a desktop host', async () => {
+    const seen: string[] = []
+    const { registry, url } = await startWithDevices({ 'dev-token': 'android:k80' }, seen)
+    const ws = new WebSocket(url, [HOST_RELAY_PROTOCOL, 'dev-token'])
+    await new Promise((r) => ws.on('open', r))
+    const closed = new Promise<number>((r) => ws.on('close', (code) => r(code)))
+    ws.send(JSON.stringify({ ...phoneHello('android:k80'), platform: 'windows' }))
+    expect(await closed).toBe(4003)
+    expect(registry.devices()).toHaveLength(0)
+    expect(registry.deviceFor('desktop')).toBeUndefined()
+    expect(seen).toEqual([])
+  })
+
+  it('frames from a kicked socket no longer reach the relay', async () => {
+    const { registry, url } = await startWithDevices({ 'dev-token': 'android:k80' })
+    const ws = new WebSocket(url, [HOST_RELAY_PROTOCOL, 'dev-token'])
+    await new Promise((r) => ws.on('open', r))
+    ws.send(JSON.stringify(phoneHello('android:k80')))
+    await until(() => registry.devices().length === 1)
+    const relay = registry.deviceFor('android')!.relay
+    let handled = 0
+    const orig = relay.handleMessage.bind(relay)
+    relay.handleMessage = (raw: string) => { handled++; orig(raw) }
+    registry.kick('android:k80', 4003, 'revoked')
+    expect(registry.devices()).toHaveLength(0)
+    ws.send(JSON.stringify({ id: 1, result: [] }))
+    await new Promise((r) => setTimeout(r, 50))
+    expect(handled).toBe(0)
+    expect(registry.devices()).toHaveLength(0)
+  })
+
   it('frames after a closing 4003 are ignored', async () => {
     const { registry, url } = await startWithDevices({ 'dev-token': 'android:k80' })
     const ws = new WebSocket(url, [HOST_RELAY_PROTOCOL, 'dev-token'])

@@ -87,11 +87,13 @@ export class HostRelayRegistry {
     if (this.live.get(deviceId)?.socket === socket) this.live.delete(deviceId)
   }
 
-  /** Drop a device's live connection (revoked). Its pending ops fail as disconnected through the
-   *  socket's close handler. */
+  /** Drop a device's live connection (revoked). Deregisters synchronously (live entry gone, pending
+   *  ops fail as disconnected) rather than waiting for the peer to acknowledge the close; the later
+   *  close handler's `disconnect` is a no-op because both guards compare socket identity. */
   kick(deviceId: string, code: number, reason: string): boolean {
     const l = this.live.get(deviceId)
     if (!l) return false
+    this.disconnect(l.socket, deviceId)
     l.socket.close?.(code, reason)
     return true
   }

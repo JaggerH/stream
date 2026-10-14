@@ -517,6 +517,12 @@ export function attachHostRelay(
         socket.close(4003, 'device id does not match its token')
         return
       }
+      if (boundDevice !== undefined && hello.platform !== 'android') {
+        log(`[host-relay] device token for ${boundDevice} claimed platform ${hello.platform} — closing`)
+        closing = true
+        socket.close(4003, 'device tokens are android-only')
+        return
+      }
       if (boundDevice !== undefined) {
         // Revocation can land between the upgrade and the hello; kick only reaches registered sockets.
         let still: string | undefined

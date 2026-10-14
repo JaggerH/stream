@@ -100,4 +100,16 @@ describe('HostRelayRegistry.kick', () => {
     expect(closed).toEqual([[4003, 'revoked']])
     expect(reg.kick('android:nope', 4003, 'revoked')).toBe(false)
   })
+
+  it('deregisters at once and fails pending ops, without waiting for the socket to close', async () => {
+    const reg = new HostRelayRegistry()
+    const phone: HostSocket = { send: () => {}, close: () => {} }
+    const relay = reg.connect(phone, hello({ deviceId: 'android:x', platform: 'android' }))
+    const pending = relay.send({ op: 'click' })
+    expect(reg.kick('android:x', 4003, 'revoked')).toBe(true)
+    expect(reg.devices()).toHaveLength(0)
+    await expect(pending).rejects.toBeInstanceOf(HostRelayDisconnected)
+    reg.disconnect(phone, 'android:x') // the later close handler is a no-op
+    expect(reg.devices()).toHaveLength(0)
+  })
 })
