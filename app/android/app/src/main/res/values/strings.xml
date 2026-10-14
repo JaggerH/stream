@@ -1,3 +1,4 @@
 <resources>
     <string name="app_name">Stream</string>
+    <string name="a11y_description">让 Stream 按你写好的 recipe 在这台手机上点按、读屏。只在后端下发指令时动作，执行中屏幕顶部有提示条，可随时点「停止」。</string>
 </resources>
