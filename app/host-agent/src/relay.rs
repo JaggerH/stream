@@ -114,7 +114,9 @@ pub fn hello_frame(device_id: &str, platform: &str, name: &str, version: &str, o
 /// This machine's hello. The device id is the host name, so it is stable across agent restarts and
 /// a reconnect is recognised as the same device (its session lease carries over).
 pub fn local_hello() -> serde_json::Value {
-    let host = sysinfo::System::host_name().unwrap_or_else(|| "unknown".to_string());
+    let host = sysinfo::System::host_name()
+        .filter(|h| !h.trim().is_empty())
+        .unwrap_or_else(|| "unknown".to_string());
     let platform = match std::env::consts::OS {
         "macos" => "macos",
         _ => "windows",
