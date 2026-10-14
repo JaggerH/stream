@@ -34,7 +34,7 @@ class RelayClient(
     private val agentVersion: String,
     private val stateProvider: () -> DeviceState,
     private val executor: (Runnable) -> Unit,
-    private val schedule: (Long, Runnable) -> Unit,
+    private val schedule: (Long, Runnable) -> () -> Unit,
     private val backoff: Backoff = Backoff(),
     private val callbacks: Callbacks,
 ) {
@@ -45,19 +45,27 @@ class RelayClient(
 
     @Volatile private var open = false
     @Volatile private var stopped = false
+    @Volatile private var gen = 0
     private var creds: Creds? = null
     private var current: Dispatcher? = null
+    private var cancelReconnect: (() -> Unit)? = null
 
     fun start(c: Creds) {
+        cancelReconnect?.invoke()
+        cancelReconnect = null
         creds = c
         stopped = false
+        open = false
+        val g = ++gen
         callbacks.status("正在连接 ${c.backend}")
-        transport.open(wsUrl(c.backend), listOf(Frames.PROTOCOL, c.token), listener)
+        transport.open(wsUrl(c.backend), listOf(Frames.PROTOCOL, c.token), listenerFor(g))
     }
 
     fun stop() {
         stopped = true
         open = false
+        cancelReconnect?.invoke()
+        cancelReconnect = null
         transport.close(1000, "stopped")
     }
 
@@ -65,31 +73,34 @@ class RelayClient(
 
     fun abort() { if (open) transport.send(Frames.abort()) }
 
-    private val listener = object : Transport.Listener {
+    private fun listenerFor(g: Int) = object : Transport.Listener {
         override fun onOpen() {
+            if (stopped || g != gen) return
             val c = creds ?: return
-            open = true
             backoff.reset()
             current = dispatcher()
             transport.send(Frames.hello(c.deviceId, name, agentVersion, ANDROID_OPS))
             transport.send(Frames.state(stateProvider()))
+            open = true
             callbacks.status("已连接 ${c.backend}")
         }
 
         override fun onMessage(text: String) {
+            if (g != gen) return
             val req = Frames.request(text) ?: return
             val d = current ?: return
             executor(Runnable {
                 val reply = try {
                     Frames.reply(req.id, d.dispatch(req.op, req.args))
-                } catch (e: Exception) {
-                    Frames.error(req.id, e.message ?: e.javaClass.simpleName)
+                } catch (t: Throwable) {
+                    Frames.error(req.id, t.message ?: t.javaClass.simpleName)
                 }
-                transport.send(reply)
+                if (g == gen && open) transport.send(reply)
             })
         }
 
         override fun onClosed(code: Int, reason: String) {
+            if (g != gen) return
             open = false
             if (code == 4003) {
                 stopped = true
@@ -100,6 +111,7 @@ class RelayClient(
         }
 
         override fun onFailure(error: String) {
+            if (g != gen) return
             open = false
             retry("连不上：$error")
         }
@@ -110,6 +122,6 @@ class RelayClient(
         val c = creds ?: return
         val ms = backoff.next()
         callbacks.status("$why，${ms / 1000} 秒后重连")
-        schedule(ms, Runnable { if (!stopped) start(c) })
+        cancelReconnect = schedule(ms, Runnable { if (!stopped) start(c) })
     }
 }

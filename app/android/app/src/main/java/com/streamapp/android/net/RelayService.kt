@@ -16,6 +16,7 @@ import android.os.Handler
 import android.os.HandlerThread
 import android.os.IBinder
 import android.os.PowerManager
+import android.util.Log
 import com.streamapp.android.BuildConfig
 import com.streamapp.android.a11y.AndroidDevice
 import com.streamapp.android.a11y.StreamAccessibilityService
@@ -45,10 +46,19 @@ class RelayService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (Build.VERSION.SDK_INT >= 34) {
-            startForeground(NOTE_ID, note("正在连接"), ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
-        } else {
-            startForeground(NOTE_ID, note("正在连接"))
+        try {
+            if (Build.VERSION.SDK_INT >= 34) {
+                startForeground(NOTE_ID, note("正在连接"), ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
+            } else {
+                startForeground(NOTE_ID, note("正在连接"))
+            }
+        } catch (e: RuntimeException) {
+            // ForegroundServiceStartNotAllowedException (API 31+) when started from the background.
+            Log.w("Stream", "startForeground refused", e)
+            statusText = "系统不允许后台启动连接，打开 Stream 一次即可恢复"
+            onStatus?.invoke(statusText)
+            stopSelf()
+            return START_NOT_STICKY
         }
         val creds = Credentials.load(this) ?: run { stopSelf(); return START_NOT_STICKY }
         if (client == null) {
@@ -60,7 +70,7 @@ class RelayService : Service() {
                 agentVersion = BuildConfig.VERSION_NAME,
                 stateProvider = ::state,
                 executor = { worker.execute(it) },
-                schedule = { ms, r -> handler.postDelayed(r, ms) },
+                schedule = { ms, r -> handler.postDelayed(r, ms); { handler.removeCallbacks(r) } },
                 callbacks = object : RelayClient.Callbacks {
                     override fun status(text: String) = publish(text)
                     override fun revoked(reason: String) {
@@ -139,10 +149,11 @@ class OkHttpTransport(private val http: OkHttpClient) : Transport {
 
     override fun open(url: String, protocols: List<String>, listener: Transport.Listener) {
         val req = Request.Builder().url(url).header("Sec-WebSocket-Protocol", protocols.joinToString(", ")).build()
+        ws?.cancel()
         ws = http.newWebSocket(req, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) = listener.onOpen()
             override fun onMessage(webSocket: WebSocket, text: String) = listener.onMessage(text)
-            override fun onClosing(webSocket: WebSocket, code: Int, reason: String) { webSocket.close(code, null) }
+            override fun onClosing(webSocket: WebSocket, code: Int, reason: String) { webSocket.close(1000, null) }
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) = listener.onClosed(code, reason)
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) =
                 if (response?.code == 401) listener.onClosed(4003, "unauthorized") else listener.onFailure(t.message ?: t.javaClass.simpleName)

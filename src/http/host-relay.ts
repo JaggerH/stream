@@ -467,8 +467,11 @@ export function attachHostRelay(
       try {
         boundDevice = t ? deviceAuth?.(t) : undefined
       } catch (e) {
+        // An internal failure is not a revoke: 401 makes a phone forget its pairing, 503 makes it retry.
         log(`[host-relay] deviceAuth threw at upgrade — refusing: ${String(e)}`)
-        boundDevice = undefined
+        socket.write('HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\n\r\n')
+        socket.destroy()
+        return
       }
       deviceToken = t ?? undefined
       if (!boundDevice) {

@@ -296,7 +296,7 @@ describe('attachHostRelay device tokens', () => {
     expect(registry.devices()).toHaveLength(0)
   })
 
-  it('a deviceAuth that throws is answered with 401', async () => {
+  it('a deviceAuth that throws is answered with 503 (an internal error is not a revoke)', async () => {
     const srv = createServer()
     server = srv
     attachHostRelay(srv, new HostRelayRegistry(), {
@@ -305,6 +305,6 @@ describe('attachHostRelay device tokens', () => {
     await new Promise<void>((r) => srv.listen(0, '127.0.0.1', r))
     const ws = new WebSocket(`ws://127.0.0.1:${(srv.address() as AddressInfo).port}/api/host`, [HOST_RELAY_PROTOCOL, 'dev-token'])
     const status = await new Promise<number>((r) => ws.on('unexpected-response', (_q, res) => r(res.statusCode ?? 0)))
-    expect(status).toBe(401)
+    expect(status).toBe(503)
   })
 })

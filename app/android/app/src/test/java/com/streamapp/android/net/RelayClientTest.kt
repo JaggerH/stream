@@ -11,11 +11,12 @@ import org.junit.Test
 
 class RelayClientTest {
     class FakeTransport : Transport {
+        val listeners = mutableListOf<Transport.Listener>()
         var listener: Transport.Listener? = null
         val sent = mutableListOf<String>()
         val opened = mutableListOf<Pair<String, List<String>>>()
         var closed: Int? = null
-        override fun open(url: String, protocols: List<String>, listener: Transport.Listener) { opened += url to protocols; this.listener = listener }
+        override fun open(url: String, protocols: List<String>, listener: Transport.Listener) { opened += url to protocols; this.listener = listener; listeners += listener }
         override fun send(text: String): Boolean { sent += text; return true }
         override fun close(code: Int, reason: String) { closed = code }
     }
@@ -23,6 +24,9 @@ class RelayClientTest {
     private val creds = Creds("http://10.9.8.21:8900", "android:abc", "tok")
     private val state = DeviceState(true, true, false, 90, false)
     private val scheduled = mutableListOf<Long>()
+    private var cancels = 0
+    private val queued = mutableListOf<Runnable>()
+    private var deferred = false
     private var revokedWith: String? = null
 
     private fun client(t: FakeTransport, dev: Device = FakeDevice()) = RelayClient(
@@ -30,8 +34,8 @@ class RelayClientTest {
         dispatcher = { Dispatcher(dev) },
         name = "K80", agentVersion = "0.1.0",
         stateProvider = { state },
-        executor = { it.run() },
-        schedule = { ms, _ -> scheduled += ms },
+        executor = { if (deferred) queued += it else it.run() },
+        schedule = { ms, _ -> scheduled += ms; { cancels++ } },
         backoff = Backoff(jitter = { 0.0 }),
         callbacks = object : RelayClient.Callbacks {
             override fun status(text: String) {}
@@ -86,6 +90,55 @@ class RelayClientTest {
         t.listener!!.onOpen()
         t.listener!!.onClosed(1006, "")
         assertEquals(listOf(1000L, 1000L), scheduled)
+    }
+
+    @Test fun aReplyNeverCrossesToANewConnection() {
+        val t = FakeTransport()
+        val c = client(t)
+        deferred = true
+        c.start(creds)
+        t.listeners[0].onOpen()
+        t.listeners[0].onMessage("""{"id":5,"op":"url"}""")
+        t.listeners[0].onClosed(1006, "")
+        c.start(creds)
+        assertEquals(2, t.listeners.size)
+        val before = t.sent.size
+        queued.forEach { it.run() }
+        assertEquals(before, t.sent.size)
+    }
+
+    @Test fun nothingIsSentBeforeOnOpenAndHelloComesFirst() {
+        val t = FakeTransport()
+        val c = client(t)
+        c.start(creds)
+        c.sendState()
+        c.abort()
+        assertTrue(t.sent.isEmpty())
+        t.listener!!.onOpen()
+        assertEquals("hello", JSONObject(t.sent[0]).getString("type"))
+        assertEquals("state", JSONObject(t.sent[1]).getString("type"))
+    }
+
+    @Test fun stopCancelsAPendingReconnectAndALateFailureSchedulesNothing() {
+        val t = FakeTransport()
+        val c = client(t)
+        c.start(creds)
+        t.listener!!.onFailure("x")
+        assertEquals(1, scheduled.size)
+        c.stop()
+        assertTrue(cancels >= 1)
+        t.listener!!.onFailure("late")
+        assertEquals(1, scheduled.size)
+    }
+
+    @Test fun callbacksFromAnOlderConnectionAreIgnored() {
+        val t = FakeTransport()
+        val c = client(t)
+        c.start(creds)
+        val old = t.listeners[0]
+        c.start(creds)
+        old.onClosed(4003, "revoked")
+        assertNull(revokedWith)
     }
 
     @Test fun abortSendsTheAbortFrame() {
