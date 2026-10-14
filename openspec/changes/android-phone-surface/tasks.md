@@ -16,7 +16,15 @@ Plan: `plans/01-host-relay-v2.md`
 
 ## 2. Pairing and device tokens
 
-Plan: `plans/02-pairing.md` (written after plan 1 lands)
+Plan: `docs/superpowers/plans/2026-10-14-device-pairing.md` (the comet guard keeps implementation
+plans out of the change directory while the change is in the open phase).
+
+- [ ] 2.1 Add `uqr` to the panel (main checkout)
+- [ ] 2.2 `DeviceStore` with hashed tokens and one-time codes
+- [ ] 2.3 `/api/host` accepts device tokens bound to their id; registry can drop a device
+- [ ] 2.4 Device routes, the pairing exemption, serve wiring
+- [ ] 2.5 Panel "手机" section
+- [ ] 2.6 Spec delta, cookbook, full suite, live check
 
 ## 3. Stream Android app
 
