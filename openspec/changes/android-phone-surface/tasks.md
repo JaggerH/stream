@@ -9,6 +9,11 @@ Plan: `plans/01-host-relay-v2.md`
 - [ ] 1.5 Stream Desktop sends `hello`
 - [ ] 1.6 Spec delta, cookbook, live swap
 
+- [ ] 1.7 **Before the next `stream` npm release:** bump and republish `@streamapp/desktop-*` with the
+  v2 agent, together with the pins in `cli/package.json` and `capabilities/desktop/package.json`
+  (they still point at the v1 build, 0.7.2). Releasing the backend alone leaves every installed
+  machine without desktop control. Publishing needs the user's go-ahead.
+
 ## 2. Pairing and device tokens
 
 Plan: `plans/02-pairing.md` (written after plan 1 lands)
