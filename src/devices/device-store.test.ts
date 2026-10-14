@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeEach } from 'vitest'
-import { mkdtempSync, readFileSync, statSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { DeviceStore, PAIRING_TTL_MS, MAX_PAIR_FAILURES } from './device-store.ts'
+import { DeviceStore, PAIRING_TTL_MS, MAX_PAIR_FAILURES, TOUCH_INTERVAL_MS } from './device-store.ts'
 
 let file: string
 let now: number
@@ -74,6 +74,52 @@ describe('DeviceStore', () => {
     now += 5000
     s.touch(r.deviceId)
     expect(s.list()[0].lastSeenAt).toBe(now)
+  })
+
+  it('minting a code retires the previous one', () => {
+    const s = make()
+    const a = s.createPairingCode()
+    const b = s.createPairingCode()
+    expect(s.pair(a.code, 'x')).toEqual({ ok: false, reason: 'invalid-code' })
+    expect(s.pair(b.code, 'x').ok).toBe(true)
+  })
+
+  it('minting a code resets the failure counter', () => {
+    const s = make()
+    const old = s.createPairingCode()
+    const wrong = old.code === '000000' ? '111111' : '000000'
+    for (let i = 0; i < MAX_PAIR_FAILURES - 1; i++) s.pair(wrong, 'x')
+    const fresh = s.createPairingCode()
+    const wrong2 = fresh.code === '000000' ? '111111' : '000000'
+    s.pair(wrong2, 'x')
+    expect(s.pair(fresh.code, 'x').ok).toBe(true)
+  })
+
+  it('saves atomically: 0600 file and no .tmp left behind', () => {
+    const s = make()
+    s.pair(s.createPairingCode().code, 'K80')
+    expect(statSync(file).mode & 0o777).toBe(0o600)
+    expect(existsSync(`${file}.tmp`)).toBe(false)
+  })
+
+  it.each(['{}', 'not json'])('refuses to start on an unreadable file (%s)', (content) => {
+    writeFileSync(file, content)
+    expect(() => make()).toThrow(file)
+  })
+
+  it('touch is throttled to once per interval', () => {
+    const s = make()
+    const r = s.pair(s.createPairingCode().code, 'K80')
+    if (!r.ok) throw new Error('expected ok')
+    const t = now
+    s.touch(r.deviceId)
+    expect(s.list()[0].lastSeenAt).toBe(t)
+    now = t + 1000
+    s.touch(r.deviceId)
+    expect(s.list()[0].lastSeenAt).toBe(t)
+    now = t + TOUCH_INTERVAL_MS
+    s.touch(r.deviceId)
+    expect(s.list()[0].lastSeenAt).toBe(t + TOUCH_INTERVAL_MS)
   })
 
   it('a blank name becomes "Android" and a long name is capped at 64 characters', () => {

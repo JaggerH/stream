@@ -9,11 +9,12 @@
  * invalidate every outstanding code, so nobody can walk the 10^6 code space within one TTL.
  */
 import { createHash, randomBytes, randomInt, randomUUID, timingSafeEqual } from 'node:crypto'
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
 
 export const PAIRING_TTL_MS = 5 * 60_000
 export const MAX_PAIR_FAILURES = 5
+export const TOUCH_INTERVAL_MS = 60_000
 const MAX_NAME = 64
 
 export interface PairedDevice {
@@ -47,11 +48,24 @@ export class DeviceStore {
   ) {
     this.now = opts.now ?? Date.now
     this.random = opts.random ?? randomBytes
-    this.rows = existsSync(file) ? (JSON.parse(readFileSync(file, 'utf8')) as { devices: Row[] }).devices : []
+    this.rows = existsSync(file) ? DeviceStore.load(file) : []
   }
 
+  /** Refuse to start on an unreadable file: silently resetting it would erase every pairing on the next save. */
+  private static load(file: string): Row[] {
+    try {
+      const parsed = JSON.parse(readFileSync(file, 'utf8')) as { devices?: unknown } | null
+      if (!parsed || !Array.isArray(parsed.devices)) throw new Error('"devices" is not an array')
+      return parsed.devices as Row[]
+    } catch (e) {
+      throw new Error(`devices.json at ${file} is not readable: ${(e as Error).message}`, { cause: e })
+    }
+  }
+
+  /** Only one code is live at a time; minting is local-only, so it may reset the failure counter. */
   createPairingCode(): { code: string; expiresAt: number } {
-    this.dropExpired()
+    this.codes.clear()
+    this.failures = 0
     let code: string
     do code = String(randomInt(0, 1_000_000)).padStart(6, '0')
     while (this.codes.has(code))
@@ -109,7 +123,9 @@ export class DeviceStore {
   touch(deviceId: string): void {
     const r = this.rows.find((x) => x.deviceId === deviceId)
     if (!r) return
-    r.lastSeenAt = this.now()
+    const t = this.now()
+    if (r.lastSeenAt !== undefined && t - r.lastSeenAt < TOUCH_INTERVAL_MS) return
+    r.lastSeenAt = t
     this.save()
   }
 
@@ -120,7 +136,9 @@ export class DeviceStore {
 
   private save(): void {
     mkdirSync(dirname(this.file), { recursive: true })
-    writeFileSync(this.file, JSON.stringify({ devices: this.rows }, null, 2) + '\n', { mode: 0o600 })
-    chmodSync(this.file, 0o600)
+    const tmp = `${this.file}.tmp`
+    writeFileSync(tmp, JSON.stringify({ devices: this.rows }, null, 2) + '\n', { mode: 0o600 })
+    chmodSync(tmp, 0o600)
+    renameSync(tmp, this.file)
   }
 }
