@@ -112,6 +112,7 @@ import { EXT_RELAY_PROTOCOL } from './ext-relay.ts'
 import { extVerifyProof } from './ext-verify.ts'
 import { authorizeAccess, peerAddress, isLoopbackAddress, isTrustedHost, isTrustedOrigin, lanUrls } from './access-guard.ts'
 import { tokenEqual } from './secrets.ts'
+import { TOKEN_EXEMPT_ROUTES } from './device-routes.ts'
 import { callSitesOf, PROVIDER_DEFAULT_SOURCE, PLANNED_PROVIDERS } from '../providers/seed.ts'
 import { identityOf } from '../providers/identities.ts'
 import { identityServes } from '../providers/system/types.ts'
@@ -1403,6 +1404,12 @@ export function createHttpApp(deps: HttpDeps): Hono {
             extraOrigins: trustedOrigins,
           })) {
         return c.json(errorBody('unauthorized', '请求来源不被信任'), 403)
+      }
+      // The one token-exempt route. A phone that is pairing has no token yet, and its one-time
+      // code is the credential (device-routes.ts). The Host/Origin check above still applied.
+      if (TOKEN_EXEMPT_ROUTES.some((r) => r.method === c.req.method && r.path === c.req.path)) {
+        await next()
+        return
       }
       const verdict = authorizeAccess({
         remoteAddress: peerAddress(c),

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { isLoopbackAddress, authorizeAccess, isTrustedHost, isTrustedOrigin, parseTrustedOrigins } from './access-guard.ts'
+import { lanBaseUrls, lanUrls, isLoopbackAddress, authorizeAccess, isTrustedHost, isTrustedOrigin, parseTrustedOrigins } from './access-guard.ts'
 
 const TOKEN = 'a'.repeat(64)
 
@@ -140,4 +140,9 @@ describe('parseTrustedOrigins', () => {
     const [origin] = parseTrustedOrigins('http://127.0.0.1:3000/')
     expect(isTrustedOrigin({ origin: 'http://127.0.0.1:3000', hostHeader: '127.0.0.1:8900', extraOrigins: [origin!] })).toBe(true)
   })
+})
+
+it('lanBaseUrls lists http://<ipv4>:<port> without a token, and lanUrls appends the token to each', () => {
+  for (const u of lanBaseUrls('8900')) expect(u).toMatch(/^http:\/\/\d+\.\d+\.\d+\.\d+:8900$/)
+  expect(lanUrls('8900', 't')).toEqual(lanBaseUrls('8900').map((u) => `${u}/?token=t`))
 })

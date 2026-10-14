@@ -183,6 +183,17 @@ describe('/api/* 的门 —— 覆盖面', () => {
   })
 })
 
+describe('/api/* 的门 —— 配对豁免', () => {
+  it('POST /api/devices/pair 不要 token，同一前缀的其它路由照拦', async () => {
+    const app = build()
+    const lan = { address: '10.9.8.21', host: '10.9.8.21:8900' }
+    // 探针 harness 里没挂这条路由，所以 404 就是"过了门"；被拦才会是带"需要出示访问令牌"的 401。
+    const pair = await req(app, '/api/devices/pair', { ...lan, method: 'POST' })
+    expect(await pair.text()).not.toContain('需要出示访问令牌')
+    expect((await req(app, '/api/devices', lan)).status).toBe(401)
+  })
+})
+
 describe('Hono 中间件顺序的前提', () => {
   it('use() 只对之后注册的路由生效——门的正确性依赖这条', async () => {
     const app = new Hono()

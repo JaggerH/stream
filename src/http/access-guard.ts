@@ -142,15 +142,20 @@ export function parseTrustedOrigins(raw: string | undefined): string[] {
  * 地址要带 zone id，扫码/手输都不现实。一个都没有（没接网）时回空数组——空**不是**故障，
  * 就是"这台机器现在没有别的设备够得着的地址"。
  */
-export function lanUrls(port: string, token: string): string[] {
+/** `http://<ipv4>:<port>` for every non-internal IPv4 interface, i.e. where a LAN device can reach us. */
+export function lanBaseUrls(port: string): string[] {
   const out: string[] = []
   for (const addrs of Object.values(networkInterfaces())) {
     for (const a of addrs ?? []) {
       if (a.family !== 'IPv4' || a.internal) continue
-      out.push(`http://${a.address}:${port}/?token=${encodeURIComponent(token)}`)
+      out.push(`http://${a.address}:${port}`)
     }
   }
   return out
+}
+
+export function lanUrls(port: string, token: string): string[] {
+  return lanBaseUrls(port).map((u) => `${u}/?token=${encodeURIComponent(token)}`)
 }
 
 export type AccessVerdict = 'local' | 'token' | 'denied'

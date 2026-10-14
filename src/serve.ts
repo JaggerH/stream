@@ -35,7 +35,9 @@ import { EventSourceRelay, attachEventSourceRelay } from './event-source/relay.t
 import { makeDrain } from './event-source/drain.ts'
 import { wireCookiesFeed } from './event-source/cookies-feed.ts'
 import { loadOrCreateExtToken, loadOrCreateApiToken } from './http/secrets.ts'
-import { authorizeAccess, parseTrustedOrigins } from './http/access-guard.ts'
+import { authorizeAccess, parseTrustedOrigins, isLoopbackAddress, peerAddress, lanBaseUrls } from './http/access-guard.ts'
+import { mountDeviceRoutes } from './http/device-routes.ts'
+import { DeviceStore } from './devices/device-store.ts'
 import { attachEnrichCommands } from './http/enrich-ws.ts'
 import { attachAuthLoginCommands } from './http/auth-login.ts'
 
@@ -269,6 +271,7 @@ async function main() {
 // **后端从不把它发出去**：扩展经 native messaging 让 stream-desktop 读同一个文件自取，
 // 后端只在 /api/ext/verify 上用它签一条 proof 自证身份。握手仍走 WS subprotocol，用户全程无感。
 const extToken = loadOrCreateExtToken(dirname(config.item_db))
+const deviceStore = new DeviceStore(join(dirname(config.item_db), 'devices.json'))
 // `/api/*` 与 `/ws` 的访问令牌。**默认就有**（用户没配 api_token 时自动生成一份持久的）——
 // 后端绑 0.0.0.0 是有意的（用户要从手机访问），那就必须有一把默认的锁，而不是默认没有。
 // 本机 loopback 请求免密，所以自己机器上用完全无感（判据与实测见 http/access-guard.ts）。
@@ -812,6 +815,12 @@ const apiToken = config.api_token || loadOrCreateApiToken(dirname(config.item_db
     actions: (name: string) => packageActions.get(name),
     paramsFor: (ref: string) => settingsStore.runtimeConfig(ref),
   })
+  mountDeviceRoutes(app, {
+    store: deviceStore,
+    registry: harvest.hostRelays,
+    isLocal: (c) => isLoopbackAddress(peerAddress(c)),
+    backendUrls: (c) => lanBaseUrls((c.req.header('Host') ?? '').split(':')[1] || String(PORT)),
+  })
   if (taskStore && runLedger) {
     mountTaskRoutes(app, {
       store: taskStore,
@@ -1056,7 +1065,11 @@ const apiToken = config.api_token || loadOrCreateApiToken(dirname(config.item_db
   // is internal, the shipped binary is `stream-desktop`).
   // Nothing connected → kind:'desktop' sources decline as a miss.
   kernel.effect(() => {
-    const wss = attachHostRelay(server as unknown as Server, harvest.hostRelays, { token: extToken })
+    const wss = attachHostRelay(server as unknown as Server, harvest.hostRelays, {
+      token: extToken,
+      deviceAuth: (t) => deviceStore.deviceForToken(t),
+      onDeviceSeen: (id) => deviceStore.touch(id),
+    })
     return () => closeRelayServer(wss)
   })
   // 外部事件源子进程的收信端 at /api/event-source（Spec 1 只装端点，spawn/看护留 Spec 2）。
