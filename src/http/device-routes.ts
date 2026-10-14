@@ -72,9 +72,11 @@ export function mountDeviceRoutes(app: Hono, deps: DeviceRoutesDeps): void {
   app.post('/api/devices/:id/ops', async (c) => {
     if (!deps.isLocal(c)) return c.json({ error: '只能在运行 Stream 的那台机器上调用' }, 403)
     const id = c.req.param('id')
-    let body: { op?: unknown; args?: unknown }
-    try { body = await c.req.json() } catch { return c.json({ error: 'body 不是合法 JSON' }, 400) }
-    if (typeof body.op !== 'string' || (body.args !== undefined && (typeof body.args !== 'object' || body.args === null))) {
+    let raw: unknown
+    try { raw = await c.req.json() } catch { return c.json({ error: 'body 不是合法 JSON' }, 400) }
+    const isObject = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v)
+    const body = isObject(raw) ? raw : {}
+    if (typeof body.op !== 'string' || (body.args !== undefined && !isObject(body.args))) {
       return c.json({ error: 'op 必须是字符串，args 可选且必须是对象' }, 400)
     }
     const device = deps.registry.devices().find((d) => d.hello.deviceId === id)

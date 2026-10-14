@@ -113,6 +113,8 @@ describe('device routes', () => {
       local = true
       expect((await opPost('android:nope', '{"op":"url"}')).status).toBe(404)
       expect((await opPost(phoneId, '{"args":{}}')).status).toBe(400)
+      expect((await opPost(phoneId, 'null')).status).toBe(400)
+      expect((await opPost(phoneId, '{"op":"url","args":[1]}')).status).toBe(400)
       expect(sent).toEqual([])
     })
   })
