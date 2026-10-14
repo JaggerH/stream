@@ -47,6 +47,49 @@ describe('attachHostRelay (v2)', () => {
     expect(res.body).toMatch(/Stream Desktop is too old/)
   })
 
+  it('an offer that includes v1 alongside v2 still gets the 426', async () => {
+    const { url } = await start()
+    const ws = new WebSocket(url, [STALE_HOST_PROTOCOL, HOST_RELAY_PROTOCOL, TOKEN])
+    const res = await new Promise<{ status: number; body: string }>((resolve) => {
+      ws.on('unexpected-response', (_req, r) => {
+        let body = ''
+        r.on('data', (c) => (body += c))
+        r.on('end', () => resolve({ status: r.statusCode ?? 0, body }))
+      })
+    })
+    expect(res.status).toBe(426)
+    expect(res.body).toMatch(/Stream Desktop is too old/)
+  })
+
+  it('a same-device reconnect routes ops to the newest socket and survives the old one closing', async () => {
+    const { registry, url } = await start()
+    const a = new WebSocket(url, [HOST_RELAY_PROTOCOL, TOKEN])
+    await new Promise((r) => a.on('open', r))
+    a.send(JSON.stringify(helloFrame))
+    await until(() => registry.devices().length === 1)
+    const b = new WebSocket(url, [HOST_RELAY_PROTOCOL, TOKEN])
+    await new Promise((r) => b.on('open', r))
+    const aGot: string[] = []
+    a.on('message', (d) => aGot.push(d.toString()))
+    const bGot = new Promise<string>((r) => b.once('message', (d) => r(d.toString())))
+    b.send(JSON.stringify(helloFrame))
+    await new Promise((r) => setTimeout(r, 50))
+    expect(registry.devices()).toHaveLength(1)
+    const p = registry.deviceFor('desktop')!.relay.send({ op: 'find' })
+    const frame = JSON.parse(await bGot)
+    expect(frame.op).toBe('find')
+    expect(aGot).toHaveLength(0)
+    b.send(JSON.stringify({ id: frame.id, result: ['ok'] }))
+    await expect(p).resolves.toEqual(['ok'])
+    a.close()
+    await new Promise((r) => a.on('close', r))
+    await new Promise((r) => setTimeout(r, 50))
+    expect(registry.devices()).toHaveLength(1)
+    b.close()
+    await until(() => registry.devices().length === 0)
+    expect(registry.devices()).toHaveLength(0)
+  })
+
   it('a device is registered only after its hello, and ops then reach it', async () => {
     const { registry, url } = await start()
     const ws = new WebSocket(url, [HOST_RELAY_PROTOCOL, TOKEN])

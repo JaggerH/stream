@@ -432,7 +432,7 @@ export function attachHostRelay(
     const offered = String(req.headers['sec-websocket-protocol'] ?? '')
       .split(',')
       .map((s) => s.trim())
-    if (offered.includes(STALE_HOST_PROTOCOL) && !offered.includes(HOST_RELAY_PROTOCOL)) {
+    if (offered.includes(STALE_HOST_PROTOCOL)) {
       const body = `Stream Desktop is too old — update it (this backend speaks ${HOST_RELAY_PROTOCOL})`
       log(`[host-relay] refused a ${STALE_HOST_PROTOCOL} agent — ${body}`)
       socket.write(
