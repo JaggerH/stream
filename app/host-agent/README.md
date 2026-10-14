@@ -196,8 +196,8 @@ WSL 里的 `--register --target windows` 会：manifest 写进 Windows 用户目
 stream-desktop --native-messaging   # stdin/stdout 说 wire 格式，日志在 stderr
 ```
 
-Once connected, `hostRelay.connected` flips true on the backend and a `kind:'desktop'` source
-(e.g. `telegram-search`) can drive it. Verify end-to-end by invoking the telegram-search source and
+Once connected, the agent sends its `hello`, the backend registers the device in its per-device registry, and
+`desktopDriver()` resolves it from there, so a `kind:'desktop'` source (e.g. `telegram-search`) can drive it. Verify end-to-end by invoking the telegram-search source and
 comparing against the live Telegram window (the "read == what's on screen" discipline — there is no
 API oracle).
 
