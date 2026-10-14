@@ -225,7 +225,7 @@ describe('attachHostRelay device tokens', () => {
     expect(seen).toEqual([])
   })
 
-  it('a deviceAuth that throws at hello time fails closed with 4003', async () => {
+  it('a deviceAuth that throws at hello time fails closed with 1011, not a revoke', async () => {
     let calls = 0
     const seen: string[] = []
     const { registry, url } = await startWithDevices(() => {
@@ -236,7 +236,7 @@ describe('attachHostRelay device tokens', () => {
     await new Promise((r) => ws.on('open', r))
     const closed = new Promise<number>((r) => ws.on('close', (code) => r(code)))
     ws.send(JSON.stringify(phoneHello('android:k80')))
-    expect(await closed).toBe(4003)
+    expect(await closed).toBe(1011)
     await until(() => false)
     expect(calls).toBe(2)
     expect(registry.devices()).toHaveLength(0)

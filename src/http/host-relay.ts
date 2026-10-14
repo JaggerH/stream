@@ -539,7 +539,11 @@ export function attachHostRelay(
         try {
           still = deviceToken ? deviceAuth?.(deviceToken) : undefined
         } catch (e) {
+          // Not a revoke: 4003 makes the phone forget its pairing. 1011 lets it retry.
           log(`[host-relay] deviceAuth threw at hello — closing: ${String(e)}`)
+          closing = true
+          socket.close(1011, 'device check failed, retry')
+          return
         }
         if (still !== boundDevice) {
           log(`[host-relay] device token for ${boundDevice} no longer valid at hello — closing`)

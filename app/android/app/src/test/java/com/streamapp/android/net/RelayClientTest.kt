@@ -107,6 +107,21 @@ class RelayClientTest {
         assertEquals(before, t.sent.size)
     }
 
+    @Test fun aStaleReplyIsDroppedEvenAfterTheNewConnectionOpens() {
+        val t = FakeTransport()
+        val c = client(t)
+        deferred = true
+        c.start(creds)
+        t.listeners[0].onOpen()
+        t.listeners[0].onMessage("""{"id":5,"op":"url"}""")
+        t.listeners[0].onClosed(1006, "")
+        c.start(creds)
+        t.listeners[1].onOpen()
+        val before = t.sent.size
+        queued.forEach { it.run() }
+        assertEquals(before, t.sent.size)
+    }
+
     @Test fun nothingIsSentBeforeOnOpenAndHelloComesFirst() {
         val t = FakeTransport()
         val c = client(t)
