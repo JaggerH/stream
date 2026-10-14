@@ -23,6 +23,14 @@ export function PhoneDevicesSettings({ conn }: { conn: Connection }) {
   }, [conn])
   useEffect(load, [load])
 
+  // While a code is on screen, keep refreshing so a phone that just paired shows up.
+  const pairingShown = pairing !== null
+  useEffect(() => {
+    if (!pairingShown) return
+    const t = setInterval(load, 3000)
+    return () => clearInterval(t)
+  }, [pairingShown, load])
+
   const startPairing = async () => {
     try {
       setPairing(await api.devices.pairingCode(conn))

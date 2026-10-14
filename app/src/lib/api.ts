@@ -85,6 +85,14 @@ export type BlockedReason =
 /** A content-search member that failed — `reason` is the core one-liner shown to the user,
  *  `stack` the full backend stack for the copy-to-clipboard diagnostic, `blocked` present only
  *  when the member is waiting on the user rather than broken. */
+export interface SearchWarning {
+  source: string
+  reason: string
+  stack?: string
+  blocked?: BlockedReason
+}
+
+/** One row of `GET /api/devices`: a paired phone or a host agent, with whether it is online now. */
 export interface DeviceRow {
   deviceId: string
   name: string
@@ -94,13 +102,6 @@ export interface DeviceRow {
   pairedAt?: number
   lastSeenAt?: number
   agentVersion?: string
-}
-
-export interface SearchWarning {
-  source: string
-  reason: string
-  stack?: string
-  blocked?: BlockedReason
 }
 
 /** 一个成员跑了多久、结果如何。搜索是并发扇出，**总耗时只等于最慢那个成员**——所以"谁慢"

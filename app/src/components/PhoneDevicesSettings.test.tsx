@@ -45,4 +45,26 @@ describe('PhoneDevicesSettings', () => {
     expect(screen.getByText('http://10.9.8.21:8900')).toBeTruthy()
     expect(container.querySelectorAll('svg[data-pair-qr]')).toHaveLength(1)
   })
+
+  it('re-lists devices every 3 seconds while a pairing code is shown', async () => {
+    fetchMock.mockImplementation((url: string) => {
+      if (String(url).endsWith('/api/devices/pairing-code')) {
+        return json({ code: '123456', expiresAt: Date.now() + 300_000, qr: [] })
+      }
+      return json({ devices: [] })
+    })
+    // Fake only the interval so findBy*/waitFor keep running on real timers.
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
+    try {
+      render(<PhoneDevicesSettings conn={conn} />)
+      fireEvent.click(await screen.findByRole('button', { name: '添加手机' }))
+      await screen.findByText('123456')
+      const listCalls = () => fetchMock.mock.calls.filter(([u]) => String(u).endsWith('/api/devices')).length
+      const before = listCalls()
+      await vi.advanceTimersByTimeAsync(3000)
+      expect(listCalls()).toBe(before + 1)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 })

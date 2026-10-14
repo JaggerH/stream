@@ -189,7 +189,7 @@ describe('/api/* 的门 —— 配对豁免', () => {
     const lan = { address: '10.9.8.21', host: '10.9.8.21:8900' }
     // 探针 harness 里没挂这条路由，所以 404 就是"过了门"；被拦才会是带"需要出示访问令牌"的 401。
     const pair = await req(app, '/api/devices/pair', { ...lan, method: 'POST' })
-    expect(await pair.text()).not.toContain('需要出示访问令牌')
+    expect(pair.status).toBe(404)
     expect((await req(app, '/api/devices', lan)).status).toBe(401)
   })
 })

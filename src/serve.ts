@@ -819,7 +819,7 @@ const apiToken = config.api_token || loadOrCreateApiToken(dirname(config.item_db
     store: deviceStore,
     registry: harvest.hostRelays,
     isLocal: (c) => isLoopbackAddress(peerAddress(c)),
-    backendUrls: (c) => lanBaseUrls((c.req.header('Host') ?? '').split(':')[1] || String(PORT)),
+    backendUrls: () => lanBaseUrls(String(PORT)),
   })
   if (taskStore && runLedger) {
     mountTaskRoutes(app, {
