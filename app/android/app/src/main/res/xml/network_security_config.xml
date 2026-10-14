@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The backend is on the LAN over plain http (http://10.9.8.21:8900); the token rides the
+     WebSocket subprotocol header. -->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true" />
+</network-security-config>
