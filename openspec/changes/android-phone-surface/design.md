@@ -106,7 +106,7 @@ interrupts are the same. A new kind would fork `desktop-runner.ts` for no semant
   token is bound to its `deviceId`. A `hello` claiming another id is rejected.
 - `GET /api/devices` lists paired devices with their last-seen time. `DELETE /api/devices/:id`
   revokes the token and drops a live connection immediately.
-- Pairing endpoints are rate-limited. Codes are compared in constant time.
+- Pairing endpoints are rate-limited. Tokens are compared in constant time; codes are protected by the 5-attempt limit.
 
 ### D5. Staying alive on an idle phone
 

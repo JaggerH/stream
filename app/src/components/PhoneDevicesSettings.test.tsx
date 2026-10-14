@@ -67,4 +67,55 @@ describe('PhoneDevicesSettings', () => {
       vi.useRealTimers()
     }
   })
+
+  it('a newly paired device clears the code and stops polling', async () => {
+    let paired = false
+    fetchMock.mockImplementation((url: string) => {
+      if (String(url).endsWith('/api/devices/pairing-code')) {
+        return json({ code: '123456', expiresAt: Date.now() + 300_000, qr: [] })
+      }
+      return json({ devices: paired
+        ? [{ deviceId: 'android:new', name: 'K80', platform: 'android', paired: true, online: true }]
+        : [] })
+    })
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
+    try {
+      render(<PhoneDevicesSettings conn={conn} />)
+      fireEvent.click(await screen.findByRole('button', { name: '添加手机' }))
+      await screen.findByText('123456')
+      paired = true
+      await vi.advanceTimersByTimeAsync(3000)
+      await waitFor(() => expect(screen.queryByText('123456')).toBeNull())
+      const listCalls = () => fetchMock.mock.calls.filter(([u]) => String(u).endsWith('/api/devices')).length
+      const before = listCalls()
+      await vi.advanceTimersByTimeAsync(9000)
+      expect(listCalls()).toBe(before)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('an expired code is replaced by the expiry text and polling stops', async () => {
+    fetchMock.mockImplementation((url: string) => {
+      if (String(url).endsWith('/api/devices/pairing-code')) {
+        return json({ code: '123456', expiresAt: Date.now() + 4000, qr: [] })
+      }
+      return json({ devices: [] })
+    })
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'Date'] })
+    try {
+      render(<PhoneDevicesSettings conn={conn} />)
+      fireEvent.click(await screen.findByRole('button', { name: '添加手机' }))
+      await screen.findByText('123456')
+      await vi.advanceTimersByTimeAsync(6000)
+      await waitFor(() => expect(screen.getByText('配对码已过期，点「添加手机」重新生成')).toBeTruthy())
+      expect(screen.queryByText('123456')).toBeNull()
+      const listCalls = () => fetchMock.mock.calls.filter(([u]) => String(u).endsWith('/api/devices')).length
+      const before = listCalls()
+      await vi.advanceTimersByTimeAsync(9000)
+      expect(listCalls()).toBe(before)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 })

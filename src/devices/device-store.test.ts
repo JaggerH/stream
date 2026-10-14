@@ -14,6 +14,16 @@ beforeEach(() => {
 })
 
 describe('DeviceStore', () => {
+  it('logs once when the 5th failure invalidates the live code', () => {
+    const lines: string[] = []
+    const s = new DeviceStore(file, { now: () => now, log: (l) => void lines.push(l) })
+    s.createPairingCode()
+    for (let i = 0; i < MAX_PAIR_FAILURES - 1; i++) s.pair('bad', 'x')
+    expect(lines).toEqual([])
+    s.pair('bad', 'x')
+    expect(lines).toEqual(['[devices] 5 failed pairing attempts — the live code was invalidated; mint a new one'])
+  })
+
   it('pairing codes are six digits and expire after the TTL', () => {
     const s = make()
     const { code, expiresAt } = s.createPairingCode()

@@ -1389,6 +1389,7 @@ export function createHttpApp(deps: HttpDeps): Hono {
   // /api/mcp）都受它管——**这正是要点**：`/api/mcp` 能打开任意网址并在你的登录态里执行任意 JS，
   // 它绝不能比别的端点松。注册在它**之前**的那几条是刻意豁免的（/api/health、/api/ext/*、
   // /api/browser-capability），各自在原地写明了理由，共同点是"连不上/没凭证的时候正要用它"。
+  // POST /api/devices/pair 也免 token，但它不在门之前：在门里、Host/Origin 检查之后放行（见下）。
   if (deps.accessGuard) {
     const guardToken = deps.accessGuard.token
     const { extId, trustedHosts, trustedOrigins } = deps.accessGuard

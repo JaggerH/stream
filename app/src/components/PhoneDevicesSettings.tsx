@@ -13,7 +13,8 @@ import { api, ApiError, type Connection, type DeviceRow } from '../lib/api.ts'
  */
 export function PhoneDevicesSettings({ conn }: { conn: Connection }) {
   const [devices, setDevices] = useState<DeviceRow[] | null>(null)
-  const [pairing, setPairing] = useState<{ code: string; expiresAt: number; qr: string[] } | null>(null)
+  const [pairing, setPairing] = useState<{ code: string; expiresAt: number; qr: string[]; knownIds: Set<string> } | null>(null)
+  const [expired, setExpired] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   const load = useCallback(() => {
@@ -24,16 +25,35 @@ export function PhoneDevicesSettings({ conn }: { conn: Connection }) {
   useEffect(load, [load])
 
   // While a code is on screen, keep refreshing so a phone that just paired shows up.
-  const pairingShown = pairing !== null
+  // Polling stops (and the code is cleared) once the code expires or a new paired device shows up.
+  const expiresAt = pairing?.expiresAt
   useEffect(() => {
-    if (!pairingShown) return
-    const t = setInterval(load, 3000)
+    if (expiresAt === undefined) return
+    const t = setInterval(() => {
+      if (Date.now() >= expiresAt) {
+        clearInterval(t)
+        setExpired(true)
+        setPairing(null)
+        return
+      }
+      load()
+    }, 3000)
     return () => clearInterval(t)
-  }, [pairingShown, load])
+  }, [expiresAt, load])
+
+  useEffect(() => {
+    if (!pairing || !devices) return
+    const fresh = devices.find((d) => d.paired && !pairing.knownIds.has(d.deviceId))
+    if (!fresh) return
+    toast.success(`已配对 ${fresh.name}`)
+    setPairing(null)
+  }, [devices, pairing])
 
   const startPairing = async () => {
     try {
-      setPairing(await api.devices.pairingCode(conn))
+      const p = await api.devices.pairingCode(conn)
+      setExpired(false)
+      setPairing({ ...p, knownIds: new Set((devices ?? []).map((d) => d.deviceId)) })
     } catch (e) {
       toast.error('生成配对码失败', { description: e instanceof ApiError ? e.message : '后端未响应' })
     }
@@ -84,6 +104,10 @@ export function PhoneDevicesSettings({ conn }: { conn: Connection }) {
       >
         添加手机
       </button>
+
+      {expired && !pairing && (
+        <p className="text-[12px] text-muted-foreground">配对码已过期，点「添加手机」重新生成</p>
+      )}
 
       {pairing && (
         <div className="space-y-2">

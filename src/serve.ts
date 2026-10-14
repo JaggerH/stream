@@ -271,7 +271,7 @@ async function main() {
 // **后端从不把它发出去**：扩展经 native messaging 让 stream-desktop 读同一个文件自取，
 // 后端只在 /api/ext/verify 上用它签一条 proof 自证身份。握手仍走 WS subprotocol，用户全程无感。
 const extToken = loadOrCreateExtToken(dirname(config.item_db))
-const deviceStore = new DeviceStore(join(dirname(config.item_db), 'devices.json'))
+const deviceStore = new DeviceStore(join(dirname(config.item_db), 'devices.json'), { log: console.log })
 // `/api/*` 与 `/ws` 的访问令牌。**默认就有**（用户没配 api_token 时自动生成一份持久的）——
 // 后端绑 0.0.0.0 是有意的（用户要从手机访问），那就必须有一把默认的锁，而不是默认没有。
 // 本机 loopback 请求免密，所以自己机器上用完全无感（判据与实测见 http/access-guard.ts）。

@@ -41,11 +41,13 @@ export class DeviceStore {
   private failures = 0
   private readonly now: () => number
   private readonly random: (bytes: number) => Buffer
+  private readonly log?: (line: string) => void
 
   constructor(
     private readonly file: string,
-    opts: { now?: () => number; random?: (bytes: number) => Buffer } = {},
+    opts: { now?: () => number; random?: (bytes: number) => Buffer; log?: (line: string) => void } = {},
   ) {
+    this.log = opts.log
     this.now = opts.now ?? Date.now
     this.random = opts.random ?? randomBytes
     this.rows = existsSync(file) ? DeviceStore.load(file) : []
@@ -81,6 +83,7 @@ export class DeviceStore {
       if (this.failures >= MAX_PAIR_FAILURES) {
         this.codes.clear()
         this.failures = 0
+        this.log?.(`[devices] ${MAX_PAIR_FAILURES} failed pairing attempts — the live code was invalidated; mint a new one`)
       }
       return { ok: false, reason: 'invalid-code' }
     }
