@@ -68,12 +68,14 @@ class Dispatcher(private val device: Device) {
             }
             "press" -> {
                 refuseMessage(args)
-                when (val key = str(args, "key")) {
+                val key = str(args, "key")
+                val done = when (key) {
                     "Back" -> device.globalBack()
                     "Home" -> device.globalHome()
                     "Enter" -> device.imeEnter(focused())
                     else -> throw AgentError("unsupported-key: $key（安卓只认 Back / Home / Enter）")
                 }
+                if (!done) throw AgentError("action-failed: 系统没执行 $key")
                 mapOf("via" to "coords")
             }
             "readSubtree" -> readSubtree(scopedRoot(), obj(args, "spec"))
@@ -102,6 +104,8 @@ class Dispatcher(private val device: Device) {
     }
 
     private fun focusApp(pkg: String): Boolean {
+        // The old scope belongs to whatever app was in front; never let a later find search it.
+        scope = null
         device.launch(pkg)
         val deadline = System.currentTimeMillis() + 5_000
         while (true) {

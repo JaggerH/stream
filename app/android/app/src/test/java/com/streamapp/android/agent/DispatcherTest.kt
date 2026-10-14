@@ -123,6 +123,21 @@ class DispatcherTest {
         dev.launchMakesForeground = "me.ele"
         dev.wins = mutableListOf(WindowInfo("9", "me.ele", "饿了么", true))
         assertEquals(mapOf("ok" to true), call("focusApp", """{"match":{"process":"me.ele"}}"""))
+        dev.roots["9"] = FakeNode("FrameLayout", children = listOf(FakeNode("Button", "下单")))
+        @Suppress("UNCHECKED_CAST")
+        assertEquals(listOf("下单"), (map(call("find", """{"query":{"role":"Button"}}"""))["elements"] as List<Map<String, Any?>>).map { it["name"] })
+    }
+
+    @Test fun focusAppDropsTheOldScopeWhenTheNewWindowIsNotFound() {
+        call("scopeWindow", """{"match":{"process":"com.sankuai.meituan"}}""")
+        dev.launchMakesForeground = "me.ele"
+        call("focusApp", """{"match":{"process":"me.ele"}}""")
+        assertTrue(assertThrows(AgentError::class.java) { call("find", """{"query":{"role":"Button"}}""") }.message!!.startsWith("no-scope:"))
+    }
+
+    @Test fun aKeyTheSystemRefusesFails() {
+        val refusing = object : Device by dev { override fun globalBack() = false }
+        assertTrue(assertThrows(AgentError::class.java) { Dispatcher(refusing).dispatch("press", JSONObject("""{"key":"Back"}""")) }.message!!.startsWith("action-failed:"))
     }
 
     @Test fun unknownOpAndMissingArg() {
