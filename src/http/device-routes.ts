@@ -46,7 +46,11 @@ export function mountDeviceRoutes(app: Hono, deps: DeviceRoutesDeps): void {
     const online = new Map(deps.registry.devices().map((d) => [d.hello.deviceId, d]))
     const paired = deps.store.list().map((d) => {
       const live = online.get(d.deviceId)
-      return { ...d, paired: true, online: !!live, ...(live ? { agentVersion: live.hello.agentVersion } : {}) }
+      return {
+        ...d, paired: true, online: !!live,
+        ...(live ? { agentVersion: live.hello.agentVersion } : {}),
+        ...(live?.state ? { state: live.state } : {}),
+      }
     })
     const pairedIds = new Set(paired.map((d) => d.deviceId))
     const others = [...online.values()]
@@ -54,8 +58,33 @@ export function mountDeviceRoutes(app: Hono, deps: DeviceRoutesDeps): void {
       .map((d) => ({
         deviceId: d.hello.deviceId, name: d.hello.name, platform: d.hello.platform,
         paired: false, online: true, agentVersion: d.hello.agentVersion,
+        ...(d.state ? { state: d.state } : {}),
       }))
     return c.json({ devices: [...paired, ...others] })
+  })
+
+  /**
+   * Run one host op on one device and return what the agent answered. **This machine only**:
+   * it actuates a phone, so it needs someone at the machine, the same rule as `pairing-code`.
+   * It exists for live checks and for measuring a new app before writing its recipe; recipes
+   * never go through it.
+   */
+  app.post('/api/devices/:id/ops', async (c) => {
+    if (!deps.isLocal(c)) return c.json({ error: '只能在运行 Stream 的那台机器上调用' }, 403)
+    const id = c.req.param('id')
+    let body: { op?: unknown; args?: unknown }
+    try { body = await c.req.json() } catch { return c.json({ error: 'body 不是合法 JSON' }, 400) }
+    if (typeof body.op !== 'string' || (body.args !== undefined && (typeof body.args !== 'object' || body.args === null))) {
+      return c.json({ error: 'op 必须是字符串，args 可选且必须是对象' }, 400)
+    }
+    const device = deps.registry.devices().find((d) => d.hello.deviceId === id)
+    if (!device) return c.json({ error: '这台设备不在线' }, 404)
+    try {
+      const result = await device.relay.send({ op: body.op, ...(body.args ? { args: body.args as Record<string, unknown> } : {}) })
+      return c.json({ result: result ?? null })
+    } catch (e) {
+      return c.json({ error: e instanceof Error ? e.message : String(e) }, 502)
+    }
   })
 
   app.delete('/api/devices/:id', (c) => {

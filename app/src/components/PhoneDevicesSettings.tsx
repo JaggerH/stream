@@ -81,6 +81,9 @@ export function PhoneDevicesSettings({ conn }: { conn: Connection }) {
             <li key={d.deviceId} className="flex items-center gap-2 rounded-md border border-[var(--acr-border-soft)] px-2.5 py-1.5">
               <span className={`size-1.5 shrink-0 rounded-full ${d.online ? 'bg-emerald-400' : 'bg-muted-foreground/40'}`} />
               <span className="min-w-0 flex-1 truncate text-[12px]">{d.name}</span>
+              {d.online && d.state?.a11yEnabled === false && (
+                <span className="rounded bg-amber-400/10 px-1.5 text-[11px] text-amber-300">无障碍已关</span>
+              )}
               <span className="text-[11px] text-muted-foreground">{d.platform === 'android' ? '安卓' : '电脑'}</span>
               {d.paired && (
                 <button
@@ -104,6 +107,12 @@ export function PhoneDevicesSettings({ conn }: { conn: Connection }) {
       >
         添加手机
       </button>
+      <a
+        href={`${conn.baseUrl}/panel/android/stream.apk`}
+        className="ml-3 text-[12px] text-muted-foreground underline hover:text-foreground"
+      >
+        下载安卓 App
+      </a>
 
       {expired && !pairing && (
         <p className="text-[12px] text-muted-foreground">配对码已过期，点「添加手机」重新生成</p>

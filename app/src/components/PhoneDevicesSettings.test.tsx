@@ -30,6 +30,17 @@ describe('PhoneDevicesSettings', () => {
       'http://127.0.0.1:8900/api/devices/android%3A1', expect.objectContaining({ method: 'DELETE' })))
   })
 
+  it('flags an online phone whose accessibility service is off, and links the APK', async () => {
+    fetchMock.mockImplementation(() => json({ devices: [
+      { deviceId: 'android:1', name: 'K80', platform: 'android', paired: true, online: true,
+        state: { a11yEnabled: false, screenOn: true, keyguardLocked: false, battery: 40, charging: false } },
+    ] }))
+    render(<PhoneDevicesSettings conn={conn} />)
+    expect(await screen.findByText('无障碍已关')).toBeTruthy()
+    expect(screen.getByRole('link', { name: '下载安卓 App' }).getAttribute('href'))
+      .toBe('http://127.0.0.1:8900/panel/android/stream.apk')
+  })
+
   it('shows the code and one QR per backend address after "添加手机"', async () => {
     fetchMock.mockImplementation((url: string) => {
       if (String(url).endsWith('/api/devices/pairing-code')) {

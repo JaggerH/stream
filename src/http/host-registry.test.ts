@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { HostRelayRegistry, parseHello, surfaceOf, type HostHello } from './host-registry.ts'
+import { HostRelayRegistry, parseHello, parseState, surfaceOf, type HostHello } from './host-registry.ts'
 import { HostRelayDisconnected, type HostSocket } from './host-relay.ts'
 
 function fakeSocket() {
@@ -111,5 +111,34 @@ describe('HostRelayRegistry.kick', () => {
     await expect(pending).rejects.toBeInstanceOf(HostRelayDisconnected)
     reg.disconnect(phone, 'android:x') // the later close handler is a no-op
     expect(reg.devices()).toHaveLength(0)
+  })
+})
+
+describe('parseState', () => {
+  it('reads a full state frame', () => {
+    expect(parseState(JSON.stringify({ type: 'state', a11yEnabled: true, screenOn: false, keyguardLocked: true, battery: 81, charging: false })))
+      .toEqual({ a11yEnabled: true, screenOn: false, keyguardLocked: true, battery: 81, charging: false })
+  })
+  it('is null for anything that is not a well-formed state frame', () => {
+    expect(parseState('{"type":"state","a11yEnabled":"yes"}')).toBeNull()
+    expect(parseState('{"id":1,"result":null}')).toBeNull()
+    expect(parseState('not json')).toBeNull()
+  })
+})
+
+describe('HostRelayRegistry.setState', () => {
+  it('attaches state to the live device and returns the previous one', () => {
+    const reg = new HostRelayRegistry()
+    reg.connect(fakeSocket().socket, hello({ deviceId: 'android:1', platform: 'android', name: 'K80' }))
+    const s1 = { a11yEnabled: true, screenOn: true, keyguardLocked: false, battery: 50, charging: true }
+    expect(reg.setState('android:1', s1)).toBeUndefined()
+    expect(reg.devices()[0].state).toEqual(s1)
+    const s2 = { ...s1, a11yEnabled: false }
+    expect(reg.setState('android:1', s2)).toEqual(s1)
+  })
+  it('ignores state for a device that is not connected', () => {
+    const reg = new HostRelayRegistry()
+    expect(reg.setState('android:gone', { a11yEnabled: true, screenOn: true, keyguardLocked: false, battery: 1, charging: false })).toBeUndefined()
+    expect(reg.devices()).toEqual([])
   })
 })

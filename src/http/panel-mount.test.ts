@@ -1,4 +1,4 @@
-import { mkdtempSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Hono } from 'hono'
@@ -121,4 +121,21 @@ test('文件不存在的 404 正文写明是没构建，不是一句裸的 Not F
   const res = await app.request('/panel/panel.js')
   expect(res.status).toBe(404)
   expect(await res.text()).toContain('npm run build:panel')
+})
+
+test('serves the Android APK from <root>/android/stream.apk', async () => {
+  const { app, root } = appWithPanel()
+  mkdirSync(join(root, 'android'), { recursive: true })
+  writeFileSync(join(root, 'android', 'stream.apk'), Buffer.from('PK\x03\x04apk'))
+  const r = await app.request('/panel/android/stream.apk')
+  expect(r.status).toBe(200)
+  expect(r.headers.get('content-type')).toBe('application/vnd.android.package-archive')
+  expect(r.headers.get('content-disposition')).toBe('attachment; filename="stream.apk"')
+})
+
+test('names the build command when the APK has not been built', async () => {
+  const { app } = appWithPanel()
+  const r = await app.request('/panel/android/stream.apk')
+  expect(r.status).toBe(404)
+  expect(await r.text()).toContain('scripts/build-android.sh')
 })

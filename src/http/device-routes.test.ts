@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { Hono } from 'hono'
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -64,6 +64,57 @@ describe('device routes', () => {
       expect.objectContaining({ deviceId: r.deviceId, name: 'K80', platform: 'android', paired: true, online: false }),
       expect.objectContaining({ deviceId: 'desktop:pc', platform: 'windows', paired: false, online: true, agentVersion: '0.1.0' }),
     ]))
+  })
+
+  it('lists the live state of an online device', async () => {
+    const r = store.pair(store.createPairingCode().code, 'K80')
+    if (!r.ok) throw new Error('expected ok')
+    registry.connect({ send: () => {} }, { deviceId: r.deviceId, platform: 'android', name: 'K80', agentVersion: '0.1.0', ops: [] })
+    const state = { a11yEnabled: false, screenOn: true, keyguardLocked: false, battery: 40, charging: false }
+    registry.setState(r.deviceId, state)
+    const body = await (await app.request('/api/devices')).json() as { devices: Array<{ state?: unknown }> }
+    expect(body.devices[0].state).toEqual(state)
+  })
+
+  describe('POST /api/devices/:id/ops', () => {
+    const opPost = (id: string, body: string) =>
+      app.request(`/api/devices/${encodeURIComponent(id)}/ops`, { method: 'POST', body })
+    const sent: string[] = []
+    let phoneId: string
+    beforeEach(() => {
+      sent.length = 0
+      phoneId = 'android:1'
+      registry.connect({ send: (d) => void sent.push(d) }, { deviceId: phoneId, platform: 'android', name: 'K80', agentVersion: '0.1.0', ops: ['find'] })
+    })
+
+    it('runs one op on a device, loopback only', async () => {
+      const p = opPost(phoneId, JSON.stringify({ op: 'find', args: { query: { role: 'Button' } } }))
+      await vi.waitFor(() => expect(sent).toHaveLength(1))
+      const frame = JSON.parse(sent[0])
+      expect(frame).toEqual({ id: frame.id, op: 'find', args: { query: { role: 'Button' } } })
+      registry.devices()[0].relay.handleMessage(JSON.stringify({ id: frame.id, result: { elements: [] } }))
+      const ok = await p
+      expect(ok.status).toBe(200)
+      expect(await ok.json()).toEqual({ result: { elements: [] } })
+    })
+
+    it('reports an agent error as 502 with the message', async () => {
+      const p = opPost(phoneId, JSON.stringify({ op: 'invoke', args: { ref: 'n3' } }))
+      await vi.waitFor(() => expect(sent).toHaveLength(1))
+      registry.devices()[0].relay.handleMessage(JSON.stringify({ id: JSON.parse(sent[0]).id, error: 'stale-ref: n3 belongs to an older tree' }))
+      const r = await p
+      expect(r.status).toBe(502)
+      expect(await r.json()).toEqual({ error: 'stale-ref: n3 belongs to an older tree' })
+    })
+
+    it('refuses the op route off-box, for an offline device and for a bad body', async () => {
+      local = false
+      expect((await opPost(phoneId, '{"op":"url"}')).status).toBe(403)
+      local = true
+      expect((await opPost('android:nope', '{"op":"url"}')).status).toBe(404)
+      expect((await opPost(phoneId, '{"args":{}}')).status).toBe(400)
+      expect(sent).toEqual([])
+    })
   })
 
   it('revoking drops the live socket and forgets the token', async () => {

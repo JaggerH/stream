@@ -131,6 +131,7 @@ describe('attachHostRelay (v2)', () => {
 async function startWithDevices(
   mapOrAuth: Record<string, string> | ((t: string) => string | undefined),
   seen: string[] = [],
+  onDeviceState?: (id: string, prev: unknown, next: unknown) => void,
 ) {
   const deviceAuth = typeof mapOrAuth === 'function' ? mapOrAuth : (t: string) => mapOrAuth[t]
   const srv = createServer()
@@ -140,6 +141,7 @@ async function startWithDevices(
     token: TOKEN, log: () => {}, helloTimeoutMs: 2000,
     deviceAuth,
     onDeviceSeen: (id) => void seen.push(id),
+    onDeviceState,
   })
   await new Promise<void>((r) => srv.listen(0, '127.0.0.1', r))
   const url = `ws://127.0.0.1:${(srv.address() as AddressInfo).port}/api/host`
@@ -158,6 +160,27 @@ describe('attachHostRelay device tokens', () => {
     await until(() => registry.deviceFor('android') !== undefined)
     expect(registry.deviceFor('android')?.hello.deviceId).toBe('android:k80')
     expect(seen).toEqual(['android:k80'])
+    ws.close()
+  })
+
+  it('routes state frames to the registry and to onDeviceState, not to the relay', async () => {
+    const seenStates: Array<[string, unknown, unknown]> = []
+    const { registry, url } = await startWithDevices(
+      { 'dev-token': 'android:k80' }, [], (id, prev, next) => void seenStates.push([id, prev, next]))
+    const ws = new WebSocket(url, [HOST_RELAY_PROTOCOL, 'dev-token'])
+    await new Promise((r) => ws.on('open', r))
+    ws.send(JSON.stringify(phoneHello('android:k80')))
+    await until(() => registry.devices().length === 1)
+    const relay = registry.deviceFor('android')!.relay
+    let handled = 0
+    const orig = relay.handleMessage.bind(relay)
+    relay.handleMessage = (raw: string) => { handled++; orig(raw) }
+    const state = { a11yEnabled: false, screenOn: true, keyguardLocked: false, battery: 40, charging: false }
+    ws.send(JSON.stringify({ type: 'state', ...state }))
+    await until(() => seenStates.length === 1)
+    expect(seenStates[0]).toEqual(['android:k80', undefined, state])
+    expect(registry.devices()[0].state?.a11yEnabled).toBe(false)
+    expect(handled).toBe(0)
     ws.close()
   })
 

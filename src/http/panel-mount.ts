@@ -37,6 +37,21 @@ export function mountPanelAssets(app: Hono, opts: { root: string; log?: (line: s
   if (!existsSync(join(opts.root, 'panel.js'))) {
     ;(opts.log ?? console.warn)(`[panel] ${NOT_BUILT}（找的是 ${join(opts.root, 'panel.js')}）`)
   }
+  // The phone downloads the Stream app from here (design D7): installing from the phone's own
+  // browser avoids Xiaomi's "USB install" gate and needs no cable.
+  app.get('/panel/android/stream.apk', async (c) => {
+    let body: Buffer
+    try {
+      body = await readFile(join(opts.root, 'android', 'stream.apk'))
+    } catch {
+      return c.text('[panel] stream.apk 还没构建：scripts/build-android.sh', 404)
+    }
+    return c.body(Uint8Array.from(body), 200, {
+      'content-type': 'application/vnd.android.package-archive',
+      'content-disposition': 'attachment; filename="stream.apk"',
+      'cache-control': 'no-cache',
+    })
+  })
   app.get('/panel/:file{[A-Za-z0-9._-]+}', async (c) => {
     const file = c.req.param('file')
     const ext = file.split('.').pop() ?? ''

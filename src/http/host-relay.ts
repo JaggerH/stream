@@ -3,7 +3,7 @@ import type { Server } from 'node:http'
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { tokenEqual } from './secrets.ts'
 import type { HostRelay, HostOp } from '../replay/desktop-driver.ts'
-import { parseHello, type HostRelayRegistry } from './host-registry.ts'
+import { parseHello, parseState, type HostDeviceState, type HostRelayRegistry } from './host-registry.ts'
 
 /**
  * The `/api/host` relay — the backend end of the `host-desktop` Engine. It pairs the
@@ -429,9 +429,10 @@ export function attachHostRelay(
     path?: string
     log?: (line: string) => void
     helloTimeoutMs?: number
+    onDeviceState?: (deviceId: string, prev: HostDeviceState | undefined, next: HostDeviceState) => void
   },
 ): WebSocketServer {
-  const { token, deviceAuth, onDeviceSeen, path = '/api/host', log = console.log, helloTimeoutMs = 5_000 } = opts
+  const { token, deviceAuth, onDeviceSeen, onDeviceState, path = '/api/host', log = console.log, helloTimeoutMs = 5_000 } = opts
   const wss = new WebSocketServer({
     noServer: true,
     handleProtocols: (protocols: Set<string>) =>
@@ -501,6 +502,12 @@ export function attachHostRelay(
       if (closing) return
       const raw = data.toString()
       if (deviceId !== null) {
+        const state = parseState(raw)
+        if (state) {
+          const prev = registry.setState(deviceId, state)
+          onDeviceState?.(deviceId, prev, state)
+          return
+        }
         registry.devices().find((d) => d.hello.deviceId === deviceId)?.relay.handleMessage(raw)
         return
       }

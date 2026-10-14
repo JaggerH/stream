@@ -1069,6 +1069,18 @@ const apiToken = config.api_token || loadOrCreateApiToken(dirname(config.item_db
       token: extToken,
       deviceAuth: (t) => deviceStore.deviceForToken(t),
       onDeviceSeen: (id) => deviceStore.touch(id),
+      // A phone whose accessibility service went off can still connect but cannot do anything.
+      // The OS turns it off silently (app updates, some OEM cleanups), so say it where the user looks.
+      onDeviceState: (id, prev, next) => {
+        if (next.a11yEnabled || prev?.a11yEnabled === false) return
+        const name = harvest.hostRelays.devices().find((d) => d.hello.deviceId === id)?.hello.name ?? id
+        streamEvents.emit({
+          type: 'device.a11y-off', severity: 'warn',
+          title: `${name} 的无障碍服务关了`,
+          body: '手机上的 Stream 连着，但无障碍服务被系统关掉了，手机上的 recipe 都跑不了。到手机的 设置 → 无障碍 → Stream 重新打开。',
+          dedupeKey: `device-a11y-off:${id}`,
+        })
+      },
     })
     return () => closeRelayServer(wss)
   })

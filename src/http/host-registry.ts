@@ -21,11 +21,38 @@ export interface HostHello {
   ops: string[]
 }
 
+/** What a phone reports about itself: sent right after `hello`, every 30 s, and on every
+ *  accessibility-service change. The backend only stores the latest one. */
+export interface HostDeviceState {
+  a11yEnabled: boolean
+  screenOn: boolean
+  keyguardLocked: boolean
+  battery: number
+  charging: boolean
+}
+
+/** `null` for anything that is not a complete state frame. A partial frame is dropped, not
+ *  merged: a missing `a11yEnabled` read as `false` would raise a false alarm. */
+export function parseState(raw: string): HostDeviceState | null {
+  let m: Record<string, unknown>
+  try {
+    m = JSON.parse(raw)
+  } catch {
+    return null
+  }
+  if (m === null || typeof m !== 'object' || m.type !== 'state') return null
+  const { a11yEnabled, screenOn, keyguardLocked, battery, charging } = m
+  if (typeof a11yEnabled !== 'boolean' || typeof screenOn !== 'boolean' || typeof keyguardLocked !== 'boolean') return null
+  if (typeof battery !== 'number' || typeof charging !== 'boolean') return null
+  return { a11yEnabled, screenOn, keyguardLocked, battery, charging }
+}
+
 export interface HostDevice {
   hello: HostHello
   relay: WsHostRelay
   ops: ReadonlySet<string>
   connectedAt: number
+  state?: HostDeviceState
 }
 
 const PLATFORMS: ReadonlySet<string> = new Set(['windows', 'macos', 'android'])
@@ -61,6 +88,7 @@ interface Live {
   socket: HostSocket
   ops: ReadonlySet<string>
   connectedAt: number
+  state?: HostDeviceState
 }
 
 export class HostRelayRegistry {
@@ -114,6 +142,17 @@ export class HostRelayRegistry {
       relay: this.relays.get(l.hello.deviceId)!,
       ops: l.ops,
       connectedAt: l.connectedAt,
+      ...(l.state ? { state: l.state } : {}),
     }))
+  }
+
+  /** Store a device's latest state. Returns the previous state so the caller can act on a
+   *  transition. A device that is not live is ignored. */
+  setState(deviceId: string, state: HostDeviceState): HostDeviceState | undefined {
+    const l = this.live.get(deviceId)
+    if (!l) return undefined
+    const prev = l.state
+    l.state = state
+    return prev
   }
 }
