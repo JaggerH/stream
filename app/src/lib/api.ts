@@ -85,6 +85,17 @@ export type BlockedReason =
 /** A content-search member that failed — `reason` is the core one-liner shown to the user,
  *  `stack` the full backend stack for the copy-to-clipboard diagnostic, `blocked` present only
  *  when the member is waiting on the user rather than broken. */
+export interface DeviceRow {
+  deviceId: string
+  name: string
+  platform: 'windows' | 'macos' | 'android'
+  paired: boolean
+  online: boolean
+  pairedAt?: number
+  lastSeenAt?: number
+  agentVersion?: string
+}
+
 export interface SearchWarning {
   source: string
   reason: string
@@ -869,6 +880,12 @@ export const api = {
   /** 局域网访问用的令牌 + 直接能点开的链接。后端只对本机回答这一口（非 loopback 一律 403）。 */
   accessToken: {
     get: (c: Connection) => get<{ token: string; urls: string[] }>(c, '/api/access-token'),
+  },
+  /** Paired phones and online host agents (design D4). `pairingCode` answers on this machine only. */
+  devices: {
+    list: (c: Connection) => get<{ devices: DeviceRow[] }>(c, '/api/devices'),
+    pairingCode: (c: Connection) => post<{ code: string; expiresAt: number; qr: string[] }>(c, '/api/devices/pairing-code', {}),
+    revoke: (c: Connection, id: string) => del<null>(c, `/api/devices/${encodeURIComponent(id)}`),
   },
   /** 摘要 prompt（settings 里唯一还归 LLM 的字段）+ 梯子就绪状态。连接与模型走 Providers 页
    *  （`llm` 行的成员实例 + 调用点绑定），不在这里写。 */

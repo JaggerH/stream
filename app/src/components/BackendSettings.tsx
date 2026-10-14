@@ -3,6 +3,7 @@ import { useBackend } from '../lib/backend.tsx'
 import { useDebugEnabled } from '../lib/debugFlag.ts'
 import { Switch } from './ui/switch.tsx'
 import { RemoteAccessSettings } from './RemoteAccessSettings.tsx'
+import { PhoneDevicesSettings } from './PhoneDevicesSettings.tsx'
 import { HarvestBrowserSettings } from './HarvestBrowserSettings.tsx'
 import { DiagnosticsSettings } from './DiagnosticsSettings.tsx'
 import { Sheet, SheetContent, SheetFooter, SheetHeader, SheetTitle } from './acrylic/sheet.tsx'
@@ -146,6 +147,18 @@ export function BackendSettings({ open, onClose }: { open: boolean; onClose: () 
               >
                 <SettingsBlock>
                   <RemoteAccessSettings conn={conn} />
+                </SettingsBlock>
+              </SettingsSection>
+
+              {/* 手机配对：配对码只在本机生成（后端对非 loopback 直接 403）。 */}
+              <SettingsSection
+                title="手机"
+                collapsible
+                {...section('phones')}
+                footnote="手机装 Stream 后扫码配对"
+              >
+                <SettingsBlock>
+                  <PhoneDevicesSettings conn={conn} />
                 </SettingsBlock>
               </SettingsSection>
 
