@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { makeDesktopDriver, type HostOp, type HostRelay, type ReadSpec } from './desktop-driver.ts'
+import { DESKTOP_OPS, UnsupportedOpError, makeDesktopDriver, type HostOp, type HostRelay, type ReadSpec } from './desktop-driver.ts'
 
 /** A fake Stream Desktop: records every op it receives and answers with `handler`. */
 function fakeRelay(handler: (op: HostOp) => unknown = () => null) {
@@ -232,10 +232,30 @@ describe('makeDesktopDriver: readText / readElements / findImage / captureWindow
       { rect: { x: 5, y: 5, w: 3, h: 4 }, kind: 'text' },
     ])
   })
-  it('老 agent 回 unsupported 错 → 两个读屏 op 都回 null，不抛', async () => {
+  it('an op the device did not declare: read ops return null without sending anything', async () => {
+    const { r, sent } = relay({})
+    const d = makeDesktopDriver(r, new Set(['click']))
+    expect(await d.readText()).toBeNull()
+    expect(await d.readElements()).toBeNull()
+    expect(await d.findImage(Buffer.from('png'))).toBeNull()
+    expect(await d.nudge()).toBe(false)
+    await d.status('x')
+    expect(sent).toEqual([])
+  })
+  it('an action op the device did not declare fails fast as UnsupportedOpError', async () => {
+    const { r, sent } = relay({})
+    const d = makeDesktopDriver(r, new Set(['find']))
+    await expect(d.click({ x: 0, y: 0, w: 1, h: 1 })).rejects.toBeInstanceOf(UnsupportedOpError)
+    await expect(d.click({ x: 0, y: 0, w: 1, h: 1 })).rejects.toThrow(/unsupported-op: click/)
+    expect(sent).toEqual([])
+  })
+  it('a declared op that fails on the agent is not swallowed as "unsupported"', async () => {
     const r: HostRelay = { async send() { throw new Error('unknown op: readText') } }
-    expect(await makeDesktopDriver(r).readText()).toBeNull()
-    expect(await makeDesktopDriver(r).readElements()).toBeNull()
+    await expect(makeDesktopDriver(r).readText()).rejects.toThrow(/unknown op/)
+  })
+  it('with no op set given, the full Stream Desktop set is assumed', () => {
+    expect(DESKTOP_OPS.has('readText')).toBe(true)
+    expect(DESKTOP_OPS.size).toBe(22)
   })
   it('硬失败照抛，不当成"没找到"（runner 的 HARD_SEE_ERRORS 靠它够得着那句人话）', async () => {
     const r: HostRelay = { async send() { throw new Error('bad-region: region … 和窗口画面没有交集') } }
@@ -284,11 +304,11 @@ describe('makeDesktopDriver: readText / readElements / findImage / captureWindow
       { op: 'status', args: { text: null } },
     ])
   })
-  /** 和 `nudge` 同一条纪律：老 agent 不认 → 吞（条子上少一句话不该让那一步失败）；
-   *  别的错误照抛（WS 断了是整趟都要停的病）。 */
-  it('status：老 agent 回 unknown op → 静默；其它错误照抛', async () => {
-    const old: HostRelay = { async send() { throw new Error('unknown op: status') } }
-    await expect(makeDesktopDriver(old).status('x')).resolves.toBeUndefined()
+  /** Same rule as `nudge`: an undeclared op is skipped (a missing status line must not fail the
+   *  step); any other error is rethrown (a dead socket stops the whole run). */
+  it('status: undeclared op is silent; other errors are rethrown', async () => {
+    const old: HostRelay = { async send() { throw new Error('unreachable') } }
+    await expect(makeDesktopDriver(old, new Set(['click'])).status('x')).resolves.toBeUndefined()
     const dead: HostRelay = { async send() { throw new Error('host relay: socket closed') } }
     await expect(makeDesktopDriver(dead).status('x')).rejects.toThrow(/socket closed/)
   })

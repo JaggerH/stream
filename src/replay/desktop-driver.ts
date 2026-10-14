@@ -357,15 +357,23 @@ export interface EnsureAppOutcome {
   window?: WindowInfo
 }
 
-/** 老版本对新 op 回 `unknown op: …`，非 Windows 后端回 `host agent: … only implemented for Windows`——
- *  两种都是"这台没有这个能力"，调用方据此让梯子落下一段，而不是把整趟 recipe 炸掉。
- *
- *  **那句 `host agent:` 是 Rust 侧原样发过来的**（`app/host-agent/src/main.rs` 的
- *  `#[cfg(not(windows))]`），不是我们这边的文案：产品叫 Stream Desktop，但这是线上的线格式，
- *  改这边的字面量只会让匹配失效。 */
-function isUnsupportedOp(e: unknown): boolean {
-  const m = e instanceof Error ? e.message : String(e)
-  return /unknown op|only implemented for Windows|unsupported/i.test(m)
+/**
+ * Every op Stream Desktop implements. **Same list as `OP_NAMES` in `app/host-agent/src/protocol.rs`**;
+ * an agent declares its own subset in `hello.ops`, and this is the default for callers that build a
+ * driver without a device (tests, and any path that has not been given one).
+ */
+export const DESKTOP_OPS: ReadonlySet<string> = new Set([
+  'windows', 'scopeWindow', 'focusApp', 'ensureApp', 'find', 'invoke', 'setValue',
+  'click', 'moveMouse', 'scroll', 'type', 'press', 'readSubtree', 'screenshot', 'findImage',
+  'readText', 'readElements', 'url', 'sleep', 'nudge', 'status', 'clearInput',
+])
+
+/** The device did not declare this op. Raised before anything is sent. */
+export class UnsupportedOpError extends Error {
+  constructor(readonly op: string) {
+    super(`unsupported-op: ${op} is not declared by this device`)
+    this.name = 'UnsupportedOpError'
+  }
 }
 
 /**
@@ -373,7 +381,7 @@ function isUnsupportedOp(e: unknown): boolean {
  * shape of each op and how a reply is unwrapped — Stream Desktop's Rust process implements the
  * matching op handlers.
  */
-export function makeDesktopDriver(raw: HostRelay): DesktopDriver {
+export function makeDesktopDriver(raw: HostRelay, ops: ReadonlySet<string> = DESKTOP_OPS): DesktopDriver {
   /**
    * **每一次 op 的往返耗时**，挂在已有的 `STREAM_DESKTOP_SEE_TRACE` 这一个开关下（不另立旋钮）。
    *
@@ -381,7 +389,7 @@ export function makeDesktopDriver(raw: HostRelay): DesktopDriver {
    * 截图 + 识别 + 模板三次往返，谁贵看不出来——只能靠猜，而猜过的两次都猜错了（先怪模型、
    * 再怪焦点）。**一条 op 一行，别在这里做聚合**：聚合要先假设哪些维度重要，而这正是还不知道的事。
    */
-  const relay: HostRelay = process.env.STREAM_DESKTOP_SEE_TRACE
+  const traced: HostRelay = process.env.STREAM_DESKTOP_SEE_TRACE
     ? {
         async send(op) {
           const t0 = Date.now()
@@ -394,6 +402,14 @@ export function makeDesktopDriver(raw: HostRelay): DesktopDriver {
         ...(raw.withSession ? { withSession: raw.withSession.bind(raw) } : {}),
       }
     : raw
+  /** Undeclared ops never reach the wire. A capability the device lacks is decided here, from what
+   *  it said it can do, not by sending the op and pattern-matching the error that comes back. */
+  const relay: HostRelay = {
+    send(op) {
+      return ops.has(op.op) ? traced.send(op) : Promise.reject(new UnsupportedOpError(op.op))
+    },
+    ...(traced.withSession ? { withSession: traced.withSession.bind(traced) } : {}),
+  }
   /** agent 回的是 `{via}` 或 `{via, confirmed:bool}`——原样透传，**不把缺失补成 true**。
    *  `via` 也一样只认 agent 说的：猜一个"大概走了 invoke"就把这个字段的全部价值抹掉了。 */
   const outcome = (v: unknown): ActOutcome => {
@@ -441,25 +457,17 @@ export function makeDesktopDriver(raw: HostRelay): DesktopDriver {
       return outcome(await relay.send({ op: 'moveMouse', args: { x, y } }))
     },
     async nudge() {
-      try {
-        await relay.send({ op: 'nudge' })
-        return true
-      } catch (e) {
-        // 老 agent 不认这个 op → 落退路。**其它错误照抛**：`nudge-refused`（锁屏时
-        // SendInput 被系统拒）不是"没有这个能力"，吞掉它就等于把"叫不醒"说成"叫醒了"。
-        if (isUnsupportedOp(e)) return false
-        throw e
-      }
+      // Not declared = this agent has no way to wake the renderer without moving the pointer; the
+      // caller falls back to `moveMouse`. A declared nudge that fails (e.g. `nudge-refused` on a
+      // locked screen) throws: "could not wake it" must not read as "woke it".
+      if (!ops.has('nudge')) return false
+      await relay.send({ op: 'nudge' })
+      return true
     },
     async status(text) {
-      try {
-        await relay.send({ op: 'status', args: { text } })
-      } catch (e) {
-        // 老 agent 不认这个 op → 吞掉：条子上少一句话不该让这一步失败。**其它错误照抛**
-        // （WS 断了之类），那是整趟都要停的病，不是"没有这个能力"。
-        if (isUnsupportedOp(e)) return
-        throw e
-      }
+      // A missing status line must not fail the step.
+      if (!ops.has('status')) return
+      await relay.send({ op: 'status', args: { text } })
     },
     async scroll(dir, amount, expect, deliver) {
       return outcome(await relay.send({ op: 'scroll', args: { dir, amount, ...(expect ? { expect } : {}), ...(deliver ? { deliver } : {}) } }))
@@ -480,45 +488,32 @@ export function makeDesktopDriver(raw: HostRelay): DesktopDriver {
       return { jpeg: Buffer.from(res.base64, 'base64'), window: res.window, scale: typeof res.scale === 'number' ? res.scale : 1 }
     },
     async readText(region) {
-      try {
-        const r = (await relay.send({ op: 'readText', args: { ...(region ? { region } : {}) } })) as TextRead | undefined
-        return r && r.window ? { texts: r.texts ?? [], window: r.window, scale: r.scale ?? 1 } : null
-      } catch (e) {
-        if (isUnsupportedOp(e)) return null
-        throw e
-      }
+      if (!ops.has('readText')) return null
+      const r = (await relay.send({ op: 'readText', args: { ...(region ? { region } : {}) } })) as TextRead | undefined
+      return r && r.window ? { texts: r.texts ?? [], window: r.window, scale: r.scale ?? 1 } : null
     },
     async readElements(opts) {
-      try {
-        const args = {
-          ...(opts?.region ? { region: opts.region } : {}),
-          icons: opts?.icons === true,
-          // runner 恒给这一格（`recipe.app.a11y ?? true`，见 desktop-runner.ts）；直接调 driver
-          // 的调用方（不经 runner）不给时，就让 agent 按它自己的缺省（true）走。
-          ...(opts?.a11y !== undefined ? { a11y: opts.a11y } : {}),
-        }
-        const r = (await relay.send({ op: 'readElements', args })) as ElementsRead | undefined
-        if (!r?.window) return null
-        return {
-          // **空名当作没名字**：agent 缺席时就不发这一格，但一个补成 `""` 的实现（或将来某个
-          // 别的 agent）会让上层的包含匹配命中每一个无名图标——见 `SeeElement.name`。
-          elements: (r.elements ?? []).map((e) => ({ rect: e.rect, kind: e.kind, ...(e.name ? { name: e.name } : {}) })),
-          window: r.window,
-          scale: r.scale ?? 1,
-        }
-      } catch (e) {
-        if (isUnsupportedOp(e)) return null
-        throw e
+      if (!ops.has('readElements')) return null
+      const args = {
+        ...(opts?.region ? { region: opts.region } : {}),
+        icons: opts?.icons === true,
+        // runner 恒给这一格（`recipe.app.a11y ?? true`，见 desktop-runner.ts）；直接调 driver
+        // 的调用方（不经 runner）不给时，就让 agent 按它自己的缺省（true）走。
+        ...(opts?.a11y !== undefined ? { a11y: opts.a11y } : {}),
+      }
+      const r = (await relay.send({ op: 'readElements', args })) as ElementsRead | undefined
+      if (!r?.window) return null
+      return {
+        // **空名当作没名字**：见 `SeeElement.name`。
+        elements: (r.elements ?? []).map((e) => ({ rect: e.rect, kind: e.kind, ...(e.name ? { name: e.name } : {}) })),
+        window: r.window,
+        scale: r.scale ?? 1,
       }
     },
     async findImage(templatePng, region) {
-      try {
-        const r = (await relay.send({ op: 'findImage', args: { template: templatePng.toString('base64'), ...(region ? { region } : {}) } })) as Partial<ImageHit> | undefined
-        return r?.rect && typeof r.score === 'number' ? { rect: r.rect, score: r.score } : null
-      } catch (e) {
-        if (isUnsupportedOp(e)) return null
-        throw e
-      }
+      if (!ops.has('findImage')) return null
+      const r = (await relay.send({ op: 'findImage', args: { template: templatePng.toString('base64'), ...(region ? { region } : {}) } })) as Partial<ImageHit> | undefined
+      return r?.rect && typeof r.score === 'number' ? { rect: r.rect, score: r.score } : null
     },
     async press(key, deliver) {
       return outcome(await relay.send({ op: 'press', args: { key, ...(deliver ? { deliver } : {}) } }))
