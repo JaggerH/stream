@@ -128,13 +128,17 @@ describe('attachHostRelay (v2)', () => {
   })
 })
 
-async function startWithDevices(map: Record<string, string>, seen: string[] = []) {
+async function startWithDevices(
+  mapOrAuth: Record<string, string> | ((t: string) => string | undefined),
+  seen: string[] = [],
+) {
+  const deviceAuth = typeof mapOrAuth === 'function' ? mapOrAuth : (t: string) => mapOrAuth[t]
   const srv = createServer()
   server = srv
   const registry = new HostRelayRegistry()
   attachHostRelay(srv, registry, {
     token: TOKEN, log: () => {}, helloTimeoutMs: 2000,
-    deviceAuth: (t) => map[t],
+    deviceAuth,
     onDeviceSeen: (id) => void seen.push(id),
   })
   await new Promise<void>((r) => srv.listen(0, '127.0.0.1', r))
@@ -194,6 +198,24 @@ describe('attachHostRelay device tokens', () => {
     delete map['dev-token']
     ws.send(JSON.stringify(phoneHello('android:k80')))
     expect(await closed).toBe(4003)
+    expect(registry.devices()).toHaveLength(0)
+    expect(seen).toEqual([])
+  })
+
+  it('a deviceAuth that throws at hello time fails closed with 4003', async () => {
+    let calls = 0
+    const seen: string[] = []
+    const { registry, url } = await startWithDevices(() => {
+      if (++calls === 1) return 'android:k80'
+      throw new Error('store unavailable')
+    }, seen)
+    const ws = new WebSocket(url, [HOST_RELAY_PROTOCOL, 'dev-token'])
+    await new Promise((r) => ws.on('open', r))
+    const closed = new Promise<number>((r) => ws.on('close', (code) => r(code)))
+    ws.send(JSON.stringify(phoneHello('android:k80')))
+    expect(await closed).toBe(4003)
+    await until(() => false)
+    expect(calls).toBe(2)
     expect(registry.devices()).toHaveLength(0)
     expect(seen).toEqual([])
   })
