@@ -97,6 +97,37 @@ impl Supervisor {
     }
 }
 
+/// The `hello` the v2 relay requires as the first frame: which device this is and which ops it
+/// implements. The backend decides "unsupported" from `ops` before sending anything, so this list
+/// must be what `dispatch` actually handles.
+pub fn hello_frame(device_id: &str, platform: &str, name: &str, version: &str, ops: &[&str]) -> serde_json::Value {
+    serde_json::json!({
+        "type": "hello",
+        "deviceId": device_id,
+        "platform": platform,
+        "name": name,
+        "agentVersion": version,
+        "ops": ops,
+    })
+}
+
+/// This machine's hello. The device id is the host name, so it is stable across agent restarts and
+/// a reconnect is recognised as the same device (its session lease carries over).
+pub fn local_hello() -> serde_json::Value {
+    let host = sysinfo::System::host_name().unwrap_or_else(|| "unknown".to_string());
+    let platform = match std::env::consts::OS {
+        "macos" => "macos",
+        _ => "windows",
+    };
+    hello_frame(
+        &format!("desktop:{}", host.to_lowercase()),
+        platform,
+        &host,
+        env!("CARGO_PKG_VERSION"),
+        crate::protocol::OP_NAMES,
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -148,5 +179,27 @@ mod tests {
             s.after(&SessionEnd::ConnectFailed("x".into()));
         }
         assert_eq!(s.after(&SessionEnd::ConnectFailed("x".into())), Duration::from_secs(30));
+    }
+
+    /// The hello is the backend's only source for "which device is this and what can it do". Field
+    /// names cross a process boundary with no compiler checking them, so they are pinned here.
+    #[test]
+    fn hello_frame_has_the_wire_shape_the_backend_parses() {
+        let v = hello_frame("desktop:pc", "windows", "PC", "0.1.0", &["click", "find"]);
+        assert_eq!(v["type"], "hello");
+        assert_eq!(v["deviceId"], "desktop:pc");
+        assert_eq!(v["platform"], "windows");
+        assert_eq!(v["name"], "PC");
+        assert_eq!(v["agentVersion"], "0.1.0");
+        assert_eq!(v["ops"], serde_json::json!(["click", "find"]));
+    }
+
+    /// The local hello declares every op this binary dispatches, under a stable device id.
+    #[test]
+    fn local_hello_declares_all_ops_and_a_desktop_id() {
+        let v = local_hello();
+        assert_eq!(v["ops"].as_array().unwrap().len(), crate::protocol::OP_NAMES.len());
+        assert!(v["deviceId"].as_str().unwrap().starts_with("desktop:"));
+        assert!(matches!(v["platform"].as_str().unwrap(), "windows" | "macos"));
     }
 }

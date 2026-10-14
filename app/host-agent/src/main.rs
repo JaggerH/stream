@@ -45,7 +45,7 @@ use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::http::header::SEC_WEBSOCKET_PROTOCOL;
 use tokio_tungstenite::tungstenite::{Error as WsError, Message};
 
-const PROTOCOL: &str = "host-relay.v1";
+const PROTOCOL: &str = "host-relay.v2";
 
 /// 指示条渲染层的句柄类型。**两个平台同一个名字**，所以 `run_session` / `supervise` 的签名
 /// 不用套 `#[cfg]`——签名分叉是漏改的温床。
@@ -527,7 +527,7 @@ async fn run_session<D: protocol::Desktop>(
         Ok(r) => r,
         Err(e) => return SessionEnd::ConnectFailed(format!("bad url: {e}")),
     };
-    // The relay's verifyHostUpgrade expects [host-relay.v1, <token>] in Sec-WebSocket-Protocol;
+    // The relay's verifyHostUpgrade expects [host-relay.v2, <token>] in Sec-WebSocket-Protocol;
     // the token rides the header, never the URL (so it never lands in an access log).
     let proto = match format!("{PROTOCOL}, {token}").parse() {
         Ok(v) => v,
@@ -546,6 +546,10 @@ async fn run_session<D: protocol::Desktop>(
     };
     eprintln!("[host-agent] connected");
     let (mut tx, mut rx) = ws.split();
+    // v2: the relay registers this device only after a hello, and closes with 4001 on anything else.
+    if tx.send(Message::Text(relay::local_hello().to_string())).await.is_err() {
+        return SessionEnd::Disconnected;
+    }
 
     let mut policy = overlay::OverlayPolicy::new();
     // 20ms 的心跳，兼两件事：**收热键**（渲染层那头是同步 channel，跨线程送过来）和
@@ -715,5 +719,32 @@ mod tests {
             _ = tokio::time::sleep(Duration::from_secs(5)) => panic!("断开之后没有重连回来"),
         };
         assert_eq!(accepted, 2, "第一条连接被挂断后必须自己再连一次");
+    }
+
+    /// The first frame on a fresh connection must be the hello — the v2 relay closes the socket
+    /// with 4001 on anything else.
+    #[tokio::test]
+    async fn the_first_frame_after_connecting_is_the_hello() {
+        use futures_util::StreamExt;
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let echo = |_r: &Request, mut resp: Response| {
+                resp.headers_mut().insert(SEC_WEBSOCKET_PROTOCOL, PROTOCOL.parse().unwrap());
+                Ok(resp)
+            };
+            let mut ws = tokio_tungstenite::accept_hdr_async(stream, echo).await.unwrap();
+            let first = ws.next().await.unwrap().unwrap();
+            serde_json::from_str::<Value>(first.to_text().unwrap()).unwrap()
+        });
+        let url = format!("ws://{addr}/api/host");
+        let mut backend = Backend::default();
+        let first = tokio::select! {
+            _ = run_session(&url, "token", &mut backend, None) => panic!("session ended before the server read a frame"),
+            v = server => v.unwrap(),
+        };
+        assert_eq!(first["type"], "hello");
+        assert_eq!(PROTOCOL, "host-relay.v2");
     }
 }
