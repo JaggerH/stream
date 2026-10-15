@@ -33,6 +33,9 @@ android {
 dependencies {
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("com.journeyapps:zxing-android-embedded:4.3.0")
+    // The scanner opens the camera through androidx.core (ContextCompat / ActivityCompat) but does
+    // not depend on it; without this the app crashes as soon as 扫码配对 opens the camera.
+    implementation("androidx.core:core:1.13.1")
     testImplementation("junit:junit:4.13.2")
     // android.jar's org.json is a stub on the JVM; tests need the real one.
     testImplementation("org.json:json:20240303")
