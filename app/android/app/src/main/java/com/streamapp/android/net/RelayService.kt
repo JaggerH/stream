@@ -75,7 +75,7 @@ class RelayService : Service() {
                     override fun status(text: String) = publish(text)
                     override fun revoked(reason: String) {
                         Credentials.clear(this@RelayService)
-                        publish("这台手机已在电脑上被移除，请重新配对")
+                        publish(REVOKED_STATUS)
                         stopSelf()
                     }
                 },

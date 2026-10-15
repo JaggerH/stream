@@ -26,6 +26,7 @@ import com.google.zxing.integration.android.IntentIntegrator
 import com.streamapp.android.a11y.StreamAccessibilityService
 import com.streamapp.android.net.Pairing
 import com.streamapp.android.net.RelayService
+import com.streamapp.android.net.shownStatus
 import com.streamapp.android.protocol.PairPayload
 import com.streamapp.android.protocol.pairChoices
 import com.streamapp.android.store.Credentials
@@ -62,7 +63,9 @@ class MainActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
-        RelayService.onStatus = { text -> runOnUiThread { if (::status.isInitialized) status.text = text } }
+        RelayService.onStatus = { text ->
+            runOnUiThread { if (::status.isInitialized) status.text = shownStatus(text, Credentials.load(this) != null) }
+        }
         render()
     }
 
@@ -91,7 +94,7 @@ class MainActivity : Activity() {
 
     private fun render() {
         root.removeAllViews()
-        status = text(RelayService.statusText, 18f)
+        status = text(shownStatus(RelayService.statusText, Credentials.load(this) != null), 18f)
         root.addView(status)
 
         val creds = Credentials.load(this)
