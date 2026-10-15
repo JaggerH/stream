@@ -140,11 +140,18 @@ class MainActivity : Activity() {
             .show()
     }
 
+    /** A pairing request in flight. The code is single-use and five failures void it, so a second
+     *  tap must not send it again: that would fail, and count as a failure, right after a success. */
+    private var pairing = false
+
     private fun doPair(p: PairPayload) {
+        if (pairing) return
+        pairing = true
         toast("正在配对…")
         thread(name = "pairing") {
             val result = Pairing.pair(p, "${Build.MANUFACTURER} ${Build.MODEL}", http)
             runOnUiThread {
+                pairing = false
                 if (isFinishing || isDestroyed) return@runOnUiThread
                 result.onSuccess { c ->
                     Credentials.save(this, c)
