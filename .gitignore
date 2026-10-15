@@ -4,6 +4,8 @@ data/
 logs/
 .env
 config.yaml
+# 发版验收的本机设置（测试机地址、账号）；模板是 scripts/release-verify.env.example
+scripts/release-verify.env
 *.db
 *.db-journal
 .codegraph/
