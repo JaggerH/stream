@@ -130,7 +130,10 @@ export function PhoneDevicesSettings({ conn }: { conn: Connection }) {
             </p>
           ) : (
             pairing.qr.map((payload) => {
-              const backend = (JSON.parse(payload) as { backend: string }).backend
+              // v2 carries every address; the phone asks which one to use. They are listed here
+              // too, for typing one in by hand.
+              const p = JSON.parse(payload) as { backends?: string[]; backend?: string }
+              const backends = p.backends ?? (p.backend ? [p.backend] : [])
               return (
                 <div key={payload} className="space-y-1">
                   <div
@@ -138,7 +141,7 @@ export function PhoneDevicesSettings({ conn }: { conn: Connection }) {
                     // renderSVG returns a self-contained <svg>; tag it so tests can count codes.
                     dangerouslySetInnerHTML={{ __html: renderSVG(payload).replace('<svg', '<svg data-pair-qr') }}
                   />
-                  <div className="font-mono text-[11px] text-muted-foreground">{backend}</div>
+                  {backends.map((b) => <div key={b} className="font-mono text-[11px] text-muted-foreground">{b}</div>)}
                 </div>
               )
             })

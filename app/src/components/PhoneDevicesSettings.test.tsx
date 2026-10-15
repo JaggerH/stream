@@ -41,11 +41,11 @@ describe('PhoneDevicesSettings', () => {
       .toBe('http://127.0.0.1:8900/panel/android/stream.apk')
   })
 
-  it('shows the code and one QR per backend address after "添加手机"', async () => {
+  it('shows the code and one QR carrying every backend address after "添加手机"', async () => {
     fetchMock.mockImplementation((url: string) => {
       if (String(url).endsWith('/api/devices/pairing-code')) {
         return json({ code: '123456', expiresAt: Date.now() + 300_000, qr: [
-          JSON.stringify({ stream: 'pair', v: 1, backend: 'http://10.9.8.21:8900', code: '123456' }),
+          JSON.stringify({ stream: 'pair', v: 2, backends: ['http://10.9.8.21:8900', 'http://100.70.0.5:8900'], code: '123456' }),
         ] })
       }
       return json({ devices: [] })
@@ -53,7 +53,9 @@ describe('PhoneDevicesSettings', () => {
     const { container } = render(<PhoneDevicesSettings conn={conn} />)
     fireEvent.click(await screen.findByRole('button', { name: '添加手机' }))
     expect(await screen.findByText('123456')).toBeTruthy()
+    // Both addresses are listed (for manual entry), under a single code.
     expect(screen.getByText('http://10.9.8.21:8900')).toBeTruthy()
+    expect(screen.getByText('http://100.70.0.5:8900')).toBeTruthy()
     expect(container.querySelectorAll('svg[data-pair-qr]')).toHaveLength(1)
   })
 

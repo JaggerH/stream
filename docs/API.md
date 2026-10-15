@@ -151,7 +151,7 @@ because a phone needs a clickable link, not a manually copied 64-bit hex string.
 Failures: pair with a wrong or expired code is 403 `{"error":"invalid-code"}`, a malformed pair body is 400, `DELETE` of an unknown id is 404, and `pairing-code` from a non-local caller is 403.
 Each `GET /api/devices` row has `deviceId`, `name`, `platform`, `paired`, `online`, `pairedAt`, `lastSeenAt` (when the device last connected) and `agentVersion`.
 Only `sha256(token)` is stored (`data/devices.json`, 0600). `/api/host` accepts the device token in place of the shared secret, but a device token only authorizes an android `hello`: a `hello.deviceId` that differs from the bound id, or any other platform, closes the socket with 4003.
-The pairing-code response carries `qr`: one JSON string per LAN address, `{"stream":"pair","v":1,"backend":"http://<lan-ip>:<port>","code":"<6 digits>"}`, which the panel renders as QR codes.
+The pairing-code response carries `qr`: a single JSON string, `{"stream":"pair","v":2,"backends":["http://<lan-ip>:<port>","http://<tailscale-ip>:<port>"],"code":"<6 digits>"}`, listing every address of this machine (an empty array when it has none), which the panel renders as one QR code with the addresses listed under it. When the code lists more than one address, the app checks which ones answer `/api/health` and asks the user to pick, reachable ones first and each marked LAN or Tailscale. The app still reads the older one-address form `{"v":1,"backend":…}`.
 
 ## Android app
 
@@ -165,9 +165,9 @@ The script runs JVM unit tests and assembles the release APK with the Gradle 8.1
 
 Release builds use the build machine's debug signing key. An APK built on another machine with a different key cannot update the installed app: uninstall it first, then install and pair again.
 
-On the computer, open Settings → Phones and create a pairing QR code. In Stream on the phone, scan that QR or use manual input for the backend address and six-digit code. The app stores the device credential locally and connects its foreground service to `/api/host` with `host-relay.v2`. Close code 4003 clears the credential, stops reconnecting and displays a request to pair again.
+On the computer, open the Stream section of the workbench settings, page 手机 (Phones), and choose 添加手机 to create a pairing QR code. In Stream on the phone, scan that QR or use manual input for the backend address and six-digit code. The app stores the device credential locally and connects its foreground service to `/api/host` with `host-relay.v2`. Close code 4003 clears the credential, stops reconnecting and displays a request to pair again.
 
-Complete the app's setup checklist: enable Stream's accessibility service (allow restricted settings in App info if Android blocks the switch), grant notifications on Android 13+, exempt Stream from battery optimization, and lock its card in recent apps. On Xiaomi/HyperOS, also allow autostart, background pop-up windows and lock-screen display. Rows marked `?` require manual checking; they do not prove that a permission is granted. Unattended operation requires a lock screen without a password; Stream cannot unlock a secure keyguard.
+Complete the app's setup checklist: enable Stream's accessibility service (allow restricted settings in App info if Android blocks the switch), grant notifications on Android 13+, exempt Stream from battery optimization, and lock its card in recent apps. On Xiaomi/HyperOS, also allow autostart, background pop-up windows and lock-screen display. The first time Stream opens a given app, HyperOS asks 「Stream 想要打开 <app>，是否允许？」; tap 始终允许 on the phone once per app (until then `focusApp` fails as `blocked-by-os` and says so). Rows marked `?` require manual checking; they do not prove that a permission is granted. Unattended operation requires a lock screen without a password; Stream cannot unlock a secure keyguard.
 
 The app declares exactly the following `ANDROID_OPS`. Recipes use the shared desktop driver and relay; Android implements these operations with accessibility nodes, gestures and system actions.
 

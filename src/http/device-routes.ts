@@ -26,7 +26,10 @@ export function mountDeviceRoutes(app: Hono, deps: DeviceRoutesDeps): void {
   app.post('/api/devices/pairing-code', (c) => {
     if (!deps.isLocal(c)) return c.json({ error: '配对码只能在运行 Stream 的那台机器上生成' }, 403)
     const { code, expiresAt } = deps.store.createPairingCode()
-    const qr = deps.backendUrls(c).map((backend) => JSON.stringify({ stream: 'pair', v: 1, backend, code }))
+    // One code carrying every address (LAN, Tailscale…): the phone checks which it can reach and
+    // lets the user pick, instead of the panel showing one QR per address to choose from by eye.
+    const backends = deps.backendUrls(c)
+    const qr = backends.length === 0 ? [] : [JSON.stringify({ stream: 'pair', v: 2, backends, code })]
     return c.json({ code, expiresAt, qr })
   })
 

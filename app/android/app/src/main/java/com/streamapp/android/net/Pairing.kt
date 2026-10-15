@@ -1,6 +1,5 @@
 package com.streamapp.android.net
 
-import com.streamapp.android.protocol.PairPayload
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -8,12 +7,20 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
 
 object Pairing {
-    fun pair(p: PairPayload, name: String, http: OkHttpClient): Result<Creds> = try {
-        val body = JSONObject().put("code", p.code).put("name", name).toString()
-        val req = Request.Builder().url("${p.backend}/api/devices/pair").post(body.toRequestBody("application/json".toMediaType())).build()
-        http.newCall(req).execute().use { r -> parseResponse(r.code, r.body?.string() ?: "", p.backend) }
+    fun pair(backend: String, code: String, name: String, http: OkHttpClient): Result<Creds> = try {
+        val body = JSONObject().put("code", code).put("name", name).toString()
+        val req = Request.Builder().url("$backend/api/devices/pair").post(body.toRequestBody("application/json".toMediaType())).build()
+        http.newCall(req).execute().use { r -> parseResponse(r.code, r.body?.string() ?: "", backend) }
     } catch (e: Exception) {
-        Result.failure(Exception("连不上 ${p.backend}：${e.message}"))
+        Result.failure(Exception("连不上 $backend：${e.message}"))
+    }
+
+    /** Whether `GET /api/health` answers within a couple of seconds: which addresses this phone can use. */
+    fun reachable(backend: String, http: OkHttpClient): Boolean = try {
+        val quick = http.newBuilder().callTimeout(2, java.util.concurrent.TimeUnit.SECONDS).build()
+        quick.newCall(Request.Builder().url("$backend/api/health").build()).execute().use { it.isSuccessful }
+    } catch (_: Exception) {
+        false
     }
 
     fun parseResponse(status: Int, body: String, backend: String): Result<Creds> {

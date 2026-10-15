@@ -20,7 +20,7 @@ beforeEach(() => {
   mountDeviceRoutes(app, {
     store, registry,
     isLocal: () => local,
-    backendUrls: () => ['http://10.9.8.21:8900'],
+    backendUrls: () => ['http://10.9.8.21:8900', 'http://100.70.0.5:8900'],
   })
 })
 
@@ -28,14 +28,16 @@ const post = (path: string, body?: unknown) =>
   app.request(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) })
 
 describe('device routes', () => {
-  it('only this machine can mint a pairing code; the QR payload names backend and code', async () => {
+  it('only this machine can mint a pairing code; one QR names every address and the code', async () => {
     local = false
     expect((await post('/api/devices/pairing-code')).status).toBe(403)
     local = true
     const res = await post('/api/devices/pairing-code')
     expect(res.status).toBe(200)
     const body = await res.json() as { code: string; qr: string[] }
-    expect(JSON.parse(body.qr[0])).toEqual({ stream: 'pair', v: 1, backend: 'http://10.9.8.21:8900', code: body.code })
+    // One code to scan; the phone lets the user pick the address (LAN at home, Tailscale away).
+    expect(body.qr).toHaveLength(1)
+    expect(JSON.parse(body.qr[0])).toEqual({ stream: 'pair', v: 2, backends: ['http://10.9.8.21:8900', 'http://100.70.0.5:8900'], code: body.code })
   })
 
   it('pairing with the code returns a token; a wrong code is 403 invalid-code', async () => {

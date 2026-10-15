@@ -27,6 +27,7 @@ import com.streamapp.android.a11y.StreamAccessibilityService
 import com.streamapp.android.net.Pairing
 import com.streamapp.android.net.RelayService
 import com.streamapp.android.protocol.PairPayload
+import com.streamapp.android.protocol.pairChoices
 import com.streamapp.android.store.Credentials
 import okhttp3.OkHttpClient
 import kotlin.concurrent.thread
@@ -130,7 +131,27 @@ class MainActivity : Activity() {
         }
         val contents = r.contents ?: return
         val p = PairPayload.parse(contents)
-        if (p == null) toast("这不是 Stream 的配对码") else doPair(p)
+        if (p == null) toast("这不是 Stream 的配对码") else chooseBackend(p)
+    }
+
+    /** The QR carries every address the computer has (LAN, Tailscale…). One: pair with it. Several:
+     *  find out which this phone can reach right now, then let the user pick. */
+    private fun chooseBackend(p: PairPayload) {
+        if (p.backends.size == 1) { doPair(p.backends[0], p.code); return }
+        toast("正在检查哪个地址连得上…")
+        thread(name = "pair-probe") {
+            val reachable = java.util.concurrent.ConcurrentHashMap<String, Boolean>()
+            p.backends.map { b -> thread { reachable[b] = Pairing.reachable(b, http) } }.forEach { it.join(3_000) }
+            val choices = pairChoices(p.backends, reachable)
+            runOnUiThread {
+                if (isFinishing || isDestroyed) return@runOnUiThread
+                AlertDialog.Builder(this)
+                    .setTitle("用哪个地址连电脑？")
+                    .setItems(choices.map { it.label }.toTypedArray()) { _, i -> doPair(choices[i].backend, p.code) }
+                    .setNegativeButton("取消", null)
+                    .show()
+            }
+        }
     }
 
     private fun manualDialog() {
@@ -149,7 +170,7 @@ class MainActivity : Activity() {
             .setNegativeButton("取消", null)
             .setPositiveButton("配对") { _, _ ->
                 val p = PairPayload.manual(address.text.toString(), code.text.toString())
-                if (p == null) toast("地址或配对码格式不对") else doPair(p)
+                if (p == null) toast("地址或配对码格式不对") else doPair(p.backends[0], p.code)
             }
             .show()
     }
@@ -158,12 +179,12 @@ class MainActivity : Activity() {
      *  tap must not send it again: that would fail, and count as a failure, right after a success. */
     private var pairing = false
 
-    private fun doPair(p: PairPayload) {
+    private fun doPair(backend: String, code: String) {
         if (pairing) return
         pairing = true
         toast("正在配对…")
         thread(name = "pairing") {
-            val result = Pairing.pair(p, "${Build.MANUFACTURER} ${Build.MODEL}", http)
+            val result = Pairing.pair(backend, code, "${Build.MANUFACTURER} ${Build.MODEL}", http)
             runOnUiThread {
                 pairing = false
                 if (isFinishing || isDestroyed) return@runOnUiThread
