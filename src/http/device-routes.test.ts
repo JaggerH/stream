@@ -36,8 +36,11 @@ describe('device routes', () => {
     expect(res.status).toBe(200)
     const body = await res.json() as { code: string; qr: string[] }
     // One code to scan; the phone lets the user pick the address (LAN at home, Tailscale away).
+    // Still v1 with `backend` = the first address, so an app that predates `backends` pairs too.
     expect(body.qr).toHaveLength(1)
-    expect(JSON.parse(body.qr[0])).toEqual({ stream: 'pair', v: 2, backends: ['http://10.9.8.21:8900', 'http://100.70.0.5:8900'], code: body.code })
+    expect(JSON.parse(body.qr[0])).toEqual({
+      stream: 'pair', v: 1, backend: 'http://10.9.8.21:8900', backends: ['http://10.9.8.21:8900', 'http://100.70.0.5:8900'], code: body.code,
+    })
   })
 
   it('pairing with the code returns a token; a wrong code is 403 invalid-code', async () => {

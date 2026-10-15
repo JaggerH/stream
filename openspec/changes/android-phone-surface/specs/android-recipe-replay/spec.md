@@ -87,7 +87,7 @@ disabled, and not again while it stays disabled.
 
 ### Requirement: Stop cancels the phone's ops
 
-The overlay's Stop button SHALL send `{type:"abort", reason:"user"}` to the backend, then cancel
+The overlay's Stop button SHALL send `{type:"abort", reason:"phone-stop"}` to the backend, then cancel
 every op the app holds: a queued op SHALL NOT run, and the running op SHALL stop before its next
 device action, including after a wait or a wake, and fail with `aborted`; a device action already
 under way completes. The connection SHALL stay open and ops received after the abort SHALL run

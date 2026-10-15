@@ -145,7 +145,8 @@ class MainActivity : Activity() {
         thread(name = "pair-probe") {
             val reachable = java.util.concurrent.ConcurrentHashMap<String, Boolean>()
             p.backends.map { b -> thread { reachable[b] = Pairing.reachable(b, http) } }.forEach { it.join(3_000) }
-            val choices = pairChoices(p.backends, reachable)
+            // A probe that outlived the join may still write; sort and label one fixed copy.
+            val choices = pairChoices(p.backends, HashMap(reachable))
             runOnUiThread {
                 if (isFinishing || isDestroyed) return@runOnUiThread
                 AlertDialog.Builder(this)

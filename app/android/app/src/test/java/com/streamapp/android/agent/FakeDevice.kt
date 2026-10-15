@@ -28,7 +28,8 @@ class FakeDevice : Device {
     override fun changedSince(version: Long, windowId: String, rect: Rect) = changes.changedSince(version, windowId, rect)
     override fun isCurrent(node: UiNode) = node !in changed
     override fun foregroundPackage() = fg
-    override fun foregroundComponent() = (fg ?: "") + "/.Main"
+    var component: String? = null
+    override fun foregroundComponent() = component ?: ((fg ?: "") + "/.Main")
     override fun launch(packageName: String): Boolean { rec("launch $packageName"); launchMakesForeground?.let { fg = it }; return true }
     override fun click(node: UiNode): Boolean { rec("click ${node.name}"); return clickable }
     override fun setText(node: UiNode, text: String): Boolean { rec("setText ${node.name}=$text"); return true }

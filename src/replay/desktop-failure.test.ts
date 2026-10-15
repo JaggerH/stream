@@ -107,6 +107,10 @@ describe('用户中止说给调用方听的那句', () => {
     expect(userAbortedReason(e)).not.toContain('Ctrl+Alt+Esc')
   })
 
+  it('老版手机 App 的停止（reason 是 user）也算手机', () => {
+    expect(new HostAbortedByUser('user').byPhone).toBe(true)
+  })
+
   it('桌面热键（或老 agent 不带原因）：照旧说热键', () => {
     for (const r of ['user-hotkey', undefined]) {
       const e = new HostAbortedByUser(r)

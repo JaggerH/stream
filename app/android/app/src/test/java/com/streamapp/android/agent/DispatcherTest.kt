@@ -179,9 +179,17 @@ class DispatcherTest {
     }
 
     @Test fun hyperOsAskingToAllowTheLaunchSaysWhereToTap() {
-        dev.fg = "com.miui.securitycenter" // 「Stream 想要打开 饿了么，是否允许？」
+        dev.fg = "com.miui.securitycenter"
+        dev.component = "com.miui.securitycenter/com.miui.wakepath.ui.ConfirmStartActivity" // 「Stream 想要打开 饿了么，是否允许？」
         val msg = assertThrows(AgentError::class.java) { call("focusApp", """{"match":{"process":"me.ele"}}""") }.message!!
         assertTrue(msg, msg.startsWith("blocked-by-os:") && msg.contains("始终允许") && !msg.contains("后台弹出界面"))
+    }
+
+    @Test fun anotherSecurityCenterScreenIsNotTheLaunchPrompt() {
+        dev.fg = "com.miui.securitycenter"
+        dev.component = "com.miui.securitycenter/com.miui.securityscan.MainActivity" // 手机管家 itself
+        val msg = assertThrows(AgentError::class.java) { call("focusApp", """{"match":{"process":"me.ele"}}""") }.message!!
+        assertFalse(msg, msg.contains("始终允许"))
     }
 
     @Test fun aKeyTheSystemRefusesFails() {

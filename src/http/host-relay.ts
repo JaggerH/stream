@@ -55,10 +55,11 @@ export class HostSessionQueueTimeout extends Error {
  *  `HostSessionQueueTimeout` = 健康但被占着、稍后重试。这一档是**用户的明确意图**，
  *  任何一层都不许自动重试——重试会把用户刚刚亲手叫停的动作再做一遍。 */
 export class HostAbortedByUser extends Error {
-  /** 手机横幅上的「停止」（abort 帧 `reason:'phone-stop'`），不是电脑上的热键——两处说法不同。 */
+  /** 手机横幅上的「停止」（abort 帧 `reason:'phone-stop'`；更早的手机 App 发 `'user'`——桌面热键
+   *  一直是 `'user-hotkey'`），不是电脑上的热键——两处说法不同。 */
   readonly byPhone: boolean
   constructor(reason?: string) {
-    const byPhone = reason === 'phone-stop'
+    const byPhone = reason === 'phone-stop' || reason === 'user'
     super(byPhone
       ? `Phone aborted by user (${reason})——用户在手机上点了停止，不要自动重试`
       : `Stream Desktop aborted by user${reason ? ` (${reason})` : ''}——用户在本机按下了中止热键，不要自动重试`)

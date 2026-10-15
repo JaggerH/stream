@@ -10,7 +10,8 @@ val ANDROID_OPS = listOf(
 
 private val NO_WAKE = setOf("status", "sleep", "windows", "url")
 
-/** HyperOS's 关联启动 prompt (`com.miui.wakepath.ui.ConfirmStartActivity`) the first time one app opens another. */
+/** HyperOS's 关联启动 prompt (`com.miui.wakepath.ui.ConfirmStartActivity`) the first time one app opens
+ *  another. Matched by activity; the bare package counts only when its activity is not known yet. */
 private const val HYPEROS_CONFIRM = "com.miui.securitycenter"
 
 /**
@@ -147,7 +148,8 @@ class Dispatcher(private val raw: Device) {
             scope = Scope(pkg, null)
             return true
         }
-        if (device.foregroundPackage() == HYPEROS_CONFIRM) {
+        val front = device.foregroundComponent()
+        if (front.contains(".wakepath.ui.ConfirmStartActivity") || front == HYPEROS_CONFIRM) {
             throw AgentError("blocked-by-os: 澎湃 OS 在问「Stream 想要打开 $pkg，是否允许？」——到手机上点「始终允许」（每个 App 一次），再试")
         }
         throw AgentError("blocked-by-os: 启动 $pkg 后它没有到前台。可能是系统拦住了后台弹出界面：到 设置 → 应用 → Stream → 其他权限 打开「后台弹出界面」")

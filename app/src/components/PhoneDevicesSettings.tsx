@@ -6,8 +6,9 @@ import { api, ApiError, type Connection, type DeviceRow } from '../lib/api.ts'
 /**
  * Phones paired with Stream, plus the host agents online right now.
  *
- * "添加手机" mints a one-time code (this machine only) and shows one QR code per LAN address. The
- * Stream app on the phone scans it and pairs. Revoking forgets the phone's token and drops its live
+ * "添加手机" mints a one-time code (this machine only) and shows one QR code carrying every address
+ * of this machine (listed under it for typing in by hand). The Stream app on the phone scans it,
+ * asks which address to use when there are several, and pairs. Revoking forgets the phone's token and drops its live
  * connection at once. Stream Desktop is listed but cannot be revoked, because it connects with the
  * machine's own secret rather than a paired token.
  */
@@ -130,8 +131,8 @@ export function PhoneDevicesSettings({ conn }: { conn: Connection }) {
             </p>
           ) : (
             pairing.qr.map((payload) => {
-              // v2 carries every address; the phone asks which one to use. They are listed here
-              // too, for typing one in by hand.
+              // `backends` carries every address; the phone asks which one to use. They are listed
+              // here too, for typing one in by hand.
               const p = JSON.parse(payload) as { backends?: string[]; backend?: string }
               const backends = p.backends ?? (p.backend ? [p.backend] : [])
               return (

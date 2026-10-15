@@ -28,8 +28,9 @@ export function mountDeviceRoutes(app: Hono, deps: DeviceRoutesDeps): void {
     const { code, expiresAt } = deps.store.createPairingCode()
     // One code carrying every address (LAN, Tailscale…): the phone checks which it can reach and
     // lets the user pick, instead of the panel showing one QR per address to choose from by eye.
+    // Still v1, with `backend` = the first address: an app that predates `backends` pairs with that.
     const backends = deps.backendUrls(c)
-    const qr = backends.length === 0 ? [] : [JSON.stringify({ stream: 'pair', v: 2, backends, code })]
+    const qr = backends.length === 0 ? [] : [JSON.stringify({ stream: 'pair', v: 1, backend: backends[0], backends, code })]
     return c.json({ code, expiresAt, qr })
   })
 
