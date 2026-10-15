@@ -75,7 +75,7 @@ a desktop Engine can implement them **as-is** — this is where "copy UI-TARS's 
 with a `status` op on each step; it only contains the recipe id and step label, without parameters; `STREAM_DESKTOP_STATUS=0` turns it off).
 Read-only ops, `ensureApp`/`invoke`/`setValue`, and `status` itself do not light it up — this signal has exactly one meaning:
 **lit = do not touch the mouse right now**. When the hotkey is pressed, the agent sends the relay one frame
-`{"type":"abort"}`, and the backend rejects all pending and queued ops with `HostAbortedByUser`; the whole recipe stops
+`{"type":"abort"}`, and the backend rejects all pending and queued ops with `HostAbortedByUser`, as well as the next op of a recipe session that was already running (a hotkey pressed between two steps still stops the run; a session started afterwards runs normally); the whole recipe stops
 there, and **no layer retries automatically** (`run_action_recipe` reports blocked, the harvest side declines, and neither records drift).
 The decision is on the agent side (`app/host-agent/src/overlay.rs` is the platform-independent policy, and `overlay_win.rs` is the Windows
 rendering layer), so if the backend crashes, the banner also disappears by itself.

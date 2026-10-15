@@ -3,8 +3,9 @@ package com.streamapp.android.protocol
 import org.json.JSONArray
 import org.json.JSONObject
 
-/** [abortEpoch]: how many aborts the backend had counted when it sent this (absent = 0). */
-data class Request(val id: Long, val op: String, val args: JSONObject, val abortEpoch: Long = 0)
+/** [abortEpoch]: how many aborts the backend had counted when it sent this; null from a backend
+ *  that does not count them. */
+data class Request(val id: Long, val op: String, val args: JSONObject, val abortEpoch: Long? = null)
 
 data class DeviceState(
     val a11yEnabled: Boolean,
@@ -25,7 +26,7 @@ object Frames {
         if (id !is Number) return null
         val op = o.optString("op", "")
         if (op.isEmpty()) return null
-        return Request(id.toLong(), op, o.optJSONObject("args") ?: JSONObject(), o.optLong("abortEpoch", 0))
+        return Request(id.toLong(), op, o.optJSONObject("args") ?: JSONObject(), if (o.has("abortEpoch")) o.optLong("abortEpoch") else null)
     }
 
     fun reply(id: Long, result: Any?): String = JSONObject().put("id", id).put("result", toJson(result)).toString()

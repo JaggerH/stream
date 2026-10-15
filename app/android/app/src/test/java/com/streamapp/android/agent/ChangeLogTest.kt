@@ -49,10 +49,35 @@ class ChangeLogTest {
         assertFalse(log.changedSince(v, "1", row))
     }
 
+    @Test fun aCarouselTickingForeverDoesNotOverflowTheLog() {
+        val log = ChangeLog(capacity = 4)
+        val v = log.version()
+        repeat(1000) { log.scrolled("1", Rect(0, 1000, 1080, 300)) }
+        assertFalse(log.changedSince(v, "1", row))
+        log.scrolled("1", Rect(0, 1000, 1080, 300))
+        assertTrue(log.changedSince(v, "1", Rect(10, 1100, 10, 10)))
+    }
+
+    @Test fun theSameWindowListTwiceIsOneChange() {
+        val log = ChangeLog()
+        log.windows(listOf("1/1/[0,0][1080,2400]"))
+        val v = log.version()
+        log.windows(listOf("1/1/[0,0][1080,2400]"))
+        assertFalse(log.changedSince(v, "1", row))
+        log.windows(listOf("1/1/[0,0][1080,2400]", "5/2/[0,1600][1080,2400]")) // the keyboard came up
+        assertTrue(log.changedSince(v, "1", row))
+    }
+
+    @Test fun onlyAPageChangeIsAWindowStateChange() {
+        assertTrue(isPageChange(contentChangeTypes = 0, className = "com.sankuai.meituan.MainActivity"))
+        assertFalse(isPageChange(contentChangeTypes = 8, className = "android.widget.FrameLayout")) // a pane title
+        assertFalse(isPageChange(contentChangeTypes = 0, className = "android.widget.Toast\$TN"))
+    }
+
     @Test fun aVersionOlderThanTheLogRemembersIsTreatedAsChanged() {
         val log = ChangeLog(capacity = 4)
         val v = log.version()
-        repeat(5) { log.scrolled("2", Rect(0, 0, 1, 1)) }
+        repeat(5) { log.scrolled("2", Rect(it, 0, 1, 1)) } // five different areas
         assertTrue(log.changedSince(v, "1", row))
     }
 }

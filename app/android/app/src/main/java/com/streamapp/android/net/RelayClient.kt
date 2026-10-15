@@ -32,7 +32,8 @@ interface Transport {
  * Every request carries a [Cancel]. Stop, abort, a closed connection and a new [start] cancel all
  * of them, so a request still queued never runs and the one running stops at its next step; a
  * request that arrives after an abort runs normally. A request the backend sent before it saw our
- * abort (its `abortEpoch` is older than the abort) is refused: the backend already failed it.
+ * abort (its `abortEpoch` is older than the abort) is refused: the backend already failed it. A
+ * backend that sends no `abortEpoch` is never refused this way.
  */
 class RelayClient(
     private val transport: Transport,
@@ -57,7 +58,7 @@ class RelayClient(
     private var current: Dispatcher? = null
     private var cancelReconnect: (() -> Unit)? = null
     private val live = mutableSetOf<Cancel>()
-    /** Highest `abortEpoch` seen on this connection, and the lowest one accepted after our abort. */
+    /** Highest `abortEpoch` seen on this connection, and the lowest one accepted after our aborts. */
     @Volatile private var seenEpoch = 0L
     @Volatile private var minEpoch = 0L
 
@@ -96,8 +97,9 @@ class RelayClient(
     fun abort() {
         // Frame first: the worker replies to the cancelled request as soon as it is cancelled, and
         // a reply ahead of the abort would read to the backend as a plain op error.
-        if (open) transport.send(Frames.abort())
-        minEpoch = seenEpoch + 1
+        // Only an abort the backend will count raises the bar; each one raises it by one more, so a
+        // request sent between two aborts is refused after the second.
+        if (open && transport.send(Frames.abort())) minEpoch = maxOf(seenEpoch, minEpoch) + 1
         cancelAll(ABORTED)
     }
 
@@ -117,11 +119,12 @@ class RelayClient(
             if (g != gen) return
             val req = Frames.request(text) ?: return
             val d = current ?: return
-            if (req.abortEpoch < minEpoch) {
+            val epoch = req.abortEpoch
+            if (epoch != null && epoch < minEpoch) {
                 if (open) transport.send(Frames.error(req.id, ABORTED))
                 return
             }
-            if (req.abortEpoch > seenEpoch) seenEpoch = req.abortEpoch
+            if (epoch != null && epoch > seenEpoch) seenEpoch = epoch
             val cancel = Cancel()
             synchronized(live) { live += cancel }
             executor(Runnable {

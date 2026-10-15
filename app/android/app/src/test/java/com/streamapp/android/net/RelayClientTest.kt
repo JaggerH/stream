@@ -207,10 +207,10 @@ class RelayClientTest {
         val c = client(t, dev)
         c.start(creds)
         t.listener!!.onOpen()
-        t.listener!!.onMessage("""{"id":1,"op":"url"}""")
+        t.listener!!.onMessage("""{"id":1,"op":"url","abortEpoch":0}""")
         c.abort()
         // Crossed on the wire: sent by the backend before our abort reached it.
-        t.listener!!.onMessage("""{"id":2,"op":"click","args":{"rect":{"x":0,"y":0,"w":2,"h":2}}}""")
+        t.listener!!.onMessage("""{"id":2,"op":"click","abortEpoch":0,"args":{"rect":{"x":0,"y":0,"w":2,"h":2}}}""")
         assertFalse(dev.log.toString(), dev.log.any { it.startsWith("tap") })
         assertTrue(t.sent.map { JSONObject(it) }.single { it.optInt("id") == 2 }.getString("error").startsWith("aborted:"))
         // Sent after the backend counted the abort.
@@ -229,8 +229,47 @@ class RelayClientTest {
         t.listeners[0].onClosed(1006, "")
         c.start(creds) // e.g. the backend restarted and counts from 0 again
         t.listeners[1].onOpen()
-        t.listeners[1].onMessage(tap)
+        t.listeners[1].onMessage(tap.replace("\"op\"", "\"abortEpoch\":0,\"op\""))
         assertTrue(dev.log.toString(), "tap 1,1 long=false" in dev.log)
+    }
+
+    private fun tapAt(epoch: Int) = tap.replace("\"op\"", "\"abortEpoch\":$epoch,\"op\"")
+
+    @Test fun stopWhileConnectingDoesNotLockTheNextConnection() {
+        val t = FakeTransport()
+        val dev = FakeDevice()
+        val c = client(t, dev)
+        c.start(creds)
+        c.abort() // not open yet: no abort frame reaches the backend
+        t.listener!!.onOpen()
+        t.listener!!.onMessage(tapAt(0))
+        assertTrue(t.sent.toString(), dev.log.any { it.startsWith("tap") })
+    }
+
+    @Test fun aBackendThatSendsNoAbortEpochIsNeverRefused() {
+        val t = FakeTransport()
+        val dev = FakeDevice()
+        val c = client(t, dev)
+        c.start(creds)
+        t.listener!!.onOpen()
+        c.abort()
+        t.listener!!.onMessage(tap) // an older backend: no abortEpoch field at all
+        assertTrue(t.sent.toString(), dev.log.any { it.startsWith("tap") })
+    }
+
+    @Test fun aSecondStopAlsoRefusesWhatCrossedIt() {
+        val t = FakeTransport()
+        val dev = FakeDevice()
+        val c = client(t, dev)
+        c.start(creds)
+        t.listener!!.onOpen()
+        t.listener!!.onMessage("""{"id":1,"op":"url","abortEpoch":0}""")
+        c.abort()
+        c.abort()
+        t.listener!!.onMessage(tapAt(1)) // sent between the two aborts
+        assertFalse(dev.log.toString(), dev.log.any { it.startsWith("tap") })
+        t.listener!!.onMessage(tapAt(2))
+        assertTrue(dev.log.toString(), dev.log.any { it.startsWith("tap") })
     }
 
     @Test fun aDisconnectStopsTheRunningRequestAtItsNextAction() {

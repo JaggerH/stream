@@ -486,6 +486,28 @@ describe('runDesktopRecipe', () => {
     expect(calls.map((c) => c.m).filter((m) => m === 'find' || m === 'invoke')).toEqual(['find', 'invoke', 'find', 'invoke'])
   })
 
+  it('optional 的 invoke 撞上 stale-ref、重找又找不到 → 跳过，不判 drift', async () => {
+    let finds = 0
+    const { driver } = fakeDriver({ reads: [[{ id: 'a', title: 'X' }]], find: () => (finds++ === 0 ? [{ ref: 'r1', role: 'Button', name: '', className: '', rect: { x: 0, y: 0, w: 1, h: 1 } }] : []) })
+    driver.invoke = async (ref) => { throw new Error(`stale-ref: ${ref} predates a window change or a scroll over it; find it again`) }
+    const out = await runDesktopRecipe(recipe({ steps: [{ kind: 'invoke', query: { role: 'Button', name: '取消' }, optional: true }] }), {}, driver)
+    expect(out.outcome).toBe('ok')
+  })
+
+  it('setValue 撞上 stale-ref → 重新 find 一次再 setValue，不退回键盘', async () => {
+    const { driver, calls } = fakeDriver({ reads: [[{ id: 'a', title: 'X' }]] })
+    let n = 0
+    driver.setValue = async (ref, text) => {
+      calls.push({ m: 'setValue', a: { ref, text } })
+      if (n++ === 0) throw new Error(`stale-ref: ${ref} predates a window change or a scroll over it; find it again`)
+      return {}
+    }
+    const out = await runDesktopRecipe(recipe({ steps: [{ kind: 'type', text: '{q}', query: { role: 'Edit' } }] }), { q: '麦当劳' }, driver)
+    expect(out.outcome).toBe('ok')
+    expect(calls.filter((c) => c.m === 'setValue')).toHaveLength(2)
+    expect(calls.some((c) => c.m === 'type')).toBe(false)
+  })
+
   it('stale-ref 只重试一次：再失效就照常报错', async () => {
     const { driver } = fakeDriver({ reads: [[]] })
     driver.invoke = async (ref) => { throw new Error(`stale-ref: ${ref} predates a window change or a scroll over it; find it again`) }

@@ -199,7 +199,16 @@ async function typeInto(
     if (!el && step.requireTarget) return 'no-target'
     if (el) {
       try {
-        await driver.setValue(el.ref, text)
+        try {
+          await driver.setValue(el.ref, text)
+        } catch (e) {
+          // 安卓：屏幕变过的 ref 报 stale-ref 且保证没写——重新 find 一次再写，不急着退回键盘
+          // （键盘打给的是此刻的焦点，屏幕刚变过，焦点在哪说不准）。
+          if (!isStaleRef(e)) throw e
+          const again = (await find(subQuery(step.query, params)))[0]
+          if (!again) throw e
+          await driver.setValue(again.ref, text)
+        }
         return 'value'
       } catch (e) {
         // 这个控件不认——退回键盘。**原因不吞**：现象（屏幕突然跳到目标应用）和成因（provider
@@ -337,6 +346,11 @@ async function waitForWindow(driver: DesktopDriver, match: DesktopWindowMatch, t
  * （见其头注 I1：交互路径要在调用方自己的客户端超时之前先失败，不然超时后排队里那份
  * op 还会真的执行，造成"同一个动作做了两遍"）。
  */
+/** 安卓 agent 的「这个 ref 指的已经不是当时那个节点」：它保证报这句时一下都没动手。 */
+function isStaleRef(e: unknown): boolean {
+  return e instanceof Error && e.message.startsWith('stale-ref:')
+}
+
 export async function runDesktopRecipe(
   recipe: DesktopRecipe,
   params: Record<string, string>,
@@ -1244,8 +1258,10 @@ async function runDesktopRecipeLocked(
         } catch (e) {
           // 安卓的 ref 在屏幕变过（弹窗、滚到它）之后报 `stale-ref`，并且保证一下都没点——
           // 重新 find 一次再点是安全的。只重试一次：再失效说明屏幕还在动，照常报错。
-          if (!(e instanceof Error && e.message.startsWith('stale-ref:'))) throw e
+          if (!isStaleRef(e)) throw e
+          probe(`#${i} invoke 的 ref 已失效（${(e as Error).message}），重新 find 一次`)
           const again = await find(q)
+          if (again.length === 0 && step.optional) return 'skip'
           if (again.length === 0) return stepFailed(step, `invoke target not found after stale-ref: ${JSON.stringify(q)}`)
           await driver.invoke(again[0].ref)
         }

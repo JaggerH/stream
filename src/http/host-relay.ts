@@ -355,11 +355,12 @@ export class WsHostRelay implements HostRelay {
         timer,
       })
       // args omitted when absent — keeps the wire shape minimal and matches the driver's ops
-      // `abortEpoch`（中止过才带）：设备记下自己发出 abort 时见过的世代，拒收更旧的请求——
-      // 那是中止之前发出、还在路上的 op，后端已经把它判成 HostAbortedByUser 了。
+      // `abortEpoch`（总是带，从 0 起）：设备记下自己发出 abort 时见过的世代，拒收更旧的请求——
+      // 那是中止之前发出、还在路上的 op，后端已经把它判成 HostAbortedByUser 了。总是带，是让
+      // 设备分得清"后端会数中止"和"老后端不带这个字段"：后者设备一律不拒，免得一按停止就锁死。
       const frame: Record<string, unknown> = { id, op: op.op }
       if (op.args !== undefined) frame.args = op.args
-      if (this.abortEpoch > 0) frame.abortEpoch = this.abortEpoch
+      frame.abortEpoch = this.abortEpoch
       const payload = JSON.stringify(frame)
       try {
         socket.send(payload)

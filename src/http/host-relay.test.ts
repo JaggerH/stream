@@ -24,7 +24,7 @@ describe('WsHostRelay', () => {
     const { socket, sent } = fakeSocket()
     relay.connect(socket)
     const p = relay.send({ op: 'find', args: { query: { name: 'x' } } })
-    expect(JSON.parse(sent[0])).toEqual({ id: 1, op: 'find', args: { query: { name: 'x' } } })
+    expect(JSON.parse(sent[0])).toEqual({ id: 1, op: 'find', args: { query: { name: 'x' } }, abortEpoch: 0 })
     relay.handleMessage(JSON.stringify({ id: 1, result: [{ ref: 'r1' }] }))
     expect(await p).toEqual([{ ref: 'r1' }])
   })
@@ -34,7 +34,7 @@ describe('WsHostRelay', () => {
     const { socket, sent } = fakeSocket()
     relay.connect(socket)
     void relay.send({ op: 'url' })
-    expect(JSON.parse(sent[0])).toEqual({ id: 1, op: 'url' })
+    expect(JSON.parse(sent[0])).toEqual({ id: 1, op: 'url', abortEpoch: 0 })
   })
 
   // 这条钉住的只是**单发 op 配对**的尾锁：同一条物理 WS 连接一次只有一个 op 在途、按 id 配对
@@ -390,7 +390,7 @@ describe('WsHostRelay', () => {
       const relay = new WsHostRelay()
       relay.connect({ send: (d) => void sent.push(d) })
       relay.send({ op: 'url' }).catch(() => {})
-      expect(JSON.parse(sent[0])).toEqual({ id: 1, op: 'url' }) // 从没中止过：帧形状不变
+      expect(JSON.parse(sent[0])).toEqual({ id: 1, op: 'url', abortEpoch: 0 }) // 从没中止过也带：设备据此知道后端会数中止
       relay.handleMessage(JSON.stringify({ type: 'abort', reason: 'user' }))
       await new Promise((r) => setTimeout(r, 0)) // 被拒的那一个异步交还租约
       relay.send({ op: 'url' }).catch(() => {})

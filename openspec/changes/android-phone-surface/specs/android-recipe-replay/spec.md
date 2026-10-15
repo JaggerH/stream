@@ -20,8 +20,9 @@ op SHALL fail with `unknown op: <op>` without acting on the phone.
 A ref returned by `find` SHALL be bound to the scope, the scoped window and the screen-change
 sequence it was found under. `invoke` and `setValue` SHALL fail with `stale-ref`, without acting,
 when a later `find` replaced the snapshot, the scope or scoped window changed, the phone's window
-set changed, a view in that window scrolled over the node, or the live node no longer has the
-class, bounds and label (for an input: class and bounds) recorded at the find.
+set changed or another page came to the front, a view in that window scrolled over the node, or
+the live node no longer has the class, bounds and label (for an input: class and bounds) recorded
+at the find.
 
 #### Scenario: a scroll between find and invoke stales the ref
 - **WHEN** a list scrolls after `find` returned a ref to one of its rows, and `invoke` uses that ref
@@ -33,8 +34,8 @@ class, bounds and label (for an input: class and bounds) recorded at the find.
 
 #### Scenario: the runner retries a stale ref once
 - **WHEN** an `invoke` step's ref comes back `stale-ref`
-- **THEN** the desktop runner finds the target again and invokes the fresh ref, and fails the step
-  only if that one is stale too
+- **THEN** the desktop runner finds the target again and invokes the fresh ref, skips an `optional`
+  step whose target is then gone, and fails the step only if the fresh ref is stale too
 
 #### Scenario: a changed scope stales the ref
 - **WHEN** `scopeWindow` selects another app after a `find`, and `setValue` uses a ref from that find
@@ -103,9 +104,10 @@ normally.
 ### Requirement: Stop also ends the backend's run
 
 On an abort the backend SHALL fail the pending and queued ops and the next op of the recipe session
-that was running, with `HostAbortedByUser`. After an abort it SHALL send each request with the
-number of aborts it has counted (`abortEpoch`), and the app SHALL refuse with `aborted` a request
-whose count is older than its own Stop.
+that was running, with `HostAbortedByUser`. It SHALL send each request with the number of aborts it
+has counted (`abortEpoch`), and once the app's abort frame is sent, the app SHALL refuse with
+`aborted` a request whose count is older than that Stop. A request without the count SHALL NOT be
+refused this way.
 
 #### Scenario: Stop between two steps ends the recipe
 - **WHEN** the user taps Stop while a recipe session is between two ops
@@ -114,6 +116,10 @@ whose count is older than its own Stop.
 #### Scenario: a request crossing the abort on the wire is refused
 - **WHEN** the backend sends a `click` before it receives the phone's abort
 - **THEN** the phone replies `aborted` and does not tap
+
+#### Scenario: Stop while reconnecting does not lock the connection
+- **WHEN** the user taps Stop before the connection is open, so no abort frame is sent
+- **THEN** requests on that connection run normally
 
 ### Requirement: An op dies with its connection
 

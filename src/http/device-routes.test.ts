@@ -91,7 +91,7 @@ describe('device routes', () => {
       const p = opPost(phoneId, JSON.stringify({ op: 'find', args: { query: { role: 'Button' } } }))
       await vi.waitFor(() => expect(sent).toHaveLength(1))
       const frame = JSON.parse(sent[0])
-      expect(frame).toEqual({ id: frame.id, op: 'find', args: { query: { role: 'Button' } } })
+      expect(frame).toEqual({ id: frame.id, op: 'find', args: { query: { role: 'Button' } }, abortEpoch: 0 })
       registry.devices()[0].relay.handleMessage(JSON.stringify({ id: frame.id, result: { elements: [] } }))
       const ok = await p
       expect(ok.status).toBe(200)
