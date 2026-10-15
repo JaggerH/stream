@@ -289,7 +289,7 @@ node scripts/release-verify.mjs --version 0.0.26 --old 0.0.25              # Loc
 - Exit code 0 = all pass / 1 = a check failed / 2 = environment is incomplete. For checks marked "external network", rule out the network first when they fail.
 - **When a release gives users one more thing they can do, add one check to the script's `CHECKS`** -- use the entrypoint the user uses, and assert the real thing returned.
 - Test-machine pitfalls: an unattended Windows machine sitting at the login screen goes to sleep after a while (ping fails); connect to both machines from **Windows-side `ssh.exe`**
-  (direct WSL connections hang at the SSH banner), with presets documented in the header comments of `release-verify-remote.sh`. This script cannot verify the UI layer (whether buttons look right or respond when clicked);
+  (direct WSL connections hang at the SSH banner), with presets documented in the header comments of `release-verify-remote.sh`. The two presets read their ssh targets (`user@host`) from `RV_WIN_TARGET` and `RV_MAC_TARGET`, which live in the developer's own environment, never in the repository. This script cannot verify the UI layer (whether buttons look right or respond when clicked);
   after logging into the desktop, use `drive-live-ui` to inspect it.
 
 ## Optional Capability Packages: How to Test Locally

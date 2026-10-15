@@ -9,7 +9,10 @@
 #
 # 两台预设都走 **Windows 侧的 ssh.exe**：从 WSL 直连这两台会卡在 SSH banner（WSL 镜像网络吞掉对端第一个
 # 数据段），Windows 自己的栈正常。私钥是 WSL 那把的 Windows 拷贝（Windows 的 ssh 不读 \\wsl.localhost 上的
-# 私钥）。要连别的机器，用环境变量覆盖：
+# 私钥）。两台的 ssh 目标（user@host）不进仓库，放在本机环境变量里：
+#   RV_WIN_TARGET  win-test 的目标
+#   RV_MAC_TARGET  mac 的目标
+# 要连别的机器，用环境变量覆盖：
 #   RV_SSH   ssh 命令（含参数与目标），例：RV_SSH='ssh me@10.9.8.20'
 #   RV_NODE  远端 node 的路径
 #
