@@ -14,6 +14,8 @@ import android.os.Bundle
 import android.os.PowerManager
 import android.provider.Settings
 import android.text.InputType
+import android.view.Window
+import android.view.WindowInsets
 import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
@@ -36,12 +38,24 @@ class MainActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Android 15 draws apps targeting 35 edge to edge: content runs under the status bar and
+        // the title bar, so the top of the page (取消配对) sat hidden behind them and could not be
+        // scrolled into view. No title bar (the status line is the page's header), and the page
+        // is padded by the system bars and cutout.
+        requestWindowFeature(Window.FEATURE_NO_TITLE)
         val pad = dp(16)
         root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(pad, pad, pad, pad)
         }
-        setContentView(ScrollView(this).apply { addView(root) })
+        setContentView(ScrollView(this).apply {
+            addView(root)
+            setOnApplyWindowInsetsListener { v, insets ->
+                val bars = insets.getInsets(WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout())
+                v.setPadding(bars.left, bars.top, bars.right, bars.bottom)
+                insets
+            }
+        })
         if (Credentials.load(this) != null) RelayService.start(this)
     }
 
