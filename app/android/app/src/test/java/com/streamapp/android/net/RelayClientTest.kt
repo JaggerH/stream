@@ -196,6 +196,43 @@ class RelayClientTest {
         assertTrue(dev.log.toString(), dev.log.isEmpty())
     }
 
+    @Test fun aRequestQueuedWhenTheServerStartsClosingNeverTouchesThePhone() {
+        val dev = queuedTapAfter { _, t -> t.listeners[0].onClosing(1001, "going away") }
+        assertTrue(dev.log.toString(), dev.log.isEmpty())
+    }
+
+    @Test fun aRequestSentBeforeTheBackendSawTheAbortIsRefused() {
+        val t = FakeTransport()
+        val dev = FakeDevice()
+        val c = client(t, dev)
+        c.start(creds)
+        t.listener!!.onOpen()
+        t.listener!!.onMessage("""{"id":1,"op":"url"}""")
+        c.abort()
+        // Crossed on the wire: sent by the backend before our abort reached it.
+        t.listener!!.onMessage("""{"id":2,"op":"click","args":{"rect":{"x":0,"y":0,"w":2,"h":2}}}""")
+        assertFalse(dev.log.toString(), dev.log.any { it.startsWith("tap") })
+        assertTrue(t.sent.map { JSONObject(it) }.single { it.optInt("id") == 2 }.getString("error").startsWith("aborted:"))
+        // Sent after the backend counted the abort.
+        t.listener!!.onMessage("""{"id":3,"op":"click","abortEpoch":1,"args":{"rect":{"x":0,"y":0,"w":2,"h":2}}}""")
+        assertTrue(dev.log.toString(), "tap 1,1 long=false" in dev.log)
+    }
+
+    @Test fun aNewConnectionForgetsTheAbortCount() {
+        val t = FakeTransport()
+        val dev = FakeDevice()
+        val c = client(t, dev)
+        c.start(creds)
+        t.listeners[0].onOpen()
+        t.listeners[0].onMessage("""{"id":1,"op":"url","abortEpoch":5}""")
+        c.abort()
+        t.listeners[0].onClosed(1006, "")
+        c.start(creds) // e.g. the backend restarted and counts from 0 again
+        t.listeners[1].onOpen()
+        t.listeners[1].onMessage(tap)
+        assertTrue(dev.log.toString(), "tap 1,1 long=false" in dev.log)
+    }
+
     @Test fun aDisconnectStopsTheRunningRequestAtItsNextAction() {
         val t = FakeTransport()
         val dev = FakeDevice()
@@ -218,7 +255,7 @@ class RelayClientTest {
         val failed = t.sent.map { JSONObject(it) }.single { it.optInt("id") == 8 }
         assertTrue(failed.toString(), failed.getString("error").startsWith("aborted:"))
         dev.after = {}
-        t.listener!!.onMessage(tap)
+        t.listener!!.onMessage(tap.replace("\"op\"", "\"abortEpoch\":1,\"op\"")) // the backend counted the abort
         assertTrue(dev.log.toString(), "tap 1,1 long=false" in dev.log)
         assertFalse(t.sent.map { JSONObject(it) }.single { it.optInt("id") == 7 }.has("error"))
     }

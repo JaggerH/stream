@@ -4,6 +4,7 @@ data class Rect(val x: Int, val y: Int, val w: Int, val h: Int) {
     fun toMap(): Map<String, Int> = mapOf("x" to x, "y" to y, "w" to w, "h" to h)
     val centerX get() = x + w / 2
     val centerY get() = y + h / 2
+    fun intersects(o: Rect) = x < o.x + o.w && o.x < x + w && y < o.y + o.h && o.y < y + h
 }
 
 /** One node of an accessibility tree, as the query engine sees it. The Android adapter builds

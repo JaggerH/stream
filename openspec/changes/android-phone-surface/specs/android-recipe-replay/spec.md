@@ -17,15 +17,24 @@ op SHALL fail with `unknown op: <op>` without acting on the phone.
 
 ### Requirement: A ref acts only on the screen it was found on
 
-A ref returned by `find` SHALL be bound to the scope, the scoped window and the accessibility tree
-version it was found under. `invoke` and `setValue` SHALL fail with `stale-ref`, without acting,
-when a later `find` replaced the snapshot, the scope or scoped window changed, a window opened,
-closed or changed state, a view scrolled, or the live node no longer has the class, bounds and label
-(for an input: class and bounds) recorded at the find.
+A ref returned by `find` SHALL be bound to the scope, the scoped window and the screen-change
+sequence it was found under. `invoke` and `setValue` SHALL fail with `stale-ref`, without acting,
+when a later `find` replaced the snapshot, the scope or scoped window changed, the phone's window
+set changed, a view in that window scrolled over the node, or the live node no longer has the
+class, bounds and label (for an input: class and bounds) recorded at the find.
 
 #### Scenario: a scroll between find and invoke stales the ref
 - **WHEN** a list scrolls after `find` returned a ref to one of its rows, and `invoke` uses that ref
 - **THEN** the reply is a `stale-ref` error and no click is performed
+
+#### Scenario: a carousel elsewhere leaves the ref usable
+- **WHEN** a banner carousel scrolls in another part of the page between `find` and `invoke`
+- **THEN** the click is performed
+
+#### Scenario: the runner retries a stale ref once
+- **WHEN** an `invoke` step's ref comes back `stale-ref`
+- **THEN** the desktop runner finds the target again and invokes the fresh ref, and fails the step
+  only if that one is stale too
 
 #### Scenario: a changed scope stales the ref
 - **WHEN** `scopeWindow` selects another app after a `find`, and `setValue` uses a ref from that find
@@ -79,8 +88,9 @@ disabled, and not again while it stays disabled.
 
 The overlay's Stop button SHALL send `{type:"abort", reason:"user"}` to the backend, then cancel
 every op the app holds: a queued op SHALL NOT run, and the running op SHALL stop before its next
-device action, including after a wait or a wake, and fail with `aborted`. The connection SHALL stay
-open and ops received after the abort SHALL run normally.
+device action, including after a wait or a wake, and fail with `aborted`; a device action already
+under way completes. The connection SHALL stay open and ops received after the abort SHALL run
+normally.
 
 #### Scenario: Stop interrupts a scroll
 - **WHEN** the user taps Stop after the first swipe of `scroll` with `amount:10`
@@ -90,10 +100,26 @@ open and ops received after the abort SHALL run normally.
 - **WHEN** the user taps Stop while a `click` is waking the phone
 - **THEN** the tap is not dispatched
 
+### Requirement: Stop also ends the backend's run
+
+On an abort the backend SHALL fail the pending and queued ops and the next op of the recipe session
+that was running, with `HostAbortedByUser`. After an abort it SHALL send each request with the
+number of aborts it has counted (`abortEpoch`), and the app SHALL refuse with `aborted` a request
+whose count is older than its own Stop.
+
+#### Scenario: Stop between two steps ends the recipe
+- **WHEN** the user taps Stop while a recipe session is between two ops
+- **THEN** the session's next op is not sent and the run fails with `HostAbortedByUser`
+
+#### Scenario: a request crossing the abort on the wire is refused
+- **WHEN** the backend sends a `click` before it receives the phone's abort
+- **THEN** the phone replies `aborted` and does not tap
+
 ### Requirement: An op dies with its connection
 
-A closed or replaced connection, a revoke and the service stopping SHALL cancel every op the app
-holds the same way Stop does, so no op acts on the phone once the connection that sent it is gone.
+A closing, closed or replaced connection, a revoke and the service stopping SHALL cancel every op
+the app holds the same way Stop does, so no op starts another device action once the connection
+that sent it is going away.
 
 #### Scenario: a queued op dies with its connection
 - **WHEN** a `click` is queued, the connection drops and a new connection opens before it runs

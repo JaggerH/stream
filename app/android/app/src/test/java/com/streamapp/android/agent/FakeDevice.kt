@@ -9,7 +9,9 @@ class FakeDevice : Device {
     var focused: UiNode? = null
     var clickable = true
     var launchMakesForeground: String? = null
-    var version = 0L
+    val changes = ChangeLog()
+    fun windowChanged() = changes.windowsChanged()
+    fun scrolled(windowId: String, area: Rect) = changes.scrolled(windowId, area)
     /** Nodes whose live counterpart no longer shows what the snapshot recorded. */
     val changed = mutableSetOf<UiNode>()
     /** Runs after every logged call, so a test can abort or change the screen mid-op. */
@@ -22,7 +24,8 @@ class FakeDevice : Device {
     override fun windowRoot(windowId: String) = roots[windowId]
     var bounds = mutableMapOf<String, Rect>()
     override fun windowBounds(windowId: String): Rect? = bounds[windowId]
-    override fun treeVersion() = version
+    override fun treeVersion() = changes.version()
+    override fun changedSince(version: Long, windowId: String, rect: Rect) = changes.changedSince(version, windowId, rect)
     override fun isCurrent(node: UiNode) = node !in changed
     override fun foregroundPackage() = fg
     override fun foregroundComponent() = (fg ?: "") + "/.Main"

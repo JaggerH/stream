@@ -353,6 +353,49 @@ describe('WsHostRelay', () => {
       relay.handleMessage(JSON.stringify({ id, result: 'https://example.com' }))
       await expect(p).resolves.toBe('https://example.com')
     })
+
+    it('中止落在一趟会话的两个 op 之间：持有者的下一个 op 不再发出，整趟以 HostAbortedByUser 结束', async () => {
+      const sent: string[] = []
+      const relay = new WsHostRelay()
+      relay.connect({ send: (d) => void sent.push(d) })
+      let release!: () => void
+      const between = new Promise<void>((r) => { release = r })
+      const run = relay.withSession(async () => {
+        const p = relay.send({ op: 'find', args: {} })
+        relay.handleMessage(JSON.stringify({ id: JSON.parse(sent[0]).id, result: {} }))
+        await p
+        await between // 两个 op 之间（runner 在想下一步）
+        await relay.send({ op: 'click', args: {} })
+      })
+      const rejected = expect(run).rejects.toBeInstanceOf(HostAbortedByUser)
+      relay.handleMessage(JSON.stringify({ type: 'abort', reason: 'user' }))
+      release()
+      await rejected
+      expect(sent.map((s) => JSON.parse(s).op)).toEqual(['find'])
+    })
+
+    it('中止之后新开的会话照常跑', async () => {
+      const sent: string[] = []
+      const relay = new WsHostRelay()
+      relay.connect({ send: (d) => void sent.push(d) })
+      relay.handleMessage(JSON.stringify({ type: 'abort', reason: 'user' }))
+      const run = relay.withSession(async () => relay.send({ op: 'url' }))
+      await Promise.resolve()
+      relay.handleMessage(JSON.stringify({ id: JSON.parse(sent[0]).id, result: 'x' }))
+      await expect(run).resolves.toBe('x')
+    })
+
+    it('请求带上已见过的中止次数，设备据此拒收中止之前发出、还在路上的请求', async () => {
+      const sent: string[] = []
+      const relay = new WsHostRelay()
+      relay.connect({ send: (d) => void sent.push(d) })
+      relay.send({ op: 'url' }).catch(() => {})
+      expect(JSON.parse(sent[0])).toEqual({ id: 1, op: 'url' }) // 从没中止过：帧形状不变
+      relay.handleMessage(JSON.stringify({ type: 'abort', reason: 'user' }))
+      await new Promise((r) => setTimeout(r, 0)) // 被拒的那一个异步交还租约
+      relay.send({ op: 'url' }).catch(() => {})
+      expect(JSON.parse(sent[1])).toEqual({ id: 2, op: 'url', abortEpoch: 1 })
+    })
   })
 })
 

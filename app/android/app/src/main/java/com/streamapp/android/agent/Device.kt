@@ -12,8 +12,12 @@ interface Device {
     fun windowRoot(windowId: String): UiNode?
     /** Screen bounds of the window with this id without snapshotting its tree, or null if it is gone. */
     fun windowBounds(windowId: String): Rect?
-    /** Moves whenever a window opens, closes or scrolls — the moments list rows get recycled. */
+    /** A sequence number of screen changes; [changedSince] compares against it. */
     fun treeVersion(): Long
+    /** Whether, since [version], the window set changed (a page, dialog or popup opened or closed)
+     *  or a view in window [windowId] scrolled over [rect] — the moments list rows get recycled.
+     *  A carousel ticking elsewhere on the page does not count. */
+    fun changedSince(version: Long, windowId: String, rect: Rect): Boolean
     /** Whether the live node behind [node] still shows what the snapshot recorded. */
     fun isCurrent(node: UiNode): Boolean
     fun foregroundPackage(): String?

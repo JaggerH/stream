@@ -471,6 +471,28 @@ describe('runDesktopRecipe', () => {
    *  没有它就会撞上真发生过的那件事——上一轮把界面留在搜索模式，下一轮第一步匹配到的是
    *  **残留的搜索结果**（名字里同样带频道名），于是整条 recipe 从第二步起全在错的界面上跑，
    *  而每一步都"成功"了。 */
+  /** 安卓的 ref 在屏幕变过（弹窗、滚到它）之后报 `stale-ref`，而且**保证什么都没做**——
+   *  所以重新 find 一次再点是安全的；一次失效就判整步失败，等于把手机上常态的动静当事故。 */
+  it('invoke 撞上 stale-ref → 重新 find 一次再点，不判 drift', async () => {
+    const { driver, calls } = fakeDriver({ reads: [[{ id: 'a', title: 'X' }]] })
+    let n = 0
+    driver.invoke = async (ref) => {
+      calls.push({ m: 'invoke', a: ref })
+      if (n++ === 0) throw new Error(`stale-ref: ${ref} predates a window change or a scroll over it; find it again`)
+      return {}
+    }
+    const out = await runDesktopRecipe(recipe({ steps: [{ kind: 'invoke', query: { role: 'Button', name: '搜索消息' } }] }), {}, driver)
+    expect(out.outcome).toBe('ok')
+    expect(calls.map((c) => c.m).filter((m) => m === 'find' || m === 'invoke')).toEqual(['find', 'invoke', 'find', 'invoke'])
+  })
+
+  it('stale-ref 只重试一次：再失效就照常报错', async () => {
+    const { driver } = fakeDriver({ reads: [[]] })
+    driver.invoke = async (ref) => { throw new Error(`stale-ref: ${ref} predates a window change or a scroll over it; find it again`) }
+    await expect(runDesktopRecipe(recipe({ steps: [{ kind: 'invoke', query: { role: 'Button', name: '搜索消息' } }] }), {}, driver))
+      .rejects.toThrow(/stale-ref/)
+  })
+
   it('optional 的 invoke 找不到目标 → 跳过，不判 drift', async () => {
     const { driver, calls } = fakeDriver({ find: (q) => (JSON.stringify(q).includes('取消搜索') ? [] : [{ ref: 'r', role: 'Button', name: '', className: '', rect: { x: 0, y: 0, w: 1, h: 1 } as Rect }]), reads: [[{ id: 'a' }]] })
     const out = await runDesktopRecipe(recipe({

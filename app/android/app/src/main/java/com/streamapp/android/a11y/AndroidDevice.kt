@@ -98,7 +98,10 @@ class AndroidDevice(private val ctx: Context, private val onStop: () -> Unit) : 
     override fun windowRoot(windowId: String): UiNode? =
         svc().windows.firstOrNull { it.id.toString() == windowId }?.root?.let { AndroidNode.snapshot(it) }
 
-    override fun treeVersion(): Long = StreamAccessibilityService.treeVersion.get()
+    override fun treeVersion(): Long = StreamAccessibilityService.changes.version()
+
+    override fun changedSince(version: Long, windowId: String, rect: Rect): Boolean =
+        StreamAccessibilityService.changes.changedSince(version, windowId, rect)
 
     /** Re-reads the node from the app: gone, or showing another label, class or place, means the
      *  view behind it now holds something else (a recycled row) and the ref must not act. An

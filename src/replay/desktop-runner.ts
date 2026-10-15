@@ -1238,7 +1238,18 @@ async function runDesktopRecipeLocked(
       if (step.fallbackClick) {
         await foreground() // 坐标点击投给屏幕，没有前台就是对着别人的窗口按
         await driver.click(els[0].rect, undefined, undefined, deliver)
-      } else await driver.invoke(els[0].ref)
+      } else {
+        try {
+          await driver.invoke(els[0].ref)
+        } catch (e) {
+          // 安卓的 ref 在屏幕变过（弹窗、滚到它）之后报 `stale-ref`，并且保证一下都没点——
+          // 重新 find 一次再点是安全的。只重试一次：再失效说明屏幕还在动，照常报错。
+          if (!(e instanceof Error && e.message.startsWith('stale-ref:'))) throw e
+          const again = await find(q)
+          if (again.length === 0) return stepFailed(step, `invoke target not found after stale-ref: ${JSON.stringify(q)}`)
+          await driver.invoke(again[0].ref)
+        }
+      }
     } else if (step.kind === 'type' && step.see) {
       // `see` 定位的输入框**没有 setValue 快车道**：识别层给的是屏幕上的一个框，不是一个能写
       // 值的元素（a11y 段虽然带 ref，但那一段命中与否是识别层的内部路径，不该在这里分叉出

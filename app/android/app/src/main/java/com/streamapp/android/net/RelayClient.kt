@@ -17,6 +17,7 @@ interface Transport {
     interface Listener {
         fun onOpen()
         fun onMessage(text: String)
+        fun onClosing(code: Int, reason: String)
         fun onClosed(code: Int, reason: String)
         fun onFailure(error: String)
     }
@@ -30,7 +31,8 @@ interface Transport {
  *
  * Every request carries a [Cancel]. Stop, abort, a closed connection and a new [start] cancel all
  * of them, so a request still queued never runs and the one running stops at its next step; a
- * request that arrives after an abort runs normally.
+ * request that arrives after an abort runs normally. A request the backend sent before it saw our
+ * abort (its `abortEpoch` is older than the abort) is refused: the backend already failed it.
  */
 class RelayClient(
     private val transport: Transport,
@@ -55,6 +57,9 @@ class RelayClient(
     private var current: Dispatcher? = null
     private var cancelReconnect: (() -> Unit)? = null
     private val live = mutableSetOf<Cancel>()
+    /** Highest `abortEpoch` seen on this connection, and the lowest one accepted after our abort. */
+    @Volatile private var seenEpoch = 0L
+    @Volatile private var minEpoch = 0L
 
     private fun cancelAll(why: String) = synchronized(live) {
         live.forEach { it.cancel(why) }
@@ -69,6 +74,9 @@ class RelayClient(
         open = false
         val g = ++gen
         cancelAll(GONE)
+        // The count is the backend's; a new connection may be a restarted backend counting from 0.
+        seenEpoch = 0
+        minEpoch = 0
         callbacks.status("正在连接 ${c.backend}")
         transport.open(wsUrl(c.backend), listOf(Frames.PROTOCOL, c.token), listenerFor(g))
     }
@@ -89,7 +97,8 @@ class RelayClient(
         // Frame first: the worker replies to the cancelled request as soon as it is cancelled, and
         // a reply ahead of the abort would read to the backend as a plain op error.
         if (open) transport.send(Frames.abort())
-        cancelAll("aborted: 用户在手机上点了停止")
+        minEpoch = seenEpoch + 1
+        cancelAll(ABORTED)
     }
 
     private fun listenerFor(g: Int) = object : Transport.Listener {
@@ -108,6 +117,11 @@ class RelayClient(
             if (g != gen) return
             val req = Frames.request(text) ?: return
             val d = current ?: return
+            if (req.abortEpoch < minEpoch) {
+                if (open) transport.send(Frames.error(req.id, ABORTED))
+                return
+            }
+            if (req.abortEpoch > seenEpoch) seenEpoch = req.abortEpoch
             val cancel = Cancel()
             synchronized(live) { live += cancel }
             executor(Runnable {
@@ -124,6 +138,13 @@ class RelayClient(
                     synchronized(live) { live -= cancel }
                 }
             })
+        }
+
+        /** The server started closing: nothing it sent may run, though onClosed comes later. */
+        override fun onClosing(code: Int, reason: String) {
+            if (g != gen) return
+            open = false
+            cancelAll(GONE)
         }
 
         override fun onClosed(code: Int, reason: String) {
@@ -146,7 +167,10 @@ class RelayClient(
         }
     }
 
-    private companion object { const val GONE = "aborted: 连接断开了，停下手上的操作" }
+    private companion object {
+        const val GONE = "aborted: 连接断开了，停下手上的操作"
+        const val ABORTED = "aborted: 用户在手机上点了停止"
+    }
 
     private fun retry(why: String) {
         if (stopped) return

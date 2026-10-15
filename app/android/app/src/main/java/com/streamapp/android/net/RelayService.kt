@@ -153,7 +153,10 @@ class OkHttpTransport(private val http: OkHttpClient) : Transport {
         ws = http.newWebSocket(req, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) = listener.onOpen()
             override fun onMessage(webSocket: WebSocket, text: String) = listener.onMessage(text)
-            override fun onClosing(webSocket: WebSocket, code: Int, reason: String) { webSocket.close(1000, null) }
+            override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
+                listener.onClosing(code, reason)
+                webSocket.close(1000, null)
+            }
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) = listener.onClosed(code, reason)
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) =
                 if (response?.code == 401) listener.onClosed(4003, "unauthorized") else listener.onFailure(t.message ?: t.javaClass.simpleName)

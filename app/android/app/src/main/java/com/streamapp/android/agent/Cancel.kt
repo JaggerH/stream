@@ -27,6 +27,7 @@ class CancellableDevice(private val inner: Device, private val cancel: Cancel) :
     override fun windowBounds(windowId: String) = guard { inner.windowBounds(windowId) }
     override fun treeVersion() = guard { inner.treeVersion() }
     override fun isCurrent(node: UiNode) = guard { inner.isCurrent(node) }
+    override fun changedSince(version: Long, windowId: String, rect: Rect) = guard { inner.changedSince(version, windowId, rect) }
     override fun foregroundPackage() = guard { inner.foregroundPackage() }
     override fun foregroundComponent() = guard { inner.foregroundComponent() }
     override fun launch(packageName: String) = guard { inner.launch(packageName) }

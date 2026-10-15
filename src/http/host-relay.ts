@@ -153,6 +153,10 @@ export class WsHostRelay implements HostRelay {
    *  等着用桌面），把它一并拒掉等于一按热键就把桌面通道锁死，那是另一种坏。 */
   private abortEpoch = 0
   private abortReason: string | undefined
+  /** 当前 `withSession` 持有者拿到租约时的 `abortEpoch`。中止落在这趟会话的两个 op 之间时，
+   *  没有挂起的 op 可拒，持有者的下一个 `send()` 靠它发现"中止发生在我开始之后"，整趟停下——
+   *  否则用户按了停止，横幅消失，动作却接着做。中止之后才拿到租约的会话不受影响。 */
+  private holderEpoch = 0
 
   constructor(opts?: { timeoutMs?: number; sessionWaitMs?: number }) {
     this.timeoutMs = opts?.timeoutMs ?? 30_000
@@ -223,6 +227,7 @@ export class WsHostRelay implements HostRelay {
     if (!this.socket) return Promise.reject(new HostRelayDisconnected())
     const currentToken = sessionContext.getStore()
     if (currentToken !== undefined && currentToken === this.sessionHolder) {
+      if (this.abortEpoch !== this.holderEpoch) return Promise.reject(new HostAbortedByUser(this.abortReason))
       return this.sendLocked(op)
     }
     if (this.sessionHolder === null) {
@@ -269,6 +274,7 @@ export class WsHostRelay implements HostRelay {
     } else {
       await this.queueSession(token, opts?.waitMs)
     }
+    this.holderEpoch = this.abortEpoch
     try {
       return await sessionContext.run(token, fn)
     } finally {
@@ -349,7 +355,12 @@ export class WsHostRelay implements HostRelay {
         timer,
       })
       // args omitted when absent — keeps the wire shape minimal and matches the driver's ops
-      const payload = JSON.stringify(op.args === undefined ? { id, op: op.op } : { id, op: op.op, args: op.args })
+      // `abortEpoch`（中止过才带）：设备记下自己发出 abort 时见过的世代，拒收更旧的请求——
+      // 那是中止之前发出、还在路上的 op，后端已经把它判成 HostAbortedByUser 了。
+      const frame: Record<string, unknown> = { id, op: op.op }
+      if (op.args !== undefined) frame.args = op.args
+      if (this.abortEpoch > 0) frame.abortEpoch = this.abortEpoch
+      const payload = JSON.stringify(frame)
       try {
         socket.send(payload)
       } catch (e) {

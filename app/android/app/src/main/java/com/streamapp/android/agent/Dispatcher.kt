@@ -19,7 +19,7 @@ class Dispatcher(private val raw: Device) {
      *  replaces the window, so the scope is re-resolved against `windows()` on every use. */
     private data class Scope(val process: String, val title: String?)
     private var scope: Scope? = null
-    /** A found node, bound to the scope, window and tree version it was found under. */
+    /** A found node, bound to the scope, window and screen-change version it was found under. */
     private class Hit(val node: UiNode, val scope: Scope, val windowId: String, val version: Long)
     private val refs = RefTable<Hit>()
     /** [raw] behind the current request's cancel token; replaced at the start of every dispatch. */
@@ -117,13 +117,13 @@ class Dispatcher(private val raw: Device) {
     }
 
     /** The node behind [ref], only while the screen it was found on is still the screen in front:
-     *  same scope, same window, no window or scroll change since, and the node unchanged. */
+     *  same scope, same window, no window change or scroll over it since, and the node unchanged. */
     private fun resolveRef(ref: String): UiNode {
         val hit = refs.resolve(ref)
         fun stale(why: String): Nothing = throw StaleRefException("stale-ref: $ref $why; find it again")
         if (hit.scope != scope) stale("was found under another scope")
         if (scopedWindow().id != hit.windowId) stale("belongs to a window that is no longer the scoped one")
-        if (device.treeVersion() != hit.version) stale("predates a window or scroll change")
+        if (device.changedSince(hit.version, hit.windowId, hit.node.rect)) stale("predates a window change or a scroll over it")
         if (!device.isCurrent(hit.node)) stale("now shows something else (the node was recycled)")
         return hit.node
     }

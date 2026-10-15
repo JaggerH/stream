@@ -193,13 +193,30 @@ class DispatcherTest {
         return (map(call("find", """{"query":$query}"""))["elements"] as List<Map<String, Any?>>)[0]["ref"] as String
     }
 
-    @Test fun aRefIsStaleOnceTheTreeVersionMoves() {
+    @Test fun aRefIsStaleAfterAWindowChange() {
         call("scopeWindow", """{"match":{"process":"com.sankuai.meituan"}}""")
         val ref = firstRef("""{"role":"Button"}""")
-        dev.version++
+        dev.windowChanged()
         val e = assertThrows(StaleRefException::class.java) { call("invoke", """{"ref":"$ref"}""") }
         assertTrue(e.message!!.startsWith("stale-ref:"))
         assertFalse(dev.log.toString(), dev.log.any { it.startsWith("click") })
+    }
+
+    @Test fun aScrollOverTheRefStalesIt() {
+        call("scopeWindow", """{"match":{"process":"com.sankuai.meituan"}}""")
+        val ref = firstRef("""{"role":"Button"}""")
+        dev.scrolled("1", Rect(0, 0, 1080, 2400))
+        assertThrows(StaleRefException::class.java) { call("invoke", """{"ref":"$ref"}""") }
+        assertFalse(dev.log.any { it.startsWith("click") })
+    }
+
+    @Test fun aCarouselScrollingElsewhereLeavesTheRefUsable() {
+        call("scopeWindow", """{"match":{"process":"com.sankuai.meituan"}}""")
+        val ref = firstRef("""{"role":"Button"}""") // at (100,200) 50x40
+        dev.scrolled("1", Rect(0, 1000, 1080, 300))
+        dev.scrolled("2", Rect(0, 0, 1080, 2400)) // another window scrolling over the same spot
+        call("invoke", """{"ref":"$ref"}""")
+        assertTrue("click 搜索" in dev.log)
     }
 
     @Test fun aRefIsStaleAfterTheScopeChanges() {
