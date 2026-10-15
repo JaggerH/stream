@@ -143,15 +143,66 @@ The retrieval point is `GET /api/access-token`, and it **only answers local call
 so other devices cannot let themselves in by "opening the settings page once". It also returns `urls` (each local network interface's `http://<ip>:<port>/?token=...`),
 because a phone needs a clickable link, not a manually copied 64-bit hex string.
 
-**Pairing a phone**: a phone gets its own revocable token instead of the shared secret. Four routes:
+**Pairing a phone**: a phone gets its own revocable token instead of the shared secret. Five routes:
 `POST /api/devices/pairing-code` mints a 6-digit, 5-minute, single-use code and answers **loopback callers only** (403 otherwise);
 `POST /api/devices/pair` (`{code, name}`) trades a valid code for `{deviceId: "android:<uuid>", deviceToken}` and is **exempt from the API access token**
 (the Host/Origin checks still apply; five failed attempts invalidate the live code, and there is only one live code at a time);
-`GET /api/devices` lists paired phones and online host agents; `DELETE /api/devices/:id` revokes a phone, forgetting its token, deregistering it at once and closing its live `/api/host` socket with 4003.
+`GET /api/devices` lists paired phones and online host agents; `DELETE /api/devices/:id` revokes a phone, forgetting its token, deregistering it at once and closing its live `/api/host` socket with 4003; `POST /api/devices/:id/ops` runs one op on a connected phone for local inspection (see [Android app](#android-app)).
 Failures: pair with a wrong or expired code is 403 `{"error":"invalid-code"}`, a malformed pair body is 400, `DELETE` of an unknown id is 404, and `pairing-code` from a non-local caller is 403.
 Each `GET /api/devices` row has `deviceId`, `name`, `platform`, `paired`, `online`, `pairedAt`, `lastSeenAt` (when the device last connected) and `agentVersion`.
 Only `sha256(token)` is stored (`data/devices.json`, 0600). `/api/host` accepts the device token in place of the shared secret, but a device token only authorizes an android `hello`: a `hello.deviceId` that differs from the bound id, or any other platform, closes the socket with 4003.
 The pairing-code response carries `qr`: one JSON string per LAN address, `{"stream":"pair","v":1,"backend":"http://<lan-ip>:<port>","code":"<6 digits>"}`, which the panel renders as QR codes.
+
+## Android app
+
+The native app lives in `app/android/` and supports Android 11 (API 30) or newer. Build from the checkout root:
+
+```bash
+scripts/qrun.sh scripts/build-android.sh
+```
+
+The script runs JVM unit tests and assembles the release APK with the Gradle 8.10.2 wrapper, Android Gradle Plugin 8.7.3, Kotlin 2.0.21, JDK 17 and Android SDK 35. Its default toolchain paths are `$HOME/opt/jdk-17.0.20.1+1` and `$HOME/android-sdk`; set `JAVA_HOME` and `ANDROID_HOME` to override them. It stages the APK at `app/dist-panel/android/stream.apk`, served as `/panel/android/stream.apk` by the backend. Download it from the phone using the backend's LAN address and allow the browser to install apps.
+
+Release builds use the build machine's debug signing key. An APK built on another machine with a different key cannot update the installed app: uninstall it first, then install and pair again.
+
+On the computer, open Settings → Phones and create a pairing QR code. In Stream on the phone, scan that QR or use manual input for the backend address and six-digit code. The app stores the device credential locally and connects its foreground service to `/api/host` with `host-relay.v2`. Close code 4003 clears the credential, stops reconnecting and displays a request to pair again.
+
+Complete the app's setup checklist: enable Stream's accessibility service (allow restricted settings in App info if Android blocks the switch), grant notifications on Android 13+, exempt Stream from battery optimization, and lock its card in recent apps. On Xiaomi/HyperOS, also allow autostart, background pop-up windows and lock-screen display. Rows marked `?` require manual checking; they do not prove that a permission is granted. Unattended operation requires a lock screen without a password; Stream cannot unlock a secure keyguard.
+
+The app declares exactly the following `ANDROID_OPS`. Recipes use the shared desktop driver and relay; Android implements these operations with accessibility nodes, gestures and system actions.
+
+| Op | Android mapping |
+|---|---|
+| `windows` | Accessibility windows with package name in `process`, title and foreground flag. |
+| `scopeWindow` | Match package and optional title; resolve the scope again as activities change. |
+| `focusApp` | Launch `match.process` as a package and wait for it to reach the foreground. |
+| `find` | Search the scoped accessibility tree; return node refs, roles, names, classes and bounds. Each find replaces the ref snapshot. |
+| `invoke` | Accessibility `ACTION_CLICK` on a current ref. |
+| `setValue` | Accessibility `ACTION_SET_TEXT` on a current ref. |
+| `type`, `clearInput` | Append text to or clear the focused editable node. |
+| `click` | Tap the rectangle center; `button:"right"` performs a long press. |
+| `scroll` | Swipe up/down within the scoped window or screen; clamp amount to 1–10. |
+| `press` | Global Back/Home or the focused input's IME Enter; other keys fail. |
+| `readSubtree` | Read structured data from the scoped accessibility tree. |
+| `screenshot` | Accessibility screenshot returned as JPEG `base64`, `window` and `scale`. |
+| `url` | Foreground package/activity component, rather than a browser URL. |
+| `sleep` | Wait for `ms` on the serialized op worker. |
+| `status` | Show or clear the accessibility status overlay, with a Stop button. |
+
+`status`, `sleep`, `windows` and `url` do not wake the phone. Other declared ops check the keyguard before running and attempt to wake an unlocked or non-secure phone. Coordinate/text/key operations reject `deliver:"message"`. Actions supporting `expect` return `confirmed` after searching for that expectation; a successful dispatch alone does not prove the expected UI appeared.
+
+A ref is current while the screen it was found on is still in front: the same scope, the same scoped window, no window change (a page, dialog or popup opening or closing, excluding Stream's own overlay) and no scroll since the find, and the node itself still has the class, bounds and label (for inputs, class and bounds) it had. `invoke` and `setValue` check this before acting and otherwise fail as `stale-ref` without touching the phone.
+
+Errors retain their prefixes: `stale-ref` (unknown, malformed or superseded ref, or a ref that is no longer current; find again), `aborted` (Stop was tapped or the connection closed while the op was queued or running), `device-locked` (secure keyguard or unsuccessful wake/unlock), `secure-window` (protected screenshot or all-black capture), `a11y-off` (service unavailable), `blocked-by-os` (background launch/wake blocked), `no-scope`, `no-window-match`, `ambiguous-window`, `not-editable`, `action-failed`, `unsupported-key`, and `unsupported-deliver`. An empty find against a background window includes `unbuilt:"a11y-unbuilt: ..."`; it is not reliable evidence of absence. Secure-window detection also rejects all-black images, so that error alone does not prove the screen has `FLAG_SECURE`.
+
+The relay receives `state` immediately after hello, every 30 seconds and when accessibility service availability changes. Its fields are `a11yEnabled`, `screenOn`, `keyguardLocked`, `battery` (percentage or -1 when unknown) and `charging`. `GET /api/devices` includes the latest state when available. An initial disabled state or a transition to disabled emits the panel warning `device.a11y-off`; repeated disabled states do not repeat the warning. The overlay's Stop button sends `{"type":"abort","reason":"user"}` to abort the device's active relay session, then cancels every op the phone holds: a queued op never runs, and the running op stops before its next device action (the next swipe of a `scroll`, the tap after a wake, the rest of a `sleep`) and fails as `aborted`. The connection stays up and ops sent after the abort run normally. A closed or replaced connection, a revoke and the service stopping cancel the same way, so an op never reaches the phone once the connection that sent it is gone.
+
+`POST /api/devices/:id/ops` runs one op for inspection and live checks from the backend machine only. External callers receive 403 even with an API token. Send `{op,args?}`; `args` must be an object. The response is `{result}` (including null), malformed input is 400, an offline device is 404, and an agent/relay failure is 502 `{error}`. This endpoint sends directly to the device relay; recipes use the desktop driver's capability checks instead.
+
+```bash
+curl -sS -X POST 'http://127.0.0.1:8900/api/devices/android%3A<device-uuid>/ops' \
+  -H 'Content-Type: application/json' -d '{"op":"windows"}'
+```
 
 **The exempt routes** (registered **before** the gate, with their reasons documented in place): `/api/health`, `/api/ext/verify`,
 `/api/ext/relay-status`, `/api/ext/claimed-tabs`, `/api/ext/debug-log`, `/api/browser-capability[/diagnose]`.

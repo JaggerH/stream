@@ -93,6 +93,12 @@ following the facility): an implementation choice, not a prohibition.
 - **Assign show**: align files on the netdisk with the program guide: binding, matching (`src/netdisk/match-engine/`, pure functions), and archive. Only the orchestration layer can see
   both the program guide and the netdisk directory, so this stays in Stream and does not enter plugins.
 
+### Android host agent
+
+`app/android/` owns the native Android host agent. `net/RelayService.kt` maintains the foreground connection, heartbeat and credential revocation; `net/RelayClient.kt` owns hello, serialized replies, reconnect backoff and per-request cancellation (Stop and disconnects cancel queued and running ops). `agent/Dispatcher.kt` defines `ANDROID_OPS`, window scope and ref snapshots bound to the scope, window and tree version they came from; `agent/Cancel.kt` checks a request's cancel token around every device call. `a11y/AndroidDevice.kt` maps operations to accessibility APIs, wake handling and screenshots; the accessibility overlay owns the user-facing Stop action. `ui/MainActivity.kt` owns pairing and the setup checklist.
+
+The backend owns pairing credentials in `src/devices/device-store.ts`, local inspection routes in `src/http/device-routes.ts`, and device connections, state and session leases in `src/http/host-registry.ts` and `src/http/host-relay.ts`. Android connects to the same `host-relay.v2` relay as Stream Desktop. `src/replay/desktop-driver.ts` consumes the declared op set when recipes target a device; the app does not contain a separate recipe engine. `src/serve.ts` turns accessibility-off state into a panel notification. Build and staging belong to `scripts/build-android.sh`; pairing, op mappings, limitations and APK installation are documented in [API.md](API.md#android-app).
+
 ### Capability Packages: The Stream Backend Is the Only Host, and a Capability Is One Slot in a Stream Package
 
 **Capability package** is the distribution unit for "one capability in hand". Source code lives in `capabilities/<x>/`, and the contract is
