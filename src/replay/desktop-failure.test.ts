@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { classifyDesktopError, type DesktopFailure } from './desktop-failure.ts'
+import { classifyDesktopError, userAbortedReason, type DesktopFailure } from './desktop-failure.ts'
+import { HostAbortedByUser } from '../http/host-relay.ts'
 import { makeDesktopDriver } from './desktop-driver.ts'
 
 /** 本 change 的承重条。
@@ -94,5 +95,23 @@ describe('expect 只在给了的时候才上线', () => {
     await driver.scroll('down', 300, e)
     await driver.invoke('el-1', e)
     expect(sent.map((s) => (s.args as Record<string, unknown>).expect)).toEqual([e, e, e])
+  })
+})
+
+describe('用户中止说给调用方听的那句', () => {
+  it('手机上点了停止：说手机，不说热键', () => {
+    const e = new HostAbortedByUser('phone-stop')
+    expect(e.message).toContain('手机上点了停止')
+    expect(e.message).not.toContain('热键')
+    expect(userAbortedReason(e)).toContain('手机')
+    expect(userAbortedReason(e)).not.toContain('Ctrl+Alt+Esc')
+  })
+
+  it('桌面热键（或老 agent 不带原因）：照旧说热键', () => {
+    for (const r of ['user-hotkey', undefined]) {
+      const e = new HostAbortedByUser(r)
+      expect(e.message).toContain('中止热键')
+      expect(userAbortedReason(e)).toContain('Ctrl+Alt+Esc')
+    }
   })
 })

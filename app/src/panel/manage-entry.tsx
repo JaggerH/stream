@@ -4,8 +4,9 @@
  * 它装的是**不属于任何一个频道**的那堆事：包的安装/卸载/更新、插件启停、凭据、日志。
  * 频道自己的配置已经回到频道里了（各 Present 顶栏下的「配置」分页），剩下这些全局的没有
  * 归属，落点是 DSH 设置里的一个 Stream 分区（`settings.section` 插槽，注册在
- * dsh-plugin-stream-ui 那侧）。**两页**（分页条切换）：包与插件（`PackagesPage`）、源健康
- * （`SourceHealthList` / `SourceRepairPage`，spec 2026-09-12 §4）。
+ * dsh-plugin-stream-ui 那侧）。**三页**（分页条切换）：包与插件（`PackagesPage`）、源健康
+ * （`SourceHealthList` / `SourceRepairPage`，spec 2026-09-12 §4）、手机（`PhoneDevicesSettings`：
+ * 配对码与二维码、设备列表、撤销——配对码只在本机生成，这一页正是在本机打开的）。
  *
  * **为什么是独立 bundle 而不是塞进主面板**：主 bundle 是**开页必载**的那一份，而这一页
  * 一次都用不到的人占绝大多数（装包、配凭据是偶发动作）。理由与影视/详情/研究那三份拆分
@@ -48,7 +49,8 @@ import { StrictMode, useEffect, useState, type ReactElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import '../entry.css'
 import '../i18n/index.ts'   // 副作用 import：设好 react-i18next 的全局默认实例
-import { applyBackend } from '../lib/api.ts'
+import { applyBackend, LOCAL } from '../lib/api.ts'
+import { PhoneDevicesSettings } from '../components/PhoneDevicesSettings.tsx'
 import { PackagesPage } from '../components/packages/PackagesPage.tsx'
 import { PreviewModal } from '../components/PreviewModal.tsx'
 import { PreviewContext, type PreviewTarget } from '../lib/previewStage.ts'
@@ -62,7 +64,7 @@ import type { ManageTarget } from './manage-bridge.ts'
 let root: Root | undefined
 let stopWatchingTheme: (() => void) | undefined
 
-type View = { page: 'packages' } | { page: 'source-health'; sourceId?: string }
+type View = { page: 'packages' } | { page: 'source-health'; sourceId?: string } | { page: 'phones' }
 
 /** 宿主经 `show()` 切页时用的模块级信号（两棵树之间没有 props）。 */
 let pushView: ((v: View) => void) | undefined
@@ -73,7 +75,7 @@ function ManageShell({ backend, initial }: { backend: string; initial?: ManageTa
   // 一条能播的视频，PostItemRow 就会调 useVideoStage()，在外面渲染直接抛、整页白）。
   const [preview, setPreview] = useState<PreviewTarget | null>(null)
   const [openVideoId, setOpenVideoId] = useState<string | null>(null)
-  // 两页（包与插件 / 源健康），分页条回来了。
+  // 三页（包与插件 / 源健康 / 手机）。
   const [view, setView] = useState<View>(() => toView(initial))
   useEffect(() => { pushView = setView; return () => { pushView = undefined } }, [])
   const tab = (page: View['page'], label: string): ReactElement => (
@@ -87,9 +89,10 @@ function ManageShell({ backend, initial }: { backend: string; initial?: ManageTa
     <PreviewContext.Provider value={{ openPreview: setPreview }}>
     <VideoStageProvider baseUrl={backend} openId={openVideoId} onOpenIdChange={setOpenVideoId}>
     <div className="flex h-full min-h-0 flex-col text-foreground">
-      <div role="tablist" className="flex gap-1 border-b px-2">{tab('packages', '包与插件')}{tab('source-health', '源健康')}</div>
+      <div role="tablist" className="flex gap-1 border-b px-2">{tab('packages', '包与插件')}{tab('source-health', '源健康')}{tab('phones', '手机')}</div>
       <div className="min-h-0 flex-1 overflow-y-auto">
         {view.page === 'packages' ? <PackagesPage apiBase={backend} />
+          : view.page === 'phones' ? <div className="p-4"><PhoneDevicesSettings conn={LOCAL} /></div>
           : view.sourceId ? <SourceRepairPage apiBase={backend} sourceId={view.sourceId} onBack={() => setView({ page: 'source-health' })} />
           : <SourceHealthList apiBase={backend} onOpen={(sourceId) => setView({ page: 'source-health', sourceId })} />}
       </div>

@@ -1,6 +1,6 @@
 import type { ActionSpec, ActResult } from '../replay/interactive-gate.ts'
 import type { DesktopDriver } from '../replay/desktop-driver.ts'
-import { DesktopUnavailable, SESSION_BUSY_REASON, USER_ABORTED_REASON } from '../replay/desktop-failure.ts'
+import { DesktopUnavailable, SESSION_BUSY_REASON, userAbortedReason } from '../replay/desktop-failure.ts'
 import { HostSessionQueueTimeout, HostAbortedByUser, INTERACTIVE_SESSION_WAIT_MS } from '../http/host-relay.ts'
 import { desktopAct, desktopLook, desktopMatch, desktopOpen, desktopPages, desktopShot } from './desktop-surface.ts'
 import { parseCdpTarget } from './cdp-target.ts'
@@ -70,9 +70,9 @@ const withDesktopSession = <T>(d: DesktopDriver, fn: () => Promise<T>): Promise<
     // `SESSION_BUSY_REASON`**，两条路的措辞不许各写各的。
     // 只吃这一种：别的错误原样抛出去，把陌生错误归成"通道忙"比不归类更坏。
     if (e instanceof HostSessionQueueTimeout) throw new Error(SESSION_BUSY_REASON, { cause: e })
-    // 用户在本机按了中止热键。同样共用一句（`USER_ABORTED_REASON`）：这一档是四档里唯一
+    // 用户在本机按了中止热键（或在手机上点了停止）。同样共用一句（`userAbortedReason`）：这一档是四档里唯一
     // **不许自动重试**的，两条交互路径的措辞分了家，就会有一条只说"超时"而把重试留给调用方猜。
-    if (e instanceof HostAbortedByUser) throw new Error(USER_ABORTED_REASON, { cause: e })
+    if (e instanceof HostAbortedByUser) throw new Error(userAbortedReason(e), { cause: e })
     throw e
   })
 

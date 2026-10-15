@@ -4,15 +4,13 @@ import android.accessibilityservice.AccessibilityService
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityWindowInfo
 import com.streamapp.android.agent.ChangeLog
+import com.streamapp.android.agent.ForegroundComponents
 import com.streamapp.android.agent.Rect
 import com.streamapp.android.agent.isPageChange
 
 /** The system-bound half. All op logic lives in `AndroidDevice`; this class only tracks the
  *  foreground component, feeds screen changes into [changes], and publishes itself while connected. */
 class StreamAccessibilityService : AccessibilityService() {
-    @Volatile var lastComponent: String = ""
-        private set
-
     override fun onServiceConnected() {
         // Nodes from the previous binding are dead.
         changes.windowsChanged()
@@ -37,9 +35,7 @@ class StreamAccessibilityService : AccessibilityService() {
         if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
             if (isPageChange(event.contentChangeTypes, event.className?.toString())) changes.windowsChanged()
             val pkg = event.packageName?.toString() ?: return
-            val cls = event.className?.toString() ?: ""
-            // Only activities name the screen; a Toast or a dialog class is not a place.
-            lastComponent = if (cls.startsWith(pkg) || cls.contains("Activity")) "$pkg/$cls" else pkg
+            components.windowStateChanged(pkg, event.className?.toString() ?: "")
         }
     }
 
@@ -75,5 +71,7 @@ class StreamAccessibilityService : AccessibilityService() {
         @Volatile var listener: ((Boolean) -> Unit)? = null
         /** See `Device.changedSince`. Static, so it keeps counting across a service restart. */
         val changes = ChangeLog()
+        /** See `Device.foregroundComponent`. */
+        val components = ForegroundComponents()
     }
 }

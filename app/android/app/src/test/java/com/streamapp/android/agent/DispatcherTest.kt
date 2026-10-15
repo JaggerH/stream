@@ -178,6 +178,12 @@ class DispatcherTest {
         assertEquals(25, dev.log.count { it == "sleep 200" })
     }
 
+    @Test fun hyperOsAskingToAllowTheLaunchSaysWhereToTap() {
+        dev.fg = "com.miui.securitycenter" // 「Stream 想要打开 饿了么，是否允许？」
+        val msg = assertThrows(AgentError::class.java) { call("focusApp", """{"match":{"process":"me.ele"}}""") }.message!!
+        assertTrue(msg, msg.startsWith("blocked-by-os:") && msg.contains("始终允许") && !msg.contains("后台弹出界面"))
+    }
+
     @Test fun aKeyTheSystemRefusesFails() {
         val refusing = object : Device by dev { override fun globalBack() = false }
         assertTrue(assertThrows(AgentError::class.java) { Dispatcher(refusing).dispatch("press", JSONObject("""{"key":"Back"}""")) }.message!!.startsWith("action-failed:"))

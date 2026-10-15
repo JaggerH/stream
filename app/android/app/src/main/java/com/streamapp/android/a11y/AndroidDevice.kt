@@ -116,7 +116,7 @@ class AndroidDevice(private val ctx: Context, private val onStop: () -> Unit) : 
 
     override fun foregroundPackage(): String? = svc().rootInActiveWindow?.packageName?.toString()
 
-    override fun foregroundComponent(): String = svc().lastComponent.ifEmpty { foregroundPackage() ?: "" }
+    override fun foregroundComponent(): String = StreamAccessibilityService.components.componentOf(foregroundPackage())
 
     override fun launch(packageName: String): Boolean {
         val i = ctx.packageManager.getLaunchIntentForPackage(packageName)

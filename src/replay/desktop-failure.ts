@@ -63,6 +63,14 @@ export const SESSION_BUSY_REASON =
 export const USER_ABORTED_REASON =
   '你在本机按下了中止热键（Ctrl+Alt+Esc），这趟动作已被停下——动作可能已部分执行，先看目标应用的实际状态，需要的话手动重来一次。系统不会自动重试。'
 
+/** 同一句，按是谁叫停的说：手机横幅上的「停止」没有热键可提。 */
+export const PHONE_ABORTED_REASON =
+  '你在手机上点了「停止」，这趟动作已被停下——动作可能已部分执行，先看手机上目标应用的实际状态，需要的话手动重来一次。系统不会自动重试。'
+
+export function userAbortedReason(e: { byPhone?: boolean }): string {
+  return e.byPhone ? PHONE_ABORTED_REASON : USER_ABORTED_REASON
+}
+
 export class DesktopUnavailable extends Error {
   constructor(
     readonly reason: DesktopFailure,

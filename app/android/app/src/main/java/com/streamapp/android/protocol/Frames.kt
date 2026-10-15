@@ -53,5 +53,6 @@ object Frames {
             .put("charging", s.charging)
             .toString()
 
-    fun abort(): String = JSONObject().put("type", "abort").put("reason", "user").toString()
+    /** `phone-stop`: the backend tells this apart from the desktop hotkey when it words the abort. */
+    fun abort(): String = JSONObject().put("type", "abort").put("reason", "phone-stop").toString()
 }

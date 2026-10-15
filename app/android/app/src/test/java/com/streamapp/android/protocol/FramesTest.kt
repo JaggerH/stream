@@ -54,6 +54,6 @@ class FramesTest {
     @Test fun abortFrame() {
         val o = JSONObject(Frames.abort())
         assertEquals("abort", o.getString("type"))
-        assertEquals("user", o.getString("reason"))
+        assertEquals("phone-stop", o.getString("reason")) // the backend words the abort as a tap on the phone
     }
 }

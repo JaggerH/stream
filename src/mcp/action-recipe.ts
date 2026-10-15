@@ -43,7 +43,7 @@ import { RateLimitedError } from '../replay/facility-rate-limit.ts'
 import type { RecipeRunOutcome } from '../replay/recipe-runner.ts'
 import { runDesktopRecipe, type OverrideSource } from '../replay/desktop-runner.ts'
 import { HostRelayDisconnected, HostRelayTimeout, HostSessionQueueTimeout, HostAbortedByUser, INTERACTIVE_SESSION_WAIT_MS } from '../http/host-relay.ts'
-import { SESSION_BUSY_REASON, USER_ABORTED_REASON } from '../replay/desktop-failure.ts'
+import { SESSION_BUSY_REASON, userAbortedReason } from '../replay/desktop-failure.ts'
 import type { DesktopRecipe } from '../replay/desktop-recipe.ts'
 import { materializeParams, validateParams, type ParamEnv } from './validate-params.ts'
 import { spillArtifacts } from './action-artifacts.ts'
@@ -362,7 +362,7 @@ async function executeDesktopAction(
     // no-desktop：agent 是健康的，坏的是"这趟被人叫停了"。报错成 agent 问题会把用户
     // 引去查 agent，而正确的下一步是看目标应用的实际状态。
     if (e instanceof HostAbortedByUser) {
-      return { status: 'blocked', sourceId, reason: USER_ABORTED_REASON }
+      return { status: 'blocked', sourceId, reason: userAbortedReason(e) }
     }
     if (e instanceof HostRelayDisconnected || e instanceof HostRelayTimeout) {
       return {
