@@ -188,6 +188,82 @@ class DispatcherTest {
         assertEquals("missing arg: ref", assertThrows(AgentError::class.java) { call("invoke") }.message)
     }
 
+    private fun firstRef(query: String): String {
+        @Suppress("UNCHECKED_CAST")
+        return (map(call("find", """{"query":$query}"""))["elements"] as List<Map<String, Any?>>)[0]["ref"] as String
+    }
+
+    @Test fun aRefIsStaleOnceTheTreeVersionMoves() {
+        call("scopeWindow", """{"match":{"process":"com.sankuai.meituan"}}""")
+        val ref = firstRef("""{"role":"Button"}""")
+        dev.version++
+        val e = assertThrows(StaleRefException::class.java) { call("invoke", """{"ref":"$ref"}""") }
+        assertTrue(e.message!!.startsWith("stale-ref:"))
+        assertFalse(dev.log.toString(), dev.log.any { it.startsWith("click") })
+    }
+
+    @Test fun aRefIsStaleAfterTheScopeChanges() {
+        dev.wins = mutableListOf(WindowInfo("1", "com.sankuai.meituan", "美团", true), WindowInfo("2", "me.ele", "饿了么", false))
+        call("scopeWindow", """{"match":{"process":"com.sankuai.meituan"}}""")
+        val ref = firstRef("""{"role":"EditText"}""")
+        call("scopeWindow", """{"match":{"process":"me.ele"}}""")
+        assertThrows(StaleRefException::class.java) { call("setValue", """{"ref":"$ref","text":"x"}""") }
+        assertFalse(dev.log.toString(), dev.log.any { it.startsWith("setText") })
+    }
+
+    @Test fun aRefIsStaleWhenTheScopedWindowWasReplaced() {
+        call("scopeWindow", """{"match":{"process":"com.sankuai.meituan"}}""")
+        val ref = firstRef("""{"role":"Button"}""")
+        dev.wins = mutableListOf(WindowInfo("7", "com.sankuai.meituan", "美团", true))
+        assertThrows(StaleRefException::class.java) { call("invoke", """{"ref":"$ref"}""") }
+        assertFalse(dev.log.any { it.startsWith("click") })
+    }
+
+    @Test fun aRefIsStaleWhenItsNodeNowShowsSomethingElse() {
+        call("scopeWindow", """{"match":{"process":"com.sankuai.meituan"}}""")
+        val ref = firstRef("""{"role":"Button"}""")
+        dev.changed += search // a recycled list row: same view, another item
+        assertThrows(StaleRefException::class.java) { call("invoke", """{"ref":"$ref"}""") }
+        assertFalse(dev.log.any { it.startsWith("click") })
+    }
+
+    @Test fun aRefStaysUsableWhileTheTreeHoldsStill() {
+        call("scopeWindow", """{"match":{"process":"com.sankuai.meituan"}}""")
+        val input = firstRef("""{"role":"EditText"}""")
+        call("setValue", """{"ref":"$input","text":"麦当劳"}""")
+        call("setValue", """{"ref":"$input","text":"肯德基"}""")
+        assertTrue("setText 搜索商家或商品=肯德基" in dev.log)
+    }
+
+    @Test fun abortAfterTheFirstSwipeStopsTheScroll() {
+        val cancel = Cancel()
+        dev.after = { if (it.startsWith("swipe")) cancel.cancel() }
+        val e = assertThrows(AgentError::class.java) { d.dispatch("scroll", JSONObject("""{"dir":"down","amount":10}"""), cancel) }
+        assertTrue(e.message!!, e.message!!.startsWith("aborted:"))
+        assertEquals(1, dev.log.count { it.startsWith("swipe") })
+    }
+
+    @Test fun abortWhileWakingStopsTheTap() {
+        val cancel = Cancel()
+        dev.after = { if (it == "awake") cancel.cancel() }
+        assertThrows(AgentError::class.java) { d.dispatch("click", JSONObject("""{"rect":{"x":0,"y":0,"w":2,"h":2}}"""), cancel) }
+        assertFalse(dev.log.any { it.startsWith("tap") })
+    }
+
+    @Test fun abortDuringALongSleepEndsItEarly() {
+        val cancel = Cancel()
+        var slept = 0
+        dev.after = { if (it.startsWith("sleep") && ++slept == 2) cancel.cancel() }
+        assertThrows(AgentError::class.java) { d.dispatch("sleep", JSONObject("""{"ms":30000}"""), cancel) }
+        assertEquals(2, slept)
+    }
+
+    @Test fun aCancelledTokenDoesNothingAtAll() {
+        val cancel = Cancel().also { it.cancel() }
+        assertThrows(AgentError::class.java) { d.dispatch("press", JSONObject("""{"key":"Home"}"""), cancel) }
+        assertTrue(dev.log.toString(), dev.log.isEmpty())
+    }
+
     @Test fun urlAndSleep() {
         assertEquals("com.sankuai.meituan/.Main", call("url"))
         assertNull(call("sleep", """{"ms":20}"""))

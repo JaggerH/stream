@@ -156,6 +156,73 @@ class RelayClientTest {
         assertNull(revokedWith)
     }
 
+    private val tap = """{"id":7,"op":"click","args":{"rect":{"x":0,"y":0,"w":2,"h":2}}}"""
+
+    /** Queue a tap on connection 1, let [cut] end it, then drain the queue. */
+    private fun queuedTapAfter(cut: (RelayClient, FakeTransport) -> Unit): FakeDevice {
+        val t = FakeTransport()
+        val dev = FakeDevice()
+        val c = client(t, dev)
+        deferred = true
+        c.start(creds)
+        t.listeners[0].onOpen()
+        t.listeners[0].onMessage(tap)
+        cut(c, t)
+        queued.toList().forEach { it.run() }
+        return dev
+    }
+
+    @Test fun aRequestQueuedBeforeAReconnectNeverTouchesThePhone() {
+        val dev = queuedTapAfter { c, t ->
+            t.listeners[0].onClosed(1006, "")
+            c.start(creds)
+            t.listeners[1].onOpen()
+        }
+        assertTrue(dev.log.toString(), dev.log.isEmpty())
+    }
+
+    @Test fun aRequestQueuedBeforeStopNeverTouchesThePhone() {
+        val dev = queuedTapAfter { c, _ -> c.stop() }
+        assertTrue(dev.log.toString(), dev.log.isEmpty())
+    }
+
+    @Test fun aRequestQueuedBeforeARevokeNeverTouchesThePhone() {
+        val dev = queuedTapAfter { _, t -> t.listeners[0].onClosed(4003, "revoked") }
+        assertTrue(dev.log.toString(), dev.log.isEmpty())
+    }
+
+    @Test fun aRequestQueuedBeforeAbortNeverTouchesThePhone() {
+        val dev = queuedTapAfter { c, _ -> c.abort() }
+        assertTrue(dev.log.toString(), dev.log.isEmpty())
+    }
+
+    @Test fun aDisconnectStopsTheRunningRequestAtItsNextAction() {
+        val t = FakeTransport()
+        val dev = FakeDevice()
+        client(t, dev).start(creds)
+        t.listener!!.onOpen()
+        dev.after = { if (it.startsWith("swipe")) t.listeners[0].onClosed(1006, "") }
+        t.listener!!.onMessage("""{"id":8,"op":"scroll","args":{"dir":"down","amount":10}}""")
+        assertEquals(1, dev.log.count { it.startsWith("swipe") })
+    }
+
+    @Test fun abortStopsTheRunningRequestButNotTheNextOne() {
+        val t = FakeTransport()
+        val dev = FakeDevice()
+        val c = client(t, dev)
+        c.start(creds)
+        t.listener!!.onOpen()
+        dev.after = { if (it.startsWith("swipe")) c.abort() }
+        t.listener!!.onMessage("""{"id":8,"op":"scroll","args":{"dir":"down","amount":10}}""")
+        assertEquals(1, dev.log.count { it.startsWith("swipe") })
+        val failed = t.sent.map { JSONObject(it) }.single { it.optInt("id") == 8 }
+        assertTrue(failed.toString(), failed.getString("error").startsWith("aborted:"))
+        dev.after = {}
+        t.listener!!.onMessage(tap)
+        assertTrue(dev.log.toString(), "tap 1,1 long=false" in dev.log)
+        assertFalse(t.sent.map { JSONObject(it) }.single { it.optInt("id") == 7 }.has("error"))
+    }
+
     @Test fun abortSendsTheAbortFrame() {
         val t = FakeTransport()
         val c = client(t)

@@ -14,14 +14,19 @@ private val NO_WAKE = setOf("status", "sleep", "windows", "url")
  * The op table (see the plan's Task 4 table). One instance per connection; it owns the scoped
  * window and the current ref snapshot. Ops run one at a time, so it needs no locking.
  */
-class Dispatcher(private val device: Device) {
+class Dispatcher(private val raw: Device) {
     /** The app (and optional title substring) the agent limited itself to. An Activity change
      *  replaces the window, so the scope is re-resolved against `windows()` on every use. */
     private data class Scope(val process: String, val title: String?)
     private var scope: Scope? = null
-    private val refs = RefTable<UiNode>()
+    /** A found node, bound to the scope, window and tree version it was found under. */
+    private class Hit(val node: UiNode, val scope: Scope, val windowId: String, val version: Long)
+    private val refs = RefTable<Hit>()
+    /** [raw] behind the current request's cancel token; replaced at the start of every dispatch. */
+    private var device: Device = raw
 
-    fun dispatch(op: String, args: JSONObject): Any? {
+    fun dispatch(op: String, args: JSONObject, cancel: Cancel = Cancel()): Any? {
+        device = CancellableDevice(raw, cancel)
         if (op !in ANDROID_OPS) throw AgentError("unknown op: $op")
         if (op !in NO_WAKE) device.ensureAwake()
         return when (op) {
@@ -35,13 +40,13 @@ class Dispatcher(private val device: Device) {
             "focusApp" -> mapOf("ok" to focusApp(str(obj(args, "match"), "process")))
             "find" -> find(A11yQuery.from(obj(args, "query")))
             "invoke" -> {
-                val node = refs.resolve(str(args, "ref"))
+                val node = resolveRef(str(args, "ref"))
                 if (!device.click(node)) throw AgentError("action-failed: 节点不可点，换坐标点击")
                 settle(args, "invoke")
             }
             "setValue" -> {
                 val ref = str(args, "ref")
-                if (!device.setText(refs.resolve(ref), str(args, "text"))) throw AgentError("not-editable: $ref 不接受 ACTION_SET_TEXT")
+                if (!device.setText(resolveRef(ref), str(args, "text"))) throw AgentError("not-editable: $ref 不接受 ACTION_SET_TEXT")
                 settle(args, "value")
             }
             "type" -> {
@@ -94,10 +99,13 @@ class Dispatcher(private val device: Device) {
     }
 
     private fun find(q: A11yQuery): Map<String, Any?> {
+        val s = scope
         val win = scopedWindow()
+        // Read before the snapshot: a change while it is being built must also stale its refs.
+        val version = device.treeVersion()
         val root = device.windowRoot(win.id) ?: throw AgentError("no-window-match: 限定的窗口已经不在了，重新 scopeWindow")
         val hits = findAll(root, q)
-        val ids = refs.snapshot(hits)
+        val ids = refs.snapshot(hits.map { Hit(it, s!!, win.id, version) })
         val els = hits.mapIndexed { i, n ->
             mapOf("ref" to ids[i], "role" to n.role, "name" to n.name, "className" to n.className, "rect" to n.rect.toMap())
         }
@@ -106,6 +114,18 @@ class Dispatcher(private val device: Device) {
             out["unbuilt"] = "a11y-unbuilt: 限定的窗口不在前台，空结果不可采信"
         }
         return out
+    }
+
+    /** The node behind [ref], only while the screen it was found on is still the screen in front:
+     *  same scope, same window, no window or scroll change since, and the node unchanged. */
+    private fun resolveRef(ref: String): UiNode {
+        val hit = refs.resolve(ref)
+        fun stale(why: String): Nothing = throw StaleRefException("stale-ref: $ref $why; find it again")
+        if (hit.scope != scope) stale("was found under another scope")
+        if (scopedWindow().id != hit.windowId) stale("belongs to a window that is no longer the scoped one")
+        if (device.treeVersion() != hit.version) stale("predates a window or scroll change")
+        if (!device.isCurrent(hit.node)) stale("now shows something else (the node was recycled)")
+        return hit.node
     }
 
     private fun focusApp(pkg: String): Boolean {

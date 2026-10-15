@@ -98,6 +98,19 @@ class AndroidDevice(private val ctx: Context, private val onStop: () -> Unit) : 
     override fun windowRoot(windowId: String): UiNode? =
         svc().windows.firstOrNull { it.id.toString() == windowId }?.root?.let { AndroidNode.snapshot(it) }
 
+    override fun treeVersion(): Long = StreamAccessibilityService.treeVersion.get()
+
+    /** Re-reads the node from the app: gone, or showing another label, class or place, means the
+     *  view behind it now holds something else (a recycled row) and the ref must not act. An
+     *  input's label is its value, which our own setValue changes, so inputs skip that check. */
+    override fun isCurrent(node: UiNode): Boolean {
+        val snap = if (node is HintlessNode) node.inner else node as? AndroidNode ?: return false
+        val live = snap.info
+        if (!live.refresh()) return false
+        val now = AndroidNode(live, emptyList())
+        return now.className == snap.className && now.rect == snap.rect && (live.isEditable || now.name == snap.name)
+    }
+
     override fun foregroundPackage(): String? = svc().rootInActiveWindow?.packageName?.toString()
 
     override fun foregroundComponent(): String = svc().lastComponent.ifEmpty { foregroundPackage() ?: "" }

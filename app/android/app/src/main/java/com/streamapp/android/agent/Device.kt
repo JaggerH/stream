@@ -12,6 +12,10 @@ interface Device {
     fun windowRoot(windowId: String): UiNode?
     /** Screen bounds of the window with this id without snapshotting its tree, or null if it is gone. */
     fun windowBounds(windowId: String): Rect?
+    /** Moves whenever a window opens, closes or scrolls — the moments list rows get recycled. */
+    fun treeVersion(): Long
+    /** Whether the live node behind [node] still shows what the snapshot recorded. */
+    fun isCurrent(node: UiNode): Boolean
     fun foregroundPackage(): String?
     /** `package/activityClass` of the foreground window, or `package` when the activity is unknown. */
     fun foregroundComponent(): String
