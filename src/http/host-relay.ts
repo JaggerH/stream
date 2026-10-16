@@ -1,6 +1,7 @@
 import { WebSocketServer } from 'ws'
 import type { Server } from 'node:http'
 import { AsyncLocalStorage } from 'node:async_hooks'
+import { PAIRED_PLATFORMS } from '../devices/device-store.ts'
 import { tokenEqual } from './secrets.ts'
 import type { HostRelay, HostOp } from '../replay/desktop-driver.ts'
 import { parseHello, parseState, type HostDeviceState, type HostRelayRegistry } from './host-registry.ts'
@@ -546,10 +547,10 @@ export function attachHostRelay(
         socket.close(4003, 'device id does not match its token')
         return
       }
-      if (boundDevice !== undefined && hello.platform !== 'android') {
+      if (boundDevice !== undefined && (!PAIRED_PLATFORMS.has(hello.platform) || !hello.deviceId.startsWith(`${hello.platform}:`))) {
         log(`[host-relay] device token for ${boundDevice} claimed platform ${hello.platform} — closing`)
         closing = true
-        socket.close(4003, 'device tokens are android-only')
+        socket.close(4003, 'device token platform mismatch')
         return
       }
       if (boundDevice !== undefined) {
@@ -570,10 +571,10 @@ export function attachHostRelay(
           socket.close(4003, 'revoked')
           return
         }
-      } else if (hello.platform === 'android') {
-        log('[host-relay] shared secret claimed the android platform — closing')
+      } else if (PAIRED_PLATFORMS.has(hello.platform)) {
+        log(`[host-relay] shared secret claimed the ${hello.platform} platform — closing`)
         closing = true
-        socket.close(4003, 'android devices must pair')
+        socket.close(4003, `${hello.platform} devices must pair`)
         return
       }
       clearTimeout(helloTimer)

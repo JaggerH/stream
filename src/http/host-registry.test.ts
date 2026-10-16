@@ -18,7 +18,8 @@ describe('parseHello', () => {
   it('rejects anything that is not a hello — a missing field must not become a default', () => {
     expect(parseHello('not json')).toBeNull()
     expect(parseHello(JSON.stringify({ id: 1, result: {} }))).toBeNull()
-    expect(parseHello(JSON.stringify({ type: 'hello', ...hello(), platform: 'linux' }))).toBeNull()
+    expect(parseHello(JSON.stringify({ type: 'hello', ...hello(), platform: 'freebsd' }))).toBeNull()
+    expect(parseHello(JSON.stringify({ type: 'hello', ...hello(), platform: 'linux' }))?.platform).toBe('linux')
     expect(parseHello(JSON.stringify({ type: 'hello', ...hello(), deviceId: '' }))).toBeNull()
     expect(parseHello(JSON.stringify({ type: 'hello', ...hello(), ops: 'click' }))).toBeNull()
     expect(parseHello(JSON.stringify({ type: 'hello', ...hello(), ops: ['click', 3] }))).toBeNull()
@@ -34,6 +35,14 @@ describe('surfaceOf', () => {
 })
 
 describe('HostRelayRegistry', () => {
+  it('a linux device is listed but never chosen as a UI surface', () => {
+    const reg = new HostRelayRegistry()
+    reg.connect(fakeSocket().socket, hello({ deviceId: 'linux:nas', platform: 'linux', name: 'NAS', ops: ['http.fetch'] }))
+    expect(reg.devices()).toHaveLength(1)
+    expect(reg.deviceFor('desktop')).toBeUndefined()
+    expect(reg.deviceFor('android')).toBeUndefined()
+  })
+
   it('a phone connecting does not knock the PC off — each device keeps its own relay', async () => {
     const reg = new HostRelayRegistry()
     const pc = fakeSocket()

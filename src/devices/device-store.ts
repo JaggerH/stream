@@ -1,5 +1,5 @@
 /**
- * Paired phones and their tokens.
+ * Paired devices (phones, headless Linux agents) and their tokens.
  *
  * **Only a hash of each token is stored.** The token is a credential that drives the phone, so a
  * copy of this file must not be enough to impersonate a device. Comparison is constant-time.
@@ -17,10 +17,13 @@ export const MAX_PAIR_FAILURES = 5
 export const TOUCH_INTERVAL_MS = 60_000
 const MAX_NAME = 64
 
+export type PairedPlatform = 'android' | 'linux'
+export const PAIRED_PLATFORMS: ReadonlySet<string> = new Set<PairedPlatform>(['android', 'linux'])
+
 export interface PairedDevice {
   deviceId: string
   name: string
-  platform: 'android'
+  platform: PairedPlatform
   pairedAt: number
   lastSeenAt?: number
 }
@@ -76,7 +79,7 @@ export class DeviceStore {
     return { code, expiresAt }
   }
 
-  pair(code: string, name: string): PairResult {
+  pair(code: string, name: string, platform: PairedPlatform = 'android'): PairResult {
     this.dropExpired()
     if (!this.codes.has(code)) {
       this.failures++
@@ -89,11 +92,11 @@ export class DeviceStore {
     }
     this.codes.delete(code)
     this.failures = 0
-    const deviceId = `android:${randomUUID()}`
+    const deviceId = `${platform}:${randomUUID()}`
     const deviceToken = this.random(32).toString('hex')
-    const clean = name.trim().slice(0, MAX_NAME) || 'Android'
+    const clean = name.trim().slice(0, MAX_NAME) || (platform === 'linux' ? 'Linux' : 'Android')
     this.rows.push({
-      deviceId, name: clean, platform: 'android', pairedAt: this.now(),
+      deviceId, name: clean, platform, pairedAt: this.now(),
       tokenHash: sha256(deviceToken).toString('hex'),
     })
     this.save()

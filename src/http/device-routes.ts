@@ -7,7 +7,7 @@
  * code itself is the credential. Host and Origin checks still apply to it.
  */
 import type { Context, Hono } from 'hono'
-import type { DeviceStore } from '../devices/device-store.ts'
+import { PAIRED_PLATFORMS, type DeviceStore, type PairedPlatform } from '../devices/device-store.ts'
 import type { HostRelayRegistry } from './host-registry.ts'
 
 export const TOKEN_EXEMPT_ROUTES: ReadonlyArray<{ method: string; path: string }> = [
@@ -37,11 +37,14 @@ export function mountDeviceRoutes(app: Hono, deps: DeviceRoutesDeps): void {
   app.post('/api/devices/pair', async (c) => {
     let body: unknown
     try { body = await c.req.json() } catch { return c.json({ error: 'body 不是合法 JSON' }, 400) }
-    const { code, name } = (body ?? {}) as { code?: unknown; name?: unknown }
+    const { code, name, platform } = (body ?? {}) as { code?: unknown; name?: unknown; platform?: unknown }
     if (typeof code !== 'string' || (name !== undefined && typeof name !== 'string')) {
       return c.json({ error: 'code 必须是字符串，name 可选且必须是字符串' }, 400)
     }
-    const r = deps.store.pair(code, name ?? '')
+    if (platform !== undefined && (typeof platform !== 'string' || !PAIRED_PLATFORMS.has(platform))) {
+      return c.json({ error: 'platform 只能是 android 或 linux' }, 400)
+    }
+    const r = deps.store.pair(code, name ?? '', (platform ?? 'android') as PairedPlatform)
     if (!r.ok) return c.json({ error: r.reason }, 403)
     return c.json({ deviceId: r.deviceId, deviceToken: r.deviceToken })
   })

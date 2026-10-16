@@ -28,6 +28,15 @@ const post = (path: string, body?: unknown) =>
   app.request(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) })
 
 describe('device routes', () => {
+  it('pair accepts platform linux and rejects unknown platforms', async () => {
+    const { code } = await (await post('/api/devices/pairing-code')).json() as { code: string }
+    const bad = await post('/api/devices/pair', { code, name: 'x', platform: 'windows' })
+    expect(bad.status).toBe(400)
+    const ok = await post('/api/devices/pair', { code, name: 'NAS', platform: 'linux' })
+    expect(ok.status).toBe(200)
+    expect(((await ok.json()) as { deviceId: string }).deviceId).toMatch(/^linux:/)
+  })
+
   it('only this machine can mint a pairing code; one QR names every address and the code', async () => {
     local = false
     expect((await post('/api/devices/pairing-code')).status).toBe(403)

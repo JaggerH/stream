@@ -8,7 +8,7 @@
  */
 import { WsHostRelay, type HostSocket } from './host-relay.ts'
 
-export type HostPlatform = 'windows' | 'macos' | 'android'
+export type HostPlatform = 'windows' | 'macos' | 'android' | 'linux'
 /** What a recipe targets. A recipe asks for a surface, not for an OS. */
 export type HostSurface = 'desktop' | 'android'
 
@@ -55,7 +55,7 @@ export interface HostDevice {
   state?: HostDeviceState
 }
 
-const PLATFORMS: ReadonlySet<string> = new Set(['windows', 'macos', 'android'])
+const PLATFORMS: ReadonlySet<string> = new Set(['windows', 'macos', 'android', 'linux'])
 
 const nonEmpty = (v: unknown): v is string => typeof v === 'string' && v.length > 0
 
@@ -130,6 +130,8 @@ export class HostRelayRegistry {
   deviceFor(surface: HostSurface): HostDevice | undefined {
     let best: HostDevice | undefined
     for (const d of this.devices()) {
+      // 无界面设备不承接任何 surface 的 UI recipe；它只经执行位置绑定被点名使用。
+      if (d.hello.platform === 'linux') continue
       if (surfaceOf(d.hello.platform) !== surface) continue
       if (!best || d.connectedAt > best.connectedAt) best = d
     }

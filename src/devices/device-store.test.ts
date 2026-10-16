@@ -132,6 +132,18 @@ describe('DeviceStore', () => {
     expect(s.list()[0].lastSeenAt).toBe(t + TOUCH_INTERVAL_MS)
   })
 
+  it('pairing a linux device returns a linux:<uuid> id and remembers the platform', () => {
+    const s = make()
+    const r = s.pair(s.createPairingCode().code, 'NAS', 'linux')
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.deviceId).toMatch(/^linux:[0-9a-f-]{36}$/)
+    expect(s.list()[0]).toMatchObject({ deviceId: r.deviceId, name: 'NAS', platform: 'linux' })
+    const r2 = s.pair(s.createPairingCode().code, '  ', 'linux')
+    if (!r2.ok) throw new Error('expected ok')
+    expect(s.list()[1].name).toBe('Linux')
+  })
+
   it('a blank name becomes "Android" and a long name is capped at 64 characters', () => {
     const s = make()
     const r = s.pair(s.createPairingCode().code, '   ')

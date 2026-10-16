@@ -253,6 +253,38 @@ describe('attachHostRelay device tokens', () => {
     expect(registry.devices()).toHaveLength(0)
   })
 
+  it('a linux device token with a linux hello connects', async () => {
+    const seen: string[] = []
+    const { registry, url } = await startWithDevices({ 'tok-linux': 'linux:abc' }, seen)
+    const ws = new WebSocket(url, [HOST_RELAY_PROTOCOL, 'tok-linux'])
+    await new Promise((r) => ws.on('open', r))
+    ws.send(JSON.stringify({ ...phoneHello('linux:abc'), platform: 'linux', name: 'NAS', ops: ['http.fetch'] }))
+    await until(() => registry.devices().length === 1)
+    expect(registry.devices()[0].hello).toMatchObject({ deviceId: 'linux:abc', platform: 'linux' })
+    expect(seen).toEqual(['linux:abc'])
+    ws.close()
+  })
+
+  it('a device token whose hello id does not start with its platform is closed 4003', async () => {
+    const { registry, url } = await startWithDevices({ 'tok-linux': 'linux:abc' })
+    const ws = new WebSocket(url, [HOST_RELAY_PROTOCOL, 'tok-linux'])
+    await new Promise((r) => ws.on('open', r))
+    const closed = new Promise<number>((r) => ws.on('close', (code) => r(code)))
+    ws.send(JSON.stringify(phoneHello('linux:abc')))
+    expect(await closed).toBe(4003)
+    expect(registry.devices()).toHaveLength(0)
+  })
+
+  it('the shared secret cannot claim the linux platform', async () => {
+    const { registry, url } = await start()
+    const ws = new WebSocket(url, [HOST_RELAY_PROTOCOL, TOKEN])
+    await new Promise((r) => ws.on('open', r))
+    const closed = new Promise<number>((r) => ws.on('close', (code) => r(code)))
+    ws.send(JSON.stringify({ ...phoneHello('linux:abc'), platform: 'linux' }))
+    expect(await closed).toBe(4003)
+    expect(registry.devices()).toHaveLength(0)
+  })
+
   it('a device token cannot register as a desktop host', async () => {
     const seen: string[] = []
     const { registry, url } = await startWithDevices({ 'dev-token': 'android:k80' }, seen)
