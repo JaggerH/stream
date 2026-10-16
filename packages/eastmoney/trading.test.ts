@@ -98,6 +98,19 @@ describe('runSubscribe', () => {
     await expect(runSubscribe(b, opts())).rejects.toThrow(/ETIMEDOUT/)
   })
 
+  // 设备中途失联（DeviceLost）被吞成一行 fail 时，原错误必须跟着 cause 走：
+  // 任务中心靠 cause 链判「不重试」，丢了它就是把已经发出去的单再下一遍。
+  it('提交抛出的原错误挂在抛出的 Error 的 cause 上，回执行里不带它', async () => {
+    const lost = Object.assign(new Error('执行途中与设备失联'), { name: 'DeviceLost' })
+    const b = mkBroker({
+      convertibleBonds: async () => [bond({ name: '甲转债' })],
+      submitSubscribe: async () => { throw lost },
+    })
+    const e = await runSubscribe(b, opts()).catch((x) => x)
+    expect(e.cause).toBe(lost)
+    expect(JSON.parse(JSON.stringify(e.outcome.detail.rows[0]))).not.toHaveProperty('cause')
+  })
+
   // 空跑是切换期的主力形态：照常算到底、照常写回执，就是不发那一个请求。
   it('未武装 ⇒ 一个提交都不发，但回执里算出了本该下的单', async () => {
     const submit = vi.fn(async () => ({ ok: true, orderId: '', message: '' }))

@@ -102,8 +102,14 @@ export async function runSubscribe(b: Broker, opts: TradingOptions): Promise<Tas
   }
   if (failed.length) {
     // 回执塞进 error 一起抛：失败路径下调度中心留下的只有这条消息，`detail` 到不了账本。
+    // 第一笔"提交本身抛了"的原错误作 cause：任务中心顺着 cause 链判要不要重试——
+    // 设备失联被吞成一行 fail 后若只剩一条普通 Error，就会被当成可重试，已发出的单再下一遍。
+    const cause = failed.map(causeOf).find((c) => c !== undefined)
     throw Object.assign(
-      new Error(`申购失败 ${failed.length} 笔 — ${failed.map((r) => `${r.name}(${r.code}): ${r.error}`).join('; ')}`),
+      new Error(
+        `申购失败 ${failed.length} 笔 — ${failed.map((r) => `${r.name}(${r.code}): ${r.error}`).join('; ')}`,
+        cause === undefined ? undefined : { cause },
+      ),
       { outcome },
     )
   }
@@ -121,9 +127,15 @@ async function submitOne(
       ? { ...o, status: 'ok', orderId: r.orderId }
       : { ...o, status: 'fail', error: r.message }
   } catch (e) {
-    return { ...o, status: 'fail', error: (e as Error).message }
+    const row: SubscribeRow = { ...o, status: 'fail', error: (e as Error).message }
+    // 不可枚举：回执会进账本（JSON），原错误对象不该被序列化进去；只给 runSubscribe 取 cause 用。
+    Object.defineProperty(row, CAUSE, { value: e, enumerable: false })
+    return row
   }
 }
+
+const CAUSE = Symbol('submit-cause')
+const causeOf = (r: SubscribeRow): unknown => (r as unknown as Record<symbol, unknown>)[CAUSE]
 
 function summarize(rows: SubscribeRow[], live: boolean, funds: number, bseCount: number): string {
   const money = funds.toLocaleString('zh-CN', { maximumFractionDigits: 2 })

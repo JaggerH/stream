@@ -119,7 +119,11 @@ export function makeFetchFor(deps: FetchForDeps): typeof fetch {
     // 那是可重试的 signal.reason；只有发出之后的中止才是状态未知的 device-lost。
     let sent = false
     try {
-      const result = await abortRace(relay.fetchOp(args, { signal, onSent: () => { sent = true } }), signal)
+      const onSent = () => {
+        sent = true
+        if (p.dispatch) p.dispatch.dispatched = true
+      }
+      const result = await abortRace(relay.fetchOp(args, { signal, onSent }), signal)
       if (Buffer.byteLength(result.body, 'base64') > MAX_DEVICE_BODY) {
         throw new DeviceRefused(deviceId, 'too-large', `响应体超过 ${MAX_DEVICE_BODY} 字节`)
       }

@@ -5,7 +5,8 @@ import { runExternal } from './exec-runner.ts'
 import type { PackageAction } from './package-actions.ts'
 import type { UserTaskRow } from './task-store.ts'
 import type { ScheduledTask } from './types.ts'
-import { LOCAL_DEVICE, runOnDevice, type RunPlacement } from '../devices/run-context.ts'
+import { LOCAL_DEVICE, runOnDevice, type DispatchMarker, type RunPlacement } from '../devices/run-context.ts'
+import { DeviceError, DeviceLost } from '../devices/errors.ts'
 
 export interface CompileOptions {
   /** 这条任务在哪台设备上执行（任务覆盖 → facility 默认 → local）。缺席 = local。见 src/devices/placement.ts。 */
@@ -59,12 +60,36 @@ function runAction(row: UserTaskRow, opts: CompileOptions): ScheduledTask['run']
     // 没绑配置格 = 空参数袋。动作自己决定这算不算错（缺账号该由动作说"没有登录态"，
     // 而不是由这里替它判——它比调度器清楚自己要什么）。
     const params = row.configRef !== undefined ? (opts.paramsFor?.(row.configRef) ?? {}) : {}
-    const p = opts.placement?.(row) ?? { deviceId: LOCAL_DEVICE, allowHosts: [] }
+    const resolved = opts.placement?.(row) ?? { deviceId: LOCAL_DEVICE, allowHosts: [] }
+    if (resolved.deviceId === LOCAL_DEVICE) {
+      opts.ready?.(resolved)
+      return await runOnDevice(resolved, () => fn(params))
+    }
+    // 每次执行一个新标记：同一条任务的上一轮发没发过，和这一轮无关。
+    const marker: DispatchMarker = { dispatched: false }
+    const p: RunPlacement = { ...resolved, dispatch: marker }
+    // 派发前的就绪检查原样抛：此刻什么都没发，DeviceOffline 按 maxAttempts 重试是安全的。
     opts.ready?.(p)
-    const out = await runOnDevice(p, () => fn(params))
+    let out: Awaited<ReturnType<PackageAction>>
+    try {
+      out = await runOnDevice(p, () => fn(params))
+    } catch (e) {
+      throw marker.dispatched ? afterDispatch(p.deviceId, e) : e
+    }
     // 运行记录要看得出在哪台设备上跑的；local 原样返回，存量任务的明细形状不变。
-    return p.deviceId === LOCAL_DEVICE ? out : { ...(out ?? { summary: '' }), detail: { device: p.deviceId, detail: out?.detail } }
+    return { ...(out ?? { summary: '' }), detail: { device: p.deviceId, detail: out?.detail } }
   }
+}
+
+/**
+ * 已经有请求经设备发出之后的失败：不管包怎么包、错误本身是不是"可重试"类，都必须是 final。
+ * 已经是不重试的设备错误 / 用户中止 → 原样；其余（普通 Error、DeviceOffline、排队超时）包成
+ * DeviceLost(cause=原错误)——第二笔撞上离线时，第一笔可能已经到了券商。
+ */
+function afterDispatch(deviceId: string, e: unknown): unknown {
+  if (e instanceof DeviceError && !e.retryable) return e
+  if (e instanceof Error && e.name === 'HostAbortedByUser') return e
+  return new DeviceLost(deviceId, e)
 }
 
 /** 执行体之一：跑一条外部命令（原样保留）。 */

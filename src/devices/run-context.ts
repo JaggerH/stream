@@ -14,6 +14,16 @@ export interface RunPlacement {
   deviceId: string
   /** 本次执行所属包声明的主机名后缀（`stream.network.hosts`，缺省 = `stream.credentials`）。 */
   allowHosts: readonly string[]
+  /**
+   * 本次执行是否已有请求经设备发出。由执行入口（任务中心 runAction）每次执行新建一个，
+   * `fetchFor` 在帧写上 socket 时置位。置位之后的任何失败都可能是「下了一半单」，不得重试——
+   * 包把错误吞成普通 Error、或者下一笔撞上 DeviceOffline，都靠它兜住。
+   */
+  dispatch?: DispatchMarker
+}
+
+export interface DispatchMarker {
+  dispatched: boolean
 }
 
 const LOCAL: RunPlacement = Object.freeze({ deviceId: LOCAL_DEVICE, allowHosts: Object.freeze([]) as readonly string[] })

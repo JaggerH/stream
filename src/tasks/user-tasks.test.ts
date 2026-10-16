@@ -3,7 +3,8 @@ import { compileUserTask, compileEnabled } from './user-tasks.ts'
 import type { UserTaskRow } from './task-store.ts'
 import type { PackageAction } from './package-actions.ts'
 import { currentDeviceId } from '../devices/run-context.ts'
-import { DeviceOffline } from '../devices/errors.ts'
+import { DeviceIncapable, DeviceLost, DeviceOffline, failureDisposition } from '../devices/errors.ts'
+import { makeFetchFor } from '../devices/fetch.ts'
 
 const row: UserTaskRow = {
   id: 'dl-freshness', label: '数据新鲜度巡检', schedule: '0 0 * * * *',
@@ -180,5 +181,90 @@ describe('action tasks run on their placement', () => {
     })
     await expect(t.run({} as never)).rejects.toBeInstanceOf(DeviceOffline)
     expect(fn).not.toHaveBeenCalled()
+  })
+
+  describe('发出过请求之后的失败一律不重试（dispatch 标记）', () => {
+    const NAS = { deviceId: 'linux:nas', allowHosts: ['eastmoneysec.com'] }
+    const URL_ = 'https://jywg.eastmoneysec.com/Trade/SubmitTrade'
+    /** 一台第一笔之后就掉线的设备。 */
+    function flakyDevice() {
+      let online = true
+      const sent: string[] = []
+      const relay = {
+        connected: true,
+        fetchOp: async (a: { url: string }, o?: { onSent?: () => void }) => {
+          o?.onSent?.(); sent.push(a.url); online = false
+          return { status: 200, headers: [], body: '', url: a.url }
+        },
+      }
+      const f = makeFetchFor({
+        local: vi.fn(async () => new Response('local')),
+        directory: { isOnline: () => online, hasOp: () => true, fetchRelay: () => (online ? relay : undefined) },
+      })
+      return { f, sent }
+    }
+
+    it('submit #1 已发出、设备掉线、submit #2 → 任务 final，不重试', async () => {
+      const { f, sent } = flakyDevice()
+      const t = compileUserTask(emRow, {
+        actions: () => async () => {
+          // 像 eastmoney 的 submitOne 那样把错误吞成普通 Error（连 cause 都没留）
+          await f(URL_, { method: 'POST', body: 'a=1' })
+          try { await f(URL_, { method: 'POST', body: 'a=2' }) } catch (e) { throw new Error(`申购失败：${(e as Error).message}`) }
+          return { summary: 'ok' }
+        },
+        placement: () => NAS,
+        ready: () => {},
+      })
+      const e = await t.run({} as never).catch((x) => x)
+      expect(sent).toHaveLength(1)
+      expect(failureDisposition(e)).toBe('final')
+      expect(e).toBeInstanceOf(DeviceLost)
+    })
+
+    it('发出之后的 DeviceOffline（可重试类）也被收成 final', async () => {
+      const { f } = flakyDevice()
+      const t = compileUserTask(emRow, {
+        actions: () => async () => { await f(URL_, { method: 'POST' }); await f(URL_, { method: 'POST' }); return { summary: 'ok' } },
+        placement: () => NAS,
+        ready: () => {},
+      })
+      const e = await t.run({} as never).catch((x) => x)
+      expect(failureDisposition(e)).toBe('final')
+      expect(e).toBeInstanceOf(DeviceLost)
+      expect((e as DeviceLost).cause).toBeInstanceOf(DeviceOffline)
+    })
+
+    it('发出之后的不可重试设备错误原样（不再包一层）', async () => {
+      const { f } = flakyDevice()
+      const incapable = new DeviceIncapable('linux:nas', 'browser')
+      const t = compileUserTask(emRow, {
+        actions: () => async () => { await f(URL_, { method: 'POST' }); throw incapable },
+        placement: () => NAS,
+        ready: () => {},
+      })
+      await expect(t.run({} as never)).rejects.toBe(incapable)
+    })
+
+    it('ready() 的 DeviceOffline（什么都没发）→ 可重试', async () => {
+      const t = compileUserTask(emRow, {
+        actions: () => vi.fn(),
+        placement: () => NAS,
+        ready: () => { throw new DeviceOffline('linux:nas') },
+      })
+      const e = await t.run({} as never).catch((x) => x)
+      expect(e).toBeInstanceOf(DeviceOffline)
+      expect(failureDisposition(e)).toBe('retry')
+    })
+
+    it('什么都没发出就失败的普通错误照旧可重试', async () => {
+      const t = compileUserTask(emRow, {
+        actions: () => async () => { throw new Error('读配置失败') },
+        placement: () => NAS,
+        ready: () => {},
+      })
+      const e = await t.run({} as never).catch((x) => x)
+      expect(failureDisposition(e)).toBe('retry')
+    })
   })
 })

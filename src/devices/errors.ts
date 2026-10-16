@@ -61,9 +61,17 @@ export class DeviceRefused extends DeviceError {
   }
 }
 
-/** 任务失败后要不要按 `maxAttempts` 再来。`HostAbortedByUser` 是用户的明确意图，同样不重试。 */
+/**
+ * 任务失败后要不要按 `maxAttempts` 再来。`HostAbortedByUser` 是用户的明确意图，同样不重试。
+ * 顺着 `cause` 链找第一个认得的设备错误：包常把底层错误包进自己的 `Error(…, { cause })`，
+ * 只看最外层就会把一个 device-lost 当普通失败重跑——重复下单。
+ */
 export function failureDisposition(e: unknown): 'retry' | 'final' {
-  if (e instanceof DeviceError) return e.retryable ? 'retry' : 'final'
-  if (e instanceof Error && e.name === 'HostAbortedByUser') return 'final'
+  const seen = new Set<unknown>()
+  for (let cur: unknown = e; cur instanceof Error && !seen.has(cur); cur = cur.cause) {
+    seen.add(cur)
+    if (cur instanceof DeviceError) return cur.retryable ? 'retry' : 'final'
+    if (cur.name === 'HostAbortedByUser') return 'final'
+  }
   return 'retry'
 }
