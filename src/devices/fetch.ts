@@ -53,7 +53,10 @@ function toResponse(r: HttpFetchResult): Response {
   return res
 }
 
-/** 调用方 signal 的剩余时间。`AbortSignal.timeout` 没有公开剩余时间，所以只能取默认上限，由下面的竞速兜底。 */
+/**
+ * 固定下发 30s 上限：`AbortSignal.timeout` 读不出剩余时间。比它更短的调用方超时由下面的 `abortRace`
+ * 在本机兑现，并归为 `device-lost`——设备那边可能仍会把请求发完，结果未知，不能当作可重试。
+ */
 function timeoutFor(_signal: AbortSignal | null | undefined): number {
   return DEFAULT_TIMEOUT_MS
 }
@@ -85,7 +88,15 @@ export function makeFetchFor(deps: FetchForDeps): typeof fetch {
     if (!hostAllowed(url.hostname, p.allowHosts)) throw new HostNotAllowed(deviceId, url.hostname)
     if (!deps.directory.isOnline(deviceId)) throw new DeviceOffline(deviceId)
     const relay = deps.directory.fetchRelay(deviceId)
-    if (!relay) throw new DeviceIncapable(deviceId, 'http.fetch')
+    if (!relay) {
+      // 声明过 http.fetch 却拿不到 relay：刚好在竞态里掉线，按离线（可重试）处理。
+      if (deps.directory.hasOp(deviceId, 'http.fetch')) throw new DeviceOffline(deviceId)
+      throw new DeviceIncapable(deviceId, 'http.fetch')
+    }
+    // Request 自带的 body 不会被转发；第一版要求调用方把 body 放进 init，免得悄悄发出无 body 的 POST。
+    if (req && req.body !== null && init?.body === undefined) {
+      throw new TypeError('device fetch: Request 自带的 body 不会被转发，请把 body 放进 init')
+    }
 
     const signal = init?.signal ?? req?.signal
     if (signal?.aborted) throw signal.reason
@@ -109,9 +120,10 @@ export function makeFetchFor(deps: FetchForDeps): typeof fetch {
       if (Buffer.byteLength(result.body, 'base64') > MAX_DEVICE_BODY) {
         throw new DeviceRefused(deviceId, 'too-large', `响应体超过 ${MAX_DEVICE_BODY} 字节`)
       }
-      status = result.status
       try {
-        return toResponse(result)
+        const res = toResponse(result)
+        status = result.status
+        return res
       } catch (e) {
         // 设备回了 Response 不接受的状态码（如 1xx）：归成设备侧的网络错误，别漏出裸 RangeError。
         throw new DeviceRefused(deviceId, 'network', e instanceof Error ? e.message : String(e))
@@ -121,23 +133,26 @@ export function makeFetchFor(deps: FetchForDeps): typeof fetch {
       if (e instanceof HostFetchQueueTimeout) throw new DeviceFetchQueueTimeout(deviceId)
       if (e instanceof HostOpError) throw new DeviceRefused(deviceId, e.code ?? 'network', e.message)
       if (e instanceof HostRelayDisconnected || e instanceof HostRelayTimeout) throw new DeviceLost(deviceId, e)
-      // HostAbortedByUser 与调用方自己的 abort reason 原样抛：前者是用户明确的停止，不是设备故障。
+      // 请求已交给设备后调用方才中止：设备可能已经发出去了，状态未知，必须是不重试的 DeviceLost。
+      if (signal?.aborted && e === signal.reason) throw new DeviceLost(deviceId, e)
+      // HostAbortedByUser 原样抛：用户明确的停止，已被归为不重试。
       throw e
     } finally {
+      const ms = now() - started
       deps.debug?.({
         id: `device-fetch:${deviceId}@${started}`,
         at: started,
         channel: 'device-fetch',
         key: deviceId,
         title: `${args.method} ${url.hostname}`,
-        summary: `${deviceId} ${args.method} ${url.hostname} → ${status || 'error'} (${now() - started}ms)`,
+        summary: `${deviceId} ${args.method} ${url.hostname} → ${status || 'error'} (${ms}ms)`,
         ok: status >= 200 && status < 400,
         fields: [
           { label: 'device', value: deviceId },
           { label: 'method', value: args.method },
           { label: 'host', value: url.hostname },
           { label: 'status', value: String(status || 'error') },
-          { label: 'ms', value: String(now() - started) },
+          { label: 'ms', value: String(ms) },
         ],
       })
     }

@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import { makeFetchFor, fetchFor, MAX_DEVICE_BODY } from './fetch.ts'
 import { runOnDevice } from './run-context.ts'
-import { DeviceIncapable, DeviceLost, DeviceOffline, DeviceRefused, HostNotAllowed } from './errors.ts'
+import { failureDisposition, DeviceIncapable,DeviceLost, DeviceOffline, DeviceRefused, HostNotAllowed } from './errors.ts'
 import { HostAbortedByUser, HostOpError, HostRelayDisconnected, type HttpFetchArgs } from '../http/host-relay.ts'
 
 const NAS = { deviceId: 'linux:nas', allowHosts: ['eastmoneysec.com'] }
@@ -111,22 +111,49 @@ describe('fetchFor', () => {
     expect(local).not.toHaveBeenCalled()
   })
 
-  it('调用方的 signal：剩余时间作为 timeoutMs 下发；已中止则不发', async () => {
+  it('下发的 timeoutMs 是固定上限（0 < t <= 30s），不随调用方 signal 变化', async () => {
     const { f, calls } = setup()
     await runOnDevice(NAS, () => f('https://jywg.eastmoneysec.com/', { signal: AbortSignal.timeout(15_000) }))
     expect(calls[0].timeoutMs).toBeGreaterThan(0)
     expect(calls[0].timeoutMs).toBeLessThanOrEqual(30_000)
-    const ac = new AbortController(); ac.abort()
-    await expect(runOnDevice(NAS, () => f('https://jywg.eastmoneysec.com/', { signal: ac.signal }))).rejects.toThrow()
-    expect(calls).toHaveLength(1)
   })
 
-  it('调用方中止时不等设备回复', async () => {
-    const { f } = setup({ reply: () => new Promise(() => {}) })
+  it('发出前已中止：抛 signal.reason，不发帧，可重试', async () => {
+    const { f, calls, local } = setup()
+    const ac = new AbortController(); ac.abort()
+    const e = await runOnDevice(NAS, () => f('https://jywg.eastmoneysec.com/', { signal: ac.signal })).catch((x) => x)
+    expect(e).toBe(ac.signal.reason)
+    expect(calls).toHaveLength(0)
+    expect(failureDisposition(e)).toBe('retry')
+    expect(local).not.toHaveBeenCalled()
+  })
+
+  it('发出后调用方中止：不等设备回复，抛 DeviceLost（状态未知，不重试）', async () => {
+    const { f, calls, local } = setup({ reply: () => new Promise(() => {}) })
     const ac = new AbortController()
     const p = runOnDevice(NAS, () => f('https://jywg.eastmoneysec.com/', { signal: ac.signal }))
+    await vi.waitFor(() => expect(calls).toHaveLength(1))
     ac.abort()
-    await expect(p).rejects.toThrow()
+    const e = await p.catch((x) => x)
+    expect(e).toBeInstanceOf(DeviceLost)
+    expect(failureDisposition(e)).toBe('final')
+    expect(local).not.toHaveBeenCalled()
+  })
+
+  it('Request 入参带 body 而 init 没给：TypeError，不发帧', async () => {
+    const { f, calls, local } = setup()
+    const req = new Request('https://jywg.eastmoneysec.com/x', { method: 'POST', body: 'pw=1' })
+    await expect(runOnDevice(NAS, () => f(req))).rejects.toBeInstanceOf(TypeError)
+    expect(calls).toHaveLength(0)
+    expect(local).not.toHaveBeenCalled()
+  })
+
+  it('relay 在竞态里没了但设备声明过 http.fetch：DeviceOffline', async () => {
+    const f = makeFetchFor({
+      local: vi.fn(),
+      directory: { isOnline: () => true, hasOp: () => true, fetchRelay: () => undefined },
+    })
+    await expect(runOnDevice(NAS, () => f('https://jywg.eastmoneysec.com/'))).rejects.toBeInstanceOf(DeviceOffline)
   })
 
   it('响应体超限：DeviceRefused too-large', async () => {
