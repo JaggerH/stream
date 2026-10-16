@@ -715,6 +715,51 @@ describe('ReplayAdapter — 设备放置（facility 绑定到设备）', () => {
     expect(touched).toBe(0)
   })
 
+  // 浏览器中继（plan 3）落地前，远程设备即使在 hello 里声明了 browser，采集也只会在本机 Chrome 上跑——
+  // 那就是「PC 登录、NAS 下单」。不看声明，一律 fail closed。
+  it('远程设备声明了 browser 也不放行浏览器类 recipe：DeviceIncapable(browser)，不碰本机浏览器', async () => {
+    let touched = 0
+    const a = new ReplayAdapter(deps({
+      placementFor: () => NAS,
+      ready: () => {},
+      ensureTransport: async () => { touched++ },
+      makeLauncher: () => { touched++; return fakeLauncher() },
+    }))
+    const e = await a.fetch({}, DEV_MANIFEST).catch((x) => x)
+    expect(e).toBeInstanceOf(DeviceIncapable)
+    expect((e as DeviceIncapable).need).toBe('browser')
+    expect(touched).toBe(0)
+  })
+
+  it('远程设备 + kind:fetch（会话 fetch）同样 DeviceIncapable(browser)', async () => {
+    let calls = 0
+    const a = new ReplayAdapter(deps({
+      recipes: { load: () => ({ version: 1, kind: 'fetch', sourceId: 'replay-dev', cookieDomain: 'example.com' }) as unknown as Recipe },
+      placementFor: () => NAS,
+      ready: () => {},
+      sessionFetch: async () => { calls++; return [] },
+    }))
+    const e = await a.fetch({}, DEV_MANIFEST).catch((x) => x)
+    expect(e).toBeInstanceOf(DeviceIncapable)
+    expect((e as DeviceIncapable).need).toBe('browser')
+    expect(calls).toBe(0)
+  })
+
+  it('远程设备 + kind:desktop：DeviceIncapable(desktop)，一帧都不发', async () => {
+    let hostCalls = 0
+    const a = new ReplayAdapter(deps({
+      recipes: { load: () => ({ version: 1, kind: 'desktop', sourceId: 'd1' }) as unknown as Recipe },
+      placementFor: () => NAS,
+      ready: () => {},
+      desktopDriver: () => { hostCalls++; return {} as never },
+      runDesktop: async () => { hostCalls++; return { outcome: 'ok', items: [], driftReason: null } },
+    }))
+    const e = await a.fetch({}, DEV_MANIFEST).catch((x) => x)
+    expect(e).toBeInstanceOf(DeviceIncapable)
+    expect((e as DeviceIncapable).need).toBe('desktop')
+    expect(hostCalls).toBe(0)
+  })
+
   it('placementFor 缺席 = local：不问 ready，行为与以前一致', async () => {
     let readyCalls = 0
     const a = new ReplayAdapter(deps({ ready: () => { readyCalls++ } }))

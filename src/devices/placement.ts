@@ -39,3 +39,22 @@ export function assertDeviceReady(
 export function assertLocalBrowser(p: RunPlacement): void {
   if (p.deviceId !== LOCAL_DEVICE) throw new DeviceIncapable(p.deviceId, 'browser')
 }
+
+/**
+ * 一条 recipe 能不能在这个 placement 上跑，在任何出站、唤起浏览器、发帧之前判。
+ * - `http` / `html`：只走 `fetchFor`，要设备有 `http.fetch`（`ready`）。
+ * - `desktop`：第一版不把桌面 recipe 派到绑定设备（spec「无界面设备不接 UI recipe」）——
+ *   不判就会在本机桌面上点，结果却记在设备名下。
+ * - 其余（`browser` / `fetch` 会话类）：浏览器中继落地前一律只通本机，**不看设备声明的 op**——
+ *   设备即便声明了 `browser`，采集也只会在本机 Chrome 上跑。
+ */
+export function assertRecipeRunnable(
+  p: RunPlacement,
+  kind: string,
+  ready?: (p: RunPlacement, need: string) => void,
+): void {
+  if (p.deviceId === LOCAL_DEVICE) return
+  if (kind === 'http' || kind === 'html') { ready?.(p, 'http.fetch'); return }
+  if (kind === 'desktop') throw new DeviceIncapable(p.deviceId, 'desktop')
+  assertLocalBrowser(p)
+}

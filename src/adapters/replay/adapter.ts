@@ -24,6 +24,7 @@ import { isCanonicalBrowserRecipe } from '../../replay/recipe.ts'
 import { EnvironmentUnavailableError, type DeclaresFailureCategory } from '../../failure.ts'
 import { sessionPrecheck } from '../../auth/session-precheck.ts'
 import { LOCAL_DEVICE, runOnDevice, type RunPlacement } from '../../devices/run-context.ts'
+import { assertRecipeRunnable } from '../../devices/placement.ts'
 
 /**
  * The source's login session is gone (login wall) — a USER action, not a broken
@@ -461,13 +462,9 @@ export class ReplayAdapter implements Adapter {
     // 这样 http/html 的 fetchFor 与 cookie 都跟着设备走，没有哪一跳能漏到本机。
     const [facility] = facilityOf(manifest)
     const p = this.deps.placementFor?.(facility) ?? { deviceId: LOCAL_DEVICE, allowHosts: [] }
-    if (p.deviceId !== LOCAL_DEVICE) {
-      // 桌面 recipe 的设备由 surface 选择判定，这里不重复判。浏览器类在中继落地前远程设备
-      // 都没有 browser 能力——宁可 fail closed，也不回落本机 Chrome。必须在任何出站、
-      // ensureTransport 之前：ready 失败时不能已经唤起了浏览器。
-      if (recipe.kind === 'http' || recipe.kind === 'html') this.deps.ready?.(p, 'http.fetch')
-      else if (recipe.kind !== 'desktop') this.deps.ready?.(p, 'browser')
-    }
+    // 必须在任何出站、ensureTransport 之前：判不过时不能已经唤起了浏览器或发了桌面帧。
+    // 浏览器类与桌面类在远程 placement 上一律 fail closed（见 assertRecipeRunnable 头注）。
+    assertRecipeRunnable(p, recipe.kind, this.deps.ready)
     return runOnDevice(p, () => this.harvest(recipe, params, manifest, context))
   }
 
