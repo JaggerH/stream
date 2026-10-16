@@ -670,7 +670,9 @@ async fn run_session<D: protocol::Desktop>(
         // 握手被中继当场拒掉（401/403）和"连不上"是两种病，日志要分得开：前者是 token 的事，
         // 后者是后端在不在的事。两者都重试（理由见 SessionEnd::Rejected 的注释）。
         Err(WsError::Http(resp)) if resp.status().as_u16() == 401 || resp.status().as_u16() == 403 => {
-            return SessionEnd::Rejected(format!("HTTP {}", resp.status()));
+            // 设备会话走到这里只剩 403：同样重试，但日志说的是主实例那边的事，不是"重启工作台"。
+            let why = format!("HTTP {}", resp.status());
+            return if session.paired { SessionEnd::DeviceRefused(why) } else { SessionEnd::Rejected(why) };
         }
         Err(e) => return SessionEnd::ConnectFailed(e.to_string()),
     };
@@ -918,6 +920,11 @@ mod tests {
 
     /// 握手阶段就回 401 的中继（不升级）。
     async fn refusing_relay() -> String {
+        refusing_relay_with("401 Unauthorized").await
+    }
+
+    /// 握手阶段就回给定状态的中继（不升级）。
+    async fn refusing_relay_with(status: &'static str) -> String {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
         let l = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = l.local_addr().unwrap();
@@ -925,10 +932,22 @@ mod tests {
             while let Ok((mut s, _)) = l.accept().await {
                 let mut buf = [0u8; 4096];
                 let _ = s.read(&mut buf).await;
-                let _ = s.write_all(b"HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").await;
+                let resp = format!("HTTP/1.1 {status}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+                let _ = s.write_all(resp.as_bytes()).await;
             }
         });
         format!("ws://{addr}/api/host")
+    }
+
+    /// 设备会话握手被 403：不是撤销（不作废配对），也不是本机那句"重启工作台"——是主实例拒了这台设备。
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn a_403_on_a_paired_session_is_a_refused_device() {
+        let url = refusing_relay_with("403 Forbidden").await;
+        let mut backend = Backend::default();
+        let end = run_session(&device_session(&url), &mut backend, None).await;
+        assert!(matches!(end, SessionEnd::DeviceRefused(_)), "{end:?}");
+        assert!(matches!(run_session(&local_session(&url), &mut backend, None).await, SessionEnd::Rejected(_)));
     }
 
     /// 握手成功、收下 hello、再以给定关闭码关掉的中继。

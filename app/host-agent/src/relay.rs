@@ -35,6 +35,9 @@ pub enum SessionEnd {
     /// `attachHostRelay`；后端内部故障回的是 503 / 1011，不会落到这里）。**不重试**——拿同一个
     /// token 再连一万次也还是 401；监督循环在这里返回，交给设备模式去作废保存的配对、重新配对。
     Revoked(String),
+    /// 配对设备的握手被拒，但不是撤销（403 等）。和 `Rejected` 一样退避重试，只是日志要说对：
+    /// 设备模式的 token 来自配对、不来自环境变量，也没有"工作台"可重启——该看的是主实例那边。
+    DeviceRefused(String),
 }
 
 impl SessionEnd {
@@ -47,6 +50,10 @@ impl SessionEnd {
     pub fn reason(&self) -> String {
         match self {
             SessionEnd::ConnectFailed(e) => format!("connect failed: {e}"),
+            SessionEnd::DeviceRefused(e) => format!(
+                "主实例拒绝了这台设备的连接（{e}）——不是撤销，保存的配对不动、照常重试；\
+                 到主实例上看日志和设备列表，确认这台设备还在、主实例接受它"
+            ),
             SessionEnd::Rejected(e) => format!(
                 "relay rejected the handshake ({e}) — token 可能已失效（后端 data 目录被重建过？），\
                  agent 的 token 只在启动时从环境变量读一次，换 token 需要重启工作台"
@@ -195,6 +202,18 @@ mod tests {
         let r = SessionEnd::Revoked("HTTP 401".into());
         assert!(r.reason().contains("撤销"));
         assert!(r.reason().contains("STREAM_PAIRING_CODE"));
+    }
+
+    /// 设备模式下握手被拒：token 不是环境变量给的、也没有"工作台"可重启——要说主实例那边的事。
+    #[test]
+    fn a_refused_device_says_to_look_at_the_main_instance() {
+        let r = SessionEnd::DeviceRefused("HTTP 403".into());
+        assert!(r.reason().contains("主实例拒绝了这台设备的连接"), "{}", r.reason());
+        assert!(r.reason().contains("设备列表") && r.reason().contains("日志"), "{}", r.reason());
+        assert!(!r.reason().contains("工作台"), "{}", r.reason());
+        let mut s = Supervisor::with(ms(100), ms(800));
+        assert_eq!(s.after(&r), ms(100));
+        assert_eq!(s.after(&r), ms(200), "照常退避重试，不复位");
     }
 
     /// 生产默认值就是扩展侧那套（1s 起、30s 封顶）——两端一致，排错不用记两套数。
