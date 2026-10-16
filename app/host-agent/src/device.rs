@@ -21,6 +21,8 @@ use crate::relay::{self, SessionEnd, Supervisor};
 pub const DEVICE_OPS: &[&str] = &["http.fetch"];
 const PAIRING_FILE: &str = "device.json";
 const REVOKED_FILE: &str = "device.json.revoked";
+/// 配对路由拒码时回的原因（device-store.ts 的 `pair`，目前只有这一种）。
+const CODE_REFUSED: &str = "invalid-code";
 
 #[derive(Debug, Clone)]
 pub struct DeviceEnv {
@@ -47,10 +49,42 @@ pub enum Startup {
 
 #[derive(Debug, PartialEq)]
 pub enum PairError {
-    /// 主实例明确拒了（码不对、过期、老后端不认 linux）。同一个码再试只会继续被拒。
-    Rejected(String),
+    /// 主实例明确拒了。不论原因，同一个请求再发只会继续被拒——一律挂起（见 [`after_pair_failure`]）；
+    /// `refusal` 只决定告诉用户该去改什么。
+    Rejected { reason: String, refusal: Refusal },
     /// 没连上 / 5xx。主实例可能还没起来，退避重试。
     Unreachable(String),
+}
+
+/// 被拒的是什么。要分开说，是因为用户的下一步完全不同：码被拒要换新码；Host 检查拒的是地址，
+/// 换多少个码都没用，反而每次重启都白烧一个。
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Refusal {
+    /// 配对路由拒了这个码（无效、过期、用过）。
+    Code,
+    /// 主实例的访问闸门不认这个 Host / Origin——请求根本没到配对路由。
+    TrustedHost,
+    /// 其余：请求体不对、主实例太旧不认 linux……
+    Request,
+}
+
+impl PairError {
+    /// 挂起时每小时打的那一行。
+    pub fn park_message(&self) -> String {
+        match self {
+            PairError::Rejected { reason, refusal: Refusal::Code } => format!(
+                "配对码被主实例拒绝（{reason}）——同一个码不再重试；在主实例上生成新码、设进 STREAM_PAIRING_CODE 后重启"
+            ),
+            PairError::Rejected { reason, refusal: Refusal::TrustedHost } => format!(
+                "主实例拒绝了配对请求（{reason}）——这是主实例的可信主机检查，不是配对码的问题（码没有被用掉）：\
+                 STREAM_MAIN_URL 改用主实例的 IP 地址，或在主实例上把这个主机名登记为可信主机，然后重启"
+            ),
+            PairError::Rejected { reason, refusal: Refusal::Request } => format!(
+                "主实例拒绝了配对请求（{reason}）——同一个请求不再重试；按原因改好（或查看主实例日志）后重启"
+            ),
+            PairError::Unreachable(w) => format!("连不上主实例配对（{w}）"),
+        }
+    }
 }
 
 #[derive(Debug, PartialEq)]
@@ -150,7 +184,7 @@ pub fn startup(saved: Option<Pairing>, code: Option<&str>) -> Startup {
 /// **当前**有效的那个码——用户刚生成、还没来得及填进环境变量的新码就这样被烧掉了。
 pub fn after_pair_failure(e: &PairError) -> PairNext {
     match e {
-        PairError::Rejected(_) => PairNext::Park,
+        PairError::Rejected { .. } => PairNext::Park,
         PairError::Unreachable(_) => PairNext::Retry,
     }
 }
@@ -198,12 +232,30 @@ pub async fn pair(client: &reqwest::Client, backend: &Url, code: &str, name: &st
             // 不能把整个回复带进错误：老后端的回复里有一个真能用的 token，错误会被 park 每小时打进日志。
             _ => {
                 let got = body["deviceId"].as_str().map(|id| format!("deviceId 是 {id}")).unwrap_or_else(|| "回复里没有 deviceId".to_string());
-                Err(PairError::Rejected(format!("主实例的配对回复不是一台 linux 设备（主实例太旧？）：{got}")))
+                Err(PairError::Rejected {
+                    reason: format!("主实例的配对回复不是一台 linux 设备（主实例太旧？）：{got}"),
+                    refusal: Refusal::Request,
+                })
             }
         };
     }
     if status.is_client_error() {
-        return Err(PairError::Rejected(body["error"].as_str().map(str::to_string).unwrap_or_else(|| status.to_string())));
+        // 4xx 有两种来源，回复形状不同：配对路由自己拒的是 `{"error":"<原因>"}`（device-routes.ts），
+        // 访问闸门挡掉不可信 Host/Origin 的是 `{"error":{"code","message"}}`（app.ts 的 errorBody）。
+        let err = &body["error"];
+        let reason = err
+            .as_str()
+            .or_else(|| err["message"].as_str())
+            .map(str::to_string)
+            .unwrap_or_else(|| status.to_string());
+        let refusal = if err.is_object() && status.as_u16() == 403 {
+            Refusal::TrustedHost
+        } else if status.as_u16() == 403 && reason == CODE_REFUSED {
+            Refusal::Code
+        } else {
+            Refusal::Request
+        };
+        return Err(PairError::Rejected { reason, refusal });
     }
     Err(PairError::Unreachable(format!("HTTP {status}")))
 }
@@ -224,14 +276,12 @@ pub async fn obtain_pairing(env: &DeviceEnv, code: &str) -> Pairing {
             }
             Err(e) => e,
         };
-        let why = match &err {
-            PairError::Rejected(w) | PairError::Unreachable(w) => w.clone(),
-        };
         match after_pair_failure(&err) {
-            PairNext::Park => {
-                match park(&format!("配对码被主实例拒绝（{why}）——同一个码不再重试；在主实例上生成新码、设进 STREAM_PAIRING_CODE 后重启")).await {}
-            }
+            PairNext::Park => match park(&err.park_message()).await {},
             PairNext::Retry => {
+                let why = match &err {
+                    PairError::Rejected { reason, .. } | PairError::Unreachable(reason) => reason.clone(),
+                };
                 let d = backoff.after(&SessionEnd::ConnectFailed(why.clone()));
                 eprintln!("[device] 连不上主实例配对（{why}）——{:.1}s 后重试", d.as_secs_f32());
                 tokio::time::sleep(d).await;
@@ -419,7 +469,10 @@ mod tests {
     /// Review Focus 4：被拒的码不再试（重启循环会烧掉用户刚生成的新码），连不上才重试。
     #[test]
     fn a_rejected_code_parks_and_an_unreachable_backend_retries() {
-        assert_eq!(after_pair_failure(&PairError::Rejected("配对码不对".into())), PairNext::Park);
+        for refusal in [Refusal::Code, Refusal::TrustedHost, Refusal::Request] {
+            let e = PairError::Rejected { reason: "x".into(), refusal };
+            assert_eq!(after_pair_failure(&e), PairNext::Park, "{e:?}");
+        }
         assert_eq!(after_pair_failure(&PairError::Unreachable("refused".into())), PairNext::Retry);
     }
 
@@ -462,23 +515,52 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_403_is_a_rejection_carrying_the_backend_reason() {
-        let (base, _) = one_shot("403 Forbidden", r#"{"error":"配对码无效或已过期"}"#).await;
-        assert_eq!(pair(&control_client(), &base, "000000", "nas").await, Err(PairError::Rejected("配对码无效或已过期".into())));
+    async fn a_refused_code_is_a_rejection_that_asks_for_a_new_code() {
+        // 配对路由的真实回复（device-routes.ts：`{ error: r.reason }`，device-store 只有 invalid-code 一种）。
+        let (base, _) = one_shot("403 Forbidden", r#"{"error":"invalid-code"}"#).await;
+        let e = pair(&control_client(), &base, "000000", "nas").await.unwrap_err();
+        assert_eq!(e, PairError::Rejected { reason: "invalid-code".into(), refusal: Refusal::Code });
+        let msg = e.park_message();
+        assert!(msg.contains("invalid-code") && msg.contains("新码"), "{msg}");
+    }
+
+    /// 访问闸门（app.ts 的 accessGate）挡掉不可信的 Host：403，error 是对象。这和码无关——
+    /// 叫用户换码只会让他白白再烧一个码，问题照旧。
+    #[tokio::test]
+    async fn an_untrusted_host_403_is_not_blamed_on_the_code() {
+        let (base, _) = one_shot("403 Forbidden", r#"{"error":{"code":"unauthorized","message":"请求来源不被信任"}}"#).await;
+        let e = pair(&control_client(), &base, "123456", "nas").await.unwrap_err();
+        assert!(matches!(&e, PairError::Rejected { refusal: Refusal::TrustedHost, .. }), "{e:?}");
+        let msg = e.park_message();
+        assert!(msg.contains("请求来源不被信任"), "{msg}");
+        assert!(msg.contains("可信主机") && msg.contains("IP"), "要说出真正该改的地方：{msg}");
+        assert!(!msg.contains("新码") && !msg.contains("配对码被主实例拒绝"), "不能叫用户换码：{msg}");
+    }
+
+    /// 其余 4xx（请求体 / platform 不对，回的是中文 message 字符串）：照实转述，也不怪到码头上。
+    #[tokio::test]
+    async fn another_4xx_is_reported_as_a_refused_request() {
+        let (base, _) = one_shot("400 Bad Request", r#"{"error":"platform 只能是 android 或 linux"}"#).await;
+        let e = pair(&control_client(), &base, "123456", "nas").await.unwrap_err();
+        assert_eq!(e, PairError::Rejected { reason: "platform 只能是 android 或 linux".into(), refusal: Refusal::Request });
+        let msg = e.park_message();
+        assert!(msg.contains("主实例拒绝了配对请求（platform 只能是 android 或 linux）"), "{msg}");
+        assert!(!msg.contains("新码"), "{msg}");
     }
 
     /// 老后端忽略 platform、发回 android 的 id：拿着它连上来会被以 4003 关掉，不如在这里就说清。
     #[tokio::test]
     async fn a_non_linux_device_id_is_a_rejection() {
         let (base, _) = one_shot("200 OK", r#"{"deviceId":"android:0b7c","deviceToken":"tok"}"#).await;
-        assert!(matches!(pair(&control_client(), &base, "123456", "nas").await, Err(PairError::Rejected(_))));
+        assert!(matches!(pair(&control_client(), &base, "123456", "nas").await, Err(PairError::Rejected { .. })));
     }
 
     /// 被拒的原因会被 park 每小时打进日志：老后端回的 token 是活的，不能出现在里面。
     #[tokio::test]
     async fn a_rejection_never_echoes_the_token_it_was_sent() {
         let (base, _) = one_shot("200 OK", r#"{"deviceId":"android:0b7c","deviceToken":"SECRET-TOKEN"}"#).await;
-        let Err(PairError::Rejected(msg)) = pair(&control_client(), &base, "123456", "nas").await else { panic!("应被拒") };
+        let Err(e @ PairError::Rejected { .. }) = pair(&control_client(), &base, "123456", "nas").await else { panic!("应被拒") };
+        let msg = e.park_message();
         assert!(!msg.contains("SECRET-TOKEN"), "{msg}");
         assert!(msg.contains("android:0b7c"), "{msg}");
     }
