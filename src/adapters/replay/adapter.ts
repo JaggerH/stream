@@ -233,6 +233,8 @@ export interface ReplayAdapterDeps {
  */
 export class ReplayAdapter implements Adapter {
   readonly id = 'replay'
+  /** 按 recipe kind 自己判执行位置（`assertRecipeRunnable`），调度器不替它问 http.fetch。 */
+  readonly checksPlacement = true
   constructor(private readonly deps: ReplayAdapterDeps) {}
 
   async init(_env: Record<string, string>): Promise<void> {}
@@ -462,17 +464,15 @@ export class ReplayAdapter implements Adapter {
     // 这样 http/html 的 fetchFor 与 cookie 都跟着设备走，没有哪一跳能漏到本机。
     const [facility] = facilityOf(manifest)
     const p = this.deps.placementFor?.(facility) ?? { deviceId: LOCAL_DEVICE, allowHosts: [] }
-    // 必须在任何出站、ensureTransport 之前：判不过时不能已经唤起了浏览器或发了桌面帧。
-    // 浏览器类与桌面类在远程 placement 上一律 fail closed（见 assertRecipeRunnable 头注）。
-    assertRecipeRunnable(p, recipe.kind, this.deps.ready)
-    return runOnDevice(p, () => this.harvest(recipe, params, manifest, context))
+    return runOnDevice(p, () => this.harvest(recipe, params, manifest, context, p))
   }
 
   private async harvest(
     recipe: Recipe,
     params: Record<string, unknown>,
     manifest: SourceManifest,
-    context?: SourceExecutionContext,
+    context: SourceExecutionContext | undefined,
+    p: RunPlacement,
   ): Promise<unknown[] | AdapterFetchResult> {
     // 动作 recipe 不得经这条路静默执行——见 ActionRecipeBlockedError 头注。判据是"这次调用
     // 是不是用户第一方发起的"（userInitiated），不是"是不是动作"：后者恒真，前者才是真正要防的
@@ -482,6 +482,11 @@ export class ReplayAdapter implements Adapter {
     // Quarantined (persistently drifting) source → decline WITHOUT launching/installing
     // a browser. A newer recipe version releases the quarantine (see RepairLedger).
     if (this.deps.ledger && !this.deps.ledger.shouldRun(manifest.id, recipe.version)) return DECLINED
+
+    // 执行位置排在动作闸与隔离之后、任何出站与 ensureTransport 之前：一个本就不该跑的源不该被
+    // 报成「设备离线、本轮跳过」；判不过时也不能已经唤起了浏览器或发了桌面帧。
+    // 浏览器类与桌面类在远程 placement 上一律 fail closed（见 assertRecipeRunnable 头注）。
+    assertRecipeRunnable(p, recipe.kind, this.deps.ready)
 
     const stringParams: Record<string, string> = {}
     for (const [k, v] of Object.entries(params)) stringParams[k] = String(v)

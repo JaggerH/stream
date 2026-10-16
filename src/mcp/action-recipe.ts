@@ -41,6 +41,8 @@ import type { SeeResolver } from '../replay/desktop-see.ts'
 import { CoolingDownError } from '../replay/facility-cooldown.ts'
 import { RateLimitedError } from '../replay/facility-rate-limit.ts'
 import type { RecipeRunOutcome } from '../replay/recipe-runner.ts'
+import { assertRecipeRunnable } from '../devices/placement.ts'
+import type { RunPlacement } from '../devices/run-context.ts'
 import { runDesktopRecipe, type OverrideSource } from '../replay/desktop-runner.ts'
 import { HostRelayDisconnected, HostRelayTimeout, HostSessionQueueTimeout, HostAbortedByUser, INTERACTIVE_SESSION_WAIT_MS } from '../http/host-relay.ts'
 import { SESSION_BUSY_REASON, userAbortedReason } from '../replay/desktop-failure.ts'
@@ -180,6 +182,12 @@ export interface ActionRecipeDeps {
    * 没装配就不发，回执照旧。
    */
   notify?: (input: EventInput) => void
+  /**
+   * 这条动作 recipe 的执行位置（它所属 facility 绑定的设备，与采集同一个解析器）。非 local 时
+   * 在执行之前就 fail closed：浏览器 / 桌面中继落地前，这条入口只会在本机的 Chrome / 桌面上动手——
+   * 绑了 NAS 却在 PC 上点，比报错更糟。缺席 = 本机（测试与旧装配）。
+   */
+  placementFor?: (sourceId: string) => RunPlacement
 }
 
 /**
@@ -233,6 +241,10 @@ export async function prepareActionRecipe(deps: ActionRecipeDeps, args: ActionRe
         '的动作 recipe；采集类的内容获取走 stream_read / content_search 等其它工具。',
     })
   }
+
+  // 执行位置：确认闸与任何执行之前。抛 DeviceIncapable（browser / desktop），不回落本机。
+  const placement = deps.placementFor?.(sourceId)
+  if (placement) assertRecipeRunnable(placement, recipe.kind)
 
   const paramsSchema = (recipe.meta.params_schema ?? {}) as Record<string, unknown>
 

@@ -8,6 +8,7 @@ import type { SeeResolver } from '../replay/desktop-see.ts'
 import { HostRelayDisconnected, HostAbortedByUser } from '../http/host-relay.ts'
 import { CoolingDownError } from '../replay/facility-cooldown.ts'
 import { RateLimitedError } from '../replay/facility-rate-limit.ts'
+import { DeviceIncapable } from '../devices/errors.ts'
 import { mkdtempSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -494,5 +495,37 @@ describe('run_action_recipe —— 浏览器档', () => {
     expect(await run('ok')).toEqual([])
     expect(await run('drift')).toEqual([])
     expect(await run('unavailable')).toEqual([])
+  })
+})
+
+// 动作 recipe 的 facility 绑在远程设备上：浏览器 / 桌面中继落地前，这条入口只会在本机跑——
+// 那就是「绑了 NAS、却在 PC 上点」。在任何执行之前 fail closed。
+describe('run_action_recipe —— facility 绑到远程设备', () => {
+  const NAS = { deviceId: 'linux:nas', allowHosts: [] }
+
+  it('桌面动作：DeviceIncapable(desktop)，driver / runner 都不碰', async () => {
+    const runDesktop = vi.fn()
+    const deps = { ...makeDeps({ recipe: actionRecipe(), driver: FAKE_DRIVER, runDesktop: runDesktop as never }), placementFor: () => NAS }
+    const e = await runActionRecipe(deps, { sourceId: 'qq-send', params: { contact: 'a', message: 'b' }, confirmed: true }).catch((x) => x)
+    expect(e).toBeInstanceOf(DeviceIncapable)
+    expect((e as DeviceIncapable).need).toBe('desktop')
+    expect(runDesktop).not.toHaveBeenCalled()
+  })
+
+  it('浏览器动作：DeviceIncapable(browser)，runBrowser 不碰', async () => {
+    const runBrowser = vi.fn()
+    const deps = { ...makeDeps({ recipe: browserAction(), runBrowser: runBrowser as never }), placementFor: () => NAS }
+    const e = await runActionRecipe(deps, { sourceId: 'dfcf-login', params: {}, confirmed: true }).catch((x) => x)
+    expect(e).toBeInstanceOf(DeviceIncapable)
+    expect((e as DeviceIncapable).need).toBe('browser')
+    expect(runBrowser).not.toHaveBeenCalled()
+  })
+
+  it('local 照常', async () => {
+    const runBrowser = vi.fn(async () => OUT('ok'))
+    const deps = { ...makeDeps({ recipe: browserAction(), runBrowser }), placementFor: () => ({ deviceId: 'local', allowHosts: [] }) }
+    const r = await runActionRecipe(deps, { sourceId: 'dfcf-login', params: {}, confirmed: true })
+    expect(r.status).not.toBe('error')
+    expect(runBrowser).toHaveBeenCalled()
   })
 })

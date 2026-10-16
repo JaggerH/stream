@@ -15,8 +15,7 @@ import { forwardingRepairRunner, LoggingRepairRunner } from '../../replay/repair
 // （它是可选的后到者，这里只在调用时现取，缺席就落 fallback）。
 import type { InterventionService } from './intervention.ts'
 import type { RuntimeConfigResolver } from './runtime-config.ts'
-import type { FacilityDeviceStore } from '../../devices/facility-devices.ts'
-import { assertDeviceReady, resolvePlacement } from '../../devices/placement.ts'
+import { assertDeviceReady, makeFacilityPlacement, type FacilityBindings } from '../../devices/placement.ts'
 
 declare module 'cordis' {
   interface Context {
@@ -55,8 +54,8 @@ export interface AdaptersConfig {
    */
   intervention?: () => InterventionService | undefined
   /** facility → 默认执行设备。serve 在 bootstrap 之前建好传入（只依赖 stream.db 路径，不存在后到问题）；
-   *  缺席 = 全部本机，ReplayAdapter 不带 placementFor 走原路径。 */
-  facilityDevices?: FacilityDeviceStore
+   *  缺席 = 全部本机，ReplayAdapter 不带 placementFor 走原路径。表打不开时 serve 传 `unavailableBindings()`（查就抛）。 */
+  facilityDevices?: FacilityBindings
 }
 
 /**
@@ -165,10 +164,10 @@ export const adaptersPlugin = {
         // 执行位置：采集在执行开始时按 facility 解一次设备；设备缺能力在唤起浏览器之前就报。
         // hostRelays 是 harvest 域的同一个注册表（设备目录），packages 的 network 调用时才取（热装卸会变）。
         ...(config.facilityDevices ? {
-          placementFor: (facility: string | undefined) => {
-            const net = facility ? ctx.packages.networkForFacility(facility) : undefined
-            return resolvePlacement({ facility, binding: (f) => config.facilityDevices!.get(f), hosts: net?.hosts ?? [] })
-          },
+          placementFor: makeFacilityPlacement({
+            bindings: config.facilityDevices,
+            network: (f) => ctx.packages.networkForFacility(f),
+          }),
           ready: (p: import('../../devices/run-context.ts').RunPlacement, need: string) => assertDeviceReady(p, ctx.harvest.hostRelays, need),
         } : {}),
         // outcome → items | typed error (NeedsLoginError / ReplayDriftError / RecipeBlockedError),

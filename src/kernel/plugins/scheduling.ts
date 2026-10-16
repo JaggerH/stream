@@ -17,6 +17,7 @@ import type { SourceType } from '../../manifest/types.ts'
 import type { HealthInfo } from '../../http/app.ts'
 import type { TrackFn, TrackSyncFn } from '../../op-track.ts'
 import type { DebugEntry } from '../../debug.ts'
+import { assertDeviceReady, makeFacilityPlacement, type FacilityBindings } from '../../devices/placement.ts'
 
 declare module 'cordis' {
   interface Context {
@@ -54,6 +55,8 @@ export interface SchedulingConfig {
   vaultRoot: string
   vaultEnabled: boolean
   runtimeConfigFor: RuntimeConfigResolver
+  /** facility → 默认执行设备（与 adapters 域同一份）。缺席 = 全部本机；表打不开时是 `unavailableBindings()`。 */
+  facilityDevices?: FacilityBindings
   /** 每条新落库的 item 额外播一份（WS 推前端）。 */
   onItem?: (item: StreamItem, type: SourceType) => void
   track?: TrackFn
@@ -84,7 +87,8 @@ export interface SchedulingConfig {
  */
 export const schedulingPlugin = {
   name: 'scheduling',
-  inject: ['sources', 'adapters', 'stores', 'credentials', 'auth', 'streamEvents', 'packages', 'provider'],
+  // `harvest`：设备目录（hostRelays）住那里，采集派到设备前要问它在不在线。它比本域早挂。
+  inject: ['sources', 'adapters', 'stores', 'credentials', 'auth', 'streamEvents', 'packages', 'provider', 'harvest'],
   apply(ctx: Context, config: SchedulingConfig): void {
     const { registry } = ctx.sources
     const adapters = ctx.adapters
@@ -103,6 +107,15 @@ export const schedulingPlugin = {
       adapters,
       health: sourceHealth,
       resolveCreds: credentials.resolver.fn(),
+      // 执行位置：与 adapters 域的 ReplayAdapter 用同一个解析器（makeFacilityPlacement），不各写一份。
+      // code 包 adapter 的 `ctx.fetch` 靠这一层才派得到设备；ReplayAdapter 自己再按 recipe kind 判。
+      ...(config.facilityDevices ? {
+        placementFor: makeFacilityPlacement({
+          bindings: config.facilityDevices,
+          network: (f) => ctx.packages.networkForFacility(f),
+        }),
+        ready: (p: import('../../devices/run-context.ts').RunPlacement, need: string) => assertDeviceReady(p, ctx.harvest.hostRelays, need),
+      } : {}),
       // 时机 ②：这一轮要用登录态了，快照太旧就先去浏览器取一次。Chrome 关着时立刻返回
       // （relay 未连），不拖慢采集。
       beforeTick: () => auth.cookiePuller.ensureFresh(COOKIE_SNAPSHOT_MAX_AGE_MS, 'before-harvest'),

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { assertDeviceReady, assertLocalBrowser, resolvePlacement } from './placement.ts'
+import { assertDeviceReady, assertLocalBrowser, makeFacilityPlacement, resolvePlacement, unavailableBindings } from './placement.ts'
 import { DeviceIncapable, DeviceOffline } from './errors.ts'
 
 const bindings: Record<string, string> = { eastmoney: 'linux:nas' }
@@ -33,4 +33,28 @@ describe('assertDeviceReady', () => {
 describe('assertLocalBrowser', () => {
   it('local 放行', () => expect(() => assertLocalBrowser({ deviceId: 'local', allowHosts: [] })).not.toThrow())
   it('远程设备 fail-closed', () => expect(() => assertLocalBrowser({ deviceId: 'linux:nas', allowHosts: [] })).toThrow(DeviceIncapable))
+})
+
+describe('makeFacilityPlacement（采集与调度器共用的同一个解析器）', () => {
+  const network = (f: string) => (f === 'eastmoney' ? { packageId: 'em', facility: 'eastmoney', hosts } : undefined)
+  const resolve = makeFacilityPlacement({ bindings: { get: binding }, network })
+  it('facility 绑到设备：设备 + 包声明的主机', () => {
+    expect(resolve('eastmoney')).toEqual({ deviceId: 'linux:nas', allowHosts: hosts })
+  })
+  it('没有 facility：local，不查绑定', () => {
+    expect(resolve(undefined)).toEqual({ deviceId: 'local', allowHosts: [] })
+  })
+})
+
+describe('unavailableBindings（绑定表打不开）', () => {
+  const b = unavailableBindings()
+  it('任何有 facility 的执行都拒绝——宁可失败，也不在错误的位置下单', () => {
+    expect(() => resolvePlacement({ facility: 'eastmoney', binding: (f) => b.get(f), hosts })).toThrow(/设备绑定表不可用/)
+  })
+  it('没有 facility 的执行照常 local', () => {
+    expect(resolvePlacement({ binding: (f) => b.get(f), hosts: [] }).deviceId).toBe('local')
+  })
+  it('任务显式指定了设备：不查绑定表', () => {
+    expect(resolvePlacement({ taskDevice: 'linux:nas', facility: 'eastmoney', binding: (f) => b.get(f), hosts }).deviceId).toBe('linux:nas')
+  })
 })

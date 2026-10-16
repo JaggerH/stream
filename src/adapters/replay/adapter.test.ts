@@ -760,6 +760,32 @@ describe('ReplayAdapter — 设备放置（facility 绑定到设备）', () => {
     expect(hostCalls).toBe(0)
   })
 
+  // 动作闸 / 隔离判在设备检查之前：一个本来就不该跑的源，不该因为设备离线被报成"设备的问题"，
+  // 更不该让调度器把一条被闸住的动作误判成「本轮跳过（设备离线）」。
+  it('动作闸先于设备检查：未经用户发起的 action recipe 报 ActionRecipeBlockedError，不问 ready', async () => {
+    const ready = { n: 0 }
+    const a = new ReplayAdapter(deps({
+      recipes: { load: () => ({ ...(HTTP_RECIPE as object), meta: { action: true } }) as unknown as Recipe },
+      placementFor: () => NAS,
+      ready: (p) => { ready.n++; throw new DeviceOffline(p.deviceId) },
+    }))
+    await expect(a.fetch({}, DEV_MANIFEST)).rejects.toBeInstanceOf(ActionRecipeBlockedError)
+    expect(ready.n).toBe(0)
+  })
+
+  it('隔离先于设备检查：被隔离的源直接 decline，不问 ready', async () => {
+    const ready = { n: 0 }
+    const a = new ReplayAdapter(deps({
+      recipes: { load: () => HTTP_RECIPE },
+      placementFor: () => NAS,
+      ready: (p) => { ready.n++; throw new DeviceOffline(p.deviceId) },
+      ledger: { shouldRun: () => false } as unknown as import('../../replay/repair-ledger.ts').RepairLedger,
+    }))
+    const got = await a.fetch({}, DEV_MANIFEST)
+    expect(got).toMatchObject({ authoritative: false })
+    expect(ready.n).toBe(0)
+  })
+
   it('placementFor 缺席 = local：不问 ready，行为与以前一致', async () => {
     let readyCalls = 0
     const a = new ReplayAdapter(deps({ ready: () => { readyCalls++ } }))

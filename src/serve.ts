@@ -39,7 +39,7 @@ import { authorizeAccess, parseTrustedOrigins, isLoopbackAddress, peerAddress, l
 import { mountDeviceRoutes } from './http/device-routes.ts'
 import { DeviceStore } from './devices/device-store.ts'
 import { FacilityDeviceStore } from './devices/facility-devices.ts'
-import { assertDeviceReady, resolvePlacement } from './devices/placement.ts'
+import { assertDeviceReady, resolvePlacement, unavailableBindings, type FacilityBindings } from './devices/placement.ts'
 import { installFetchFor, makeFetchFor } from './devices/fetch.ts'
 import type { RunPlacement } from './devices/run-context.ts'
 import type { UserTaskRow } from './tasks/task-store.ts'
@@ -278,12 +278,17 @@ async function main() {
 const extToken = loadOrCreateExtToken(dirname(config.item_db))
 const deviceStore = new DeviceStore(join(dirname(config.item_db), 'devices.json'), { log: console.log })
 // facility → 默认设备，与 TaskStore 同一个 stream.db。在 bootstrap 之前建：adapters 域要它，而它只依赖路径。
-// 开不起来（文件锁/损坏）只丢「绑定」这一格：全部按本机跑，和升级前一样。
+// 开不起来（文件锁/损坏）不让启动失败，但**不是**「没有绑定 = 全部本机」：用户把东财绑在大陆的 NAS 上，
+// 表一坏就改从本机下单，正是这套设计要防的事。换成查就抛的替身——有 facility 的执行一律拒绝，
+// 没有 facility 的照常 local。绑定路由不挂（读写都无从谈起）。
 let facilityDevices: FacilityDeviceStore | undefined
+let facilityBindings: FacilityBindings
 try {
   facilityDevices = new FacilityDeviceStore(join(dirname(config.item_db), 'stream.db'))
+  facilityBindings = facilityDevices
 } catch (e) {
-  console.log(`[stream] facility device bindings disabled — open failed: ${errText(e)}`)
+  console.error(`[stream] facility device bindings UNAVAILABLE — open failed: ${errText(e)}; runs of any facility will be refused until this is fixed`)
+  facilityBindings = unavailableBindings()
 }
 // `/api/*` 与 `/ws` 的访问令牌。**默认就有**（用户没配 api_token 时自动生成一份持久的）——
 // 后端绑 0.0.0.0 是有意的（用户要从手机访问），那就必须有一把默认的锁，而不是默认没有。
@@ -354,7 +359,7 @@ const apiToken = config.api_token || loadOrCreateApiToken(dirname(config.item_db
     mcpEndpoint: () => ({ url: `http://127.0.0.1:${PORT}/api/mcp`, token: apiToken }),
     onItem: (item, type) => hub.broadcast({ type: 'item', item_type: type, item: toClientItem({ ...item, type }) }),
     onDebug: recordDebug,
-    ...(facilityDevices ? { facilityDevices } : {}),
+    facilityDevices: facilityBindings,
     broadcast: (msg) => hub.broadcast(msg),
     track,
     trackSync,
@@ -835,7 +840,7 @@ const apiToken = config.api_token || loadOrCreateApiToken(dirname(config.item_db
     placement: (row: UserTaskRow) => {
       const pkgId = row.action?.split(':')[0]
       const net = pkgId ? pkgs.networkFor(pkgId) : undefined
-      return resolvePlacement({ taskDevice: row.device, facility: net?.facility, binding: (f) => facilityDevices?.get(f), hosts: net?.hosts ?? [] })
+      return resolvePlacement({ taskDevice: row.device, facility: net?.facility, binding: (f) => facilityBindings.get(f), hosts: net?.hosts ?? [] })
     },
     ready: (p: RunPlacement) => assertDeviceReady(p, harvest.hostRelays, 'http.fetch'),
   })

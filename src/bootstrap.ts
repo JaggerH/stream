@@ -37,6 +37,7 @@ import { makeResolveDownload } from './audio/resolve-download.ts'
 import type { AppConfig, StreamItem } from './types.ts'
 import type { SourceType } from './manifest/types.ts'
 import { writeTags } from './audio/tag-writer.ts'
+import { makeFacilityPlacement } from './devices/placement.ts'
 
 export type Logger = (...args: unknown[]) => void
 
@@ -62,8 +63,9 @@ export interface Boot {
 }
 
 export interface BootOptions {
-  /** facility → 默认执行设备（serve 在 bootstrap 之前就能建：它只要 stream.db 路径）。缺席 = 全部本机。 */
-  facilityDevices?: import('./devices/facility-devices.ts').FacilityDeviceStore
+  /** facility → 默认执行设备（serve 在 bootstrap 之前就能建：它只要 stream.db 路径）。缺席 = 全部本机；
+   *  表打不开时 serve 传 `unavailableBindings()`——有 facility 的执行一律拒绝，不悄悄回落本机。 */
+  facilityDevices?: import('./devices/placement.ts').FacilityBindings
   /** fired (in addition to the item-store write) for each newly-persisted item */
   onItem?: (item: StreamItem, type: SourceType) => void
   /** push a debug entry (download queue diagnostics) to the frontend DebugBox over the WS */
@@ -605,6 +607,7 @@ export async function bootstrap(
   // scheduler 的 `stop()` 与 `shutdownAdapters()` 随之变成域内 effect：bootstrap 的手写
   // `shutdown()` 与 `gracefulShutdown` 里那行 `scheduler.stop()` 一起归零。
   await kernel.plugin(schedulingPlugin, {
+    facilityDevices: opts.facilityDevices,
     adFilter: config.ad_filter,
     vaultRoot: config.vault_root,
     vaultEnabled: config.vault_enabled,
@@ -687,6 +690,13 @@ export async function bootstrap(
     // 同 harvest / adapters 两处：经 config 递 thunk 从根 kernel 现取，不在插件里 inject
     // `intervention`——五个 `graph_*` 工具的注册门读它，写死就是它们永远不注册。
     intervention: () => kernel.intervention,
+    // 动作 recipe 的执行位置：与 adapters / scheduling 两域同一个解析器、同一份绑定表。
+    ...(opts.facilityDevices ? {
+      placementForFacility: makeFacilityPlacement({
+        bindings: opts.facilityDevices,
+        network: (f) => kernel.packages.networkForFacility(f),
+      }),
+    } : {}),
   })
 
   return { config, kernel }

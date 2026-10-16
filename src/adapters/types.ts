@@ -56,6 +56,11 @@ export interface AdapterFetchResult {
 export interface Adapter {
   /** matches SourceManifest.adapter */
   id: string
+  /**
+   * 这个 adapter 自己按每次执行的内容判断「能不能在这台设备上跑」（ReplayAdapter 按 recipe kind 判）。
+   * 为 true 时调度器只包执行上下文，不再替它问设备要 `http.fetch`——它可能根本不走 HTTP。
+   */
+  readonly checksPlacement?: boolean
   /** apply credential env overrides before any fetch (idempotent) */
   init(envOverrides: Record<string, string>): Promise<void>
   /** fetch raw items for a manifest + params (route resolved from manifest/params).

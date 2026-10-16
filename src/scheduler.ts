@@ -1,4 +1,5 @@
 import { join } from 'path'
+import { LOCAL_DEVICE, runOnDevice, type RunPlacement } from './devices/run-context.ts'
 import type { Registry } from './registry/registry.ts'
 import type { Stream, StreamMember } from './streams/types.ts'
 import type { Adapter } from './adapters/types.ts'
@@ -104,6 +105,14 @@ export interface SchedulerOpts {
    * 而且永远没有解释。静默的跳过和静默的失败，用户体验上是同一个东西。
    */
   onHarvestSkipped?: (sourceId: string, reason: string) => void
+  /**
+   * 执行位置：源 facility → 它绑定的设备（与 ReplayAdapter 的 `placementFor` 是**同一个**解析器，
+   * 见 `src/devices/placement.ts` 的 `makeFacilityPlacement`）。每次真采集开始时解一次，整次
+   * `adapter.fetch` 在这个上下文里跑——code 包的 `ctx.fetch` 才会派到那台设备。缺席 = 全部本机。
+   */
+  placementFor?: (facility: string | undefined) => RunPlacement
+  /** 派发前检查设备就绪（在线、有那个 op）；不就绪就抛，adapter 一次都不调。 */
+  ready?: (p: RunPlacement, need: string) => void
   /** collection 分片替换的"近乎全空"防线状态（armed 位，per stream+source）。生产注入 stream.db
    *  的实现；缺省 = 进程内，重启即忘（单测 / disk 档）。见 collection-replace-guard.ts。 */
   collectionGuard?: CollectionGuardStore
@@ -484,11 +493,17 @@ export class Scheduler {
     const items = await this.cache.fetchOrWait(cacheKey, ttlMs, async () => {
       try {
         ranFetch = true
-        const got = await adapter.fetch(src.params, manifest, {
+        // 执行位置在 try 里解：设备离线（DeviceOffline，声明了「环境没就绪」）走下面那条
+        // 本轮跳过；绑定表不可用等解析错误照普通失败记。
+        const p = this.opts.placementFor?.(manifest.facility?.key) ?? { deviceId: LOCAL_DEVICE, allowHosts: [] }
+        // 自己判位置的 adapter（replay 按 recipe kind 判）不在这里替它问 http.fetch——
+        // 浏览器类 recipe 根本不走 HTTP，问了只会报出一条错误的原因。
+        if (p.deviceId !== LOCAL_DEVICE && !adapter.checksPlacement) this.opts.ready?.(p, 'http.fetch')
+        const got = await runOnDevice(p, () => adapter.fetch(src.params, manifest, {
           runtimeConfig: this.opts.runtimeConfigFor?.(manifest) ?? {},
           signal,
           userInitiated,
-        })
+        }))
         const normalized = Array.isArray(got) ? got : got.items
         if (!Array.isArray(got)) {
           title = got.title

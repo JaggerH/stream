@@ -4,6 +4,7 @@ import { blockedOf } from './blocked.ts'
 import { NeedsLoginError, SiteChallengeError } from './adapters/replay/adapter.ts'
 import { CoolingDownError } from './replay/facility-cooldown.ts'
 import { EnvironmentUnavailableError } from './failure.ts'
+import { DeviceFetchQueueTimeout, DeviceLost, DeviceOffline } from './devices/errors.ts'
 
 describe('blockedOf', () => {
   it('reads a login block off NeedsLoginError, carrying facility + label', () => {
@@ -65,5 +66,13 @@ it('登录面板占着这个 facility → 也是「需要登录」，画按钮�
     expect(got?.kind).toBe('cooldown')
     // login 那一档才有 facility→登录流程的语义；cooldown 只是拿它把话说具体。
     expect(got).not.toHaveProperty('action')
+  })
+
+  it('设备离线 / 设备排队超时 → device-offline 带设备名，**不是 extension**', () => {
+    // 两者都被声明为「环境没就绪」（isEnvironmentUnavailable 为真），落到 extension 那行就会说
+    // "扩展没连接"——把用户支去查一个跟这台 NAS 毫无关系的扩展。
+    expect(blockedOf(new DeviceOffline('linux:nas'))).toEqual({ kind: 'device-offline', deviceId: 'linux:nas' })
+    expect(blockedOf(new DeviceFetchQueueTimeout('linux:nas'))).toEqual({ kind: 'device-offline', deviceId: 'linux:nas' })
+    expect(blockedOf(new DeviceLost('linux:nas'))).toBeUndefined()
   })
 })

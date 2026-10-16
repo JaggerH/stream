@@ -2,6 +2,7 @@ import { NeedsLoginError, SiteChallengeError } from './adapters/replay/adapter.t
 import { CoolingDownError } from './replay/facility-cooldown.ts'
 import { isEnvironmentUnavailable } from './failure.ts'
 import { LaneBusyForLoginError } from './replay/session-manager.ts'
+import { DeviceFetchQueueTimeout, DeviceOffline } from './devices/errors.ts'
 
 /**
  * Why a member produced nothing when the cause is a **missing precondition** rather than a
@@ -24,6 +25,11 @@ export type BlockedReason =
    * `facility`/`label` 只为把话说具体（"抖音 正在限流"），不是登录流程的入口。
    */
   | { kind: 'cooldown'; facility: string; label: string; retryAfterMs?: number }
+  /**
+   * 这个源的 facility 绑在一台设备上，而那台设备不在线（或 HTTP 名额排满）——请求一帧都没发出。
+   * 修法是让那台设备上线（开机、连网、启动 agent），**不是**去查浏览器扩展。
+   */
+  | { kind: 'device-offline'; deviceId: string }
 
 /**
  * Read a blocked reason off a thrown error, or `undefined` if it is an ordinary failure.
@@ -55,6 +61,9 @@ export function blockedOf(e: unknown): BlockedReason | undefined {
   if (e instanceof CoolingDownError) {
     return { kind: 'cooldown', facility: e.facility, label: e.facility, retryAfterMs: e.remainingMs }
   }
+  // 同理也必须排在 `isEnvironmentUnavailable` 前面：设备离线声明了「环境没就绪」，落到下一行
+  // 就是"扩展没连接"——而扩展好好的，是那台 NAS 没开。
+  if (e instanceof DeviceOffline || e instanceof DeviceFetchQueueTimeout) return { kind: 'device-offline', deviceId: e.deviceId }
   if (isEnvironmentUnavailable(e)) return { kind: 'extension' }
   return undefined
 }

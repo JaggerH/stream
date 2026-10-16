@@ -23,7 +23,18 @@ export class EnvironmentUnavailableError extends Error {
   }
 }
 
+/**
+ * 不继承本类、但同样「确定没跑成」的错误，靠声明这个标记加入（如设备离线 `DeviceOffline`、
+ * 设备排队超时 `DeviceFetchQueueTimeout`——请求一帧都没发出）。**不走继承**：那些错误各有自己的
+ * 类层次（`DeviceError`），继承这里会把重试语义、`blockedOf` 的分支顺序一起搅乱
+ * （`CoolingDownError` 继承本类，就曾被报成"扩展没连接"）。
+ */
+export interface DeclaresEnvironmentUnavailable {
+  readonly environmentUnavailable: true
+}
+
 /** 这次失败是不是"环境没就绪"——调度侧据此跳过本轮而不是判故障。 */
 export function isEnvironmentUnavailable(e: unknown): boolean {
+  if (e instanceof Error && (e as Partial<DeclaresEnvironmentUnavailable>).environmentUnavailable === true) return true
   return e instanceof EnvironmentUnavailableError
 }

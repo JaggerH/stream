@@ -90,6 +90,9 @@ export type McpExtrasDeps = Pick<AgentDomain, 'searchAgent' | 'webSearch' | 'int
   /** 动作 recipe `output.files` 的落盘目录（`<dataDir>/action-artifacts`）。缺席 = 声明了文件的
    *  recipe 一律报错（`ActionRecipeDeps.artifactsDir` 头注）。 */
   actionArtifactsDir?: string
+  /** 源 facility → 执行位置（`makeFacilityPlacement`，与采集同一个）。动作 recipe 据此在远程设备上
+   *  fail closed（`ActionRecipeDeps.placementFor` 头注）。缺席 = 本机。 */
+  placementForFacility?: (facility: string | undefined) => import('../devices/run-context.ts').RunPlacement
   // `channels` 是频道表（`inbox_search` 的 channel 过滤把频道解析成它的成员 stream 集合）。
   // `audioArchive` 只为 `resolve` 工具的歌词那一档当缓存（与 HTTP 那条路同一份壳）。
 } & Pick<Stores, 'sourceHealth' | 'itemStore' | 'channels' | 'audioArchive'>
@@ -151,6 +154,10 @@ function makeRunActionRecipe(boot: McpExtrasDeps): (args: ActionRecipeArgs) => P
     listActions: () =>
       [...boot.liveRecipes.current].filter(([, r]) => r.meta?.action === true).map(([id]) => id).sort(),
     notify: (input) => boot.events.emit(input),
+    // facility 从投影后的 manifest 上读（seal 时按包的 source group 补齐，原始 recipe 上未必有）。
+    ...(boot.placementForFacility ? {
+      placementFor: (id: string) => boot.placementForFacility!(boot.registry.get(id)?.facility?.key),
+    } : {}),
   }
   if (!boot.actionRunStore) return (args) => runActionRecipe(deps, args)
   const svc = createActionRunService({ store: boot.actionRunStore, prepare: (args) => prepareActionRecipe(deps, args) })

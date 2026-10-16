@@ -21,6 +21,39 @@ export function resolvePlacement(input: {
   return { deviceId, allowHosts: input.hosts }
 }
 
+/** facility → 默认设备的读口（`FacilityDeviceStore` 满足它；表打不开时换成 `unavailableBindings`）。 */
+export interface FacilityBindings {
+  get(facility: string): string | undefined
+}
+
+/**
+ * 绑定表打不开（文件锁 / 损坏）时的替身：**查就抛**。不能当成「没有绑定 = 全部本机」——
+ * 用户把东财绑在大陆的 NAS 上，表一坏就改从加州的本机下单，那正是这套设计要防的事。
+ * 没有 facility 的执行根本不查绑定（`resolvePlacement`），照常 local。
+ */
+export function unavailableBindings(): FacilityBindings {
+  return {
+    get() {
+      throw new Error('设备绑定表不可用——拒绝执行，以免在错误的位置下单')
+    },
+  }
+}
+
+/**
+ * 源 facility → placement。ReplayAdapter 与调度器共用**同一个**解析器（各写一份迟早会分叉：
+ * 一边按 facility 派到 NAS、另一边仍在本机）。包的主机声明调用时才取——热装卸会变。
+ */
+export function makeFacilityPlacement(deps: {
+  bindings: FacilityBindings
+  network: (facility: string) => PackageNetwork | undefined
+}): (facility: string | undefined) => RunPlacement {
+  return (facility) => resolvePlacement({
+    facility,
+    binding: (f) => deps.bindings.get(f),
+    hosts: facility ? deps.network(facility)?.hosts ?? [] : [],
+  })
+}
+
 /** 派发前就把「去不了」说出来，不发任何帧。`local` 是后端本机，永远就绪。 */
 export function assertDeviceReady(
   p: RunPlacement,

@@ -4,6 +4,7 @@
  * 设备回报网络错）或者是配置错误（能力不足、主机不允许）→ 不重试。一个下了一半单的动作
  * 被自动重跑就是重复下单。权威设计：openspec/changes/device-execution/design.md D9。
  */
+import type { DeclaresEnvironmentUnavailable } from '../../shared/failure/environment.ts'
 export abstract class DeviceError extends Error {
   abstract readonly code: string
   abstract readonly retryable: boolean
@@ -13,17 +14,20 @@ export abstract class DeviceError extends Error {
   }
 }
 
-export class DeviceOffline extends DeviceError {
+export class DeviceOffline extends DeviceError implements DeclaresEnvironmentUnavailable {
   readonly code = 'device-offline'
   readonly retryable = true
+  /** 采集侧：什么都没发出，本轮跳过而不是判源故障（shared/failure/environment.ts）。 */
+  readonly environmentUnavailable = true
   constructor(deviceId: string) {
     super(deviceId, `设备 ${deviceId} 不在线——这次执行没有发出任何请求，也不会改在主实例上执行`)
   }
 }
 
-export class DeviceFetchQueueTimeout extends DeviceError {
+export class DeviceFetchQueueTimeout extends DeviceError implements DeclaresEnvironmentUnavailable {
   readonly code = 'device-fetch-queue-timeout'
   readonly retryable = true
+  readonly environmentUnavailable = true
   constructor(deviceId: string) {
     super(deviceId, `设备 ${deviceId} 的请求排队超时（在途已满）——请求没有发出`)
   }

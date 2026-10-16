@@ -81,6 +81,8 @@ export type BlockedReason =
    *  这一档**故意没有可点的动作**：正确的 UI 是一句带"还剩多久"的话（`retryAfterMs`），
    *  不是按钮。别在渲染处给它加登录入口——登录态是好的，那正是要区分它的原因。 */
   | { kind: 'cooldown'; facility: string; label: string; retryAfterMs?: number }
+  /** 源的 facility 绑定的那台设备不在线——请求没发出；修法是让设备上线，不是查扩展。 */
+  | { kind: 'device-offline'; deviceId: string }
 
 /** A content-search member that failed — `reason` is the core one-liner shown to the user,
  *  `stack` the full backend stack for the copy-to-clipboard diagnostic, `blocked` present only

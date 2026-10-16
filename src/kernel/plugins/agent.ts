@@ -125,6 +125,11 @@ export interface AgentConfig {
    * 不注册（同 harvest 域那条 `intervention` 的先例）。
    */
   intervention?: () => { explorations: Pick<import('../../intervention/explore-manager.ts').ExploreManager, 'get'> } | undefined
+  /**
+   * 源 facility → 执行位置（与采集、调度器同一个解析器，`makeFacilityPlacement`）。`run_action_recipe`
+   * 与 `POST /api/recipes/action` 据此在远程设备上 fail closed。缺席 = 本机（没有绑定表的装配）。
+   */
+  placementForFacility?: (facility: string | undefined) => import('../../devices/run-context.ts').RunPlacement
 }
 
 /**
@@ -169,7 +174,7 @@ export interface AgentConfig {
  * 所以这个数字有两道闸门：装配期的自检（对不上直接 throw，见 `apply` 里那段）+ `agent.test.ts`
  * 里钉住它的断言。往表里加一格 → 两处都得改，任一处没改都是当场红。
  */
-export const MCP_EXTRAS_DEP_COUNT = 46
+export const MCP_EXTRAS_DEP_COUNT = 47
 
 export const agentPlugin = {
   name: 'agent',
@@ -735,6 +740,9 @@ export const agentPlugin = {
       actionRunStore: searchRunStore,
       // 文件产物落盘目录。漏了这一格的表现是 photopea 那类 recipe 每次都报「文件没处落」。
       actionArtifactsDir,
+      // 动作 recipe 的执行位置（facility → 设备，与采集同一个解析器）。漏了这一格不报错，
+      // 表现是绑到 NAS 的 facility 的动作照样在本机 Chrome / 桌面上动手。
+      placementForFacility: config.placementForFacility,
       // 介入域的探索会话登记处：五个 `graph_*` 建图工具按 runId 现取活会话。**两层都是现取**
       // ——外层这个 thunk 在工具调用那一刻才问根 kernel 有没有介入域，内层 `get()` 才问那条 run
       // 还活着没。任一层写死都是「工具在、但永远找不到会话」，而工具面上看不出任何异样。
