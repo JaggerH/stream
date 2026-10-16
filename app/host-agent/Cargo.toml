@@ -87,3 +87,19 @@ objc = "0.2"
 # 各写一个不兼容的版本号是解不出来的，升整体又等于把 Windows 那条已经验过的截图路径换成一个
 # 没验过的版本。CGWindowList 只要六七个函数，和 a11y 走 `accessibility-sys` 是同一个取舍——
 # 不为它拖进一整个绑定。`core-graphics` crate 也没引，同一个理由。
+
+# 设备模式（`device.rs` / `httpfetch.rs`）只在 Linux 构建里：NAS 上的执行端替主实例发 HTTP。
+# 挂在 linux target 下，Windows / macOS 桌面构建的依赖集合因此一个都不变。
+#
+# reqwest：rustls（镜像里不带系统 CA 也能用，webpki 根证书随二进制走）；**不开 default-features**，
+# 于是没有 native-tls、没有系统代理探测之外的多余东西——代理在代码里显式 `.no_proxy()` 关掉
+# （走代理时 resolver 解析的是代理地址，私网检查就被绕过了）。gzip/brotli/deflate：包代码常常
+# 自己带 `Accept-Encoding`，对端回压缩体时必须在这里解开，后端构造的 Response 不会替你解。
+[target.'cfg(target_os = "linux")'.dependencies]
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "http2", "gzip", "brotli", "deflate", "json"] }
+url = "2"
+# 主实例走公网 HTTPS 时设备要连 wss://。
+tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
+
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+flate2 = "1"

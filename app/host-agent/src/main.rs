@@ -18,6 +18,8 @@
 
 mod datadir;
 mod glide;
+#[cfg(target_os = "linux")]
+mod httpfetch;
 mod launch;
 #[cfg(target_os = "linux")]
 mod netguard;
