@@ -194,7 +194,11 @@ pub async fn pair(client: &reqwest::Client, backend: &Url, code: &str, name: &st
             (Some(id), Some(token)) if id.starts_with("linux:") && !token.is_empty() => {
                 Ok(Pairing { device_id: id.to_string(), device_token: token.to_string() })
             }
-            _ => Err(PairError::Rejected(format!("主实例的配对回复不是一台 linux 设备（主实例太旧？）：{body}"))),
+            // 不能把整个回复带进错误：老后端的回复里有一个真能用的 token，错误会被 park 每小时打进日志。
+            _ => {
+                let got = body["deviceId"].as_str().map(|id| format!("deviceId 是 {id}")).unwrap_or_else(|| "回复里没有 deviceId".to_string());
+                Err(PairError::Rejected(format!("主实例的配对回复不是一台 linux 设备（主实例太旧？）：{got}")))
+            }
         };
     }
     if status.is_client_error() {
@@ -459,6 +463,15 @@ mod tests {
     async fn a_non_linux_device_id_is_a_rejection() {
         let (base, _) = one_shot("200 OK", r#"{"deviceId":"android:0b7c","deviceToken":"tok"}"#).await;
         assert!(matches!(pair(&control_client(), &base, "123456", "nas").await, Err(PairError::Rejected(_))));
+    }
+
+    /// 被拒的原因会被 park 每小时打进日志：老后端回的 token 是活的，不能出现在里面。
+    #[tokio::test]
+    async fn a_rejection_never_echoes_the_token_it_was_sent() {
+        let (base, _) = one_shot("200 OK", r#"{"deviceId":"android:0b7c","deviceToken":"SECRET-TOKEN"}"#).await;
+        let Err(PairError::Rejected(msg)) = pair(&control_client(), &base, "123456", "nas").await else { panic!("应被拒") };
+        assert!(!msg.contains("SECRET-TOKEN"), "{msg}");
+        assert!(msg.contains("android:0b7c"), "{msg}");
     }
 
     #[tokio::test]
