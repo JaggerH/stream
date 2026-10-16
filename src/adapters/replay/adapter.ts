@@ -23,6 +23,7 @@ import type { RepairRunner } from '../../replay/repair-runner.ts'
 import { isCanonicalBrowserRecipe } from '../../replay/recipe.ts'
 import { EnvironmentUnavailableError, type DeclaresFailureCategory } from '../../failure.ts'
 import { sessionPrecheck } from '../../auth/session-precheck.ts'
+import { LOCAL_DEVICE, runOnDevice, type RunPlacement } from '../../devices/run-context.ts'
 
 /**
  * The source's login session is gone (login wall) — a USER action, not a broken
@@ -207,6 +208,12 @@ export interface ReplayAdapterDeps {
   /** debug bus 的入口——kind:'desktop' 分支的 `HostSessionQueueTimeout` 落这里（channel
    *  `host-agent`），见 `runDesktop` 头注 I2。缺席就不记（诊断通道没资格掀翻一条能用的采集）。 */
   onDebug?: (entry: DebugEntry) => void
+  /** facility → 它绑定的设备（见 device-execution D3）。整趟采集在这个 placement 里跑，recipe 的
+   *  出站请求因此跟着设备走。缺席（或返回 local）= 后端本机，与以前完全一致。 */
+  placementFor?: (facility: string | undefined) => RunPlacement
+  /** 非 local 设备上、第一次出站（或确保浏览器传输）之前的就绪检查：离线抛 `DeviceOffline`，
+   *  缺能力抛 `DeviceIncapable`。缺席 = 不检查（只有注入了 placementFor 的装配才会配它）。 */
+  ready?: (p: RunPlacement, need: string) => void
   /** Optional facility session executor. `undefined` means this recipe uses the normal runner. */
   sessionFetch?: (
     recipe: import('../../replay/recipe.ts').Recipe,
@@ -450,6 +457,26 @@ export class ReplayAdapter implements Adapter {
   ): Promise<unknown[] | AdapterFetchResult> {
     const recipe = this.deps.recipes.load(manifest.id)
 
+    // 整趟采集（含 session recipe 的早退路径）都包在 facility 所绑设备的 placement 里，
+    // 这样 http/html 的 fetchFor 与 cookie 都跟着设备走，没有哪一跳能漏到本机。
+    const [facility] = facilityOf(manifest)
+    const p = this.deps.placementFor?.(facility) ?? { deviceId: LOCAL_DEVICE, allowHosts: [] }
+    if (p.deviceId !== LOCAL_DEVICE) {
+      // 桌面 recipe 的设备由 surface 选择判定，这里不重复判。浏览器类在中继落地前远程设备
+      // 都没有 browser 能力——宁可 fail closed，也不回落本机 Chrome。必须在任何出站、
+      // ensureTransport 之前：ready 失败时不能已经唤起了浏览器。
+      if (recipe.kind === 'http' || recipe.kind === 'html') this.deps.ready?.(p, 'http.fetch')
+      else if (recipe.kind !== 'desktop') this.deps.ready?.(p, 'browser')
+    }
+    return runOnDevice(p, () => this.harvest(recipe, params, manifest, context))
+  }
+
+  private async harvest(
+    recipe: Recipe,
+    params: Record<string, unknown>,
+    manifest: SourceManifest,
+    context?: SourceExecutionContext,
+  ): Promise<unknown[] | AdapterFetchResult> {
     // 动作 recipe 不得经这条路静默执行——见 ActionRecipeBlockedError 头注。判据是"这次调用
     // 是不是用户第一方发起的"（userInitiated），不是"是不是动作"：后者恒真，前者才是真正要防的
     // 那件事。放在最前面，quarantine/sessionPrecheck 之类的分支都不该有机会先于这道闸跑到底。

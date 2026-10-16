@@ -8,6 +8,8 @@ import { EnvironmentUnavailableError } from '../../failure.ts'
 import { HostSessionQueueTimeout, HostRelayDisconnected, HostAbortedByUser } from '../../http/host-relay.ts'
 import type { DebugEntry } from '../../debug.ts'
 import type { SeeResolver } from '../../replay/desktop-see.ts'
+import { currentDeviceId } from '../../devices/run-context.ts'
+import { DeviceOffline, DeviceIncapable } from '../../devices/errors.ts'
 
 /** 一个不干活的识别层：这几条用例只关心"工厂有没有被递到 runner 手上"，梯子本身有它自己的测试。 */
 const NOOP_SEE: SeeResolver = {
@@ -660,5 +662,64 @@ describe('ReplayAdapter — session precheck (cookie fast path)', () => {
     await a.fetch({}, MANIFEST_C)                          // 没有 auth 声明
     expect(cookieLookups).toBe(0)
     expect(sessionFetchCalls).toBe(1)
+  })
+})
+
+describe('ReplayAdapter — 设备放置（facility 绑定到设备）', () => {
+  const HTTP_RECIPE = {
+    version: 1, kind: 'http', sourceId: 'replay-dev', cookieDomain: 'example.com',
+    request: { url: 'https://example.com/api', method: 'GET' },
+    pagination: { mode: 'increment', itemsAt: 'hits', param: 'page', start: 0, step: 1, maxPages: 1 },
+    assert: [{ path: 'hits', desc: 'no hits' }],
+    mapping: { title: 'title', url: 'url' },
+  } as unknown as Recipe
+  const DEV_MANIFEST = { id: 'replay-dev', facility: { key: 'nas-site', label: 'NAS' } } as SourceManifest
+  const NAS = { deviceId: 'linux:nas', allowHosts: ['example.com'] }
+
+  it('绑定到设备的 facility：采集在该设备上下文里跑', async () => {
+    let seen = ''
+    let askedFacility: string | undefined
+    const a = new ReplayAdapter(deps({
+      recipes: { load: () => HTTP_RECIPE },
+      placementFor: (f) => { askedFacility = f; return NAS },
+      ready: () => {},
+      // cookieFor 在 http recipe 每次出站前被问一次，借它读当时的设备；抛错以免真的出站。
+      cookieFor: async () => { seen = currentDeviceId(); throw new Error('stop-before-network') },
+    }))
+    await expect(a.fetch({}, DEV_MANIFEST)).rejects.toThrow('stop-before-network')
+    expect(seen).toBe('linux:nas')
+    expect(askedFacility).toBe('nas-site')
+  })
+
+  it('设备离线：采集抛 DeviceOffline，桩没被调用', async () => {
+    let stubCalls = 0
+    const a = new ReplayAdapter(deps({
+      recipes: { load: () => HTTP_RECIPE },
+      placementFor: () => NAS,
+      ready: (p, need) => { expect(need).toBe('http.fetch'); throw new DeviceOffline(p.deviceId) },
+      cookieFor: async () => { stubCalls++; return undefined },
+    }))
+    await expect(a.fetch({}, DEV_MANIFEST)).rejects.toBeInstanceOf(DeviceOffline)
+    expect(stubCalls).toBe(0)
+  })
+
+  it('远程设备 + 浏览器类 recipe：要 browser 能力，缺则 DeviceIncapable，传输与 launcher 都不碰', async () => {
+    let touched = 0
+    const a = new ReplayAdapter(deps({
+      placementFor: () => NAS,
+      ready: (p, need) => { if (need === 'browser') throw new DeviceIncapable(p.deviceId, need) },
+      ensureTransport: async () => { touched++ },
+      makeLauncher: () => { touched++; return fakeLauncher() },
+    }))
+    await expect(a.fetch({}, DEV_MANIFEST)).rejects.toBeInstanceOf(DeviceIncapable)
+    expect(touched).toBe(0)
+  })
+
+  it('placementFor 缺席 = local：不问 ready，行为与以前一致', async () => {
+    let readyCalls = 0
+    const a = new ReplayAdapter(deps({ ready: () => { readyCalls++ } }))
+    const items = await a.fetch({ query: 'x', page: 0 }, MANIFEST)
+    expect(items).toHaveLength(1)
+    expect(readyCalls).toBe(0)
   })
 })
