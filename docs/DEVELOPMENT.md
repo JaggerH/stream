@@ -54,6 +54,10 @@ If the clone is not in the default location, set `RSSHUB_PKG=/abs/path/RSSHub/li
 it will miss renamed rows, retired rows, and members that were backfilled. First checkout `33221b4c` and run it once (so it brings the database to the current shape),
 then upgrade to the new version. Fresh installs do not have this concern.
 
+**Downgrading past device execution loses login state.** On first start, a version with device execution renames `data/cookies.json` to
+`data/cookies/local.json` (login state is kept per device from then on). An older version only reads `data/cookies.json`, so after a downgrade every
+facility looks logged out. To downgrade, copy `data/cookies/local.json` back to `data/cookies.json` first (or log in again).
+
 ## Start/Stop / Logs / Tests
 
 ```bash
