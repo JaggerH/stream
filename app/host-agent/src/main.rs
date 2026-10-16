@@ -19,6 +19,8 @@
 mod datadir;
 mod glide;
 mod launch;
+#[cfg(target_os = "linux")]
+mod netguard;
 #[cfg(target_os = "macos")]
 mod macos;
 mod nativemsg;
