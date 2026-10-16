@@ -2,10 +2,12 @@ import type { AuthSpec } from '../manifest/types.ts'
 import { cookieStr, transformRegistry } from '../cookie-mapper.ts'
 import type { BrowserCookie } from '../types.ts'
 import type { CredentialProvider, ResolvedCredential } from './types.ts'
+import { currentDeviceId } from '../devices/run-context.ts'
 
 /** Anything that yields cookies-by-domain (the real PushedCookieStore, or a test stub). */
 export interface CookieSource {
-  fetch(): Promise<Record<string, BrowserCookie[]>>
+  /** `deviceId` 缺省 = `local`。 */
+  fetch(deviceId?: string): Promise<Record<string, BrowserCookie[]>>
 }
 
 /**
@@ -50,8 +52,8 @@ function expandCookieEnv(template: string, cookies: BrowserCookie[], ref: string
  */
 export class CookieProvider implements CredentialProvider {
   readonly id = 'cookie'
-  private cookies: Record<string, BrowserCookie[]> | null = null
-  private fetchedAt = 0
+  /** 按设备各一份：执行在哪台设备上，读的就是那台设备的登录态。 */
+  private readonly cache = new Map<string, { cookies: Record<string, BrowserCookie[]>; fetchedAt: number }>()
 
   // Source is swappable at runtime: adapters/resolver hold this provider by reference, so
   // replacing the source here propagates everywhere with no re-wiring. `null` = no source
@@ -67,47 +69,55 @@ export class CookieProvider implements CredentialProvider {
   /** Point at a new cookie source (or null to disable); clears the cache + re-reads. */
   async reconfigure(source: CookieSource | null): Promise<void> {
     this.source = source
-    this.cookies = null
+    this.cache.clear()
     if (source) await this.refresh()
   }
 
-  async refresh(): Promise<void> {
-    this.cookies = this.source ? await this.source.fetch() : null
-    this.fetchedAt = Date.now()
+  /** 缺省刷新当前 placement 的设备。 */
+  async refresh(deviceId: string = currentDeviceId()): Promise<void> {
+    if (!this.source) {
+      this.cache.delete(deviceId)
+      return
+    }
+    this.cache.set(deviceId, { cookies: await this.source.fetch(deviceId), fetchedAt: Date.now() })
   }
 
   /**
+   * 当前执行所在设备的快照（逐设备各一份）。
    * Re-read when the cache is empty or older than ttlMs, so a newly-synced domain surfaces
    * within one TTL without a manual reconfigure. A failure on a WARM cache is swallowed
    * (keep the working cookies, back off a full TTL) — a transient read blip must not strip a
    * live session mid-harvest; only a COLD start surfaces the error.
    */
-  private async ensureFresh(): Promise<void> {
-    if (this.cookies && Date.now() - this.fetchedAt <= this.ttlMs) return
+  private async snapshot(): Promise<Record<string, BrowserCookie[]> | null> {
+    const id = currentDeviceId()
+    const hit = this.cache.get(id)
+    if (hit && Date.now() - hit.fetchedAt <= this.ttlMs) return hit.cookies
     try {
-      await this.refresh()
+      await this.refresh(id)
     } catch (err) {
-      if (!this.cookies) throw err
-      this.fetchedAt = Date.now()
+      if (!hit) throw err
+      hit.fetchedAt = Date.now()
     }
+    return this.cache.get(id)?.cookies ?? null
   }
 
   /** Cookie domains currently held (normalized) — for health/readiness reporting. */
   async availableDomains(): Promise<string[]> {
-    await this.ensureFresh()
-    if (!this.cookies) return []
-    return Object.keys(this.cookies).map(normalizeDomain).sort()
+    const cookies = await this.snapshot()
+    if (!cookies) return []
+    return Object.keys(cookies).map(normalizeDomain).sort()
   }
 
   async resolve(auth: AuthSpec): Promise<ResolvedCredential | null> {
     if (auth.type !== 'cookie') return null
-    await this.ensureFresh()
-    if (!this.cookies) return null
+    const cookies = await this.snapshot()
+    if (!cookies) return null
 
     // scope to the requested domain (suffix match), then inject per the auth's self-description
     const scoped: BrowserCookie[] = []
     const want = normalizeDomain(auth.domain) // 查询侧同样归一，两边对称
-    for (const [raw, cs] of Object.entries(this.cookies)) {
+    for (const [raw, cs] of Object.entries(cookies)) {
       const n = normalizeDomain(raw)
       if (n === want || n.endsWith(`.${want}`)) scoped.push(...cs)
     }
@@ -150,12 +160,12 @@ export class CookieProvider implements CredentialProvider {
    * 而两边单看都正常。
    */
   async cookiesFor(domain: string): Promise<BrowserCookie[]> {
-    await this.ensureFresh()
-    if (!this.cookies) return []
+    const cookies = await this.snapshot()
+    if (!cookies) return []
 
     const out: BrowserCookie[] = []
     const want = normalizeDomain(domain) // 查询侧同样归一，两边对称
-    for (const [raw, cs] of Object.entries(this.cookies)) {
+    for (const [raw, cs] of Object.entries(cookies)) {
       const n = normalizeDomain(raw)
       if (n === want || n.endsWith(`.${want}`)) out.push(...cs)
     }

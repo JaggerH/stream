@@ -1,6 +1,7 @@
 import { describe, it, expect, afterEach, vi } from 'vitest'
 import { CookieProvider, setPackageCookieEnvSource, type CookieSource } from './cookie-provider.ts'
 import type { BrowserCookie } from '../types.ts'
+import { runOnDevice } from '../devices/run-context.ts'
 
 function source(byDomain: Record<string, BrowserCookie[]>): CookieSource {
   return { fetch: async () => byDomain }
@@ -167,5 +168,29 @@ describe('transform 注入先查包声明的模板', () => {
     const p = provider({ 'github.com': [{ name: 'user_session', value: 'tok' } as BrowserCookie] })
     const r = await p.resolve({ type: 'cookie', domain: 'github.com', inject: { kind: 'transform', ref: 'github' } })
     expect(r?.envOverrides).toEqual({ GITHUB_PERSONAL_ACCESS_TOKEN: 'tok' })
+  })
+})
+
+describe('CookieProvider per device', () => {
+  const perDevice: Record<string, Record<string, BrowserCookie[]>> = {
+    local: { 'eastmoneysec.com': [{ name: 'who', value: 'local' } as BrowserCookie] },
+    'linux:nas': { 'eastmoneysec.com': [{ name: 'who', value: 'nas' } as BrowserCookie] },
+  }
+  const src = { fetch: async (id = 'local') => perDevice[id] ?? {} }
+
+  it('按当前设备取', async () => {
+    const p = new CookieProvider(src)
+    expect(await p.cookieString('eastmoneysec.com')).toBe('who=local')
+    expect(await runOnDevice({ deviceId: 'linux:nas', allowHosts: [] }, () => p.cookieString('eastmoneysec.com'))).toBe('who=nas')
+    expect(await runOnDevice({ deviceId: 'android:p', allowHosts: [] }, () => p.cookieString('eastmoneysec.com'))).toBeNull()
+  })
+
+  it('refresh 只刷新指定设备的缓存', async () => {
+    const p = new CookieProvider(src)
+    await runOnDevice({ deviceId: 'linux:nas', allowHosts: [] }, () => p.cookieString('eastmoneysec.com'))
+    perDevice['linux:nas'] = { 'eastmoneysec.com': [{ name: 'who', value: 'nas2' } as BrowserCookie] }
+    perDevice.local = { 'eastmoneysec.com': [{ name: 'who', value: 'local2' } as BrowserCookie] }
+    await p.refresh('linux:nas')
+    expect(await runOnDevice({ deviceId: 'linux:nas', allowHosts: [] }, () => p.cookieString('eastmoneysec.com'))).toBe('who=nas2')
   })
 })

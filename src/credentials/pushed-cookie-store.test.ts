@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { mkdtempSync, rmSync, writeFileSync, statSync, readFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, rmSync, writeFileSync, statSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { PushedCookieStore } from './pushed-cookie-store.ts'
+import { DeviceCookieStores, PushedCookieStore, cookieFileName } from './pushed-cookie-store.ts'
 import { CookieProvider } from './cookie-provider.ts'
 
 let dir: string
@@ -25,7 +25,7 @@ describe('PushedCookieStore', () => {
     expect(s.status().domains).toEqual(['.quark.cn'])
     expect(s.status().updatedAt).toBeTypeOf('number')
     // 不加密，所以文件权限就是唯一的那道保护
-    expect(statSync(join(dir, 'cookies.json')).mode & 0o777).toBe(0o600)
+    expect(statSync(join(dir, 'cookies', 'local.json')).mode & 0o777).toBe(0o600)
   })
 
   it('重启后（新实例）读得到上一次推的', async () => {
@@ -55,8 +55,58 @@ describe('PushedCookieStore', () => {
     s.replace({ 'a.com': [cookie('x', '1')] })
     s.replace({ 'a.com': [cookie('x', '2')] })
     // 半份 JSON 会让采集把"解析失败"当成"没登录"——所以先写 tmp 再 rename
-    const raw = JSON.parse(readFileSync(join(dir, 'cookies.json'), 'utf8')) as { cookies: unknown }
+    const raw = JSON.parse(readFileSync(join(dir, 'cookies', 'local.json'), 'utf8')) as { cookies: unknown }
     expect(raw.cookies).toEqual({ 'a.com': [cookie('x', '2')] })
+  })
+})
+
+const c = (name: string) => ({ name, value: 'v', domain: 'eastmoneysec.com' }) as never
+
+describe('per-device cookie snapshots', () => {
+  it('两台设备各写各的文件', async () => {
+    const stores = new DeviceCookieStores(dir)
+    stores.forDevice('linux:nas').replace({ 'eastmoneysec.com': [c('nas')] })
+    expect(await stores.fetch('linux:nas')).toEqual({ 'eastmoneysec.com': [c('nas')] })
+    expect(await stores.fetch('local')).toEqual({})
+    expect(existsSync(join(dir, 'cookies', cookieFileName('linux:nas')))).toBe(true)
+  })
+
+  it('设备 id 里的冒号与斜杠不会逃出 cookies 目录', () => {
+    expect(cookieFileName('linux:3f2a')).toBe('linux_3f2a.json')
+    expect(cookieFileName('../../etc')).not.toContain('/')
+  })
+
+  it('旧 cookies.json 迁为 local，内容不变', async () => {
+    writeFileSync(join(dir, 'cookies.json'), JSON.stringify({ updatedAt: 1, cookies: { 'eastmoneysec.com': [c('old')] } }))
+    const s = new PushedCookieStore(dir, 'local')
+    expect(await s.fetch()).toEqual({ 'eastmoneysec.com': [c('old')] })
+    expect(existsSync(join(dir, 'cookies.json'))).toBe(false)
+    expect(JSON.parse(readFileSync(join(dir, 'cookies', 'local.json'), 'utf8')).cookies['eastmoneysec.com'][0].name).toBe('old')
+  })
+
+  it('新旧都在时不覆盖新的', async () => {
+    new PushedCookieStore(dir, 'local').replace({ b: [c('new')] })
+    // 迁移跑过之后旧文件又出现了（有人从备份放回来）：不能用它盖掉新的。
+    writeFileSync(join(dir, 'cookies.json'), JSON.stringify({ updatedAt: 1, cookies: { a: [c('old')] } }))
+    expect(await new PushedCookieStore(dir, 'local').fetch()).toEqual({ b: [c('new')] })
+    expect(existsSync(join(dir, 'cookies.json'))).toBe(true)
+  })
+
+  it('改名失败时 local 仍读得到旧文件（升级不掉登录）', async () => {
+    writeFileSync(join(dir, 'cookies.json'), JSON.stringify({ updatedAt: 1, cookies: { a: [c('old')] } }))
+    // 让 cookies 目录建不出来：同名普通文件挡路，迁移必然失败
+    writeFileSync(join(dir, 'cookies'), 'x')
+    const logs: string[] = []
+    const s = new PushedCookieStore(dir, 'local', (l) => logs.push(l))
+    expect(logs.some((l) => l.includes('WARN'))).toBe(true)
+    expect(await s.fetch()).toEqual({ a: [c('old')] })
+    expect(existsSync(join(dir, 'cookies.json'))).toBe(true)
+  })
+
+  it('非 local 设备不碰旧文件', async () => {
+    writeFileSync(join(dir, 'cookies.json'), JSON.stringify({ updatedAt: 1, cookies: { a: [c('old')] } }))
+    expect(await new PushedCookieStore(dir, 'linux:nas').fetch()).toEqual({})
+    expect(existsSync(join(dir, 'cookies.json'))).toBe(true)
   })
 })
 

@@ -1,6 +1,7 @@
 import type { Context } from 'cordis'
 import { CookieProvider, type CookieSource } from '../../credentials/cookie-provider.ts'
-import { PushedCookieStore, type CookieHealth } from '../../credentials/pushed-cookie-store.ts'
+import { DeviceCookieStores, type PushedCookieStore, type CookieHealth } from '../../credentials/pushed-cookie-store.ts'
+import { LOCAL_DEVICE } from '../../devices/run-context.ts'
 import { CredentialResolver } from '../../credentials/resolver.ts'
 import { TokenProvider } from '../../credentials/token-provider.ts'
 import type { CredentialProvider } from '../../credentials/types.ts'
@@ -18,8 +19,10 @@ export interface ExtSyncConfig {
 }
 
 export interface CredentialsService {
-  /** 后端从用户 Chrome 里取回来的那份登录态（`data/cookies.json`）。 */
+  /** 本机（`local` 设备）那份登录态（`data/cookies/local.json`）——本机扩展的 cookie 拉取写它。 */
   pushedCookies: PushedCookieStore
+  /** 每台设备各一份登录态；设备执行读自己那台的。 */
+  cookieStores: DeviceCookieStores
   /** 供 cookie 的 provider；`reconfigure` 可热换来源，持它引用的 adapter 无需重新接线。 */
   cookieProvider: CookieProvider
   /** 按逻辑名解 BYOK key（stored → env 两层）。 */
@@ -63,8 +66,9 @@ export const credentialsPlugin = {
   apply(ctx: Context, config: CredentialsConfig): void {
     const settings = ctx.settings
 
-    const pushedCookies = new PushedCookieStore(config.dataDir)
-    const cookieSource: CookieSource = pushedCookies
+    const cookieStores = new DeviceCookieStores(config.dataDir, config.log)
+    const pushedCookies = cookieStores.forDevice(LOCAL_DEVICE)
+    const cookieSource: CookieSource = cookieStores
 
     const providers: CredentialProvider[] = []
     const cookieProvider = new CookieProvider(cookieSource)
@@ -102,6 +106,7 @@ export const credentialsPlugin = {
 
     ctx.provide('credentials', {
       pushedCookies,
+      cookieStores,
       cookieProvider,
       tokenProvider,
       resolver: new CredentialResolver(providers),
