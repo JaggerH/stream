@@ -95,7 +95,17 @@ pub struct Session {
     pub fetcher: Option<std::sync::Arc<FetcherLike>>,
     /// token 是配对得来的 device token：握手 401 / 关闭码 4003 = 已被撤销，不是"后端还没起完"。
     pub paired: bool,
+    /// 多久一帧都没收到就判这条连接已死、结束会话交给监督循环重连。`None` = 不判（本机模式）。
+    ///
+    /// 设备模式平时只在回答时才写 socket：连接若没有 FIN 就没了（路由器重启、PPPoE 重拨、NAT 映射
+    /// 过期——国内家宽的日常），`rx.next()` 会永远等下去，NAS 一直离线到有人去重启它。后端每 ~20s
+    /// ping 一次（host-relay.ts 的 attachHostRelay），所以"很久没听到任何帧"本身就是连接死了的证据。
+    /// 本机模式连的是同机的 loopback，不会这样死，行为不变。
+    pub silence_limit: Option<std::time::Duration>,
 }
+
+/// 设备模式的静默上限：连续错过三次后端 ping（~20s 一次）才判死，一次丢包或一次慢回复不至于误杀。
+pub const PAIRED_SILENCE_LIMIT: std::time::Duration = std::time::Duration::from_secs(60);
 
 /// The active Desktop backend for this OS.
 ///
@@ -526,7 +536,7 @@ async fn main() {
             // 后端（AX 句柄）不是 Send，在这条线程里建。
             let mut backend = Backend::default();
             let mut supervisor = Supervisor::default();
-            let session = Session { url, token, hello: relay::local_hello(), fetcher: None, paired: false };
+            let session = Session { url, token, hello: relay::local_hello(), fetcher: None, paired: false, silence_limit: None };
             let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().expect("tokio runtime");
             let _ = rt.block_on(supervise(&session, &mut backend, &mut supervisor, Some(&handle)));
         });
@@ -537,7 +547,7 @@ async fn main() {
     {
         let mut backend = Backend::default();
         let mut supervisor = Supervisor::default();
-        let session = Session { url, token, hello: relay::local_hello(), fetcher: None, paired: false };
+        let session = Session { url, token, hello: relay::local_hello(), fetcher: None, paired: false, silence_limit: None };
         // 本机会话不以撤销结束（paired=false），这一行实际走不到；真走到了就如实退出，别装作还在跑。
         let why = supervise(&session, &mut backend, &mut supervisor, overlay_handle.as_ref()).await;
         eprintln!("[host-agent] {why}");
@@ -588,6 +598,7 @@ async fn run_device_mode(env: device::DeviceEnv) {
             hello: device::device_hello(&pairing.device_id, &env.name),
             fetcher: Some(fetcher.clone()),
             paired: true,
+            silence_limit: Some(PAIRED_SILENCE_LIMIT),
         };
         let mut backend = Backend::default();
         let why = supervise(&session, &mut backend, &mut Supervisor::default(), None).await;
@@ -680,10 +691,15 @@ async fn run_session<D: protocol::Desktop>(
     // **到点熄灭**。不为它引 `tokio::sync::mpsc` 去改造渲染层——那边是个 Win32 消息泵线程，
     // 本来就得自己轮询，换成异步 channel 只是把轮询挪个地方。
     let mut hot = tokio::time::interval(std::time::Duration::from_millis(20));
+    // 最后一次收到任何帧（含 Ping/Pong）的时刻；握手完成就算第一次"听到"对端。
+    let mut last_heard = std::time::Instant::now();
     loop {
         let msg = tokio::select! {
             m = rx.next() => match m {
-                Some(m) => m,
+                Some(m) => {
+                    last_heard = std::time::Instant::now();
+                    m
+                }
                 None => break,
             },
             Some(line) = out_rx.recv() => {
@@ -693,6 +709,12 @@ async fn run_session<D: protocol::Desktop>(
                 continue;
             }
             _ = hot.tick() => {
+                // 静默判死放在心跳里：不为它另起一个计时器，20ms 的粒度对 60s 的上限绰绰有余。
+                // 以 Disconnected 结束——对监督循环而言它就是"连上过、然后断了"，照常复位退避重连。
+                if session.silence_limit.is_some_and(|limit| last_heard.elapsed() >= limit) {
+                    eprintln!("[host-agent] {:.0}s 没收到主实例的任何帧，判定连接已断", last_heard.elapsed().as_secs_f32());
+                    break;
+                }
                 if let Some(o) = overlay {
                     // 热键：只发一帧 `{"type":"abort"}` 就够了，**不需要在 agent 侧维持"已中止"
                     // 的状态**。op 在物理连接上严格串行，后端收到 abort 会把挂起的那个 op 和
@@ -809,7 +831,7 @@ mod tests {
     use tokio_tungstenite::tungstenite::protocol::{frame::coding::CloseCode, CloseFrame};
 
     fn local_session(url: &str) -> Session {
-        Session { url: url.to_string(), token: "token".into(), hello: relay::local_hello(), fetcher: None, paired: false }
+        Session { url: url.to_string(), token: "token".into(), hello: relay::local_hello(), fetcher: None, paired: false, silence_limit: None }
     }
 
     #[cfg(target_os = "linux")]
@@ -820,7 +842,77 @@ mod tests {
             hello: relay::hello_frame("linux:abc", "linux", "nas", "0.1.0", &["http.fetch"]),
             fetcher: Some(Arc::new(httpfetch::Fetcher::new(httpfetch::Guard::loopback_ok(), None).unwrap())),
             paired: true,
+            silence_limit: Some(PAIRED_SILENCE_LIMIT),
         }
+    }
+
+    /// 握手成功、收下 hello，然后一声不吭地攥着 socket 不关——没有 FIN 就断了的连接在 agent 看来
+    /// 就是这个样子（路由器重启、NAT 映射过期）。
+    async fn silent_relay() -> String {
+        let l = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = l.local_addr().unwrap();
+        tokio::spawn(async move {
+            let mut held = Vec::new();
+            while let Ok((stream, _)) = l.accept().await {
+                let echo = |_r: &Request, mut resp: Response| {
+                    resp.headers_mut().insert(SEC_WEBSOCKET_PROTOCOL, PROTOCOL.parse().unwrap());
+                    Ok(resp)
+                };
+                let Ok(mut ws) = tokio_tungstenite::accept_hdr_async(stream, echo).await else { continue };
+                let _ = ws.next().await;
+                held.push(ws);
+            }
+        });
+        format!("ws://{addr}/api/host")
+    }
+
+    /// F1：设备会话很久收不到任何帧就自己结束（交给监督循环重连），不在一条死连接上等到天荒地老。
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn a_silent_connection_ends_a_paired_session() {
+        let url = silent_relay().await;
+        let mut backend = Backend::default();
+        let session = Session { silence_limit: Some(Duration::from_millis(300)), ..device_session(&url) };
+        let end = tokio::time::timeout(Duration::from_secs(3), run_session(&session, &mut backend, None))
+            .await
+            .expect("静默超过上限后会话应当结束");
+        assert_eq!(end, SessionEnd::Disconnected);
+    }
+
+    /// 判的是"静默"不是"连接时长"：对端按时 ping，设备会话就一直活着。
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn a_pinging_relay_keeps_a_paired_session_alive() {
+        let l = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = l.local_addr().unwrap();
+        tokio::spawn(async move {
+            let (stream, _) = l.accept().await.unwrap();
+            let echo = |_r: &Request, mut resp: Response| {
+                resp.headers_mut().insert(SEC_WEBSOCKET_PROTOCOL, PROTOCOL.parse().unwrap());
+                Ok(resp)
+            };
+            let mut ws = tokio_tungstenite::accept_hdr_async(stream, echo).await.unwrap();
+            let _ = ws.next().await;
+            loop {
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                if ws.send(Message::Ping(vec![])).await.is_err() {
+                    break;
+                }
+            }
+        });
+        let session = Session { silence_limit: Some(Duration::from_millis(300)), ..device_session(&format!("ws://{addr}/api/host")) };
+        let mut backend = Backend::default();
+        let outcome = tokio::time::timeout(Duration::from_millis(1500), run_session(&session, &mut backend, None)).await;
+        assert!(outcome.is_err(), "按时 ping 的连接不该被判死：{outcome:?}");
+    }
+
+    /// 本机会话不判静默：同一个不说话的中继，它照样一直挂着。
+    #[tokio::test]
+    async fn a_silent_connection_does_not_end_a_local_session() {
+        let url = silent_relay().await;
+        let mut backend = Backend::default();
+        let outcome = tokio::time::timeout(Duration::from_millis(1500), run_session(&local_session(&url), &mut backend, None)).await;
+        assert!(outcome.is_err(), "本机会话不该因为静默而结束：{outcome:?}");
     }
 
     /// 握手阶段就回 401 的中继（不升级）。
