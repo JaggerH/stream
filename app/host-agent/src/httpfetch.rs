@@ -299,6 +299,9 @@ fn too_large() -> FetchError {
 /// reqwest 的错误 → 线上 code。resolver 的拒绝埋在错误链深处（reqwest → hyper-util → 我们的
 /// `PrivateTarget`），顺着 `source()` 找；找不到才看是不是超时，其余都是 `network`。
 fn classify(e: reqwest::Error) -> FetchError {
+    // 先剥掉 URL：reqwest 的 Display 带着完整 URL（含查询串），而这条信息会回到后端的运行记录里，
+    // 交易类 URL 的查询串常带 token。错误链里更深的那几层（hyper / IO）不含 URL。
+    let e = e.without_url();
     let mut src: Option<&(dyn std::error::Error + 'static)> = Some(&e);
     while let Some(s) = src {
         if let Some(p) = s.downcast_ref::<PrivateTarget>() {
@@ -557,6 +560,17 @@ mod tests {
         let r = fetcher().fetch(a).await.unwrap();
         assert_eq!(r.body, b64("你好".as_bytes()));
         assert!(header(&r, "content-encoding").is_empty(), "解压后不再声称是 gzip");
+    }
+
+    /// 错误信息会写进后端的运行记录：交易类 URL 的查询串里带着 token，不能跟着错误回去。
+    #[tokio::test]
+    async fn a_network_error_does_not_echo_the_url() {
+        let l = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = l.local_addr().unwrap();
+        drop(l);
+        let e = fetcher().fetch(args(&format!("http://{addr}/trade?secret=XYZ"), &["127.0.0.1"])).await.unwrap_err();
+        assert_eq!(e.code, "network");
+        assert!(!e.message.contains("XYZ") && !e.message.contains("/trade"), "{}", e.message);
     }
 
     #[tokio::test]
