@@ -15,6 +15,12 @@ describe('parseHello', () => {
   it('accepts a well-formed hello frame', () => {
     expect(parseHello(JSON.stringify({ type: 'hello', ...hello() }))).toEqual(hello())
   })
+  // `local` 是后端本机的保留 id：一台自称 local 的设备连上来，fetchFor 判 local 走本机、
+  // 设备目录却说它在线——两套答案。握手就拒。
+  it('rejects the reserved deviceId local (any case / padding)', () => {
+    expect(parseHello(JSON.stringify({ type: 'hello', ...hello({ deviceId: 'local' }) }))).toBeNull()
+    expect(parseHello(JSON.stringify({ type: 'hello', ...hello({ deviceId: ' Local ' }) }))).toBeNull()
+  })
   it('rejects anything that is not a hello — a missing field must not become a default', () => {
     expect(parseHello('not json')).toBeNull()
     expect(parseHello(JSON.stringify({ id: 1, result: {} }))).toBeNull()

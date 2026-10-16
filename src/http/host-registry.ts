@@ -7,6 +7,7 @@
  * connection, and two recipes on two devices do not wait for each other.
  */
 import { WsHostRelay, type HostSocket } from './host-relay.ts'
+import { LOCAL_DEVICE } from '../devices/run-context.ts'
 
 export type HostPlatform = 'windows' | 'macos' | 'android' | 'linux'
 /** What a recipe targets. A recipe asks for a surface, not for an OS. */
@@ -74,6 +75,8 @@ export function parseHello(raw: string): HostHello | null {
   if (m === null || typeof m !== 'object' || m.type !== 'hello') return null
   const { deviceId, platform, name, agentVersion, ops } = m
   if (!nonEmpty(deviceId) || !nonEmpty(name) || !nonEmpty(agentVersion)) return null
+  // `local` 是后端本机的保留 id（fetchFor 见到它就走本机），不能被一台设备占用。
+  if (deviceId.trim().toLowerCase() === LOCAL_DEVICE) return null
   if (typeof platform !== 'string' || !PLATFORMS.has(platform)) return null
   if (!Array.isArray(ops) || !ops.every((o) => typeof o === 'string')) return null
   return { deviceId, platform: platform as HostPlatform, name, agentVersion, ops: ops as string[] }
