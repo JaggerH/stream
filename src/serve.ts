@@ -41,6 +41,7 @@ import { DeviceStore } from './devices/device-store.ts'
 import { FacilityDeviceStore } from './devices/facility-devices.ts'
 import { assertDeviceReady, resolvePlacement, unavailableBindings, type FacilityBindings } from './devices/placement.ts'
 import { installFetchFor, makeFetchFor } from './devices/fetch.ts'
+import { installGlobalFetchTrap } from './devices/global-fetch-trap.ts'
 import type { RunPlacement } from './devices/run-context.ts'
 import type { UserTaskRow } from './tasks/task-store.ts'
 import { attachEnrichCommands } from './http/enrich-ws.ts'
@@ -395,6 +396,9 @@ const apiToken = config.api_token || loadOrCreateApiToken(dirname(config.item_db
   // 出站唯一入口接上设备目录。之前（装配早期）的 fetchFor 对非 local 一律报离线，这一步之后才能派到设备。
   // 必须早于调度中心 / 任务中心开始派活（它们在本函数更靠后才启动）。
   installFetchFor(makeFetchFor({ directory: harvest.hostRelays, debug: recordDebug }))
+  // 全局 fetch 的运行时兜底：远程设备上的执行里直接调全局 fetch 就抛，而不是从本机发出去。
+  // owned-outbound 早在文件首行就快照了原始 fetch，ownedFetch 不经过它。见 global-fetch-trap.ts 头注。
+  installGlobalFetchTrap()
   // 授权健康住 `ctx.auth`（横幅 / 对账 / 重登）。`focusLoginTab` 不在这儿——它是 lane 的薄壳，
   // 归 harvest 域。
   const auth = kernel.auth
