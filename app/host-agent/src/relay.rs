@@ -31,6 +31,10 @@ pub enum SessionEnd {
     Rejected(String),
     /// 连上过、跑过一会儿，然后断了（后端重启、网络抖动、对端主动关）。
     Disconnected,
+    /// 配对设备的 token 被主实例作废了：握手 401，或连接被以 4003 关闭（`host-relay.ts` 的
+    /// `attachHostRelay`；后端内部故障回的是 503 / 1011，不会落到这里）。**不重试**——拿同一个
+    /// token 再连一万次也还是 401；监督循环在这里返回，交给设备模式去作废保存的配对、重新配对。
+    Revoked(String),
 }
 
 impl SessionEnd {
@@ -48,6 +52,9 @@ impl SessionEnd {
                  agent 的 token 只在启动时从环境变量读一次，换 token 需要重启工作台"
             ),
             SessionEnd::Disconnected => "disconnected".to_string(),
+            SessionEnd::Revoked(e) => format!(
+                "主实例撤销了这台设备（{e}）——保存的配对作废，需要在主实例上生成新配对码，设进 STREAM_PAIRING_CODE 后重启"
+            ),
         }
     }
 }
@@ -180,6 +187,14 @@ mod tests {
         assert_eq!(s.after(&rejected), ms(100));
         assert_eq!(s.after(&rejected), ms(200));
         assert!(rejected.reason().contains("重启工作台"), "日志要给出可操作的下一步");
+    }
+
+    /// 撤销不是"连不上"：监督循环据此停下来交给设备模式去重新配对，日志要说出下一步。
+    #[test]
+    fn a_revoked_session_says_what_to_do() {
+        let r = SessionEnd::Revoked("HTTP 401".into());
+        assert!(r.reason().contains("撤销"));
+        assert!(r.reason().contains("STREAM_PAIRING_CODE"));
     }
 
     /// 生产默认值就是扩展侧那套（1s 起、30s 封顶）——两端一致，排错不用记两套数。

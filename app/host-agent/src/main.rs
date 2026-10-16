@@ -69,6 +69,32 @@ impl OverlayHandleLike {
     }
 }
 
+/// `http.fetch` 的执行者。Linux 上是真的（`httpfetch.rs`）；其余平台没有设备模式，用一个**不可构造**
+/// 的类型占位——和 `OverlayHandleLike` 同一个做法，`Session` 与 `run_session` 的签名因此不用套 `#[cfg]`。
+#[cfg(target_os = "linux")]
+type FetcherLike = httpfetch::Fetcher;
+#[cfg(not(target_os = "linux"))]
+pub enum FetcherLike {}
+#[cfg(not(target_os = "linux"))]
+impl FetcherLike {
+    pub async fn reply(&self, _id: Value, _args: &Value) -> Value {
+        match *self {}
+    }
+}
+
+/// 一条会话要的全部输入。本机模式与设备模式只在这几个值上不同——WS 客户端、`host-relay.v2`
+/// 协议、监督循环是同一份（spec linux-device-agent：复用现有的协议与 WS 客户端实现）。
+pub struct Session {
+    pub url: String,
+    pub token: String,
+    /// 首帧。本机模式是 `relay::local_hello()`，设备模式是 `device::device_hello(..)`。
+    pub hello: Value,
+    /// 设备模式才有：`http.fetch` 交给它并发执行。缺席时这个 op 和其他没声明的 op 一样落进 dispatch 报错。
+    pub fetcher: Option<std::sync::Arc<FetcherLike>>,
+    /// token 是配对得来的 device token：握手 401 / 关闭码 4003 = 已被撤销，不是"后端还没起完"。
+    pub paired: bool,
+}
+
 /// The active Desktop backend for this OS.
 ///
 /// **三档，不是两档**：Windows（UIA）、macOS（AX）、其余（占位）。分档写在这一处，
@@ -478,8 +504,9 @@ async fn main() {
             // 后端（AX 句柄）不是 Send，在这条线程里建。
             let mut backend = Backend::default();
             let mut supervisor = Supervisor::default();
+            let session = Session { url, token, hello: relay::local_hello(), fetcher: None, paired: false };
             let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().expect("tokio runtime");
-            rt.block_on(supervise(&url, &token, &mut backend, &mut supervisor, Some(&handle)));
+            let _ = rt.block_on(supervise(&session, &mut backend, &mut supervisor, Some(&handle)));
         });
         lp.run(None);
         return;
@@ -488,24 +515,31 @@ async fn main() {
     {
         let mut backend = Backend::default();
         let mut supervisor = Supervisor::default();
-        supervise(&url, &token, &mut backend, &mut supervisor, overlay_handle.as_ref()).await;
+        let session = Session { url, token, hello: relay::local_hello(), fetcher: None, paired: false };
+        // 本机会话不以撤销结束（paired=false），这一行实际走不到；真走到了就如实退出，别装作还在跑。
+        let why = supervise(&session, &mut backend, &mut supervisor, overlay_handle.as_ref()).await;
+        eprintln!("[host-agent] {why}");
+        std::process::exit(1);
     }
 }
 
-/// 监督循环：连 → 跑会话 → 退避 → 再连，**永不返回**。
+/// 监督循环：连 → 跑会话 → 退避 → 再连。**只有一个出口：设备被撤销**（返回原因，交给设备模式
+/// 重新配对）；本机模式的会话不会以撤销结束，于是对它而言这仍是一个永不返回的循环。
 ///
 /// 这个函数存在的全部理由，是让 agent 的寿命不再等于一条 WebSocket 的寿命。进程只有两条
 /// 出路：父进程（持有它的那个 DSH 引擎进程）没了（stdin EOF，见 `main`），或者被杀。中继断了从来不是其中之一
 /// ——后端 restart 是开发期的日常，agent 得自己熬过去。退避语义见 `relay.rs`。
 async fn supervise<D: protocol::Desktop>(
-    url: &str,
-    token: &str,
+    session: &Session,
     backend: &mut D,
     supervisor: &mut Supervisor,
     overlay: Option<&OverlayHandleLike>,
-) {
+) -> String {
     loop {
-        let end = run_session(url, token, backend, overlay).await;
+        let end = run_session(session, backend, overlay).await;
+        if let SessionEnd::Revoked(why) = &end {
+            return why.clone();
+        }
         let delay = supervisor.after(&end);
         eprintln!(
             "[host-agent] {} — reconnecting in {:.1}s (attempt #{})",
@@ -522,18 +556,17 @@ async fn supervise<D: protocol::Desktop>(
 ///
 /// `overlay` 缺席（非 Windows / 渲染层没起来）时整条指示条逻辑空转，会话本身不受影响。
 async fn run_session<D: protocol::Desktop>(
-    url: &str,
-    token: &str,
+    session: &Session,
     backend: &mut D,
     overlay: Option<&OverlayHandleLike>,
 ) -> SessionEnd {
-    let mut req = match url.into_client_request() {
+    let mut req = match session.url.as_str().into_client_request() {
         Ok(r) => r,
         Err(e) => return SessionEnd::ConnectFailed(format!("bad url: {e}")),
     };
     // The relay's verifyHostUpgrade expects [host-relay.v2, <token>] in Sec-WebSocket-Protocol;
     // the token rides the header, never the URL (so it never lands in an access log).
-    let proto = match format!("{PROTOCOL}, {token}").parse() {
+    let proto = match format!("{PROTOCOL}, {}", session.token).parse() {
         Ok(v) => v,
         Err(e) => return SessionEnd::ConnectFailed(format!("bad token header: {e}")),
     };
@@ -541,6 +574,11 @@ async fn run_session<D: protocol::Desktop>(
 
     let (ws, _resp) = match tokio_tungstenite::connect_async(req).await {
         Ok(v) => v,
+        // device token 的 401 是确定的撤销（后端内部故障回 503，见 host-relay.ts 的 attachHostRelay），
+        // 不是共享 token 那种"后端重启途中还没挂上中继"——拿同一个 token 再试也还是 401。
+        Err(WsError::Http(resp)) if session.paired && resp.status().as_u16() == 401 => {
+            return SessionEnd::Revoked(format!("HTTP {}", resp.status()));
+        }
         // 握手被中继当场拒掉（401/403）和"连不上"是两种病，日志要分得开：前者是 token 的事，
         // 后者是后端在不在的事。两者都重试（理由见 SessionEnd::Rejected 的注释）。
         Err(WsError::Http(resp)) if resp.status().as_u16() == 401 || resp.status().as_u16() == 403 => {
@@ -551,10 +589,16 @@ async fn run_session<D: protocol::Desktop>(
     eprintln!("[host-agent] connected");
     let (mut tx, mut rx) = ws.split();
     // v2: the relay registers this device only after a hello, and closes with 4001 on anything else.
-    if tx.send(Message::Text(relay::local_hello().to_string())).await.is_err() {
+    if tx.send(Message::Text(session.hello.to_string())).await.is_err() {
         return SessionEnd::Disconnected;
     }
 
+    // http.fetch 不在这条循环里执行：一个慢请求（跨洋、对端卡住）会把后面所有帧都堵到它超时为止，
+    // 而后端给每台设备开了 4 个在途名额（host-relay.ts 的 DEVICE_FETCH_CONCURRENCY），本来就期待并发。
+    // 每个请求一个任务，回复经 channel 交回这里写 socket——写端只有这一个所有者。
+    let (out_tx, mut out_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+    let mut fetches = tokio::task::JoinSet::new();
+    let mut end = SessionEnd::Disconnected;
     let mut policy = overlay::OverlayPolicy::new();
     // 20ms 的心跳，兼两件事：**收热键**（渲染层那头是同步 channel，跨线程送过来）和
     // **到点熄灭**。不为它引 `tokio::sync::mpsc` 去改造渲染层——那边是个 Win32 消息泵线程，
@@ -566,6 +610,12 @@ async fn run_session<D: protocol::Desktop>(
                 Some(m) => m,
                 None => break,
             },
+            Some(line) = out_rx.recv() => {
+                if tx.send(Message::Text(line)).await.is_err() {
+                    break;
+                }
+                continue;
+            }
             _ = hot.tick() => {
                 if let Some(o) = overlay {
                     // 热键：只发一帧 `{"type":"abort"}` 就够了，**不需要在 agent 侧维持"已中止"
@@ -593,6 +643,11 @@ async fn run_session<D: protocol::Desktop>(
         let text = match msg {
             Ok(Message::Text(t)) => t,
             Ok(Message::Ping(_)) | Ok(Message::Pong(_)) => continue,
+            // 4003 = 主实例撤销了这台设备（或 token 与 hello 对不上），见 host-relay.ts。
+            Ok(Message::Close(Some(f))) if session.paired && u16::from(f.code) == 4003 => {
+                end = SessionEnd::Revoked(format!("closed 4003: {}", f.reason));
+                break;
+            }
             Ok(Message::Close(_)) | Err(_) => break,
             _ => continue,
         };
@@ -606,6 +661,18 @@ async fn run_session<D: protocol::Desktop>(
 
         // `status` 的收件人是指示条，不是桌面：在这里拦下、不进 dispatch。没有渲染层
         // （非 Windows）也照样回 `{}`——它是提示，缺席不该让后端那一步失败。
+        if op == "http.fetch" {
+            if let Some(f) = &session.fetcher {
+                let (f, out) = (f.clone(), out_tx.clone());
+                fetches.spawn(async move {
+                    let _ = out.send(f.reply(id, &args).await.to_string());
+                });
+                // 完成了的任务的结果会一直攒在 JoinSet 里；每来一个新请求顺手收掉。
+                while fetches.try_join_next().is_some() {}
+                continue;
+            }
+        }
+
         if op == "status" {
             if let Some(o) = overlay {
                 if let Some(cmd) = policy.on_status(protocol::status_arg(&args)) {
@@ -644,13 +711,16 @@ async fn run_session<D: protocol::Desktop>(
             }
         }
     }
+    // 断开时还在跑的请求一律放弃：后端已经把它们判成 device-lost（状态未知、不重试），
+    // 结果写不回一条已经不在的连接。
+    fetches.abort_all();
     // 断连立刻熄（连同任务文字）——后端都不在了还亮着就是撒谎。
     if let Some(o) = overlay {
         for cmd in policy.on_session_end() {
             o.send(cmd);
         }
     }
-    SessionEnd::Disconnected
+    end
 }
 
 #[cfg(test)]
@@ -659,6 +729,161 @@ mod tests {
     use std::time::Duration;
     use tokio::net::TcpListener;
     use tokio_tungstenite::tungstenite::handshake::server::{Request, Response};
+    use std::sync::Arc;
+    use tokio_tungstenite::tungstenite::protocol::{frame::coding::CloseCode, CloseFrame};
+
+    fn local_session(url: &str) -> Session {
+        Session { url: url.to_string(), token: "token".into(), hello: relay::local_hello(), fetcher: None, paired: false }
+    }
+
+    #[cfg(target_os = "linux")]
+    fn device_session(url: &str) -> Session {
+        Session {
+            url: url.to_string(),
+            token: "device-token".into(),
+            hello: relay::hello_frame("linux:abc", "linux", "nas", "0.1.0", &["http.fetch"]),
+            fetcher: Some(Arc::new(httpfetch::Fetcher::new(httpfetch::Guard::loopback_ok(), None).unwrap())),
+            paired: true,
+        }
+    }
+
+    /// 握手阶段就回 401 的中继（不升级）。
+    async fn refusing_relay() -> String {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let l = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = l.local_addr().unwrap();
+        tokio::spawn(async move {
+            while let Ok((mut s, _)) = l.accept().await {
+                let mut buf = [0u8; 4096];
+                let _ = s.read(&mut buf).await;
+                let _ = s.write_all(b"HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").await;
+            }
+        });
+        format!("ws://{addr}/api/host")
+    }
+
+    /// 握手成功、收下 hello、再以给定关闭码关掉的中继。
+    async fn closing_relay(code: u16) -> String {
+        let l = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = l.local_addr().unwrap();
+        tokio::spawn(async move {
+            while let Ok((stream, _)) = l.accept().await {
+                let echo = |_r: &Request, mut resp: Response| {
+                    resp.headers_mut().insert(SEC_WEBSOCKET_PROTOCOL, PROTOCOL.parse().unwrap());
+                    Ok(resp)
+                };
+                let Ok(mut ws) = tokio_tungstenite::accept_hdr_async(stream, echo).await else { continue };
+                let _ = ws.next().await;
+                let _ = ws.send(Message::Close(Some(CloseFrame { code: CloseCode::from(code), reason: "revoked".into() }))).await;
+            }
+        });
+        format!("ws://{addr}/api/host")
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn a_401_on_a_paired_session_is_a_revoke_but_on_the_shared_token_it_is_a_retry() {
+        let url = refusing_relay().await;
+        let mut backend = Backend::default();
+        assert!(matches!(run_session(&device_session(&url), &mut backend, None).await, SessionEnd::Revoked(_)));
+        assert!(matches!(run_session(&local_session(&url), &mut backend, None).await, SessionEnd::Rejected(_)));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn a_4003_close_on_a_paired_session_is_a_revoke() {
+        let url = closing_relay(4003).await;
+        let mut backend = Backend::default();
+        assert!(matches!(run_session(&device_session(&url), &mut backend, None).await, SessionEnd::Revoked(_)));
+        let url = closing_relay(1001).await;
+        assert!(matches!(run_session(&device_session(&url), &mut backend, None).await, SessionEnd::Disconnected));
+    }
+
+    /// 撤销是监督循环唯一的出口：返回撤销原因，交给设备模式。
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn supervise_returns_only_when_the_device_is_revoked() {
+        let url = closing_relay(4003).await;
+        let mut backend = Backend::default();
+        let mut sup = Supervisor::with(Duration::from_millis(20), Duration::from_millis(60));
+        let why = tokio::time::timeout(Duration::from_secs(5), supervise(&device_session(&url), &mut backend, &mut sup, None))
+            .await
+            .expect("撤销之后监督循环应当返回");
+        assert!(why.contains("4003"), "{why}");
+    }
+
+    /// 设备会话的首帧是调用方给的 hello（linux 平台、只声明 http.fetch），不是本机那份。
+    ///
+    /// 服务端任务把 `ws` 连同首帧一起交回来：若在任务里就 drop 掉，客户端会在 `select!` 轮到
+    /// 服务端那一臂之前先看到断连、让 `run_session` 先返回，两臂同时就绪，随机命中 panic 那臂
+    /// （曾经的偶发失败）。socket 的寿命撑到断言之后，两臂就不会同时就绪。
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn a_device_session_sends_its_own_hello_first() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let echo = |_r: &Request, mut resp: Response| {
+                resp.headers_mut().insert(SEC_WEBSOCKET_PROTOCOL, PROTOCOL.parse().unwrap());
+                Ok(resp)
+            };
+            let mut ws = tokio_tungstenite::accept_hdr_async(stream, echo).await.unwrap();
+            let first = ws.next().await.unwrap().unwrap();
+            (serde_json::from_str::<Value>(first.to_text().unwrap()).unwrap(), ws)
+        });
+        let session = device_session(&format!("ws://{addr}/api/host"));
+        let mut backend = Backend::default();
+        let (first, _ws) = tokio::select! {
+            _ = run_session(&session, &mut backend, None) => panic!("session ended before the server read a frame"),
+            v = server => v.unwrap(),
+        };
+        assert_eq!(first, session.hello);
+    }
+
+    /// Review Focus 5：一个挂住的请求不挡同一条连接上的下一个请求。
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn a_slow_fetch_does_not_hold_up_the_next_one() {
+        let hang = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let hang_addr = hang.local_addr().unwrap();
+        tokio::spawn(async move {
+            let mut held = Vec::new();
+            while let Ok((s, _)) = hang.accept().await {
+                held.push(s);
+            }
+        });
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let echo = |_r: &Request, mut resp: Response| {
+                resp.headers_mut().insert(SEC_WEBSOCKET_PROTOCOL, PROTOCOL.parse().unwrap());
+                Ok(resp)
+            };
+            let mut ws = tokio_tungstenite::accept_hdr_async(stream, echo).await.unwrap();
+            let _hello = ws.next().await.unwrap().unwrap();
+            let slow = json!({"id": 1, "op": "http.fetch", "abortEpoch": 0, "args": {
+                "method": "GET", "url": format!("http://{hang_addr}/"), "headers": [], "redirect": "manual",
+                "timeoutMs": 3000, "allowHosts": ["127.0.0.1"] }});
+            let fast = json!({"id": 2, "op": "http.fetch", "abortEpoch": 0, "args": {
+                "method": "GET", "url": "http://example.com/", "headers": [], "redirect": "manual",
+                "timeoutMs": 3000, "allowHosts": ["example.org"] }});
+            ws.send(Message::Text(slow.to_string())).await.unwrap();
+            ws.send(Message::Text(fast.to_string())).await.unwrap();
+            let first = ws.next().await.unwrap().unwrap();
+            (serde_json::from_str::<Value>(first.to_text().unwrap()).unwrap(), ws)
+        });
+        let session = device_session(&format!("ws://{addr}/api/host"));
+        let mut backend = Backend::default();
+        let (first, _ws) = tokio::select! {
+            _ = run_session(&session, &mut backend, None) => panic!("session ended early"),
+            v = server => v.unwrap(),
+            _ = tokio::time::sleep(Duration::from_secs(2)) => panic!("快的请求被慢的挡住了"),
+        };
+        assert_eq!(first["id"], 2);
+        assert_eq!(first["code"], "host-not-allowed");
+    }
 
     /// 借一个端口再放掉：之后连它必然 ECONNREFUSED（= 后端没起来的样子），且不碰真网络。
     async fn dead_addr() -> String {
@@ -673,7 +898,7 @@ mod tests {
     #[tokio::test]
     async fn a_refused_connection_comes_back_as_a_value_not_an_exit() {
         let mut backend = Backend::default();
-        let end = run_session(&dead_addr().await, "token", &mut backend, None).await;
+        let end = run_session(&local_session(&dead_addr().await), &mut backend, None).await;
         assert!(matches!(end, SessionEnd::ConnectFailed(_)), "得到的是 {end:?}");
     }
 
@@ -685,7 +910,7 @@ mod tests {
         let mut sup = Supervisor::with(Duration::from_millis(20), Duration::from_millis(60));
         let outcome = tokio::time::timeout(
             Duration::from_millis(400),
-            supervise(&url, "token", &mut backend, &mut sup, None),
+            supervise(&local_session(&url), &mut backend, &mut sup, None),
         )
         .await;
         assert!(outcome.is_err(), "监督循环不许自己结束");
@@ -717,8 +942,9 @@ mod tests {
         let url = format!("ws://{addr}/api/host");
         let mut backend = Backend::default();
         let mut sup = Supervisor::with(Duration::from_millis(20), Duration::from_millis(60));
+        let session = local_session(&url);
         let accepted = tokio::select! {
-            _ = supervise(&url, "token", &mut backend, &mut sup, None) => unreachable!("监督循环不许返回"),
+            _ = supervise(&session,&mut backend, &mut sup, None) => unreachable!("监督循环不许返回"),
             n = server => n.unwrap(),
             _ = tokio::time::sleep(Duration::from_secs(5)) => panic!("断开之后没有重连回来"),
         };
@@ -740,12 +966,13 @@ mod tests {
             };
             let mut ws = tokio_tungstenite::accept_hdr_async(stream, echo).await.unwrap();
             let first = ws.next().await.unwrap().unwrap();
-            serde_json::from_str::<Value>(first.to_text().unwrap()).unwrap()
+            // 连同 ws 一起交回，理由见 a_device_session_sends_its_own_hello_first。
+            (serde_json::from_str::<Value>(first.to_text().unwrap()).unwrap(), ws)
         });
-        let url = format!("ws://{addr}/api/host");
+        let session = local_session(&format!("ws://{addr}/api/host"));
         let mut backend = Backend::default();
-        let first = tokio::select! {
-            _ = run_session(&url, "token", &mut backend, None) => panic!("session ended before the server read a frame"),
+        let (first, _ws) = tokio::select! {
+            _ = run_session(&session, &mut backend, None) => panic!("session ended before the server read a frame"),
             v = server => v.unwrap(),
         };
         assert_eq!(first["type"], "hello");
