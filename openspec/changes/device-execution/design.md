@@ -124,7 +124,8 @@ error:  { code: 'host-not-allowed' | 'private-target' | 'timeout' | 'network' | 
   `recipe-package.ts` 白名单与校验；安装闸门的权限展示加一行「会访问这些网站」。
 - **后端派发前**：目标主机须匹配**本次执行所属包**（执行上下文里的 `packageId`）的声明。不匹配 →
   `host-not-allowed`，不发帧。随请求下发 `allowHosts`（同一份声明）。没有所属包的执行（宿主自己的出站）
-  不能派到非 `local` 设备——今天没有这样的调用方，出现时报 `device-incapable`。
+  不能派到非 `local` 设备：它的允许主机为空，任何出站都在派发前以 `host-not-allowed` 失败
+  （例如任务行显式设了 `device`、但动作所属的包已经不在——解析出设备，却没有任何主机声明）。
 - **agent 收到后**：
   1. 若设备配置了 `ALLOW_HOSTS`，以它为准（覆盖下发的 `allowHosts`）；否则以下发的为准。不匹配 → `host-not-allowed`。
   2. 解析 DNS，任一结果落在 loopback / RFC1918 / 链路本地 / CGNAT（含 Tailscale `100.64/10`）/ ULA → `private-target`。
