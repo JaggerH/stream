@@ -8,6 +8,8 @@
  */
 import type { Context, Hono } from 'hono'
 import { PAIRED_PLATFORMS, type DeviceStore, type PairedPlatform } from '../devices/device-store.ts'
+import type { FacilityDeviceStore } from '../devices/facility-devices.ts'
+import { LOCAL_DEVICE } from '../devices/run-context.ts'
 import type { HostRelayRegistry } from './host-registry.ts'
 
 export const TOKEN_EXEMPT_ROUTES: ReadonlyArray<{ method: string; path: string }> = [
@@ -17,6 +19,8 @@ export const TOKEN_EXEMPT_ROUTES: ReadonlyArray<{ method: string; path: string }
 export interface DeviceRoutesDeps {
   store: DeviceStore
   registry: Pick<HostRelayRegistry, 'devices' | 'kick'>
+  /** Facility default devices. Optional so callers that only pair devices need not provide it. */
+  bindings?: FacilityDeviceStore
   isLocal: (c: Context) => boolean
   /** Base URLs where a phone on the LAN can reach this backend (`http://<ip>:<port>`). */
   backendUrls: (c: Context) => string[]
@@ -100,6 +104,29 @@ export function mountDeviceRoutes(app: Hono, deps: DeviceRoutesDeps): void {
     const id = c.req.param('id')
     if (!deps.store.revoke(id)) return c.json({ error: '没有这台设备' }, 404)
     deps.registry.kick(id, 4003, 'revoked')
+    return c.body(null, 204)
+  })
+
+  const bindings = deps.bindings
+  if (!bindings) return
+  const known = (id: string) =>
+    id === LOCAL_DEVICE || deps.store.list().some((d) => d.deviceId === id) || deps.registry.devices().some((d) => d.hello.deviceId === id)
+
+  app.get('/api/devices/bindings', (c) => c.json({ bindings: bindings.list() }))
+
+  app.put('/api/devices/bindings/:facility', async (c) => {
+    let body: unknown
+    try { body = await c.req.json() } catch { return c.json({ error: 'body 不是合法 JSON' }, 400) }
+    const deviceId = (body as { deviceId?: unknown } | null)?.deviceId
+    if (typeof deviceId !== 'string' || deviceId.trim() === '') return c.json({ error: 'deviceId 必填' }, 400)
+    // 绑到一台不认识的设备，表现是这个账号的每一次执行都 device-offline——当场拒比几小时后红一片好。
+    if (!known(deviceId.trim())) return c.json({ error: `没有这台设备：${deviceId}` }, 400)
+    bindings.set(c.req.param('facility'), deviceId.trim())
+    return c.json({ facility: c.req.param('facility'), deviceId: bindings.get(c.req.param('facility')) ?? LOCAL_DEVICE })
+  })
+
+  app.delete('/api/devices/bindings/:facility', (c) => {
+    bindings.clear(c.req.param('facility'))
     return c.body(null, 204)
   })
 }

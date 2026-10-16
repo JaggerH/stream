@@ -138,6 +138,15 @@ export class HostRelayRegistry {
     return best
   }
 
+  /** 调度用的窄视图：在不在线、声明了哪些 op。 */
+  isOnline(id: string): boolean {
+    return this.live.has(id)
+  }
+
+  hasOp(id: string, op: string): boolean {
+    return this.live.get(id)?.ops.has(op) ?? false
+  }
+
   devices(): HostDevice[] {
     return [...this.live.values()].map((l) => ({
       hello: l.hello,

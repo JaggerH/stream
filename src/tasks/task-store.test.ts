@@ -250,6 +250,13 @@ describe('TaskStore', () => {
     expect(new TaskStore(path).get('ser')!.exclusiveOn).toBe('jq-bridge')
   })
 
+  it('device 列可存可清', () => {
+    const s = new TaskStore(join(mkdtempSync(join(tmpdir(), 'ts-dev-')), 'stream.db'))
+    const base = { id: 'em', label: 'x', schedule: '0 45 9 * * *', action: 'eastmoney:subscribe', args: [], serial: true, maxAttempts: 1, enabled: true }
+    expect(s.upsert({ ...base, device: 'linux:nas' }).device).toBe('linux:nas')
+    expect(s.upsert(base).device).toBeUndefined()
+  })
+
   it('重开同一个库文件读得到之前写的（建表是 IF NOT EXISTS）', () => {
     const dir = mkdtempSync(join(tmpdir(), 'task-store-'))
     const path = join(dir, 'stream.db')

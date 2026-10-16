@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { mountDeviceRoutes } from './device-routes.ts'
 import { DeviceStore } from '../devices/device-store.ts'
+import { FacilityDeviceStore } from '../devices/facility-devices.ts'
 import { HostRelayRegistry } from './host-registry.ts'
 
 let store: DeviceStore
@@ -13,12 +14,14 @@ let local: boolean
 let app: Hono
 
 beforeEach(() => {
-  store = new DeviceStore(join(mkdtempSync(join(tmpdir(), 'devroutes-')), 'devices.json'))
+  const dir = mkdtempSync(join(tmpdir(), 'devroutes-'))
+  store = new DeviceStore(join(dir, 'devices.json'))
   registry = new HostRelayRegistry()
   local = true
   app = new Hono()
   mountDeviceRoutes(app, {
     store, registry,
+    bindings: new FacilityDeviceStore(join(dir, 'stream.db')),
     isLocal: () => local,
     backendUrls: () => ['http://10.9.8.21:8900', 'http://100.70.0.5:8900'],
   })
@@ -28,6 +31,20 @@ const post = (path: string, body?: unknown) =>
   app.request(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body) })
 
 describe('device routes', () => {
+  it('facility 绑定：PUT / GET / DELETE；未知设备 400；local 等于清除', async () => {
+    const put = (f: string, deviceId: string) =>
+      app.request(`/api/devices/bindings/${f}`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ deviceId }) })
+    expect((await put('eastmoney', 'linux:nope')).status).toBe(400)
+    const { code } = await (await post('/api/devices/pairing-code')).json() as { code: string }
+    const { deviceId } = await (await post('/api/devices/pair', { code, name: 'NAS', platform: 'linux' })).json() as { deviceId: string }
+    expect((await put('eastmoney', deviceId)).status).toBe(200)
+    expect(await (await app.request('/api/devices/bindings')).json()).toEqual({ bindings: [{ facility: 'eastmoney', deviceId }] })
+    expect((await put('eastmoney', 'local')).status).toBe(200)
+    expect(await (await app.request('/api/devices/bindings')).json()).toEqual({ bindings: [] })
+    await put('eastmoney', deviceId)
+    expect((await app.request('/api/devices/bindings/eastmoney', { method: 'DELETE' })).status).toBe(204)
+  })
+
   it('pair accepts platform linux and rejects unknown platforms', async () => {
     const { code } = await (await post('/api/devices/pairing-code')).json() as { code: string }
     const bad = await post('/api/devices/pair', { code, name: 'x', platform: 'windows' })

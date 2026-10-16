@@ -65,6 +65,12 @@ export interface UserTaskRow {
    * 列名是 `group_name` 不是 `group`：`group` 是 SQL 关键字。
    */
   group?: string
+  /**
+   * 这条任务在哪台设备上执行（覆盖 facility 默认设备）。缺席 = 跟随 facility，再缺席 = 主实例本机。
+   * 只对 `action` 任务有意义——`command` 是在主实例上起本地进程，路由层拒绝给它设设备。
+   * 见 openspec/changes/device-execution/design.md D2。
+   */
+  device?: string
   enabled: boolean
   createdAt: number
   updatedAt: number
@@ -77,7 +83,7 @@ interface RawRow {
   command: string; action: string | null; args: string; cwd: string | null; env: string | null
   timeout_ms: number | null; serial: number; max_attempts: number
   exclusive_on: string | null; when_busy: string | null
-  config_ref: string | null; group_name: string | null
+  config_ref: string | null; group_name: string | null; device: string | null
   enabled: number; created_at: number; updated_at: number
 }
 
@@ -103,6 +109,7 @@ function hydrate(r: RawRow): UserTaskRow {
     // 空串和 NULL 一样按"没分组"处理：老行是 NULL，而路由层已经把空串归一化掉了——
     // 这里再兜一层，免得手改过库的行在页面上顶出一个名字是空串的分组标题。
     ...(r.group_name === null || r.group_name === '' ? {} : { group: r.group_name }),
+    ...(r.device === null || r.device === '' ? {} : { device: r.device }),
     enabled: r.enabled === 1,
     createdAt: r.created_at, updatedAt: r.updated_at,
   }
@@ -131,6 +138,7 @@ export class TaskStore {
         when_busy TEXT,
         config_ref TEXT,
         group_name TEXT,
+        device TEXT,
         enabled INTEGER NOT NULL DEFAULT 1,
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL
@@ -141,6 +149,14 @@ export class TaskStore {
     this.addActionColumn()
     this.addGroupColumn()
     this.addExclusivityColumns()
+    this.addDeviceColumn()
+  }
+
+  /** `device` 是后加的一列（执行位置覆盖）。加可空列，同 `config_ref`。 */
+  private addDeviceColumn(): void {
+    const cols = this.db.prepare('PRAGMA table_info(scheduled_tasks)').all() as { name: string }[]
+    if (cols.some((c) => c.name === 'device')) return
+    this.db.exec('ALTER TABLE scheduled_tasks ADD COLUMN device TEXT')
   }
 
   /**
@@ -260,14 +276,14 @@ export class TaskStore {
     // createdAt 用 excluded 之外的旧值保住——UI 上"这条建于何时"不该被一次改排期抹掉。
     this.db.prepare(`
       INSERT INTO scheduled_tasks
-        (id, label, schedule, timezone, command, action, args, cwd, env, timeout_ms, serial, max_attempts, exclusive_on, when_busy, config_ref, group_name, enabled, created_at, updated_at)
-      VALUES (@id, @label, @schedule, @timezone, @command, @action, @args, @cwd, @env, @timeout_ms, @serial, @max_attempts, @exclusive_on, @when_busy, @config_ref, @group_name, @enabled, @now, @now)
+        (id, label, schedule, timezone, command, action, args, cwd, env, timeout_ms, serial, max_attempts, exclusive_on, when_busy, config_ref, group_name, device, enabled, created_at, updated_at)
+      VALUES (@id, @label, @schedule, @timezone, @command, @action, @args, @cwd, @env, @timeout_ms, @serial, @max_attempts, @exclusive_on, @when_busy, @config_ref, @group_name, @device, @enabled, @now, @now)
       ON CONFLICT(id) DO UPDATE SET
         label=excluded.label, schedule=excluded.schedule, timezone=excluded.timezone,
         command=excluded.command, action=excluded.action, args=excluded.args, cwd=excluded.cwd, env=excluded.env,
         timeout_ms=excluded.timeout_ms, serial=excluded.serial, max_attempts=excluded.max_attempts,
         exclusive_on=excluded.exclusive_on, when_busy=excluded.when_busy,
-        config_ref=excluded.config_ref, group_name=excluded.group_name,
+        config_ref=excluded.config_ref, group_name=excluded.group_name, device=excluded.device,
         enabled=excluded.enabled, updated_at=excluded.updated_at
     `).run({
       id: input.id, label: input.label, schedule: input.schedule,
@@ -283,6 +299,7 @@ export class TaskStore {
       when_busy: input.whenBusy ?? null,
       config_ref: input.configRef ?? null,
       group_name: input.group ?? null,
+      device: input.device ?? null,
       enabled: input.enabled ? 1 : 0,
       now: t,
     })

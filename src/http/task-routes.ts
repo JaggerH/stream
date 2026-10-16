@@ -68,6 +68,9 @@ function validate(
   if (b.whenBusy !== undefined && b.whenBusy !== 'queue' && b.whenBusy !== 'skip') {
     return { ok: false, why: 'whenBusy 只能是 queue（排着）或 skip（这一班不跑）' }
   }
+  const device = typeof b.device === 'string' ? b.device.trim() : ''
+  // 本地命令是在主实例上起进程——派不到设备上。存下来的后果是一条看着绑了 NAS、实际在本机跑的任务。
+  if (device !== '' && hasCommand) return { ok: false, why: 'command 类任务不能设 device：本地命令只能在主实例上执行' }
   return {
     ok: true,
     value: {
@@ -91,6 +94,7 @@ function validate(
       // 空串 = 没分组（编辑器里那个「不分组」选项发的就是空串），理由同上面 configRef 那格：
       // 不归一化的话库里会存下一个空字符串分组，页面上就顶出一个没有名字的分组小标题。
       ...(typeof b.group === 'string' && b.group.trim() !== '' ? { group: b.group.trim() } : {}),
+      ...(device !== '' ? { device } : {}),
       enabled: b.enabled !== false,
     },
   }

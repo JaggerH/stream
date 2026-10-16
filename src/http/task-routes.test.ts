@@ -367,6 +367,28 @@ describe('动作型任务行', () => {
     expect(res.status).toBe(400)
   })
 
+  it('command 类任务不能设 device', async () => {
+    const { app, deps } = mk()
+    const res = await app.request('/api/tasks', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ id: 'c', label: 'c', schedule: '0 0 3 * * *', command: 'echo', args: [], maxAttempts: 1, device: 'linux:nas' }),
+    })
+    expect(res.status).toBe(400)
+    expect((await res.json()).error).toContain('本地命令只能在主实例上执行')
+    expect(deps.store.get('c')).toBeUndefined()
+  })
+
+  it('action 任务的 device 原样落库，空串归一为不设', async () => {
+    const { app, deps } = mk()
+    const send = (method: string, path: string, device: string) => app.request(path, {
+      method, headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ...actionRow, device }),
+    })
+    expect((await send('POST', '/api/tasks', 'linux:nas')).status).toBe(200)
+    expect(deps.store.get('em-repo')!.device).toBe('linux:nas')
+    expect((await send('PUT', '/api/tasks/em-repo', '')).status).toBe(200)
+    expect('device' in deps.store.get('em-repo')!).toBe(false)
+  })
+
   // 编辑器要拿它画「执行什么」那个下拉。单开一条端点只是多一次往返。
   it('清单顺带回可选动作名', async () => {
     const { app } = mk()
