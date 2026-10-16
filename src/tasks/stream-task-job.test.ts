@@ -3,6 +3,8 @@ import { StreamTaskJob } from './stream-task-job.ts'
 import { taskRegistry } from './registry.ts'
 import { setTaskDeps, resetTaskDeps } from './deps.ts'
 import type { ScheduledTask, TaskDeps } from './types.ts'
+import { DeviceLost, DeviceOffline } from '../devices/errors.ts'
+import { HostAbortedByUser } from '../http/host-relay.ts'
 
 const mkTask = (over: Partial<ScheduledTask>): ScheduledTask => ({
   id: 't1', label: 'T1', schedule: '0 * * * * *', serial: false, maxAttempts: 2,
@@ -42,5 +44,33 @@ describe('StreamTaskJob', () => {
   it('deps 未初始化 → 拒跑抛错', async () => {
     taskRegistry.set('t1', mkTask({}))
     await expect(new StreamTaskJob().run('t1')).rejects.toThrow(/not initialized/)
+  })
+
+  it.each([
+    ['DeviceLost', () => new DeviceLost('linux:nas')],
+    ['HostAbortedByUser', () => new HostAbortedByUser('hotkey')],
+  ])('%s from task.run → failed transition, event still emitted, no rethrow (不重试)', async (_name, mk) => {
+    const append = vi.fn()
+    const err = mk()
+    taskRegistry.set('t1', mkTask({ run: async () => { throw err } }))
+    setTaskDeps({ log: () => {}, events: { append } })
+    const out = await new StreamTaskJob().run('t1')
+    expect(out).toMatchObject({
+      __is_job_transition__: true, type: 'failed',
+      error: expect.objectContaining({ message: err.message }),
+    })
+    expect(append).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'task.failed', dedupeKey: 'task-failed:t1',
+    }))
+  })
+
+  it.each([
+    ['DeviceOffline', () => new DeviceOffline('linux:nas')],
+    ['plain Error', () => new Error('boom')],
+  ])('%s from task.run → still rethrows so the engine retries', async (_name, mk) => {
+    const err = mk()
+    taskRegistry.set('t1', mkTask({ run: async () => { throw err } }))
+    setTaskDeps({ log: () => {}, events: { append: vi.fn() } })
+    await expect(new StreamTaskJob().run('t1')).rejects.toBe(err)
   })
 })
