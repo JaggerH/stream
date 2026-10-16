@@ -206,7 +206,7 @@ export class WsHostRelay implements HostRelay {
 
   /** HTTP 通道：在途数与排队者。与 `inFlight`/`queue`（UI 单发尾锁）、`sessionHolder`（UI 会话租约）完全分开。 */
   private fetchInFlight = 0
-  private readonly fetchWaiters: Array<{ grant: () => void }> = []
+  private readonly fetchWaiters: Array<{ grant: () => void; reject: (e: unknown) => void }> = []
   private readonly fetchQueueWaitMs: number
 
   constructor(opts?: { timeoutMs?: number; sessionWaitMs?: number; fetchQueueWaitMs?: number }) {
@@ -396,7 +396,11 @@ export class WsHostRelay implements HostRelay {
 
   private waitFetchSlot(): Promise<void> {
     return new Promise((resolve, reject) => {
-      const waiter = { grant: () => { clearTimeout(timer); this.fetchInFlight++; resolve() } }
+      const waiter = {
+        grant: () => { clearTimeout(timer); this.fetchInFlight++; resolve() },
+        // 中止/断连时由 `rejectAll` 调：没拿过名额，所以不动 `fetchInFlight`。
+        reject: (e: unknown) => { clearTimeout(timer); reject(e) },
+      }
       const timer = setTimeout(() => {
         const i = this.fetchWaiters.indexOf(waiter)
         if (i >= 0) this.fetchWaiters.splice(i, 1)
@@ -426,7 +430,8 @@ export class WsHostRelay implements HostRelay {
       this.pending.set(id, { op: op.op, resolve, reject, timer })
       try {
         // 与 `dispatch` 同一条帧形：总是带 `abortEpoch`，设备据此拒收中止之前发出、还在路上的请求
-        // （见 `dispatch` 里那段注释）。HTTP 通道不该在用户按了停止之后还把单子送出去。
+        // （见 `dispatch` 里那段注释）。中止/断连时 `rejectAll` 连排队等名额的也一起拒了，
+        // HTTP 通道不会在用户按了停止之后还把单子送出去。
         socket.send(JSON.stringify({ id, op: op.op, args: op.args, abortEpoch: this.abortEpoch }))
       } catch (e) {
         this.pending.delete(id)
@@ -502,6 +507,11 @@ export class WsHostRelay implements HostRelay {
     // 先把还没真的发出去的排队项摘出来，防止下面 pending 那条的 reject 触发 advance() 时，
     // 把它们派发到一个已经清空的 socket 上（此刻 this.socket 已经是 null 了）。
     const queued = this.queue.splice(0)
+    // HTTP 通道同样一并停掉：排队等名额的 fetch 也摘出来拒绝。必须在拒 pending 之前摘——
+    // 否则在途 fetch 的 finally 释放名额时会把排队者放行，在仍然活着的 socket 上以中止之后的
+    // abortEpoch 发出去，设备会收下，热键又只停了一半。
+    const fetchQueued = this.fetchWaiters.splice(0)
+    for (const w of fetchQueued) w.reject(err)
     for (const p of this.pending.values()) {
       clearTimeout(p.timer)
       p.reject(err)

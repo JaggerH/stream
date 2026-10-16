@@ -34,6 +34,17 @@ describe('surfaceOf', () => {
   })
 })
 
+describe('HostRelayRegistry.fetchRelay', () => {
+  it('only an online device that declared http.fetch has an HTTP channel', () => {
+    const reg = new HostRelayRegistry()
+    expect(reg.fetchRelay('linux:nas')).toBeUndefined()
+    reg.connect(fakeSocket().socket, hello({ deviceId: 'android:k80', platform: 'android', ops: ['click'] }))
+    expect(reg.fetchRelay('android:k80')).toBeUndefined()
+    const relay = reg.connect(fakeSocket().socket, hello({ deviceId: 'linux:nas', platform: 'linux', ops: ['http.fetch'] }))
+    expect(reg.fetchRelay('linux:nas')).toBe(relay)
+  })
+})
+
 describe('HostRelayRegistry', () => {
   it('a linux device is listed but never chosen as a UI surface', () => {
     const reg = new HostRelayRegistry()

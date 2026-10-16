@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { HostFetchQueueTimeout, HostOpError, HostRelayDisconnected, WsHostRelay } from './host-relay.ts'
+import { HostAbortedByUser, HostFetchQueueTimeout, HostOpError, HostRelayDisconnected, WsHostRelay } from './host-relay.ts'
 
 function fakeSocket() {
   const sent: { id: number; op: string; args?: unknown }[] = []
@@ -70,6 +70,88 @@ describe('WsHostRelay.fetchOp', () => {
     const p = r.fetchOp(args('https://example.com/x'))
     r.disconnect(socket)
     await expect(p).rejects.toBeInstanceOf(HostRelayDisconnected)
+  })
+
+  describe('名额记账', () => {
+    const OK = { status: 200, headers: [], body: '', url: '' }
+    const fill = (r: WsHostRelay, n: number, timeoutMs = 1_000) =>
+      Array.from({ length: n }, (_, i) => r.fetchOp({ ...args(`https://example.com/${i}`), timeoutMs }))
+
+    it('错误帧落定后释放名额，第 5 个发出', async () => {
+      const r = new WsHostRelay()
+      const { socket, sent } = fakeSocket()
+      r.connect(socket)
+      const ps = fill(r, 5)
+      const first = ps[0].catch((e) => e)
+      r.handleMessage(JSON.stringify({ id: sent[0].id, error: 'boom' }))
+      await first
+      expect(sent).toHaveLength(5)
+      for (const f of sent.slice(1)) reply(r, f.id, OK)
+      await Promise.all(ps.slice(1))
+    })
+
+    it('op 超时后释放名额，第 5 个发出', async () => {
+      const r = new WsHostRelay()
+      const { socket, sent } = fakeSocket()
+      r.connect(socket)
+      // op 超时 = timeoutMs + 5s；给 -4_990 让它 10ms 就到点，免用假定时器
+      const ps = fill(r, 4, -4_990)
+      const p5 = r.fetchOp(args('https://example.com/5'))
+      const e = await ps[0].catch((x) => x)
+      expect(e.name).toBe('HostRelayTimeout')
+      expect(sent).toHaveLength(5)
+      reply(r, sent[4].id, OK)
+      await expect(p5).resolves.toMatchObject({ status: 200 })
+      await Promise.allSettled(ps)
+    })
+
+    it('socket.send 同步抛错后释放名额，第 5 个发出', async () => {
+      const r = new WsHostRelay()
+      const sent: { id: number }[] = []
+      let throwNext = false
+      r.connect({ send: (d: string) => { if (throwNext) { throwNext = false; throw new Error('ws closing') } sent.push(JSON.parse(d)) } })
+      const ps = fill(r, 3)
+      throwNext = true
+      const bad = r.fetchOp(args('https://example.com/bad'))
+      const p5 = r.fetchOp(args('https://example.com/5'))
+      await expect(bad).rejects.toThrow('ws closing')
+      expect(sent).toHaveLength(4)
+      for (const f of sent) reply(r, f.id, OK)
+      await Promise.all([...ps, p5])
+    })
+
+    it('断连时排队者以 HostRelayDisconnected 拒绝，重连后名额回满', async () => {
+      const r = new WsHostRelay()
+      const a = fakeSocket()
+      r.connect(a.socket)
+      const ps = fill(r, 6)
+      const settled = Promise.allSettled(ps)
+      r.disconnect(a.socket)
+      for (const x of await settled) {
+        expect(x.status).toBe('rejected')
+        expect((x as PromiseRejectedResult).reason).toBeInstanceOf(HostRelayDisconnected)
+      }
+      const b = fakeSocket()
+      r.connect(b.socket)
+      const again = fill(r, 4)
+      expect(b.sent).toHaveLength(4)
+      for (const f of b.sent) reply(r, f.id, OK)
+      await Promise.all(again)
+    })
+
+    it('中止：4 在途 + 2 排队全部以 HostAbortedByUser 拒绝，之后不再发帧', async () => {
+      const r = new WsHostRelay()
+      const { socket, sent } = fakeSocket()
+      r.connect(socket)
+      const ps = fill(r, 6)
+      const settled = Promise.allSettled(ps)
+      r.handleMessage(JSON.stringify({ type: 'abort', reason: 'user-hotkey' }))
+      for (const x of await settled) {
+        expect(x.status).toBe('rejected')
+        expect((x as PromiseRejectedResult).reason).toBeInstanceOf(HostAbortedByUser)
+      }
+      expect(sent).toHaveLength(4)
+    })
   })
 
   it('fetch 在途时 UI op 照常走单发尾锁', async () => {
