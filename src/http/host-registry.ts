@@ -91,11 +91,13 @@ interface Live {
   state?: HostDeviceState
 }
 
+export type DeviceFetchRelay = Pick<WsHostRelay, 'fetchOp' | 'connected'>
+
 export class HostRelayRegistry {
   private readonly relays = new Map<string, WsHostRelay>()
   private readonly live = new Map<string, Live>()
 
-  constructor(private readonly relayOpts?: { timeoutMs?: number; sessionWaitMs?: number }) {}
+  constructor(private readonly relayOpts?: { timeoutMs?: number; sessionWaitMs?: number; fetchQueueWaitMs?: number }) {}
 
   /** A device finished its handshake. Returns that device's relay. */
   connect(socket: HostSocket, hello: HostHello, now: number = Date.now()): WsHostRelay {
@@ -145,6 +147,12 @@ export class HostRelayRegistry {
 
   hasOp(id: string, op: string): boolean {
     return this.live.get(id)?.ops.has(op) ?? false
+  }
+
+  /** 一台在线且声明了 `http.fetch` 的设备的 HTTP 通道；否则 undefined。 */
+  fetchRelay(id: string): DeviceFetchRelay | undefined {
+    if (!this.hasOp(id, 'http.fetch')) return undefined
+    return this.relays.get(id)
   }
 
   devices(): HostDevice[] {

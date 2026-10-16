@@ -92,6 +92,44 @@ export class HostAbortedByUser extends Error {
  */
 export const INTERACTIVE_SESSION_WAIT_MS = 20_000
 
+/** agent 回了一个错误帧。`code` 是 agent 给的机器可读分类（`private-target` 等），旧 agent 不带。 */
+export class HostOpError extends Error {
+  constructor(message: string, readonly code?: string) {
+    super(message)
+    this.name = 'HostOpError'
+  }
+}
+
+/** 设备 HTTP 通道排队等在途名额等太久——请求**没有**发出。与 UI 会话租约的排队超时分开报。 */
+export class HostFetchQueueTimeout extends Error {
+  constructor() {
+    super('device http.fetch queue wait timed out（在途名额已满，请求没有发出）')
+    this.name = 'HostFetchQueueTimeout'
+  }
+}
+
+export interface HttpFetchArgs {
+  method: string
+  url: string
+  headers: [string, string][]
+  /** base64 */
+  body?: string
+  redirect: 'manual' | 'follow'
+  timeoutMs: number
+  allowHosts: string[]
+}
+
+export interface HttpFetchResult {
+  status: number
+  headers: [string, string][]
+  /** base64 */
+  body: string
+  url: string
+}
+
+/** 每台设备的 HTTP 在途上限。一次采集不该把 NAS 打满，也不该被 UI 租约挡住。 */
+export const DEVICE_FETCH_CONCURRENCY = 4
+
 interface Pending {
   op: string
   resolve: (v: unknown) => void
@@ -166,8 +204,14 @@ export class WsHostRelay implements HostRelay {
    *  否则用户按了停止，横幅消失，动作却接着做。中止之后才拿到租约的会话不受影响。 */
   private holderEpoch = 0
 
-  constructor(opts?: { timeoutMs?: number; sessionWaitMs?: number }) {
+  /** HTTP 通道：在途数与排队者。与 `inFlight`/`queue`（UI 单发尾锁）、`sessionHolder`（UI 会话租约）完全分开。 */
+  private fetchInFlight = 0
+  private readonly fetchWaiters: Array<{ grant: () => void }> = []
+  private readonly fetchQueueWaitMs: number
+
+  constructor(opts?: { timeoutMs?: number; sessionWaitMs?: number; fetchQueueWaitMs?: number }) {
     this.timeoutMs = opts?.timeoutMs ?? 30_000
+    this.fetchQueueWaitMs = opts?.fetchQueueWaitMs ?? 30_000
     // 一趟桌面 recipe 十几个 op、每个最多等 timeoutMs——排在它后面的默认给足够宽的窗口
     // （比单个 op 的超时宽一个数量级），不然长 recipe 天然会把后面排队的人挤到超时。
     this.sessionWaitMs = opts?.sessionWaitMs ?? 180_000
@@ -193,7 +237,7 @@ export class WsHostRelay implements HostRelay {
 
   /** Receive {id,result} | {id,error}, resolve/reject by id and clear its timer. Unknown id ignored. */
   handleMessage(raw: string): void {
-    let msg: { id?: number; result?: unknown; error?: string; type?: string; reason?: string }
+    let msg: { id?: number; result?: unknown; error?: string; code?: unknown; type?: string; reason?: string }
     try {
       msg = JSON.parse(raw)
     } catch {
@@ -214,7 +258,7 @@ export class WsHostRelay implements HostRelay {
     if (!p) return
     this.pending.delete(msg.id)
     clearTimeout(p.timer)
-    if (msg.error !== undefined) p.reject(new Error(msg.error))
+    if (msg.error !== undefined) p.reject(new HostOpError(msg.error, typeof msg.code === 'string' ? msg.code : undefined))
     else p.resolve(msg.result)
   }
 
@@ -325,6 +369,71 @@ export class WsHostRelay implements HostRelay {
       return
     }
     this.sessionHolder = null
+  }
+
+  /**
+   * 经设备代发一个 HTTP 请求（`http.fetch` op）。**不占 UI 会话租约、不进单发尾锁**：
+   * 一条在跑的 UI recipe 不该挡住同一台设备上的 HTTP，HTTP 也不该被 recipe 的十几个 op 夹住。
+   * 并发由 `DEVICE_FETCH_CONCURRENCY` 限住。op 超时 = 请求自己的超时再宽 5 秒（agent 侧先到点）。
+   */
+  fetchOp(args: HttpFetchArgs): Promise<HttpFetchResult> {
+    if (!this.socket) return Promise.reject(new HostRelayDisconnected())
+    // 有空位就同步占位、同步发出（与 `send()` 同样"未竞争时发送是同步的"）；满了才排队。
+    // 不能写成 `await acquire` 再发：那会给未竞争的调用平白多一次微任务延迟。
+    const run = () => this.runFetch(args)
+    if (this.fetchInFlight < DEVICE_FETCH_CONCURRENCY) { this.fetchInFlight++; return run() }
+    return this.waitFetchSlot().then(run)
+  }
+
+  /** 调用方已占好名额；无论成败都释放（成功、op 错误、超时、断连各条路都经过这里）。 */
+  private async runFetch(args: HttpFetchArgs): Promise<HttpFetchResult> {
+    try {
+      return (await this.dispatchParallel({ op: 'http.fetch', args: args as unknown as Record<string, unknown> }, args.timeoutMs + 5_000)) as HttpFetchResult
+    } finally {
+      this.releaseFetchSlot()
+    }
+  }
+
+  private waitFetchSlot(): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const waiter = { grant: () => { clearTimeout(timer); this.fetchInFlight++; resolve() } }
+      const timer = setTimeout(() => {
+        const i = this.fetchWaiters.indexOf(waiter)
+        if (i >= 0) this.fetchWaiters.splice(i, 1)
+        reject(new HostFetchQueueTimeout())
+      }, this.fetchQueueWaitMs)
+      timer.unref?.()
+      this.fetchWaiters.push(waiter)
+    })
+  }
+
+  private releaseFetchSlot(): void {
+    this.fetchInFlight--
+    this.fetchWaiters.shift()?.grant()
+  }
+
+  /** 发一个 op、按 id 配回复，**不碰** `inFlight`/`advance`——那是 UI 单发尾锁的。断连由 `rejectAll` 统一拒。 */
+  private dispatchParallel(op: HostOp, timeoutMs: number): Promise<unknown> {
+    const socket = this.socket
+    if (!socket) return Promise.reject(new HostRelayDisconnected())
+    const id = this.nextId++
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.pending.delete(id)
+        reject(new HostRelayTimeout(op.op))
+      }, timeoutMs)
+      timer.unref?.()
+      this.pending.set(id, { op: op.op, resolve, reject, timer })
+      try {
+        // 与 `dispatch` 同一条帧形：总是带 `abortEpoch`，设备据此拒收中止之前发出、还在路上的请求
+        // （见 `dispatch` 里那段注释）。HTTP 通道不该在用户按了停止之后还把单子送出去。
+        socket.send(JSON.stringify({ id, op: op.op, args: op.args, abortEpoch: this.abortEpoch }))
+      } catch (e) {
+        this.pending.delete(id)
+        clearTimeout(timer)
+        reject(e)
+      }
+    })
   }
 
   /** 底层单发尾锁：`inFlight` 时排队，不立刻发到 socket——见 `queue` 头注。 */
