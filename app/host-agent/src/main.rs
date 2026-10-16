@@ -17,6 +17,8 @@
 //!   STREAM_DATA_DIR    Stream 的 data 目录；不给就靠 config.yaml / 可执行文件位置推。
 
 mod datadir;
+#[cfg(target_os = "linux")]
+mod device;
 mod glide;
 #[cfg(target_os = "linux")]
 mod httpfetch;
@@ -339,6 +341,26 @@ async fn main() {
         std::process::exit(run_register(&args, true));
     }
 
+    // 设备模式：这台机器是主实例的一个执行位置（NAS），不是本机工作台。只认 STREAM_BACKEND_URL
+    // 这一个开关——本机模式什么都不用设，设备模式至少要知道主实例在哪。
+    #[cfg(target_os = "linux")]
+    match device::DeviceEnv::from_process() {
+        Ok(Some(env)) => {
+            run_device_mode(env).await;
+            return;
+        }
+        Ok(None) => {}
+        Err(e) => {
+            eprintln!("[device] {e}");
+            std::process::exit(2);
+        }
+    }
+    #[cfg(not(target_os = "linux"))]
+    if std::env::var_os("STREAM_BACKEND_URL").is_some() {
+        eprintln!("[device] 设备模式（STREAM_BACKEND_URL）目前只有 Linux 构建");
+        std::process::exit(2);
+    }
+
     if std::env::args().nth(1).as_deref() == Some("verify") {
         run_verify();
         return;
@@ -520,6 +542,60 @@ async fn main() {
         let why = supervise(&session, &mut backend, &mut supervisor, overlay_handle.as_ref()).await;
         eprintln!("[host-agent] {why}");
         std::process::exit(1);
+    }
+}
+
+/// 设备模式的一生：拿到配对 → 监督循环 → 被撤销就作废配对、回到第一步。不返回。
+///
+/// 每一步的失败去向：配置 / 状态目录坏了 → 退出码 2（不会自己变好）；没有码或码被拒 → 挂起等人
+/// （`device::park`）；主实例连不上 → 监督循环里退避重试。
+#[cfg(target_os = "linux")]
+async fn run_device_mode(env: device::DeviceEnv) {
+    if let Err(e) = device::ensure_state_dir(&env.state_dir) {
+        eprintln!("[device] {e}");
+        std::process::exit(2);
+    }
+    let fetcher = match httpfetch::Fetcher::new(httpfetch::Guard::strict(), env.allow_hosts.clone()) {
+        Ok(f) => std::sync::Arc::new(f),
+        Err(e) => {
+            eprintln!("[device] {e}");
+            std::process::exit(2);
+        }
+    };
+    if let Some(list) = &env.allow_hosts {
+        eprintln!("[device] ALLOW_HOSTS 生效，只放行：{}", list.join(", "));
+    }
+    let ws = device::ws_url(&env.backend);
+    loop {
+        let saved = match device::load_pairing(&env.state_dir) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("[device] {e}");
+                std::process::exit(2);
+            }
+        };
+        let pairing = match device::startup(saved, env.pairing_code.as_deref()) {
+            device::Startup::Saved(p) => p,
+            device::Startup::Pair(code) => device::obtain_pairing(&env, &code).await,
+            device::Startup::NoCode => {
+                match device::park("还没配对，也没有 STREAM_PAIRING_CODE——在主实例上生成配对码，设进环境变量后重启").await {}
+            }
+        };
+        eprintln!("[device] {}（{}）→ {ws}", pairing.device_id, env.name);
+        let session = Session {
+            url: ws.clone(),
+            token: pairing.device_token.clone(),
+            hello: device::device_hello(&pairing.device_id, &env.name),
+            fetcher: Some(fetcher.clone()),
+            paired: true,
+        };
+        let mut backend = Backend::default();
+        let why = supervise(&session, &mut backend, &mut Supervisor::default(), None).await;
+        eprintln!("[device] {}", SessionEnd::Revoked(why).reason());
+        if let Err(e) = device::forget_pairing(&env.state_dir) {
+            eprintln!("[device] {e}");
+            std::process::exit(2);
+        }
     }
 }
 
