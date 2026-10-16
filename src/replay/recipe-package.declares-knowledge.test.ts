@@ -19,7 +19,8 @@ const NOT_FACILITY_KNOWLEDGE = new Set([
   // `facility` 是这个包的名字，不是它带的知识。
   'facility',
   // 插件槽位：由**插件路径**（`loadPlugins` / `activatePackages`）消费，与 recipe 层无关。
-  'backend', 'credentials', 'code', 'capability', 'normalizer', 'presenter', 'sourceGrouping',
+  // `network` 同 `credentials`：执行位置声明（允许访问的主机），不是 facility 知识。
+  'backend', 'credentials', 'network', 'code', 'capability', 'normalizer', 'presenter', 'sourceGrouping',
   // `sources` 由跳过判据自己那半条管（`!sources.length`），不归这张表。
   'sources',
   // 迁移期别名（spec 2026-09-26-link-recognition §6）：装载时翻译进 `links`，描述符上不留这两格，

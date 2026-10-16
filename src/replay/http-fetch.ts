@@ -1,5 +1,5 @@
 import { publicHttpUrl } from '../adapters/safe-fetch.ts'
-import { ownedFetch } from '../http/owned-outbound.ts'
+import { fetchFor } from '../devices/fetch.ts'
 import { runCompute, type CapabilityName } from './compute-sandbox.ts'
 import { substitute, type ResolvedFetch } from './interpret.ts'
 import type { HttpRecipe } from './recipe.ts'
@@ -54,7 +54,7 @@ export function makeHttpFetch(
   doFetch?: typeof fetch,
   now: () => number = () => Math.floor(Date.now() / 1000),
 ): (req: ResolvedFetch) => Promise<unknown> {
-  const send = doFetch ?? ownedFetch
+  const send = doFetch ?? fetchFor
 
   // The jar lives exactly as long as this closure — one adapter fetch = one jar (spec §4.1
   // rule 2). It is NOT keyed per params like the prefetch memo: paging within one fetch is

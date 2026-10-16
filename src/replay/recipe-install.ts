@@ -274,6 +274,8 @@ export interface RecipePackagePreview {
    *  **包级**申报：代码格的包没有容器也吃它。没申报就整格缺席，不给一个空数组——空数组和
    *  「没有这一格」在确认页上是两句不同的话。 */
   credentials?: string[]
+  /** 这个包会访问的主机（`stream.network.hosts`）。没声明就整格缺席——缺省等于 credentials，确认页已经列了那一格。 */
+  networkHosts?: string[]
   /** 官方 scope 的包从镜像装、却核不上官方源（见 `mirrorVerdict`）——值是原因。照装，但装上去
    *  是第三方待遇（不注入凭据）。官方源装的 / 核得上的没有这一格。 */
   mirrorUnverified?: string
@@ -575,6 +577,7 @@ export async function previewRecipePackage(
     // 形状，展示它就等于让用户批准一份与落盘不同的东西。
     ...(r.backend && { backend: summarizeBackend(r.backend) }),
     ...(r.stream.credentials?.length && { credentials: r.stream.credentials }),
+    ...(r.stream.network?.hosts.length && { networkHosts: r.stream.network.hosts }),
     ...(r.mirrorUnverified && { mirrorUnverified: r.mirrorUnverified }),
     confirm: r.integrity,
   }

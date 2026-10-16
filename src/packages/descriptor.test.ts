@@ -111,6 +111,23 @@ describe('parseStreamDescriptor', () => {
 
   // 取 cookie 是后缀匹配，所以申报一个后缀 = 申报它下面所有站点。
   // 申报名单是这个包的授权边界，边界必须落在具体站点上。
+  describe('network.hosts 与 credentials 同一把域名尺', () => {
+    const parse = (hosts: string[]) =>
+      parseStreamDescriptor({ stream: { id: 'p', network: { hosts } } }, 'p/package.json')
+
+    it('合法域名通过', () => {
+      expect(parse(['api.example.com', 'example.com']).network).toEqual({ hosts: ['api.example.com', 'example.com'] })
+    })
+
+    it('没声明时该格缺席', () => {
+      expect(parseStreamDescriptor({ stream: { id: 'p' } }, 'p/package.json').network).toBeUndefined()
+    })
+
+    it.each(['*.com', 'http://a.com', ''])('拒绝 %j', (d) => {
+      expect(() => parse([d])).toThrow()
+    })
+  })
+
   describe('credentials 必须是具体站点域名', () => {
     const parse = (creds: string[]) =>
       parseStreamDescriptor({ stream: { id: 'p', credentials: creds } }, 'p/package.json')

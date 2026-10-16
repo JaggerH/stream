@@ -13,6 +13,7 @@ const ctx: PluginContext = {
   login: refuse('login'),
   readSource: refuse('readSource'),
   readArticle: refuse('readArticle'),
+  fetch: refuse('fetch'),
   log: () => {},
   config: {},
 }

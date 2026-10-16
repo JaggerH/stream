@@ -30,6 +30,12 @@ export interface PluginContext {
   /** 这个域的 Cookie 头。**只放行该包 `credentials` 里申报过的域**，其余抛错。 */
   cookieFor: (domain: string) => Promise<string | undefined>
   /**
+   * 出站 HTTP。**包里别用全局 `fetch`**（守卫测试会拦）：这一格按本次执行绑定的设备发出——
+   * 绑到 NAS 的账号，请求就从 NAS 出去。签名与标准 fetch 相同。
+   * 见 openspec/changes/device-execution/design.md D5。
+   */
+  fetch: typeof fetch
+  /**
    * 把某个 facility 的登录态**登回来**：宿主找到那条 `meta.login` 的 recipe、在用户自己的
    * Chrome 里跑掉、跑完强制刷新 cookie 快照。成功即返回，任何一档失败都抛。
    *

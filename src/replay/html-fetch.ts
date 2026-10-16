@@ -1,4 +1,5 @@
 import { publicHttpUrl } from '../adapters/safe-fetch.ts'
+import { fetchFor } from '../devices/fetch.ts'
 import { hostMatchesDomain } from './http-fetch.ts'
 import type { InterpretHtmlDeps } from './interpret-html.ts'
 import type { HtmlRecipe } from './recipe.ts'
@@ -51,7 +52,7 @@ export function makeHtmlFetch(
   cookieFor?: (domain: string) => Promise<string | undefined>,
   doFetch?: typeof fetch,
 ): InterpretHtmlDeps['fetchHtml'] {
-  const send = doFetch ?? fetch
+  const send = doFetch ?? fetchFor
   return async (req) => {
     const url = publicHttpUrl(req.url)
     if (!url) throw new Error(`html recipe "${recipe.sourceId}": refusing non-public URL ${req.url}`)

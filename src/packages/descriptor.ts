@@ -38,6 +38,9 @@ export interface StreamDescriptor {
   sources?: SourceManifest[]
   backend?: PluginBackend
   credentials?: string[]
+  /** 这个包会访问的主机名后缀。缺省 = `credentials`。派到远程设备的请求只放行这里的主机
+   *  （openspec/changes/device-execution/design.md D6），安装确认页把它列给用户看。 */
+  network?: { hosts: string[] }
   normalizer?: string
   /**
    * 这个包带代码：`entry` 是它的 activate 模块（相对包目录），两个名单是它**申报**会注册的
@@ -232,6 +235,8 @@ const PUBLIC_SUFFIXES = new Set([
 export function credentialDomainProblem(domain: string): string | null {
   const d = domain.trim().replace(/^\.+/, '').toLowerCase()
   if (!d) return '空条目'
+  // 通配符、协议、端口、路径都不是主机名：后缀匹配下它们要么永远匹配不上，要么让人误以为写了通配就能放行。
+  if (/[\s*/:@?#\\]/.test(d)) return `'${domain}' 不是主机名（不要带通配符、协议、端口或路径）`
   if (!d.includes('.')) {
     return `'${domain}' 是单标签，不是一个站点域名；申报它等于申报它下面所有站点的登录态`
   }
@@ -523,6 +528,7 @@ const streamSchema = z.object({
   sources: z.array(manifestSchema).optional(),
   backend: backendSchema.optional(),
   credentials: credentialsSchema.optional(),
+  network: z.object({ hosts: credentialsSchema }).strict().optional(),
   normalizer: z.string().optional(),
   /** normalizer 的迁移期别名，仍受理 */
   presenter: z.string().optional(),
@@ -608,6 +614,7 @@ export function parseStreamDescriptor(raw: unknown, label: string): StreamDescri
     sources: stream.sources as SourceManifest[] | undefined,
     backend: stream.backend as PluginBackend | undefined,
     credentials: stream.credentials,
+    network: stream.network,
     normalizer: stream.normalizer ?? stream.presenter,
     code: stream.code,
     capability: stream.capability,

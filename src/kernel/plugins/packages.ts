@@ -21,7 +21,10 @@ import { standbyDiagnose, standbyInertReason, standbyOrigin, withAwake } from '.
 import { provisionDeclaredBackends, type ProvisionNotice } from '../../plugins/provision-wire.ts'
 import { aggregatePluginStatus, type PluginStatus } from '../../plugins/status.ts'
 import { activatePackages, makeCookieFor, type ActivateFn, type PackageActivationFailure } from '../../packages/activate.ts'
-import { pickCodeLayer, type LayerPick } from '../../packages/pick-layer.ts'
+import { packageNetwork } from '../../packages/network-index.ts'
+import { fetchFor } from '../../devices/fetch.ts'
+import type { PackageNetwork } from '../../devices/placement.ts'
+import { applyLayerPick, pickCodeLayer, type LayerPick } from '../../packages/pick-layer.ts'
 import { makePackageReadSource, type ReadSourceImpl } from '../../packages/read-source.ts'
 import type { PackageActionEntry } from '../../tasks/package-actions.ts'
 import { buildPackageInventory, listRecipeNames, type PackageSummary } from '../../packages/inventory.ts'
@@ -99,6 +102,10 @@ export interface PackagesService {
    * 目录、容器名册、sealManifests 的 pluginName 查表都还要认识这个包。
    */
   layerPick: LayerPick
+  /** 包 id → 执行位置声明（facility、允许主机）。 */
+  networkFor: (pkgId: string) => PackageNetwork | undefined
+  /** facility → 执行位置声明（recipe 源按 facility 找到它的包）。 */
+  networkForFacility: (facility: string) => PackageNetwork | undefined
   /** 「所有带 backend 的包」的唯一合并名单（内置 + 用户装的第三方）。 */
   backendDirectory: BackendDirectory
   /** 容器取址走哪个档（host loopback / compose 容器 DNS / 没有容器）。 */
@@ -447,6 +454,17 @@ export const packagesPlugin = {
     // 算的是同一份结论，不再报）。
     const picked = pickCodeLayer(packages, userPackages, log)
     const userCodePackages = picked.user
+    // 执行位置要的两张小表：包 id → 声明、facility → 声明。热装包后 serve 会重建 kernel，这里不做增量。
+    // 取两层的并集而不只是代码包：纯 recipe 包也有 facility 与 credentials，recipe 源就是按 facility 来找它的。
+    // 同 npm 名两层都在时沿用上面的层选结论，输掉的那份不进表。
+    const keptLayers = applyLayerPick(picked.pick, packages, userPackages)
+    const networkIndex = new Map<string, PackageNetwork>()
+    const facilityIndex = new Map<string, PackageNetwork>()
+    for (const p of [...keptLayers.builtin, ...keptLayers.user]) {
+      const n = packageNetwork(p)
+      networkIndex.set(n.packageId, n)
+      if (!facilityIndex.has(n.facility)) facilityIndex.set(n.facility, n)
+    }
     const activatedResult = await activatePackages(
       [...picked.builtin.filter(isPluginEnabled), ...userCodePackages],
       // 装的是**包对象本身**，不是 id：第三方把 stream.id 写成 `alist` 也绝不会让内置那个
@@ -458,6 +476,7 @@ export const packagesPlugin = {
         backendUrl: (service) => pluginTarget(service ?? pkg.backend?.service ?? pkg.id) ?? undefined,
         withAwake: (service, fn) => withAwake(service, fn),
         cookieFor: makeCookieFor(pkg, (domain) => ctx.credentials.cookieProvider.cookieString(domain)),
+        fetch: fetchFor,
         // 转发到上面那个共用入口——它每次现读回填变量。**别在这儿抓快照**：实现由下游的
         // auth 域在自己起来之后才回填（`setFacilityLogin`，理由见那一格头注：sources/harvest
         // 在装载序上排在本域后面，本域 inject 它俩就是环），抓快照就是 AGENTS.md 记的
@@ -651,6 +670,8 @@ export const packagesPlugin = {
       packages,
       plugins,
       layerPick: picked.pick,
+      networkFor: (id) => networkIndex.get(id),
+      networkForFacility: (f) => facilityIndex.get(f),
       backendDirectory,
       netMode,
       isPluginEnabled,

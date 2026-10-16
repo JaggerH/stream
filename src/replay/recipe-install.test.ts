@@ -897,6 +897,13 @@ describe('P5b: 容器格对第三方开放（钳制）', () => {
     expect(preview.credentials).toEqual(['douyin.com'])
   })
 
+  it('preview 带出包声明的 network.hosts；没声明时该格缺席', async () => {
+    const withNet = makeDeps({ registry: registryWithBackend(BACKEND_OK, { network: { hosts: ['api.example.com'] } }), userDir })
+    expect((await previewRecipePackage(withNet, PKG_NAME)).networkHosts).toEqual(['api.example.com'])
+    const without = makeDeps({ registry: registryWithBackend(BACKEND_OK), userDir })
+    expect((await previewRecipePackage(without, PKG_NAME)).networkHosts).toBeUndefined()
+  })
+
   it('没申报凭证域时 preview 不造一个空名单出来', async () => {
     const deps = makeDeps({ registry: registryWithBackend(BACKEND_OK), userDir })
     expect((await previewRecipePackage(deps, PKG_NAME)).credentials).toBeUndefined()

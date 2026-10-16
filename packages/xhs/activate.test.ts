@@ -13,6 +13,7 @@ const ctx = (over: Partial<PluginContext> = {}): PluginContext => ({
   login: async () => { throw new Error('这个包不该调 login') },
   readSource: async () => [],
   readArticle: async () => { throw new Error('这个包不该调 readArticle') },
+  fetch: async () => { throw new Error('这个测试不该调 ctx.fetch') },
   log: () => {},
   config: {},
   ...over,

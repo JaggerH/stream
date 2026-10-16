@@ -251,6 +251,12 @@ export interface PluginContext {
    *  manifest's `credentials` are allowed; anything else throws. */
   cookieFor: (domain: string) => Promise<string | undefined>
   /**
+   * 出站 HTTP。**包里别用全局 `fetch`**（守卫测试会拦）：这一格按本次执行绑定的设备发出——
+   * 绑到 NAS 的账号，请求就从 NAS 出去。签名与标准 fetch 相同。
+   * 见 openspec/changes/device-execution/design.md D5。
+   */
+  fetch: typeof fetch
+  /**
    * Log a facility back in: the host finds that facility's `meta.login` recipe, runs it in the
    * user's own browser, and force-refreshes the cookie snapshot. Resolves on success, throws
    * on any failure (including "this facility has no login recipe").

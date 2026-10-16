@@ -11,6 +11,7 @@ const ctx = (config: Record<string, unknown> = {}): PluginContext => ({
   login: async () => { throw new Error('这个包不该调 login') },
   readSource: async () => { throw new Error('这个包不该调 readSource') },
   readArticle: async () => { throw new Error('这个包不该调 readArticle') },
+  fetch: async () => { throw new Error('这个测试不该调 ctx.fetch') },
   log: () => {},
   config,
 })
