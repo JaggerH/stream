@@ -11,7 +11,7 @@ import { fetchXunleiSubtitle, searchXunlei } from './client.ts'
 export class XunleiSubtitleAdapter implements Adapter {
   readonly id = 'xunlei-subtitle'
 
-  constructor(private readonly fetchImpl: typeof fetch = (...a) => fetch(...a)) {}
+  constructor(private readonly fetchImpl: typeof fetch) {}
 
   async init(): Promise<void> {}
 

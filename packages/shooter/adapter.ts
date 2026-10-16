@@ -10,7 +10,7 @@ import { fetchShooterSubtitle, searchShooter, type RangeReader } from './client.
 export class ShooterSubtitleAdapter implements Adapter {
   readonly id = 'shooter-subtitle'
 
-  constructor(private readonly fetchImpl: typeof fetch = (...a) => fetch(...a)) {}
+  constructor(private readonly fetchImpl: typeof fetch) {}
 
   async init(): Promise<void> {}
 

@@ -267,7 +267,7 @@ export interface PluginContext {
    * placed, a message sent) does that thing twice. Narrow the retry to the side-effect-free part:
    *
    * ```ts
-   * const open = async () => await openSession(await ctx.cookieFor(DOMAIN))
+   * const open = async () => await openSession(await ctx.cookieFor(DOMAIN), ctx.fetch)
    * try { return await open() }
    * catch (e) {
    *   if (!isSessionExpired(e)) throw e

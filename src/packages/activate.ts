@@ -45,7 +45,7 @@ export interface PluginContext {
    * 单的动作被自动重跑，就是重复下单。正确的形状是包自己把它收窄到**没有副作用的那一段**：
    *
    * ```ts
-   * const open = async () => await openSession(await ctx.cookieFor(DOMAIN))
+   * const open = async () => await openSession(await ctx.cookieFor(DOMAIN), ctx.fetch)
    * try { return await open() }
    * catch (e) {
    *   if (!(e instanceof SessionExpired)) throw e

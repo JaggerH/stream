@@ -94,7 +94,7 @@ export function filterXunlei(entries: XunleiEntry[], videoFile: string): Subtitl
 }
 
 /** 调迅雷接口 → 过滤后的候选。任何错误 → []（静默降级：兜底路径，一家挂了不拖累别家）。 */
-export async function searchXunlei(videoFile: string, fetchImpl: typeof fetch = fetch): Promise<SubtitleHit[]> {
+export async function searchXunlei(videoFile: string, fetchImpl: typeof fetch): Promise<SubtitleHit[]> {
   try {
     const u = `${XUNLEI_URL}?name=${encodeURIComponent(videoFile)}`
     const res = await fetchImpl(u, { headers: { 'User-Agent': UA, Accept: 'application/json' } })
@@ -108,7 +108,7 @@ export async function searchXunlei(videoFile: string, fetchImpl: typeof fetch = 
 }
 
 /** 按候选 id（直链）取字幕字节。主机不在白名单 → 抛（宿主转成 400/502，不静默）。 */
-export async function fetchXunleiSubtitle(id: string, fetchImpl: typeof fetch = fetch): Promise<Uint8Array> {
+export async function fetchXunleiSubtitle(id: string, fetchImpl: typeof fetch): Promise<Uint8Array> {
   if (!isAllowedXunleiHost(id)) throw new Error(`[xunlei] 拒绝取字节：${id} 不是迅雷字幕主机`)
   const res = await fetchImpl(id, { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(10_000) })
   if (!res.ok) throw new Error(`[xunlei] subtitle HTTP ${res.status}`)

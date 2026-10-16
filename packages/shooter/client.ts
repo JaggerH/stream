@@ -56,9 +56,9 @@ export async function searchShooter(opts: {
   videoFile: string
   size?: number
   read?: RangeReader
-  fetchImpl?: typeof fetch
+  fetchImpl: typeof fetch
 }): Promise<SubtitleHit[]> {
-  const fetchImpl = opts.fetchImpl ?? fetch
+  const fetchImpl = opts.fetchImpl
   try {
     if (!opts.read || !opts.size || opts.size < 8192) return [] // 没有字节可读 / 太小算不出四段
     const filehash = await shooterFilehash(opts.read, opts.size)
@@ -95,7 +95,7 @@ export async function searchShooter(opts: {
 }
 
 /** 按候选 id（直链）取字幕字节。主机不在白名单 → 抛。 */
-export async function fetchShooterSubtitle(id: string, fetchImpl: typeof fetch = fetch): Promise<Uint8Array> {
+export async function fetchShooterSubtitle(id: string, fetchImpl: typeof fetch): Promise<Uint8Array> {
   if (!isAllowedShooterHost(id)) throw new Error(`[shooter] 拒绝取字节：${id} 不是射手主机`)
   const res = await fetchImpl(id, { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(10_000) })
   if (!res.ok) throw new Error(`[shooter] subtitle HTTP ${res.status}`)

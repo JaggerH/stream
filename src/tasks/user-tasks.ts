@@ -63,7 +63,7 @@ function runAction(row: UserTaskRow, opts: CompileOptions): ScheduledTask['run']
     opts.ready?.(p)
     const out = await runOnDevice(p, () => fn(params))
     // 运行记录要看得出在哪台设备上跑的；local 原样返回，存量任务的明细形状不变。
-    return p.deviceId === LOCAL_DEVICE ? out : { ...out, detail: { device: p.deviceId, detail: out.detail } }
+    return p.deviceId === LOCAL_DEVICE ? out : { ...(out ?? { summary: '' }), detail: { device: p.deviceId, detail: out?.detail } }
   }
 }
 
