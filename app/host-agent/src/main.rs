@@ -351,8 +351,9 @@ async fn main() {
         std::process::exit(run_register(&args, true));
     }
 
-    // 设备模式：这台机器是主实例的一个执行位置（NAS），不是本机工作台。只认 STREAM_BACKEND_URL
-    // 这一个开关——本机模式什么都不用设，设备模式至少要知道主实例在哪。
+    // 设备模式：这台机器是主实例的一个执行位置（NAS），不是本机工作台。只认 STREAM_MAIN_URL
+    // 这一个开关——本机模式什么都不用设，设备模式至少要知道主实例在哪。不用 STREAM_BACKEND_URL：
+    // 它是 CLI/MCP 的本机后端地址，后端 spawn 本机 agent 时会继承下来，拿它当开关会误入设备模式。
     #[cfg(target_os = "linux")]
     match device::DeviceEnv::from_process() {
         Ok(Some(env)) => {
@@ -366,8 +367,8 @@ async fn main() {
         }
     }
     #[cfg(not(target_os = "linux"))]
-    if std::env::var_os("STREAM_BACKEND_URL").is_some() {
-        eprintln!("[device] 设备模式（STREAM_BACKEND_URL）目前只有 Linux 构建");
+    if std::env::var_os("STREAM_MAIN_URL").is_some() {
+        eprintln!("[device] 设备模式（STREAM_MAIN_URL）目前只有 Linux 构建");
         std::process::exit(2);
     }
 

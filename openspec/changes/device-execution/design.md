@@ -168,7 +168,9 @@ UI op 同层，所有设备一套模型。
 - `app/host-agent` 新增 Linux 构建：只编入 relay、`http.fetch`（`reqwest` + rustls，自定义 resolver 做 D6 的地址检查）、
   浏览器转发与 native host。`hello.platform = 'linux'`，`ops = ['http.fetch', 'browser']`（扩展在线时）。
 - 设备 id 与配对：配对请求体增加 `platform`，返回 `<platform>:<uuid>`；首次启动读环境变量
-  `STREAM_BACKEND_URL` 与 `STREAM_PAIRING_CODE` 完成配对，device token 写 agent 数据卷，之后不再需要配对码。
+  `STREAM_MAIN_URL` 与 `STREAM_PAIRING_CODE` 完成配对，device token 写 agent 数据卷，之后不再需要配对码。
+  开关不叫 `STREAM_BACKEND_URL`：那个名字已经是 CLI/MCP 的本机后端地址，且会被后端 spawn 的本机 agent 继承，
+  拿它触发设备模式会让本机工作台的 agent 误入设备模式（非 Linux 上直接退出）。
 - 镜像 `stream-node`（x86_64 / aarch64）：agent + Chromium（Xvfb）+ 预装 Stream 扩展与 native host 清单 + noVNC。
   Chrome 与 native host 必须同一文件系统，所以同一容器。noVNC 只用于首次登录或人工介入；验证码识别仍由主实例的
   识别能力处理。

@@ -64,7 +64,7 @@ cargo build --release            # → target/release/stream-desktop.exe
 ## 设备模式（Linux）
 
 同一个二进制在 Linux 上还能当**主实例的执行位置**用（NAS、另一台常开的机器）：它不连本机后端，而是连
-`STREAM_BACKEND_URL` 指向的主实例，替主实例发 HTTP 请求（`http.fetch`）。绑定到这台设备的任务，出站
+`STREAM_MAIN_URL` 指向的主实例，替主实例发 HTTP 请求（`http.fetch`）。绑定到这台设备的任务，出站
 请求全部从这里发出。设计：`openspec/changes/device-execution/`。
 
 ```bash
@@ -72,7 +72,7 @@ cargo build --release            # → target/release/stream-desktop.exe
 curl -sS -X POST http://127.0.0.1:8900/api/devices/pairing-code
 
 # 在设备上
-STREAM_BACKEND_URL=http://100.101.102.103:8900 \
+STREAM_MAIN_URL=http://100.101.102.103:8900 \
 STREAM_PAIRING_CODE=123456 \
 STREAM_DEVICE_NAME=家里的NAS \
 ./stream-desktop
@@ -80,7 +80,7 @@ STREAM_DEVICE_NAME=家里的NAS \
 
 | 变量 | 作用 |
 |---|---|
-| `STREAM_BACKEND_URL` | 主实例的 http(s) 地址。**设了它就是设备模式。** 用 IP 地址（Tailscale / 局域网）最省事：用主机名时主实例要把它登记为可信主机，否则配对请求会被 Host 检查拒掉。 |
+| `STREAM_MAIN_URL` | 主实例的 http(s) 地址。**设了它就是设备模式。** 用 IP 地址（Tailscale / 局域网）最省事：用主机名时主实例要把它登记为可信主机，否则配对请求会被 Host 检查拒掉。（不是 `STREAM_BACKEND_URL`：那是 CLI 连本机后端用的，设了它不会进入设备模式。） |
 | `STREAM_PAIRING_CODE` | 一次性配对码，只在还没配对时用。配对成功后 token 存进状态目录，之后的启动不再需要它（留着过期的码也没关系）。 |
 | `STREAM_AGENT_DATA` | 状态目录，缺省 `$XDG_DATA_HOME/stream-agent` 或 `~/.local/share/stream-agent`。容器里指向挂载的数据卷，否则每次重建容器都要重新配对。 |
 | `STREAM_DEVICE_NAME` | 设备列表里显示的名字，缺省主机名。 |

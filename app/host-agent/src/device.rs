@@ -1,6 +1,7 @@
 //! 设备模式：这台 Linux 机器（NAS）不是主实例，而是主实例的一个执行位置。
 //!
-//! `STREAM_BACKEND_URL` 在场就进入这个模式：首次启动用 `STREAM_PAIRING_CODE` 配对，device token
+//! `STREAM_MAIN_URL` 在场就进入这个模式（不是 `STREAM_BACKEND_URL`：那个名字早已是 CLI/MCP 用的
+//! 本机后端地址，后端 spawn agent 时会原样继承，拿它当开关会把本机工作台的 agent 误判成设备）。首次启动用 `STREAM_PAIRING_CODE` 配对，device token
 //! 存进状态目录，之后每次启动都用它直接连——配对码只用一次。被主实例撤销后作废保存的配对，
 //! 再用环境变量里的码配（通常它早已用过，于是挂起等用户换新码）。
 //! 权威：openspec/changes/device-execution/specs/linux-device-agent/spec.md、design.md D8。
@@ -59,14 +60,14 @@ pub enum PairNext {
 }
 
 impl DeviceEnv {
-    /// 读设备模式的配置。`Ok(None)` = 不是设备模式（没有 `STREAM_BACKEND_URL`）；`Err` = 是设备模式
+    /// 读设备模式的配置。`Ok(None)` = 不是设备模式（没有 `STREAM_MAIN_URL`）；`Err` = 是设备模式
     /// 但配置不能用——启动即判死，因为它不会自己变好。
     pub fn from_lookup(get: &dyn Fn(&str) -> Option<String>, hostname: Option<String>) -> Result<Option<DeviceEnv>, String> {
         let val = |k: &str| get(k).map(|v| v.trim().to_string()).filter(|v| !v.is_empty());
-        let Some(raw) = val("STREAM_BACKEND_URL") else { return Ok(None) };
-        let backend = Url::parse(&raw).map_err(|e| format!("STREAM_BACKEND_URL 不是合法地址（{raw}）：{e}"))?;
+        let Some(raw) = val("STREAM_MAIN_URL") else { return Ok(None) };
+        let backend = Url::parse(&raw).map_err(|e| format!("STREAM_MAIN_URL 不是合法地址（{raw}）：{e}"))?;
         if backend.scheme() != "http" && backend.scheme() != "https" {
-            return Err(format!("STREAM_BACKEND_URL 只能是 http:// 或 https://（{raw}）"));
+            return Err(format!("STREAM_MAIN_URL 只能是 http:// 或 https://（{raw}）"));
         }
         let state_dir = val("STREAM_AGENT_DATA")
             .map(PathBuf::from)
@@ -276,15 +277,23 @@ mod tests {
     }
 
     #[test]
-    fn no_backend_url_means_not_device_mode() {
+    fn no_main_url_means_not_device_mode() {
         assert!(DeviceEnv::from_lookup(&env_of(&[]), None).unwrap().is_none());
-        assert!(DeviceEnv::from_lookup(&env_of(&[("STREAM_BACKEND_URL", "  ")]), None).unwrap().is_none());
+        assert!(DeviceEnv::from_lookup(&env_of(&[("STREAM_MAIN_URL", "  ")]), None).unwrap().is_none());
+    }
+
+    /// `STREAM_BACKEND_URL` 是 CLI/MCP 用的本机后端地址，后端 spawn agent 时会原样继承下来——
+    /// 它在场不能把一个本机工作台的 agent 变成设备模式。
+    #[test]
+    fn the_cli_backend_url_alone_is_not_device_mode() {
+        let only_cli = env_of(&[("STREAM_BACKEND_URL", "http://127.0.0.1:8787"), ("HOME", "/home/x")]);
+        assert_eq!(DeviceEnv::from_lookup(&only_cli, None).map(|e| e.is_none()), Ok(true));
     }
 
     #[test]
     fn the_env_is_read_with_its_defaults() {
         let e = DeviceEnv::from_lookup(
-            &env_of(&[("STREAM_BACKEND_URL", "http://100.101.102.103:8900"), ("STREAM_PAIRING_CODE", " 123456 "), ("HOME", "/home/nas")]),
+            &env_of(&[("STREAM_MAIN_URL", "http://100.101.102.103:8900"), ("STREAM_PAIRING_CODE", " 123456 "), ("HOME", "/home/nas")]),
             Some("DS920".into()),
         )
         .unwrap()
@@ -300,7 +309,7 @@ mod tests {
     fn explicit_settings_win_over_defaults() {
         let e = DeviceEnv::from_lookup(
             &env_of(&[
-                ("STREAM_BACKEND_URL", "https://stream.example.com/base/"),
+                ("STREAM_MAIN_URL", "https://stream.example.com/base/"),
                 ("STREAM_AGENT_DATA", "/data"),
                 ("XDG_DATA_HOME", "/xdg"),
                 ("STREAM_DEVICE_NAME", " 家里的 NAS "),
@@ -315,16 +324,16 @@ mod tests {
         assert_eq!(e.name, "家里的 NAS");
         assert_eq!(e.pairing_code, None, "空配对码 = 没给");
         assert_eq!(e.allow_hosts, Some(vec!["eastmoneysec.com".to_string(), "eastmoney.com".to_string()]));
-        let xdg = DeviceEnv::from_lookup(&env_of(&[("STREAM_BACKEND_URL", "http://h:1"), ("XDG_DATA_HOME", "/xdg"), ("HOME", "/home/x")]), None).unwrap().unwrap();
+        let xdg = DeviceEnv::from_lookup(&env_of(&[("STREAM_MAIN_URL", "http://h:1"), ("XDG_DATA_HOME", "/xdg"), ("HOME", "/home/x")]), None).unwrap().unwrap();
         assert_eq!(xdg.state_dir, PathBuf::from("/xdg/stream-agent"));
         assert_eq!(xdg.name, "Linux");
     }
 
     #[test]
-    fn a_bad_backend_url_or_no_state_dir_is_a_startup_error() {
-        assert!(DeviceEnv::from_lookup(&env_of(&[("STREAM_BACKEND_URL", "not a url")]), None).is_err());
-        assert!(DeviceEnv::from_lookup(&env_of(&[("STREAM_BACKEND_URL", "ftp://h/"), ("HOME", "/h")]), None).is_err());
-        assert!(DeviceEnv::from_lookup(&env_of(&[("STREAM_BACKEND_URL", "http://h:1")]), None).is_err(), "没有任何状态目录可用");
+    fn a_bad_main_url_or_no_state_dir_is_a_startup_error() {
+        assert!(DeviceEnv::from_lookup(&env_of(&[("STREAM_MAIN_URL", "not a url")]), None).is_err());
+        assert!(DeviceEnv::from_lookup(&env_of(&[("STREAM_MAIN_URL", "ftp://h/"), ("HOME", "/h")]), None).is_err());
+        assert!(DeviceEnv::from_lookup(&env_of(&[("STREAM_MAIN_URL", "http://h:1")]), None).is_err(), "没有任何状态目录可用");
     }
 
     #[test]
