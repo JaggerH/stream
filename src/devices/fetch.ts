@@ -115,8 +115,11 @@ export function makeFetchFor(deps: FetchForDeps): typeof fetch {
 
     const started = now()
     let status = 0
+    // 帧真的写上 socket 了没有。排队等名额时被中止的请求永远不会发出（relay 摘出队列），
+    // 那是可重试的 signal.reason；只有发出之后的中止才是状态未知的 device-lost。
+    let sent = false
     try {
-      const result = await abortRace(relay.fetchOp(args), signal)
+      const result = await abortRace(relay.fetchOp(args, { signal, onSent: () => { sent = true } }), signal)
       if (Buffer.byteLength(result.body, 'base64') > MAX_DEVICE_BODY) {
         throw new DeviceRefused(deviceId, 'too-large', `响应体超过 ${MAX_DEVICE_BODY} 字节`)
       }
@@ -134,7 +137,8 @@ export function makeFetchFor(deps: FetchForDeps): typeof fetch {
       if (e instanceof HostOpError) throw new DeviceRefused(deviceId, e.code ?? 'network', e.message)
       if (e instanceof HostRelayDisconnected || e instanceof HostRelayTimeout) throw new DeviceLost(deviceId, e)
       // 请求已交给设备后调用方才中止：设备可能已经发出去了，状态未知，必须是不重试的 DeviceLost。
-      if (signal?.aborted && e === signal.reason) throw new DeviceLost(deviceId, e)
+      // 还在排队就中止：没发出，原样抛 signal.reason（可重试）。
+      if (signal?.aborted && e === signal.reason) throw sent ? new DeviceLost(deviceId, e) : e
       // HostAbortedByUser 原样抛：用户明确的停止，已被归为不重试。
       throw e
     } finally {

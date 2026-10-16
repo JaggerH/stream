@@ -127,6 +127,16 @@ export interface HttpFetchResult {
   url: string
 }
 
+export interface FetchOpOptions {
+  /**
+   * 调用方的中止信号。只在**排队等名额**这一段生效：中止就摘出队列、以 `signal.reason` 拒绝，
+   * 这个请求永远不会发出（因此可重试）。帧已发出之后的中止由调用方自己处理（`fetchFor` 判成 device-lost）。
+   */
+  signal?: AbortSignal | null
+  /** 帧即将写上 socket 时同步调用——调用方据此记下「本次执行已有请求发出」（见 run-context 的 dispatch 标记）。 */
+  onSent?: () => void
+}
+
 /** 每台设备的 HTTP 在途上限。一次采集不该把 NAS 打满，也不该被 UI 租约挡住。 */
 export const DEVICE_FETCH_CONCURRENCY = 4
 
@@ -376,37 +386,49 @@ export class WsHostRelay implements HostRelay {
    * 一条在跑的 UI recipe 不该挡住同一台设备上的 HTTP，HTTP 也不该被 recipe 的十几个 op 夹住。
    * 并发由 `DEVICE_FETCH_CONCURRENCY` 限住。op 超时 = 请求自己的超时再宽 5 秒（agent 侧先到点）。
    */
-  fetchOp(args: HttpFetchArgs): Promise<HttpFetchResult> {
+  fetchOp(args: HttpFetchArgs, opts: FetchOpOptions = {}): Promise<HttpFetchResult> {
+    const { signal } = opts
+    // 已经中止的调用不进队列、不发出：调用方放弃了，就不该在之后某个名额空出来时被补发。
+    if (signal?.aborted) return Promise.reject(signal.reason)
     if (!this.socket) return Promise.reject(new HostRelayDisconnected())
     // 有空位就同步占位、同步发出（与 `send()` 同样"未竞争时发送是同步的"）；满了才排队。
     // 不能写成 `await acquire` 再发：那会给未竞争的调用平白多一次微任务延迟。
-    const run = () => this.runFetch(args)
+    const run = () => this.runFetch(args, opts.onSent)
     if (this.fetchInFlight < DEVICE_FETCH_CONCURRENCY) { this.fetchInFlight++; return run() }
-    return this.waitFetchSlot().then(run)
+    return this.waitFetchSlot(signal).then(run)
   }
 
   /** 调用方已占好名额；无论成败都释放（成功、op 错误、超时、断连各条路都经过这里）。 */
-  private async runFetch(args: HttpFetchArgs): Promise<HttpFetchResult> {
+  private async runFetch(args: HttpFetchArgs, onSent?: () => void): Promise<HttpFetchResult> {
     try {
-      return (await this.dispatchParallel({ op: 'http.fetch', args: args as unknown as Record<string, unknown> }, args.timeoutMs + 5_000)) as HttpFetchResult
+      return (await this.dispatchParallel({ op: 'http.fetch', args: args as unknown as Record<string, unknown> }, args.timeoutMs + 5_000, onSent)) as HttpFetchResult
     } finally {
       this.releaseFetchSlot()
     }
   }
 
-  private waitFetchSlot(): Promise<void> {
+  private waitFetchSlot(signal?: AbortSignal | null): Promise<void> {
     return new Promise((resolve, reject) => {
-      const waiter = {
-        grant: () => { clearTimeout(timer); this.fetchInFlight++; resolve() },
-        // 中止/断连时由 `rejectAll` 调：没拿过名额，所以不动 `fetchInFlight`。
-        reject: (e: unknown) => { clearTimeout(timer); reject(e) },
-      }
-      const timer = setTimeout(() => {
+      const done = () => { clearTimeout(timer); signal?.removeEventListener('abort', onAbort) }
+      const drop = () => {
         const i = this.fetchWaiters.indexOf(waiter)
         if (i >= 0) this.fetchWaiters.splice(i, 1)
+      }
+      const waiter = {
+        grant: () => { done(); this.fetchInFlight++; resolve() },
+        // 中止/断连时由 `rejectAll` 调：没拿过名额，所以不动 `fetchInFlight`。
+        reject: (e: unknown) => { done(); reject(e) },
+      }
+      // 调用方在排队时放弃：摘出队列，不然名额空出来时它会被 grant、帧照样发出——
+      // 调用方以为"没发"（可重试），设备那边却收下了。
+      const onAbort = () => { done(); drop(); reject(signal!.reason) }
+      const timer = setTimeout(() => {
+        done()
+        drop()
         reject(new HostFetchQueueTimeout())
       }, this.fetchQueueWaitMs)
       timer.unref?.()
+      signal?.addEventListener('abort', onAbort, { once: true })
       this.fetchWaiters.push(waiter)
     })
   }
@@ -417,7 +439,7 @@ export class WsHostRelay implements HostRelay {
   }
 
   /** 发一个 op、按 id 配回复，**不碰** `inFlight`/`advance`——那是 UI 单发尾锁的。断连由 `rejectAll` 统一拒。 */
-  private dispatchParallel(op: HostOp, timeoutMs: number): Promise<unknown> {
+  private dispatchParallel(op: HostOp, timeoutMs: number, onSent?: () => void): Promise<unknown> {
     const socket = this.socket
     if (!socket) return Promise.reject(new HostRelayDisconnected())
     const id = this.nextId++
@@ -432,6 +454,8 @@ export class WsHostRelay implements HostRelay {
         // 与 `dispatch` 同一条帧形：总是带 `abortEpoch`，设备据此拒收中止之前发出、还在路上的请求
         // （见 `dispatch` 里那段注释）。中止/断连时 `rejectAll` 连排队等名额的也一起拒了，
         // HTTP 通道不会在用户按了停止之后还把单子送出去。
+        // 先记「已发出」再写 socket：send 同步抛时也宁可当作可能发出了（不重试），不可反过来。
+        onSent?.()
         socket.send(JSON.stringify({ id, op: op.op, args: op.args, abortEpoch: this.abortEpoch }))
       } catch (e) {
         this.pending.delete(id)

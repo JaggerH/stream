@@ -152,6 +152,57 @@ describe('WsHostRelay.fetchOp', () => {
       }
       expect(sent).toHaveLength(4)
     })
+
+    it('排队时调用方中止：摘出队列、以 signal.reason 拒绝、永不发出，名额记账不乱', async () => {
+      const r = new WsHostRelay()
+      const { socket, sent } = fakeSocket()
+      r.connect(socket)
+      const ps = fill(r, 4)
+      const ac = new AbortController()
+      let sentMarked = false
+      const queued = r.fetchOp(args('https://example.com/queued'), { signal: ac.signal, onSent: () => { sentMarked = true } })
+      const reason = new Error('caller gave up')
+      ac.abort(reason)
+      await expect(queued).rejects.toBe(reason)
+      expect(sentMarked).toBe(false)
+      // 前面的落定、名额放出来——被中止的那个不能被补发
+      for (const f of sent.slice(0, 4)) reply(r, f.id, OK)
+      await Promise.all(ps)
+      expect(sent).toHaveLength(4)
+      // 名额回满：再来 4 个同步发出，第 5 个排队
+      const more = fill(r, 5)
+      expect(sent).toHaveLength(8)
+      for (const f of sent.slice(4)) reply(r, f.id, OK)
+      await Promise.all(more.slice(0, 4))
+      expect(sent).toHaveLength(9)
+      reply(r, sent[8].id, OK)
+      await more[4]
+    })
+
+    it('已中止的 signal：立刻拒绝，不排队、不发出', async () => {
+      const r = new WsHostRelay()
+      const { socket, sent } = fakeSocket()
+      r.connect(socket)
+      const reason = new Error('already')
+      await expect(r.fetchOp(args('https://example.com/x'), { signal: AbortSignal.abort(reason) })).rejects.toBe(reason)
+      expect(sent).toHaveLength(0)
+      const p = r.fetchOp(args('https://example.com/y'))
+      expect(sent).toHaveLength(1)
+      reply(r, sent[0].id, OK)
+      await p
+    })
+
+    it('onSent 在帧发出之前被同步调用', async () => {
+      const r = new WsHostRelay()
+      const { socket, sent } = fakeSocket()
+      r.connect(socket)
+      let n = 0
+      const p = r.fetchOp(args('https://example.com/x'), { onSent: () => { n++; expect(sent).toHaveLength(0) } })
+      expect(n).toBe(1)
+      expect(sent).toHaveLength(1)
+      reply(r, sent[0].id, OK)
+      await p
+    })
   })
 
   it('fetch 在途时 UI op 照常走单发尾锁', async () => {

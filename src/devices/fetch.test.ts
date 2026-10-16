@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest'
 import { makeFetchFor, fetchFor, MAX_DEVICE_BODY } from './fetch.ts'
 import { runOnDevice } from './run-context.ts'
 import { failureDisposition, DeviceIncapable,DeviceLost, DeviceOffline, DeviceRefused, HostNotAllowed } from './errors.ts'
-import { HostAbortedByUser, HostOpError, HostRelayDisconnected, type HttpFetchArgs } from '../http/host-relay.ts'
+import { HostAbortedByUser, HostOpError, HostRelayDisconnected, WsHostRelay, type FetchOpOptions, type HttpFetchArgs } from '../http/host-relay.ts'
 
 const NAS = { deviceId: 'linux:nas', allowHosts: ['eastmoneysec.com'] }
 const b64 = (s: string) => Buffer.from(s).toString('base64')
@@ -13,7 +13,8 @@ function setup(over: { online?: boolean; ops?: string[]; reply?: (a: HttpFetchAr
   const debug = vi.fn()
   const relay = {
     connected: true,
-    fetchOp: async (a: HttpFetchArgs) => { calls.push(a); return (over.reply ?? (async () => ({ status: 200, headers: [['content-type', 'text/plain']], body: b64('nas'), url: a.url })))(a) as never },
+    // 与真 relay 一致：帧"发出"时调 onSent（真 relay 在 socket.send 之前同步调）。
+    fetchOp: async (a: HttpFetchArgs, o?: FetchOpOptions) => { calls.push(a); o?.onSent?.(); return (over.reply ?? (async () => ({ status: 200, headers: [['content-type', 'text/plain']], body: b64('nas'), url: a.url })))(a) as never },
   }
   const online = over.online ?? true
   const ops = new Set(over.ops ?? ['http.fetch'])
@@ -138,6 +139,30 @@ describe('fetchFor', () => {
     expect(e).toBeInstanceOf(DeviceLost)
     expect(failureDisposition(e)).toBe('final')
     expect(local).not.toHaveBeenCalled()
+  })
+
+  it('排队等名额时调用方中止：帧永不发出，抛 signal.reason（可重试），名额不乱', async () => {
+    const relay = new WsHostRelay()
+    const sent: { id: number }[] = []
+    relay.connect({ send: (d: string) => { sent.push(JSON.parse(d)) } })
+    const f = makeFetchFor({
+      local: vi.fn(async () => new Response('local')),
+      directory: { isOnline: () => true, hasOp: () => true, fetchRelay: () => relay },
+    })
+    const url = 'https://jywg.eastmoneysec.com/'
+    const busy = [0, 1, 2, 3].map(() => runOnDevice(NAS, () => f(url)))
+    await vi.waitFor(() => expect(sent).toHaveLength(4))
+    const ac = new AbortController()
+    const queued = runOnDevice(NAS, () => f(url, { signal: ac.signal })).catch((x) => x)
+    await new Promise((r) => setTimeout(r, 5))
+    ac.abort()
+    const e = await queued
+    expect(e).toBe(ac.signal.reason)
+    expect(failureDisposition(e)).toBe('retry')
+    const OK = { status: 200, headers: [], body: '', url }
+    for (const s of sent) relay.handleMessage(JSON.stringify({ id: s.id, result: OK }))
+    await Promise.all(busy)
+    expect(sent).toHaveLength(4)
   })
 
   it('Request 入参带 body 而 init 没给：TypeError，不发帧', async () => {
