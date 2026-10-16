@@ -1762,7 +1762,7 @@ and is only called inside the host process. **What sits behind it is decided by 
 ### 5.2 Where login state comes from
 
 **Default: the backend fetches it from the user's Chrome itself, with zero containers.** The backend sends `op:'cookiePull'` over the relay, the extension returns the
-cookies for those domains, and the backend writes the whole set into `data/cookies.json` (0600). There is no third-party process anywhere on this path
+cookies for those domains, and the backend writes the whole set into `data/cookies/local.json` (0600; one file per device, `data/cookies/<device>.json`). There is no third-party process anywhere on this path
 — the extension and the backend already talk to each other directly (ext-relay has a token, and human-like harvest goes through it the whole time), so the cookies have no reason to take a detour.
 
 **Why the backend pulls, instead of the extension pushing on a timer**: only the backend knows when login state is needed — this round is about to harvest, how old
@@ -1835,7 +1835,7 @@ A run can be bound to a device (e.g. a NAS in mainland China), so a package's HT
   - **`HOST_CONTAINER_ONLY` exemption**: a file may stay on the global `fetch` only if it talks exclusively to **this package's own backend container on the main instance** (those requests must stay local; routing them to a device would only end in `host-not-allowed`). Such a file is listed in the `HOST_CONTAINER_ONLY` map in that test with its reason, and adding an entry needs a reviewer to confirm the file never touches an external host. A stale entry (file gone) fails the test.
 - **`stream.network.hosts: string[]`** in `package.json` declares the hostnames (suffix match: `h === d || h.endsWith('.' + d)`, not substring) the package may reach through a device. Absent = the same list as `stream.credentials`. The backend rejects a non-matching target before sending anything (`host-not-allowed`) and passes the list to the agent, which checks again and always refuses private / loopback / CGNAT targets. The install gate lists these hosts on the confirmation page.
 
-A run with no owning package (host-internal outbound) cannot be dispatched to a non-`local` device. See `docs/ARCHITECTURE.md` "Execution Placement".
+A run with no owning package (host-internal outbound, or a task row whose `device` is set but whose action's package is gone) cannot reach anything through a non-`local` device: its allowed-host list is empty, so every request fails before dispatch as `host-not-allowed`. See `docs/ARCHITECTURE.md` "Execution Placement".
 
 ---
 

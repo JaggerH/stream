@@ -118,7 +118,7 @@ How the transports work (probe rule, what degrades without a backend, env vars):
 Cookie-protected sources (Bilibili, Weibo, Xiaohongshu, Quark, …) need your browser's login state.
 **There is nothing to configure, and no container involved**: install the extension, and the
 backend pulls the cookies it needs from your Chrome when it needs them — which domains is derived
-from what you have installed and subscribed to. They land in `data/cookies.json`, mode 0600.
+from what you have installed and subscribed to. They land in `data/cookies/<device>.json` (this machine's are `data/cookies/local.json`), mode 0600.
 Plugin backend containers never hold credentials. Details: [docs/PACKAGE.md](docs/PACKAGE.md) §5.
 
 ## Current limitations

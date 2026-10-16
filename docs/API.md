@@ -224,7 +224,7 @@ The check is not "this address looks right"; it is **both sides know `data/ext-r
 
 - **How the extension obtains the token**: it launches `stream-desktop` through Chrome native messaging (host id `com.stream.desktop`), and that process reads the file
   (`0600`, readable only by the same user). The manifest is written in the operating-system-designated location, and `allowed_origins` pins our extension id,
-  so an impersonator must first be able to modify the user's registry/config directory to forge this path — and at that point it is simpler to read `data/cookies.json`
+  so an impersonator must first be able to modify the user's registry/config directory to forge this path — and at that point it is simpler to read `data/cookies/local.json`
   directly. **The threshold is raised from "grab a port" to "modify your machine"** (the same fix shape as Claude Code's IDE integration for
   CVE-2025-52882: the out-of-band channel goes through the filesystem).
 - **How the backend proves itself**: `POST /api/ext/verify`, body `{nonce}`, returns

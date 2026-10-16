@@ -106,7 +106,7 @@ HTTP 形式把 `command`/`args` 换成 `"httpUrl": "http://localhost:8900/api/mc
 
 要 cookie 的源（B 站、微博、小红书、夸克……）需要你浏览器里的登录态。**没有任何东西要配，也不涉及
 容器**：装上扩展，后端在需要的时候自己去你的 Chrome 里取它要的 cookie——取哪些域名由你装了什么、
-订了什么推出来。它们落在 `data/cookies.json`，权限 0600。插件后端容器从不持有凭证。
+订了什么推出来。它们按设备落在 `data/cookies/<设备>.json`（本机是 `data/cookies/local.json`），权限 0600。插件后端容器从不持有凭证。
 细节见 [docs/PACKAGE.md](docs/PACKAGE.md) §5。
 
 ## 当前限制

@@ -22,7 +22,7 @@ cookieDomain 绑定)、`src/manifest/loader.ts`+`types.ts`(auth session `login: 
 | 哪一档 | 登录在哪 | 怎么建立 | 掉了怎么办 |
 |---|---|---|---|
 | **浏览器档**（3–5 级 canonical recipe） | **用户自己的 Chrome** | 用户像上任何一个网站那样登 | 他自己重登；或给这个 facility 声明 `login: qr`（Stream 弹扫码面板）/ `login: oauth`（Stream 替他点掉第三方入口，见 1.2） |
-| **HTTP 档**（第 2 级 `kind:'http'`，以及 legacy fetch recipe 的 `cookieDomain`） | 后端的登录态库（`data/cookies.json`） | 后端在中继上向扩展取（`op:'cookiePull'`，见 `src/credentials/cookie-puller.ts`） | 用户在自己 Chrome 重登，同步自动跟上，**stream 侧零操作** |
+| **HTTP 档**（第 2 级 `kind:'http'`，以及 legacy fetch recipe 的 `cookieDomain`） | 后端的登录态库（按设备一份：`data/cookies/<设备>.json`，本机 `data/cookies/local.json`） | 后端在中继上向扩展取（`op:'cookiePull'`，见 `src/credentials/cookie-puller.ts`） | 用户在自己 Chrome 重登，同步自动跟上，**stream 侧零操作** |
 | **作者流程 · 抓包**（`capturing.md`） | 形态 A（`cdp_*`）：**用户自己那个 Chrome**，经扩展中继；形态 B（仓库脚本）：**你自己**另起的那个带调试端口的 Chrome | 那个浏览器登着就行 | ——（形态 B 要抓一个"这个浏览器没登录"的会话，才用 `COOKIE_HEADER`+`COOKIE_DOMAIN`；形态 A 没有这一档，它就是用户的登录态） |
 
 ### 1.1 `login: qr` 扫到的是用户自己的浏览器
