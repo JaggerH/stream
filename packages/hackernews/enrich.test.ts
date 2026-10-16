@@ -2,6 +2,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { makeEnrichers } from './enrich.ts'
 import type { Article, Enrichment } from '../../src/content/types.ts'
 
+/** 晚绑定的发送器：测试在调用时才 stub 全局 fetch，包代码本身只认注入的 send。 */
+const send: typeof fetch = (...a) => globalThis.fetch(...a)
+
 const STORIES: Record<number, unknown> = {
   1: { id: 1, by: 'op', title: 'Linked', url: 'https://example.com/x', descendants: 7 },
   2: { id: 2, by: 'asker', title: 'Ask HN: why?', text: '<p>body</p>', descendants: 0 },
@@ -27,7 +30,7 @@ describe('hackernews-comments enricher', () => {
   it('returns the linked article (via the host reader) + comments + HN total', async () => {
     mockFetch()
     const readArticle = vi.fn(async (url: string): Promise<Article> => ({ sourceUrl: url, html: '<p>a</p>' }))
-    const e = (await makeEnrichers({ readArticle })['hackernews-comments']({ id: '1' })) as Enrichment
+    const e = (await makeEnrichers({ readArticle, fetch: send })['hackernews-comments']({ id: '1' })) as Enrichment
     expect(readArticle).toHaveBeenCalledWith('https://example.com/x')
     // the article keeps the story title when the page gave none
     expect(e.article).toMatchObject({ sourceUrl: 'https://example.com/x', title: 'Linked' })
@@ -39,7 +42,7 @@ describe('hackernews-comments enricher', () => {
   it('Ask/Show HN text post → the post body is the article; no external read', async () => {
     mockFetch()
     const readArticle = vi.fn(async () => null)
-    const e = (await makeEnrichers({ readArticle })['hackernews-comments']({ id: '2' })) as Enrichment
+    const e = (await makeEnrichers({ readArticle, fetch: send })['hackernews-comments']({ id: '2' })) as Enrichment
     expect(readArticle).not.toHaveBeenCalled()
     expect(e.article).toMatchObject({ title: 'Ask HN: why?', author: 'asker', html: '<p>body</p>' })
     expect(e.article?.sourceUrl).toMatch(/item\?id=2$/)
@@ -48,12 +51,12 @@ describe('hackernews-comments enricher', () => {
 
   it('dead story → empty enrichment (not an error)', async () => {
     mockFetch()
-    const e = await makeEnrichers({ readArticle: async () => null })['hackernews-comments']({ id: '999' })
+    const e = await makeEnrichers({ readArticle: async () => null, fetch: send })['hackernews-comments']({ id: '999' })
     expect(e).toEqual({})
   })
 
   it('bad id → ValidationError (host answers 400)', async () => {
-    const run = makeEnrichers({ readArticle: async () => null })['hackernews-comments']
+    const run = makeEnrichers({ readArticle: async () => null, fetch: send })['hackernews-comments']
     await expect(run({})).rejects.toMatchObject({ name: 'ValidationError' })
     await expect(run({ id: 'abc' })).rejects.toMatchObject({ name: 'ValidationError' })
   })

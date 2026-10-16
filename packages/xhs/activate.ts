@@ -12,7 +12,7 @@ import { StreamTable } from './streams.ts'
 export const activate: ActivateFn = (ctx) => {
   const deps = { readSource: ctx.readSource, streams: new StreamTable() }
   return {
-    adapters: { xhs: new XhsAdapter(deps) },
+    adapters: { xhs: new XhsAdapter(deps, ctx.fetch) },
     normalizers: { xhs: xhsNormalizer },
     enrichers: makeDetailEnricher(deps),
   }

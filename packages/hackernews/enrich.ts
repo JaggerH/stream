@@ -8,17 +8,17 @@ import { fetchHnStory, fetchThreadComments, storyPageUrl } from './client.ts'
  *
  *  评论树一次拿完（Algolia 一发），`cursor` 恒为 null；`total` 用 HN 自己报的数（树被截断时
  *  它大于 comments.length）。 */
-export function makeEnrichers(ctx: Pick<PluginContext, 'readArticle'>): Record<string, Enricher> {
+export function makeEnrichers(ctx: Pick<PluginContext, 'readArticle' | 'fetch'>): Record<string, Enricher> {
   return {
     'hackernews-comments': async (q, signal): Promise<Enrichment> => {
       const id = Number(q.id)
       if (!Number.isInteger(id) || id <= 0) throw new ValidationError('id (a Hacker News story id) required')
-      const story = await fetchHnStory(id, signal)
+      const story = await fetchHnStory(id, ctx.fetch, signal)
       if (!story) return {}
       // 原文与评论树并行：卡片预览（摘要 + 首图）不必等整棵树。
       const [extracted, comments] = await Promise.all([
         story.url ? ctx.readArticle(story.url) : Promise.resolve(null),
-        fetchThreadComments(id, story.by, signal),
+        fetchThreadComments(id, ctx.fetch, story.by, signal),
       ])
       let article: Article | undefined
       if (extracted) article = { ...extracted, title: extracted.title ?? story.title }

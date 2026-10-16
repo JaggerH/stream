@@ -82,7 +82,11 @@ const ownerCache = new Map<string, BiliOwner & { exp: number }>()
 const commentCache = new Map<string, BiliComments & { exp: number }>()
 
 export class BilibiliClient {
-  constructor(private readonly cookie: CookieFn) {}
+  constructor(
+    private readonly cookie: CookieFn,
+    /** 出站发送器（宿主的 ctx.fetch）：包里不碰全局 fetch，请求才会从绑定的设备发出。 */
+    private readonly send: typeof fetch,
+  ) {}
 
   private async apiHeaders(): Promise<Record<string, string>> {
     const h: Record<string, string> = { 'User-Agent': UA, Referer: REFERER }
@@ -104,7 +108,7 @@ export class BilibiliClient {
     let last: unknown
     for (let i = 0; i < tries; i++) {
       try {
-        const j = (await fetch(url, { headers: await this.apiHeaders() }).then((r) => r.json())) as {
+        const j = (await this.send(url, { headers: await this.apiHeaders() }).then((r) => r.json())) as {
           code: number
           data?: unknown
         }
@@ -125,14 +129,14 @@ export class BilibiliClient {
     if (hit && hit.exp > Date.now()) return hit
 
     const idQ = ref.bvid ? `bvid=${ref.bvid}` : `aid=${ref.aid}`
-    const view = (await fetch(`https://api.bilibili.com/x/web-interface/view?${idQ}`, {
+    const view = (await this.send(`https://api.bilibili.com/x/web-interface/view?${idQ}`, {
       headers: await this.apiHeaders(),
     }).then((r) => r.json())) as { code: number; data?: { cid?: number } }
     const cid = view.data?.cid
     if (view.code !== 0 || !cid) throw new Error(`view failed code=${view.code}`)
 
     const playIdQ = ref.bvid ? `bvid=${ref.bvid}` : `avid=${ref.aid}`
-    const pu = (await fetch(
+    const pu = (await this.send(
       `https://api.bilibili.com/x/player/playurl?${playIdQ}&cid=${cid}&qn=64&otype=json&fnval=1&fnver=0&platform=html5&high_quality=1`,
       { headers: await this.apiHeaders() }
     ).then((r) => r.json())) as { code: number; data?: { durl?: Array<{ url: string }> } }
@@ -223,7 +227,7 @@ export class BilibiliClient {
     const hit = userCache.get(uid)
     if (hit && hit.exp > Date.now()) return { uid, name: hit.name, face: hit.face }
 
-    const j = (await fetch(`https://api.bilibili.com/x/web-interface/card?mid=${uid}&photo=false`, {
+    const j = (await this.send(`https://api.bilibili.com/x/web-interface/card?mid=${uid}&photo=false`, {
       headers: await this.apiHeaders(),
     }).then((r) => r.json())) as { code: number; data?: { card?: { name?: string; face?: string } } }
     const name = j.data?.card?.name
@@ -241,7 +245,7 @@ export class BilibiliClient {
     const hit = nameCache.get(key)
     if (hit && hit.exp > Date.now()) return { uid: hit.uid, name: hit.name, face: hit.face }
 
-    const j = (await fetch(
+    const j = (await this.send(
       `https://api.bilibili.com/x/web-interface/search/type?search_type=bili_user&keyword=${encodeURIComponent(key)}`,
       { headers: { ...(await this.apiHeaders()), Referer: 'https://search.bilibili.com/' } }
     ).then((r) => r.json())) as {
@@ -287,7 +291,7 @@ export class BilibiliClient {
 
     let aid = ref.aid
     if (!aid) {
-      const view = (await fetch(`https://api.bilibili.com/x/web-interface/view?bvid=${ref.bvid}`, {
+      const view = (await this.send(`https://api.bilibili.com/x/web-interface/view?bvid=${ref.bvid}`, {
         headers: await this.apiHeaders(),
       }).then((r) => r.json())) as { code: number; data?: { aid?: number } }
       aid = String(view.data?.aid ?? '')
@@ -295,7 +299,7 @@ export class BilibiliClient {
     }
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const r = (await fetch(`https://api.bilibili.com/x/v2/reply?type=1&oid=${aid}&pn=${pn}&ps=20&sort=2`, {
+    const r = (await this.send(`https://api.bilibili.com/x/v2/reply?type=1&oid=${aid}&pn=${pn}&ps=20&sort=2`, {
       headers: await this.apiHeaders(),
     }).then((x) => x.json())) as { code: number; data?: any }
     if (r.code !== 0 || !r.data) throw new Error(`reply failed code=${r.code}`)

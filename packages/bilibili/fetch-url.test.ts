@@ -1,13 +1,16 @@
 import { describe, it, expect } from 'vitest'
 import { fetchUrlFor } from './fetch-url.ts'
 
+/** 晚绑定的发送器：测试在调用时才 stub 全局 fetch，包代码本身只认注入的 send。 */
+const send: typeof fetch = (...a) => globalThis.fetch(...a)
+
 const client = {
   view: async () => ({ title: '标题', owner: { mid: '1', name: 'UP', face: 'https://x/f.jpg' } }),
 } as never
 
 describe('bilibili-fetch-url', () => {
   it('从链接里抠出 BV 号，媒体地址走宿主的通用播放路由', async () => {
-    const r = await fetchUrlFor(client, 'https://www.bilibili.com/video/BV1xx411c7mD?p=1')
+    const r = await fetchUrlFor(client, 'https://www.bilibili.com/video/BV1xx411c7mD?p=1', { fetch: send })
     expect(r.platform).toBe('bilibili')
     expect(r.title).toBe('标题')
     expect(r.author).toBe('UP')
@@ -18,19 +21,19 @@ describe('bilibili-fetch-url', () => {
   it('av 号链接：id 保留 av 前缀，view 用 aid 查', async () => {
     let asked: unknown
     const c = { view: async (ref: unknown) => { asked = ref; return { title: 't', owner: null } } } as never
-    const r = await fetchUrlFor(c, 'https://www.bilibili.com/video/av170001/')
+    const r = await fetchUrlFor(c, 'https://www.bilibili.com/video/av170001/', { fetch: send })
     expect(asked).toEqual({ aid: '170001' })
     expect(r.media[0].url).toBe('/api/media/play?platform=bilibili&vid=av170001')
     expect(r.author).toBe('')
   })
   it('抠不出视频 id → 带原因的失败，不是空成功', async () => {
-    const r = await fetchUrlFor(client, 'https://www.bilibili.com/')
+    const r = await fetchUrlFor(client, 'https://www.bilibili.com/', { fetch: send })
     expect(r.media).toEqual([])
     expect(r.error).toBeTruthy()
   })
   it('view 接口打嗝 → 仍然给得出可播地址（标题作者缺就缺）', async () => {
     const broken = { view: async () => { throw new Error('boom') } } as never
-    const r = await fetchUrlFor(broken, 'https://b23.tv/BV1xx411c7mD')
+    const r = await fetchUrlFor(broken, 'https://b23.tv/BV1xx411c7mD', { fetch: send })
     expect(r.media).toHaveLength(1)
     expect(r.title).toBe('')
   })

@@ -29,7 +29,7 @@ function matchesIdentity(identity: VideoLookupIdentity, title: unknown, year: un
 }
 
 /** 查一次 OMDb；查不到 / 对不上身份 → null；HTTP 失败 → 抛。 */
-export async function omdbLookup(identity: VideoLookupIdentity, apiKey: string): Promise<Record<string, any> | null> {
+export async function omdbLookup(identity: VideoLookupIdentity, apiKey: string, send: typeof fetch): Promise<Record<string, any> | null> {
   const url = new URL(OMDB_BASE)
   url.searchParams.set('apikey', apiKey)
   url.searchParams.set('plot', 'full')
@@ -39,7 +39,7 @@ export async function omdbLookup(identity: VideoLookupIdentity, apiKey: string):
     if (identity.year) url.searchParams.set('y', String(identity.year))
     if (identity.kind === 'movie' || identity.kind === 'series' || identity.kind === 'episode') url.searchParams.set('type', identity.kind)
   }
-  const response = await fetch(url.toString(), { headers: { accept: 'application/json' } })
+  const response = await send(url.toString(), { headers: { accept: 'application/json' } })
   if (!response.ok) throw new Error(`OMDb request failed (${response.status})`)
   const body = await response.json()
   const parsed = body && typeof body === 'object' && (body as Record<string, any>).Response === 'True' ? body as Record<string, any> : null

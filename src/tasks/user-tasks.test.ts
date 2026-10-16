@@ -2,6 +2,8 @@ import { describe, it, expect, vi } from 'vitest'
 import { compileUserTask, compileEnabled } from './user-tasks.ts'
 import type { UserTaskRow } from './task-store.ts'
 import type { PackageAction } from './package-actions.ts'
+import { currentDeviceId } from '../devices/run-context.ts'
+import { DeviceOffline } from '../devices/errors.ts'
 
 const row: UserTaskRow = {
   id: 'dl-freshness', label: '数据新鲜度巡检', schedule: '0 0 * * * *',
@@ -139,5 +141,44 @@ describe('compileUserTask —— 动作型的行', () => {
     const t = compileUserTask(actionRow, { exec, actions: () => async () => ({ summary: 'ok' }) })
     await t.run({ log: () => {} })
     expect(exec).not.toHaveBeenCalled()
+  })
+})
+
+describe('action tasks run on their placement', () => {
+  const emRow: UserTaskRow = {
+    id: 'em', label: 'x', schedule: '0 45 9 * * *', action: 'eastmoney:calendar', args: [],
+    serial: true, maxAttempts: 1, enabled: true, createdAt: 0, updatedAt: 0,
+  }
+
+  it('动作在解析出的设备上下文里跑，结果带设备', async () => {
+    let seen = ''
+    const t = compileUserTask(emRow, {
+      actions: () => async () => { seen = currentDeviceId(); return { summary: 'ok', detail: { n: 1 } } },
+      placement: () => ({ deviceId: 'linux:nas', allowHosts: ['eastmoneysec.com'] }),
+      ready: () => {},
+    })
+    const out = await t.run({} as never)
+    expect(seen).toBe('linux:nas')
+    expect(out).toEqual({ summary: 'ok', detail: { device: 'linux:nas', detail: { n: 1 } } })
+  })
+
+  it('local 时结果原样', async () => {
+    const t = compileUserTask(emRow, {
+      actions: () => async () => ({ summary: 'ok', detail: { n: 1 } }),
+      placement: () => ({ deviceId: 'local', allowHosts: [] }),
+      ready: () => {},
+    })
+    expect(await t.run({} as never)).toEqual({ summary: 'ok', detail: { n: 1 } })
+  })
+
+  it('设备不就绪：动作一次都不调', async () => {
+    const fn = vi.fn()
+    const t = compileUserTask(emRow, {
+      actions: () => fn,
+      placement: () => ({ deviceId: 'linux:nas', allowHosts: [] }),
+      ready: () => { throw new DeviceOffline('linux:nas') },
+    })
+    await expect(t.run({} as never)).rejects.toBeInstanceOf(DeviceOffline)
+    expect(fn).not.toHaveBeenCalled()
   })
 })

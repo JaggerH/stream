@@ -1,6 +1,9 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { CloudflareBackend } from './client.ts'
 
+/** 晚绑定的发送器：测试在调用时才 stub 全局 fetch，包代码本身只认注入的 send。 */
+const send: typeof fetch = (...a) => globalThis.fetch(...a)
+
 afterEach(() => vi.unstubAllGlobals())
 
 describe('CloudflareBackend', () => {
@@ -9,7 +12,7 @@ describe('CloudflareBackend', () => {
       async () => new Response(JSON.stringify({ success: true, result: { text: 'hi', segments: [] } }), { status: 200 })
     )
     vi.stubGlobal('fetch', fetchMock)
-    const b = new CloudflareBackend('a', 't')
+    const b = new CloudflareBackend('a', 't', send)
     await b.transcribe(new Uint8Array([1]), 'audio/mpeg', 'f', undefined, { translate: true })
     const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit]
     expect(JSON.parse(init.body as string)).toEqual({ audio: 'AQ==', task: 'translate' })
@@ -35,7 +38,7 @@ describe('CloudflareBackend', () => {
     )
     vi.stubGlobal('fetch', fetchMock)
 
-    const b = new CloudflareBackend('acct123', 'tok456')
+    const b = new CloudflareBackend('acct123', 'tok456', send)
     const res = await b.transcribe(new Uint8Array([1, 2, 3]), 'audio/mpeg')
 
     // request shape
@@ -55,7 +58,7 @@ describe('CloudflareBackend', () => {
 
   it('throws on HTTP error', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response('nope', { status: 401 })))
-    const b = new CloudflareBackend('a', 't')
+    const b = new CloudflareBackend('a', 't', send)
     await expect(b.transcribe(new Uint8Array([1]), 'audio/mpeg')).rejects.toThrow(/HTTP 401/)
   })
 
@@ -64,7 +67,7 @@ describe('CloudflareBackend', () => {
       'fetch',
       vi.fn(async () => new Response(JSON.stringify({ success: false, errors: [{ code: 8007 }] }), { status: 200 }))
     )
-    const b = new CloudflareBackend('a', 't')
+    const b = new CloudflareBackend('a', 't', send)
     await expect(b.transcribe(new Uint8Array([1]), 'audio/mpeg')).rejects.toThrow(/8007/)
   })
 })

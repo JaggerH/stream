@@ -40,8 +40,8 @@ async function followShortLink(url: string, fetchFn: typeof fetch): Promise<URL 
 }
 
 export interface FetchUrlDeps {
-  /** 只给短链跟跳用；默认全局 fetch，测试注入假的。 */
-  fetch?: typeof fetch
+  /** 只给短链跟跳用；宿主的 ctx.fetch（包里不碰全局 fetch），测试注入假的。 */
+  fetch: typeof fetch
 }
 
 const str = (v: unknown) => (typeof v === 'string' ? v : '')
@@ -56,10 +56,10 @@ const str = (v: unknown) => (typeof v === 'string' ? v : '')
  * 播放时 xhs-resolve 成员取出、宿主代理。图文笔记直接给图集的 CDN 地址。
  */
 export async function fetchUrlFor(
-  deps: DetailDeps, url: string, opts: FetchUrlDeps = {},
+  deps: DetailDeps, url: string, opts: FetchUrlDeps,
 ): Promise<FetchUrlResult> {
   let u = parse(url)
-  if (u && u.hostname.toLowerCase() === SHORT_HOST) u = await followShortLink(url, opts.fetch ?? globalThis.fetch)
+  if (u && u.hostname.toLowerCase() === SHORT_HOST) u = await followShortLink(url, opts.fetch)
   const noteId = u ? noteIdIn(u) : undefined
   if (!u || !noteId) return { platform: PLATFORM, media: [], error: '这个链接里没有笔记 id（/explore/… 或 /discovery/item/…）' }
   const token = u.searchParams.get('xsec_token')

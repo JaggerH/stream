@@ -81,7 +81,10 @@ async function searchSongId(f: typeof fetch, title: string, artist: string): Pro
   return bestMatch(title, artist, body.result?.songs ?? [])
 }
 
-export interface NeteaseLyricsDeps { fetch?: typeof fetch }
+export interface NeteaseLyricsDeps {
+  /** 出站发送器（宿主的 ctx.fetch）：包里不碰全局 fetch，请求才会从绑定的设备发出。 */
+  fetch: typeof fetch
+}
 
 /**
  * `lyrics-search` 行的一个成员（`categories: [music, lyrics]` + `key_param: input` 让它被
@@ -100,8 +103,8 @@ export interface NeteaseLyricsDeps { fetch?: typeof fetch }
 export class NeteaseLyricsAdapter implements Adapter {
   readonly id = 'netease-lyrics'
   private readonly f: typeof fetch
-  constructor(deps: NeteaseLyricsDeps = {}) {
-    this.f = deps.fetch ?? globalThis.fetch.bind(globalThis)
+  constructor(deps: NeteaseLyricsDeps) {
+    this.f = deps.fetch
   }
 
   async init(): Promise<void> { /* 无凭证 */ }

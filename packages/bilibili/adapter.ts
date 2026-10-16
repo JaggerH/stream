@@ -15,7 +15,7 @@ import { fetchUrlFor } from './fetch-url.ts'
  */
 export class BilibiliAdapter implements Adapter {
   readonly id = 'bilibili'
-  constructor(private readonly client: BilibiliClient) {}
+  constructor(private readonly client: BilibiliClient, private readonly send: typeof fetch) {}
 
   async init(): Promise<void> { /* 凭证由宿主注入进 client 的 cookie 闭包 */ }
 
@@ -24,7 +24,7 @@ export class BilibiliAdapter implements Adapter {
     if (manifest.id.endsWith('bilibili-fetch-url')) {
       const url = typeof params.url === 'string' ? params.url : ''
       if (!url) return []
-      return [await fetchUrlFor(this.client, url)]
+      return [await fetchUrlFor(this.client, url, { fetch: this.send })]
     }
     throw new Error(`[bilibili] unsupported source ${manifest.id}`)
   }

@@ -42,8 +42,8 @@ async function followShortLink(url: string, fetchFn: typeof fetch): Promise<stri
 }
 
 export interface FetchUrlDeps {
-  /** 只给短链跟跳用；默认全局 fetch，测试注入假的。 */
-  fetch?: typeof fetch
+  /** 只给短链跟跳用；宿主的 ctx.fetch（包里不碰全局 fetch），测试注入假的。 */
+  fetch: typeof fetch
 }
 
 /**
@@ -53,11 +53,11 @@ export interface FetchUrlDeps {
  * 自己拼的那份不会报错，只会指向一个 404。
  */
 export async function fetchUrlFor(
-  client: Pick<BilibiliClient, 'view'>, url: string, deps: FetchUrlDeps = {},
+  client: Pick<BilibiliClient, 'view'>, url: string, deps: FetchUrlDeps,
 ): Promise<FetchUrlResult> {
   let vid = videoIdIn(url)
   if (!vid && hostOf(url) === SHORT_HOST) {
-    const target = await followShortLink(url, deps.fetch ?? globalThis.fetch)
+    const target = await followShortLink(url, deps.fetch)
     if (target) vid = videoIdIn(target)
   }
   if (!vid) return { ...NO_ID }

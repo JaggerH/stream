@@ -38,7 +38,7 @@ interface ScrapeBody {
 
 export async function scrapeWithFirecrawl(
   url: string,
-  opts: { baseUrl?: string; apiKey?: string | null; timeoutMs?: number; signal?: AbortSignal } = {},
+  opts: { send: typeof fetch; baseUrl?: string; apiKey?: string | null; timeoutMs?: number; signal?: AbortSignal },
 ): Promise<FirecrawlPage> {
   const base = (opts.baseUrl ?? DEFAULT_BASE).replace(/\/$/, '')
   const headers: Record<string, string> = { 'Content-Type': 'application/json' }
@@ -48,7 +48,7 @@ export async function scrapeWithFirecrawl(
 
   let res: Response
   try {
-    res = await fetch(`${base}/v2/scrape`, {
+    res = await opts.send(`${base}/v2/scrape`, {
       method: 'POST',
       headers,
       body: JSON.stringify({ url, formats: ['markdown'] }),

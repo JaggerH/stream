@@ -8,6 +8,8 @@ export class CloudflareBackend {
   constructor(
     private readonly accountId: string,
     private readonly token: string,
+    /** 出站发送器（宿主的 ctx.fetch）：包里不碰全局 fetch，请求才会从绑定的设备发出。 */
+    private readonly send: typeof fetch,
     private readonly model = '@cf/openai/whisper-large-v3-turbo'
   ) {}
 
@@ -23,7 +25,7 @@ export class CloudflareBackend {
       audio: Buffer.from(bytes).toString('base64'),
       task: opts?.translate ? 'translate' : 'transcribe',
     })
-    const r = await fetch(url, {
+    const r = await this.send(url, {
       method: 'POST',
       headers: { Authorization: `Bearer ${this.token}`, 'Content-Type': 'application/json' },
       body,

@@ -30,7 +30,7 @@ export const STREAM_NOT_REGISTERED = '这条笔记的播放地址还没取到—
  */
 export class XhsAdapter implements Adapter {
   readonly id = 'xhs'
-  constructor(private readonly deps: DetailDeps) {}
+  constructor(private readonly deps: DetailDeps, private readonly send: typeof fetch) {}
 
   async init(): Promise<void> { /* 没有凭证要装：recipe 骑的是用户 Chrome 里的登录态 */ }
 
@@ -39,7 +39,7 @@ export class XhsAdapter implements Adapter {
     if (manifest.id.endsWith('xhs-fetch-url')) {
       const url = typeof params.url === 'string' ? params.url : ''
       if (!url) return []
-      return [await fetchUrlFor(this.deps, url)]
+      return [await fetchUrlFor(this.deps, url, { fetch: this.send })]
     }
     throw new Error(`[xhs] unsupported source ${manifest.id}`)
   }

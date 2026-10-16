@@ -2,6 +2,9 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { BilibiliClient, videoRefOf } from './client.ts'
 import { allStreamUrls, isAllowedSegHost } from '../../src/video/dash.ts'
 
+/** 晚绑定的发送器：测试在调用时才 stub 全局 fetch，包代码本身只认注入的 send。 */
+const send: typeof fetch = (...a) => globalThis.fetch(...a)
+
 const json = (body: unknown) => ({ json: async () => body }) as unknown as Response
 
 /** 一个按 URL 片段应答的假 fetch，顺带记下每次请求的 headers。 */
@@ -36,7 +39,7 @@ describe('videoRefOf', () => {
 describe('BilibiliClient — cookie 每次现取，不在构造时快照', () => {
   it('myUid 从 cookie 的 DedeUserID 读；cookie 换了下一次就读到新的', async () => {
     let cookie: string | undefined = 'SESSDATA=a; DedeUserID=111; bili_jct=x'
-    const client = new BilibiliClient(async () => cookie)
+    const client = new BilibiliClient(async () => cookie, send)
     expect(await client.myUid()).toBe('111')
     cookie = 'DedeUserID=222'
     expect(await client.myUid()).toBe('222')
@@ -47,7 +50,7 @@ describe('BilibiliClient — cookie 每次现取，不在构造时快照', () =>
   it('请求头带 UA + Referer，有 cookie 就带 Cookie；没有就不带这一格', async () => {
     const { f, calls } = fakeFetch([[/web-interface\/card/, { code: 0, data: { card: { name: 'UP', face: '//i0.hdslb.com/a.jpg' } } }]])
     vi.stubGlobal('fetch', f)
-    const client = new BilibiliClient(async () => undefined)
+    const client = new BilibiliClient(async () => undefined, send)
     const u = await client.user(String(9000 + n++))
     expect(u.face).toBe('https://i0.hdslb.com/a.jpg')
     expect(calls[0].headers).toMatchObject({ Referer: 'https://www.bilibili.com' })
@@ -62,7 +65,7 @@ describe('BilibiliClient — cookie 每次现取，不在构造时快照', () =>
       [/player\/playurl/, { code: 0, data: { durl: [{ url: 'https://upos-sz.bilivideo.com/v.mp4' }] } }],
     ])
     vi.stubGlobal('fetch', f)
-    const client = new BilibiliClient(async () => 'SESSDATA=s')
+    const client = new BilibiliClient(async () => 'SESSDATA=s', send)
     const r = await client.progressive({ bvid: bv })
     expect(r.url).toBe('https://upos-sz.bilivideo.com/v.mp4')
     expect(r.headers).toMatchObject({ Cookie: 'SESSDATA=s', Referer: 'https://www.bilibili.com' })
@@ -92,7 +95,7 @@ describe('BilibiliClient — cookie 每次现取，不在构造时快照', () =>
       }],
     ])
     vi.stubGlobal('fetch', f)
-    const client = new BilibiliClient(async () => 'SESSDATA=t')
+    const client = new BilibiliClient(async () => 'SESSDATA=t', send)
     const d = await client.dash({ bvid: bv })
     expect(d.durationS).toBe(12)
     expect(d.video[0]).toMatchObject({ url: 'https://cn-primary.bilivideo.com/v.m4s', backupUrls: ['https://cn-backup.mirrorks.com/v.m4s'], init: '0-9', indexRange: '10-20' })
@@ -115,7 +118,7 @@ describe('BilibiliClient — cookie 每次现取，不在构造时快照', () =>
     ])
     vi.stubGlobal('fetch', f)
     let cookie = 'SESSDATA=first'
-    const client = new BilibiliClient(async () => cookie)
+    const client = new BilibiliClient(async () => cookie, send)
     expect((await client.dash({ bvid: bv })).headers?.Cookie).toBe('SESSDATA=first')
     cookie = 'SESSDATA=rotated'
     const again = await client.dash({ bvid: bv })
@@ -137,7 +140,7 @@ describe('BilibiliClient — cookie 每次现取，不在构造时快照', () =>
       }],
     ])
     vi.stubGlobal('fetch', f)
-    const client = new BilibiliClient(async () => 'SESSDATA=u')
+    const client = new BilibiliClient(async () => 'SESSDATA=u', send)
     const a = await client.audio({ bvid: bv })
     expect(a.url).toBe('https://a.bilivideo.com/lo.m4s')
     expect(a.headers.Cookie).toBe('SESSDATA=u')
@@ -147,7 +150,7 @@ describe('BilibiliClient — cookie 每次现取，不在构造时快照', () =>
     const bv = freshBv()
     const { f } = fakeFetch([[/web-interface\/view/, { code: 0, data: { title: '标题', owner: { mid: 42, name: 'UP', face: '//i.hdslb.com/f.jpg' } } }]])
     vi.stubGlobal('fetch', f)
-    const client = new BilibiliClient(async () => undefined)
+    const client = new BilibiliClient(async () => undefined, send)
     expect(await client.view({ bvid: bv })).toEqual({ title: '标题', owner: { mid: '42', name: 'UP', face: 'https://i.hdslb.com/f.jpg' } })
     const { f: f2 } = fakeFetch([[/web-interface\/view/, { code: 0, data: { title: 'T' } }]])
     vi.stubGlobal('fetch', f2)
@@ -168,7 +171,7 @@ describe('BilibiliClient — cookie 每次现取，不在构造时快照', () =>
       }],
     ])
     vi.stubGlobal('fetch', f)
-    const client = new BilibiliClient(async () => undefined)
+    const client = new BilibiliClient(async () => undefined, send)
     const c = await client.comments({ bvid: bv })
     expect(c.total).toBe(2)
     expect(c.pinned).toMatchObject({ rpid: '1', author: 'UP', isUp: true, text: '置顶', avatar: 'https://i/a.jpg' })
@@ -180,7 +183,7 @@ describe('BilibiliClient — cookie 每次现取，不在构造时快照', () =>
       { mid: 1, uname: '某某 official', upic: '//i/1.jpg' }, { mid: 2, uname: `某某${n}`, upic: '//i/2.jpg' },
     ] } }]])
     vi.stubGlobal('fetch', f)
-    const client = new BilibiliClient(async () => undefined)
+    const client = new BilibiliClient(async () => undefined, send)
     expect(await client.userByName(`某某${n}`)).toEqual({ uid: '2', name: `某某${n}`, face: 'https://i/2.jpg' })
     expect(await client.userByName('   ')).toBeNull()
   })

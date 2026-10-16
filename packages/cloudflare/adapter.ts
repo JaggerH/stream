@@ -20,6 +20,8 @@ const MAX_BYTES = 20 * 1024 * 1024
 export class CloudflareAdapter implements Adapter {
   readonly id = 'cloudflare'
 
+  constructor(private readonly send: typeof fetch) {}
+
   async init(): Promise<void> {}
 
   async fetch(rawParams: Record<string, unknown>, _manifest: SourceManifest, context?: SourceExecutionContext): Promise<unknown[]> {
@@ -31,7 +33,7 @@ export class CloudflareAdapter implements Adapter {
     const token = typeof cfg.apiKey === 'string' ? cfg.apiKey : ''
     const accountId = typeof cfg.accountId === 'string' ? cfg.accountId : ''
     if (!token || !accountId) return []
-    const res = await new CloudflareBackend(accountId, token).transcribe(p.bytes, String(p.mime ?? ''), 'audio', undefined, p.opts)
+    const res = await new CloudflareBackend(accountId, token, this.send).transcribe(p.bytes, String(p.mime ?? ''), 'audio', undefined, p.opts)
     return [res]
   }
 }

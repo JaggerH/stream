@@ -67,10 +67,10 @@ function timeout(signal?: AbortSignal): AbortSignal {
 /** Fetch just the story metadata (url, body, total) — one fast Firebase call. Lets the
  *  caller extract the linked article in parallel with the comment-tree harvest.
  *  null = dead / deleted / unreachable. */
-export async function fetchHnStory(id: number, signal?: AbortSignal): Promise<HnStory | null> {
+export async function fetchHnStory(id: number, send: typeof fetch, signal?: AbortSignal): Promise<HnStory | null> {
   let root: HnItem | null = null
   try {
-    const res = await fetch(`${FB_API}/item/${id}.json`, { signal: timeout(signal) })
+    const res = await send(`${FB_API}/item/${id}.json`, { signal: timeout(signal) })
     if (!res.ok) return null
     root = (await res.json()) as HnItem | null
   } catch {
@@ -90,10 +90,10 @@ export async function fetchHnStory(id: number, signal?: AbortSignal): Promise<Hn
 
 /** Fetch the whole nested comment tree in one Algolia request, then map it (OP flagged,
  *  depth/node-capped). Deleted comments (text:null) are dropped. Empty on any failure. */
-export async function fetchThreadComments(id: number, opAuthor?: string, signal?: AbortSignal): Promise<Comment[]> {
+export async function fetchThreadComments(id: number, send: typeof fetch, opAuthor?: string, signal?: AbortSignal): Promise<Comment[]> {
   let root: AlgoliaNode | null = null
   try {
-    const res = await fetch(`${ALGOLIA_API}/items/${id}`, { signal: timeout(signal) })
+    const res = await send(`${ALGOLIA_API}/items/${id}`, { signal: timeout(signal) })
     if (res.ok) root = (await res.json()) as AlgoliaNode
   } catch {
     return []

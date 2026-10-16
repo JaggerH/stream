@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { assertDeviceReady, resolvePlacement } from './placement.ts'
+import { assertDeviceReady, assertLocalBrowser, resolvePlacement } from './placement.ts'
 import { DeviceIncapable, DeviceOffline } from './errors.ts'
 
 const bindings: Record<string, string> = { eastmoney: 'linux:nas' }
@@ -28,4 +28,9 @@ describe('assertDeviceReady', () => {
   it('离线', () => expect(() => assertDeviceReady({ deviceId: 'android:p', allowHosts: [] }, dir, 'http.fetch')).toThrow(DeviceOffline))
   it('能力不足', () => expect(() => assertDeviceReady({ deviceId: 'linux:nas', allowHosts: [] }, dir, 'browser')).toThrow(DeviceIncapable))
   it('就绪', () => expect(() => assertDeviceReady({ deviceId: 'linux:nas', allowHosts: [] }, dir, 'http.fetch')).not.toThrow())
+})
+
+describe('assertLocalBrowser', () => {
+  it('local 放行', () => expect(() => assertLocalBrowser({ deviceId: 'local', allowHosts: [] })).not.toThrow())
+  it('远程设备 fail-closed', () => expect(() => assertLocalBrowser({ deviceId: 'linux:nas', allowHosts: [] })).toThrow(DeviceIncapable))
 })

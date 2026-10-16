@@ -10,6 +10,9 @@ import { Registry } from '../../src/registry/registry.ts'
 import { SourceHealthStore } from '../../src/source-health-store.ts'
 import { memberCallArgs } from '../../src/providers/invoke-types.ts'
 
+/** 晚绑定的发送器：测试在调用时才 stub 全局 fetch，包代码本身只认注入的 send。 */
+const send: typeof fetch = (...a) => globalThis.fetch(...a)
+
 // 进 registry 的是全名（`<包名>/<局部名>`），adapter 按后缀分派。
 const RESOLVE = { id: '@streamapp/bilibili/bilibili-resolve' } as unknown as SourceManifest
 
@@ -24,40 +27,40 @@ function fakeClient() {
 describe('BilibiliAdapter — bilibili-resolve（video-bilibili 行的成员）', () => {
   it('default (no format) resolves a dash descriptor', async () => {
     const c = fakeClient()
-    const out = await new BilibiliAdapter(c as unknown as BilibiliClient).fetch({ vid: 'BV1xx' }, RESOLVE)
+    const out = await new BilibiliAdapter(c as unknown as BilibiliClient, send).fetch({ vid: 'BV1xx' }, RESOLVE)
     expect(out).toEqual([{ kind: 'dash', manifest: { durationS: 10, video: [], audio: [] } }])
     expect(c.dash).toHaveBeenCalledWith({ bvid: 'BV1xx' })
   })
 
   it("format:'progressive' resolves a progressive descriptor with headers", async () => {
     const c = fakeClient()
-    const out = await new BilibiliAdapter(c as unknown as BilibiliClient).fetch({ vid: 'BV1xx', format: 'progressive' }, RESOLVE)
+    const out = await new BilibiliAdapter(c as unknown as BilibiliClient, send).fetch({ vid: 'BV1xx', format: 'progressive' }, RESOLVE)
     expect(out).toEqual([{ kind: 'progressive', url: 'https://cdn.bili/v.mp4', headers: { Referer: 'https://www.bilibili.com' } }])
     expect(c.progressive).toHaveBeenCalledWith({ bvid: 'BV1xx' })
   })
 
   it("format:'audio' resolves the smallest audio rep as a progressive descriptor tagged audio/mp4", async () => {
     const c = fakeClient()
-    const out = await new BilibiliAdapter(c as unknown as BilibiliClient).fetch({ vid: 'BV1xx', format: 'audio' }, RESOLVE)
+    const out = await new BilibiliAdapter(c as unknown as BilibiliClient, send).fetch({ vid: 'BV1xx', format: 'audio' }, RESOLVE)
     expect(out).toEqual([{ kind: 'progressive', url: 'https://cdn.bili/a.m4s', headers: { Referer: 'https://www.bilibili.com' }, mime: 'audio/mp4' }])
     expect(c.audio).toHaveBeenCalledWith({ bvid: 'BV1xx' })
   })
 
   it('an av-number vid maps to an aid ref', async () => {
     const c = fakeClient()
-    await new BilibiliAdapter(c as unknown as BilibiliClient).fetch({ vid: 'av12345' }, RESOLVE)
+    await new BilibiliAdapter(c as unknown as BilibiliClient, send).fetch({ vid: 'av12345' }, RESOLVE)
     expect(c.dash).toHaveBeenCalledWith({ aid: '12345' })
   })
 
   it('declines (empty) when there is no vid — dispatch is by serves-key, but a missing key is a no-op', async () => {
     const c = fakeClient()
-    expect(await new BilibiliAdapter(c as unknown as BilibiliClient).fetch({}, RESOLVE)).toEqual([])
+    expect(await new BilibiliAdapter(c as unknown as BilibiliClient, send).fetch({}, RESOLVE)).toEqual([])
     expect(c.dash).not.toHaveBeenCalled()
   })
 
   it('an unknown source id of this package throws instead of silently returning nothing', async () => {
     const c = fakeClient()
-    await expect(new BilibiliAdapter(c as unknown as BilibiliClient).fetch({}, { id: '@streamapp/bilibili/nope' } as unknown as SourceManifest))
+    await expect(new BilibiliAdapter(c as unknown as BilibiliClient, send).fetch({}, { id: '@streamapp/bilibili/nope' } as unknown as SourceManifest))
       .rejects.toThrow(/unsupported source/)
   })
 })
@@ -73,7 +76,7 @@ describe('BilibiliAdapter 经真 ResolveEngine：对象输入按字段到达 par
     const dir = mkdtempSync(join(tmpdir(), 'bili-engine-'))
     try {
       const c = fakeClient()
-      const adapter = new BilibiliAdapter(c as unknown as BilibiliClient)
+      const adapter = new BilibiliAdapter(c as unknown as BilibiliClient, send)
       const manifest = {
         schema_version: 1, id: '@streamapp/bilibili/bilibili-resolve', adapter: 'bilibili', type: 'post', description: 'd',
         topics: [], example_queries: [], capabilities: ['anchor'], auth: { type: 'none' }, params_schema: {},

@@ -31,3 +31,11 @@ export function assertDeviceReady(
   if (!dir.isOnline(p.deviceId)) throw new DeviceOffline(p.deviceId)
   if (!dir.hasOp(p.deviceId, need)) throw new DeviceIncapable(p.deviceId, need)
 }
+
+/**
+ * 浏览器通道（登录）目前只通本机——远程设备的浏览器中继在 device-browser-relay 接上。
+ * 在那之前，绑定到远程设备的执行若在本机 Chrome 里登录，就是「PC 登录、NAS 下单」，宁可失败。
+ */
+export function assertLocalBrowser(p: RunPlacement): void {
+  if (p.deviceId !== LOCAL_DEVICE) throw new DeviceIncapable(p.deviceId, 'browser')
+}

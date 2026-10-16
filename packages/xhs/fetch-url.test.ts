@@ -4,6 +4,9 @@ import { StreamTable } from './streams.ts'
 import { XhsAdapter } from './adapter.ts'
 import type { SourceManifest } from '../../src/manifest/types.ts'
 
+/** 晚绑定的发送器：测试在调用时才 stub 全局 fetch，包代码本身只认注入的 send。 */
+const send: typeof fetch = (...a) => globalThis.fetch(...a)
+
 const ID = '6aafa8f4000000002902e34b'
 const SHARE = `https://www.xiaohongshu.com/discovery/item/${ID}?source=webshare&xhsshare=pc_web&xsec_token=ABp6rV=&xsec_source=pc_share`
 const VIDEO_URL = 'http://sns-video-qc.example-cdn.com/stream/x.mp4?sign=s'
@@ -25,7 +28,7 @@ function setup(items: unknown[]) {
 describe('xhs-fetch-url', () => {
   it('分享链接（/discovery/item/）→ 用链接里的 noteId + xsec_token 跑 xhs-detail；视频笔记走宿主播放路由', async () => {
     const { deps, readSource, streams } = setup([note({ video_stream: { EF4: [{ masterUrl: VIDEO_URL }] } })])
-    const r = await fetchUrlFor(deps, SHARE)
+    const r = await fetchUrlFor(deps, SHARE, { fetch: send })
     expect(readSource).toHaveBeenCalledWith('xhs-detail', { noteId: ID, xsec_token: 'ABp6rV=' }, expect.anything())
     expect(r).toMatchObject({ platform: 'xhs', title: '小星星的大月饼', author: '早教Bang', author_avatar: 'http://a/1.png', text: '正文' })
     expect(r.error).toBeUndefined()
@@ -41,20 +44,20 @@ describe('xhs-fetch-url', () => {
 
   it('图文笔记（/explore/）→ 整套图集', async () => {
     const { deps } = setup([note()])
-    const r = await fetchUrlFor(deps, `https://www.xiaohongshu.com/explore/${ID}?xsec_token=T`)
+    const r = await fetchUrlFor(deps, `https://www.xiaohongshu.com/explore/${ID}?xsec_token=T`, { fetch: send })
     expect(r.media).toEqual([{ kind: 'image', url: 'http://img/1.webp' }, { kind: 'image', url: 'http://img/2.webp' }])
   })
 
   it('缺 xsec_token → 带原因的失败，且不跑 recipe（白烧限速名额）', async () => {
     const { deps, readSource } = setup([note()])
-    const r = await fetchUrlFor(deps, `https://www.xiaohongshu.com/explore/${ID}`)
+    const r = await fetchUrlFor(deps, `https://www.xiaohongshu.com/explore/${ID}`, { fetch: send })
     expect(r.error).toMatch(/xsec_token/)
     expect(readSource).not.toHaveBeenCalled()
   })
 
   it('抠不出笔记 id → 带原因的失败', async () => {
     const { deps, readSource } = setup([note()])
-    const r = await fetchUrlFor(deps, 'https://www.xiaohongshu.com/user/profile/abc?xsec_token=T')
+    const r = await fetchUrlFor(deps, 'https://www.xiaohongshu.com/user/profile/abc?xsec_token=T', { fetch: send })
     expect(r.error).toBeTruthy()
     expect(r.media).toEqual([])
     expect(readSource).not.toHaveBeenCalled()
@@ -62,7 +65,7 @@ describe('xhs-fetch-url', () => {
 
   it('recipe 读不到笔记 → 带原因的失败，不是空成功', async () => {
     const { deps } = setup([])
-    const r = await fetchUrlFor(deps, SHARE)
+    const r = await fetchUrlFor(deps, SHARE, { fetch: send })
     expect(r.media).toEqual([])
     expect(r.error).toBeTruthy()
   })
@@ -88,7 +91,7 @@ describe('xhs-fetch-url', () => {
 
   it('adapter 按 manifest id 分派到这里，回单个对象', async () => {
     const { deps } = setup([note()])
-    const out = await new XhsAdapter(deps).fetch({ url: SHARE }, { id: '@streamapp/xhs/xhs-fetch-url' } as unknown as SourceManifest)
+    const out = await new XhsAdapter(deps, send).fetch({ url: SHARE }, { id: '@streamapp/xhs/xhs-fetch-url' } as unknown as SourceManifest)
     expect(out).toHaveLength(1)
     expect((out[0] as { platform: string }).platform).toBe('xhs')
   })

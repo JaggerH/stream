@@ -22,6 +22,8 @@ function identityOf(params: Record<string, unknown>): VideoLookupIdentity | null
 export class OmdbAdapter implements Adapter {
   readonly id = 'omdb'
 
+  constructor(private readonly send: typeof fetch) {}
+
   async init(): Promise<void> {}
 
   async fetch(params: Record<string, unknown>, _manifest: SourceManifest, context?: SourceExecutionContext): Promise<unknown[]> {
@@ -30,7 +32,7 @@ export class OmdbAdapter implements Adapter {
     const identity = identityOf(params)
     const apiKey = typeof context?.runtimeConfig.apiKey === 'string' ? context.runtimeConfig.apiKey : ''
     if (!identity || !apiKey) return []
-    const detail = await omdbLookup(identity, apiKey)
+    const detail = await omdbLookup(identity, apiKey, this.send)
     if (!detail) return []
     if (mode === 'omdb-metadata') return [omdbMetadata(detail)]
     const poster = omdbPoster(detail)

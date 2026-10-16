@@ -5,8 +5,13 @@ import { runExternal } from './exec-runner.ts'
 import type { PackageAction } from './package-actions.ts'
 import type { UserTaskRow } from './task-store.ts'
 import type { ScheduledTask } from './types.ts'
+import { LOCAL_DEVICE, runOnDevice, type RunPlacement } from '../devices/run-context.ts'
 
 export interface CompileOptions {
+  /** 这条任务在哪台设备上执行（任务覆盖 → facility 默认 → local）。缺席 = local。见 src/devices/placement.ts。 */
+  placement?: (row: UserTaskRow) => RunPlacement
+  /** 派发前检查设备就绪（在线、有 http.fetch）；不就绪就抛，动作一次都不调。 */
+  ready?: (p: RunPlacement) => void
   logDir?: string
   exec?: typeof runExternal
   /** 全局动作名 → 实现（`activate()` 交出来的那些，见 `package-actions.ts`）。 */
@@ -54,7 +59,11 @@ function runAction(row: UserTaskRow, opts: CompileOptions): ScheduledTask['run']
     // 没绑配置格 = 空参数袋。动作自己决定这算不算错（缺账号该由动作说"没有登录态"，
     // 而不是由这里替它判——它比调度器清楚自己要什么）。
     const params = row.configRef !== undefined ? (opts.paramsFor?.(row.configRef) ?? {}) : {}
-    return await fn(params)
+    const p = opts.placement?.(row) ?? { deviceId: LOCAL_DEVICE, allowHosts: [] }
+    opts.ready?.(p)
+    const out = await runOnDevice(p, () => fn(params))
+    // 运行记录要看得出在哪台设备上跑的；local 原样返回，存量任务的明细形状不变。
+    return p.deviceId === LOCAL_DEVICE ? out : { ...out, detail: { device: p.deviceId, detail: out.detail } }
   }
 }
 

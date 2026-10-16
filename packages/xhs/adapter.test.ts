@@ -4,13 +4,16 @@ import { StreamTable } from './streams.ts'
 import type { SourceManifest } from '../../src/manifest/types.ts'
 import { BROWSER_UA } from '../../shared/package-sdk/browser-ua.ts'
 
+/** 晚绑定的发送器：测试在调用时才 stub 全局 fetch，包代码本身只认注入的 send。 */
+const send: typeof fetch = (...a) => globalThis.fetch(...a)
+
 // 进 registry 的是全名（`<包名>/<局部名>`），adapter 按后缀分派。
 const RESOLVE = { id: '@streamapp/xhs/xhs-resolve' } as unknown as SourceManifest
 const URL_A = 'http://sns-video-qc.example-cdn.com/stream/a.mp4?sign=s'
 
 function setup() {
   const streams = new StreamTable()
-  const adapter = new XhsAdapter({ streams, readSource: async () => [] })
+  const adapter = new XhsAdapter({ streams, readSource: async () => [] }, send)
   return { streams, adapter }
 }
 

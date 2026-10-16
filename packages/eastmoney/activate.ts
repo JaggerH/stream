@@ -27,7 +27,7 @@ const FACILITY = 'eastmoney'
 async function openOnce(ctx: PluginContext) {
   const cookie = await ctx.cookieFor(DOMAIN)
   if (!cookie) throw new SessionExpired(`没有 ${DOMAIN} 的登录态`)
-  return await openSession(cookie)
+  return await openSession(cookie, ctx.fetch)
 }
 
 /**
@@ -70,7 +70,7 @@ async function broker(ctx: PluginContext): Promise<Broker> {
     revocableOrders: () => getRevocableOrders(s),
     batchCancel: (orders) => batchCancel(s, orders),
     submitReverseRepo: (o) => submitReverseRepo(s, o),
-    repoBid1: (code) => getRepoBid1(code),
+    repoBid1: (code) => getRepoBid1(code, ctx.fetch),
   }
 }
 

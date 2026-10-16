@@ -13,6 +13,8 @@ import { scrapeWithFirecrawl, type FirecrawlPage } from './client.ts'
 export class FirecrawlAdapter implements Adapter {
   readonly id = 'firecrawl'
 
+  constructor(private readonly send: typeof fetch) {}
+
   async init(): Promise<void> {}
 
   async fetch(rawParams: Record<string, unknown>, _manifest: SourceManifest, context?: SourceExecutionContext): Promise<unknown[]> {
@@ -22,6 +24,7 @@ export class FirecrawlAdapter implements Adapter {
     if (!/^https?:\/\//i.test(url)) return [] // decline —— 不是我能处理的输入
     const apiKey = context?.runtimeConfig.apiKey
     const page: FirecrawlPage = await scrapeWithFirecrawl(url, {
+      send: this.send,
       baseUrl: typeof params.baseUrl === 'string' && params.baseUrl ? params.baseUrl : undefined,
       apiKey: typeof apiKey === 'string' && apiKey ? apiKey : null,
     })

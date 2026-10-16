@@ -31,7 +31,7 @@ function ladder(defuddle: () => Promise<unknown[]>) {
   const store = new UserStore(join(dir, 'stream.db'))
   ensureSystemRows(store)
   const calls: string[] = []
-  const adapter = new FirecrawlAdapter()
+  const adapter = new FirecrawlAdapter((...a) => globalThis.fetch(...a))
   // 非 builtin 成员走引擎：成员 params（`$input` 已填）并进 adapter params，runtimeConfig 由宿主解析（这里 keyless）。
   const firecrawl = (_input: unknown, params: Record<string, unknown>) =>
     adapter.fetch(params, { id: '@streamapp/firecrawl/article-firecrawl', adapter: 'firecrawl' } as SourceManifest, { runtimeConfig: {} })

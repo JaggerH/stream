@@ -13,9 +13,9 @@ const DOMAIN = 'bilibili.com'
  *  cookie **每次现取**（`ctx.cookieFor` 是异步函数，不是快照）——用户重新登录之后下一次调用
  *  就该用新的那份。 */
 export const activate: ActivateFn = (ctx) => {
-  const client = new BilibiliClient(() => ctx.cookieFor(DOMAIN))
+  const client = new BilibiliClient(() => ctx.cookieFor(DOMAIN), ctx.fetch)
   return {
-    adapters: { bilibili: new BilibiliAdapter(client) },
+    adapters: { bilibili: new BilibiliAdapter(client, ctx.fetch) },
     normalizers: { bilibili: bilibiliNormalizer },
     enrichers: makeEnrichers(client),
     connect: makeConnect(client),

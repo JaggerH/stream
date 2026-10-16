@@ -1,6 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { fetchHnStory, fetchThreadComments } from './client.ts'
 
+/** 晚绑定的发送器：测试在调用时才 stub 全局 fetch，包代码本身只认注入的 send。 */
+const send: typeof fetch = (...a) => globalThis.fetch(...a)
+
 // story metadata comes from Firebase item/{id}.json; the comment tree from Algolia
 // items/{id} (nested children inline). Story 1 → comments 2 (OP, reply 4) and 3; 9 deleted.
 const FB_ITEMS: Record<number, unknown> = {
@@ -44,20 +47,20 @@ afterEach(() => vi.unstubAllGlobals())
 describe('fetchHnStory', () => {
   it('reads story metadata (url, author, total)', async () => {
     mockFetch()
-    const s = await fetchHnStory(1)
+    const s = await fetchHnStory(1, send)
     expect(s).toMatchObject({ id: 1, by: 'op', url: 'https://example.com/post', total: 4 })
   })
 
   it('returns null for a dead/deleted root', async () => {
     mockFetch()
-    expect(await fetchHnStory(5)).toBeNull()
+    expect(await fetchHnStory(5, send)).toBeNull()
   })
 })
 
 describe('fetchThreadComments', () => {
   it('builds a threaded tree, flags OP, drops dead', async () => {
     mockFetch()
-    const comments = await fetchThreadComments(1, 'op')
+    const comments = await fetchThreadComments(1, send, 'op')
 
     // dead comment (9) dropped; 2 top-level survive
     expect(comments.map((c) => c.id)).toEqual(['2', '3'])
@@ -77,6 +80,6 @@ describe('fetchThreadComments', () => {
 
   it('returns [] when the thread request fails', async () => {
     vi.stubGlobal('fetch', () => Promise.reject(new Error('down')))
-    expect(await fetchThreadComments(1)).toEqual([])
+    expect(await fetchThreadComments(1, send)).toEqual([])
   })
 })

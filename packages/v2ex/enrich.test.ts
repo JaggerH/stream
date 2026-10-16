@@ -2,9 +2,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { makeEnrichers } from './enrich.ts'
 import type { Enrichment } from '../../src/content/types.ts'
 
+/** 晚绑定的发送器：测试在调用时才 stub 全局 fetch，包代码本身只认注入的 send。 */
+const send: typeof fetch = (...a) => globalThis.fetch(...a)
+
 afterEach(() => vi.unstubAllGlobals())
 
-const run = makeEnrichers()['v2ex-comments']
+const run = makeEnrichers({ fetch: send })['v2ex-comments']
 
 describe('v2ex-comments enricher', () => {
   it('maps v1 replies → flat comments; the topic body is not refetched', async () => {

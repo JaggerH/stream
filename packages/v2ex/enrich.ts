@@ -4,7 +4,7 @@
  *  html 原样交出（`content_rendered`）：消毒归宿主——它在收下包交出的 enricher 时统一过一遍
  *  （`src/packages/activate.ts`），包里不带第二份消毒器。 */
 
-import type { Enricher } from '../../src/packages/activate.ts'
+import type { Enricher, PluginContext } from '../../src/packages/activate.ts'
 import type { Comment, Enrichment } from '../../src/content/types.ts'
 import { ValidationError } from '../../shared/package-sdk/errors.ts'
 
@@ -20,11 +20,11 @@ interface V2exReply {
 }
 
 /** A topic's replies as normalized (flat) comments. Empty on any failure. */
-async function fetchReplies(topicId: number, signal?: AbortSignal): Promise<Comment[]> {
+async function fetchReplies(topicId: number, send: typeof fetch, signal?: AbortSignal): Promise<Comment[]> {
   let replies: unknown
   try {
     const t = AbortSignal.timeout(TIMEOUT_MS)
-    const res = await fetch(`${API}/replies/show.json?topic_id=${topicId}`, {
+    const res = await send(`${API}/replies/show.json?topic_id=${topicId}`, {
       signal: signal ? AbortSignal.any([signal, t]) : t,
     })
     if (!res.ok) return []
@@ -46,12 +46,12 @@ async function fetchReplies(topicId: number, signal?: AbortSignal): Promise<Comm
 }
 
 /** `/api/enrich?source=v2ex-comments&id=<topic id>` → 全部回复（v1 API 一发给全，`cursor` 恒为 null）。 */
-export function makeEnrichers(): Record<string, Enricher> {
+export function makeEnrichers(ctx: Pick<PluginContext, 'fetch'>): Record<string, Enricher> {
   return {
     'v2ex-comments': async (q, signal): Promise<Enrichment> => {
       const id = /^\d+$/.test(q.id ?? '') ? Number(q.id) : NaN
       if (!Number.isInteger(id) || id <= 0) throw new ValidationError('id (a V2EX topic id) required')
-      const comments = await fetchReplies(id, signal)
+      const comments = await fetchReplies(id, ctx.fetch, signal)
       return { comments, total: comments.length, cursor: null }
     },
   }

@@ -2,6 +2,9 @@ import { describe, it, expect, vi, afterEach } from 'vitest'
 import { OmdbAdapter } from './adapter.ts'
 import type { SourceManifest } from '../../src/manifest/types.ts'
 
+/** 晚绑定的发送器：测试在调用时才 stub 全局 fetch，包代码本身只认注入的 send。 */
+const send: typeof fetch = (...a) => globalThis.fetch(...a)
+
 afterEach(() => vi.unstubAllGlobals())
 
 const metadataRow = { id: '@streamapp/omdb/omdb-metadata', fixed_params: { mode: 'omdb-metadata' } } as unknown as SourceManifest
@@ -15,7 +18,7 @@ function json(body: unknown, status = 200): Response {
 
 /** 执行器怎么喂非 builtin 成员：对象输入整袋摊进 params，fixed_params 在前（`buildParams` + `memberCallArgs`）。 */
 const call = (row: SourceManifest, input: Record<string, unknown>, ctx: { runtimeConfig: Record<string, unknown> } = keys) =>
-  new OmdbAdapter().fetch({ ...(row.fixed_params ?? {}), url: '', ...input }, row, ctx)
+  new OmdbAdapter(send).fetch({ ...(row.fixed_params ?? {}), url: '', ...input }, row, ctx)
 
 // 搬家等价：下面三组是搬前 src/adapters/builtin/video-metadata.test.ts 里 makeOmdb*Fn 的同一组用例，
 // 只是钥匙从宿主 getSettings 换成了 context.runtimeConfig、输入从 builtin 的整对象换成摊进 params。

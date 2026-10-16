@@ -4,6 +4,8 @@
  *
  * 浏览器只在**登录**那一步出场（`eastmoney-login.recipe.json`）：那一步要认图形验证码、
  * 要让站点的安全控件在页内自己算密码。会话一旦建立，剩下的全在这里，纯 HTTP。
+ *
+ * 请求一律走调用方传进来的 send（宿主的 ctx.fetch）——账号绑在哪台设备，请求就从哪台设备发出。
  */
 
 const BASE = 'https://jywg.eastmoneysec.com'
@@ -17,6 +19,8 @@ export class SessionExpired extends Error {}
 export interface EastmoneySession {
   cookie: string
   validatekey: string
+  /** 出站发送器（宿主的 ctx.fetch）：账号绑在哪台设备，请求就从哪台设备发出。 */
+  send: typeof fetch
 }
 
 /**
@@ -29,8 +33,8 @@ export interface EastmoneySession {
  * 它同时就是**会话活没活着**的判据：会话没了，这个 GET 会 302 去 /Login，或者回一张带
  * `txtZjzh`（登录表单的账号框）的页面。两种都翻成 SessionExpired。
  */
-export async function openSession(cookie: string): Promise<EastmoneySession> {
-  const r = await fetch(`${BASE}/Trade/Buy`, {
+export async function openSession(cookie: string, send: typeof fetch): Promise<EastmoneySession> {
+  const r = await send(`${BASE}/Trade/Buy`, {
     headers: { cookie, 'user-agent': UA },
     redirect: 'manual',
     signal: AbortSignal.timeout(TIMEOUT_MS),
@@ -45,7 +49,7 @@ export async function openSession(cookie: string): Promise<EastmoneySession> {
     ?? html.match(/name="em_validatekey"[^>]*value="([^"]+)"/)
     ?? html.match(/value="([^"]+)"[^>]*em_validatekey/)
   if (!m) throw new SessionExpired('交易页里没有 em_validatekey——会话多半已失效')
-  return { cookie, validatekey: m[1]! }
+  return { cookie, validatekey: m[1]!, send }
 }
 
 /**
@@ -57,7 +61,7 @@ export async function openSession(cookie: string): Promise<EastmoneySession> {
 export async function post<T = unknown>(
   s: EastmoneySession, path: string, form: Record<string, string> = {},
 ): Promise<T> {
-  const r = await fetch(`${BASE}${path}?validatekey=${encodeURIComponent(s.validatekey)}`, {
+  const r = await s.send(`${BASE}${path}?validatekey=${encodeURIComponent(s.validatekey)}`, {
     method: 'POST',
     headers: {
       cookie: s.cookie,
@@ -285,7 +289,7 @@ export async function batchCancel(s: EastmoneySession, orders: RevocableOrder[])
     const chunk = orders.slice(i, i + CANCEL_BATCH).map((o) => ({
       wtrq: o.Wtrq, wtbh: o.Wtbh, market: o.Market, mmlb: o.Mmbz,
     }))
-    const r = await fetch(`${BASE}/Trade/batchCancelStockWEB?validatekey=${encodeURIComponent(s.validatekey)}`, {
+    const r = await s.send(`${BASE}/Trade/batchCancelStockWEB?validatekey=${encodeURIComponent(s.validatekey)}`, {
       method: 'POST',
       headers: {
         cookie: s.cookie, 'user-agent': UA,
@@ -314,8 +318,8 @@ export async function batchCancel(s: EastmoneySession, orders: RevocableOrder[])
  *
  * 匿名可读，**不带 cookie**：它是公开行情，把登录态递给一个不需要它的域是白送风险。
  */
-export async function getRepoBid1(code: string): Promise<number | null> {
-  const r = await fetch(
+export async function getRepoBid1(code: string, send: typeof fetch): Promise<number | null> {
+  const r = await send(
     `https://emhsmarketwgmix.eastmoneysec.com/api/SHSZQuoteSnapshot?id=${encodeURIComponent(code)}`,
     { headers: { 'user-agent': UA }, signal: AbortSignal.timeout(TIMEOUT_MS) },
   )
