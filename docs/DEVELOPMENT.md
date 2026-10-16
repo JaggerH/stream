@@ -86,8 +86,7 @@ systemctl --user status stream-back        # Resident backend (non-dev mode): Re
   that changed again after process startup; it is a hint, not an alarm -- uncommitted WIP from other lines also counts. **Before live verification / A-B experiments, check this first**.
 - **Backend logs are directly in the `pnpm dev` terminal**; do not use `docker compose logs`.
 - **Tests/typecheck**: `pnpm test`, `pnpm typecheck` (backend); `cd app && npm run typecheck` (frontend).
-  In a worktree, **do not run `pnpm install`** -- symlink `node_modules` from the main checkout (both root and `app/`);
-  see the worktree section in `CONTRIBUTING.md` for how to run.
+  In a worktree, run `pnpm install` there (pnpm's shared store makes it take seconds); see "worktree workflow" below.
 - **For a full run, write the entire output to a file**; do not use `| tail` (failure details are printed **above** the summary, and tail leaves only the
   "1 failed" number -- see the general rule in `~/.claude/principles.md`):
   ```bash
@@ -322,7 +321,11 @@ really runs an xhs build once to pin the artifact shape (it fails instead of ski
 
 ## worktree workflow
 
-See CONTRIBUTING.md "Workflow": open one worktree for each task, and do not work inline on `main`. The hot-reload stack
+Open one worktree for each task, and do not work inline on `main`. Worktrees live **outside** the checkout: the workspace
+manager creates them (Orca keeps them under `~/orca/workspaces/stream/<name>`), not under `.claude/worktrees/` inside the
+repository. Run `pnpm install` in the new worktree rather than symlinking `node_modules` from the main checkout: a symlink is
+easy to miss (the `node_modules` pattern in `.gitignore` is written without a trailing slash for that reason) and ties the
+worktree to whatever the main checkout has installed. Use absolute paths and `git -C <worktree>`. The hot-reload stack
 bind-mounts the **main checkout**, so worktree changes are picked up by the running stack only after they land in main.
 
 ## Starting containers for plugin backends
