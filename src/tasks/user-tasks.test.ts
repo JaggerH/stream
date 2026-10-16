@@ -257,6 +257,46 @@ describe('action tasks run on their placement', () => {
       expect(failureDisposition(e)).toBe('retry')
     })
 
+    it('失败点名设备：前缀 [设备 id]，同一个实例；发出后的失败写明状态未知、保留原因', async () => {
+      const boom = new Error('读配置失败')
+      const t1 = compileUserTask(emRow, { actions: () => async () => { throw boom }, placement: () => NAS, ready: () => {} })
+      const e1 = await t1.run({} as never).catch((x) => x)
+      expect(e1).toBe(boom)
+      expect(e1.message).toBe('[设备 linux:nas] 读配置失败')
+
+      const offline = new DeviceOffline('linux:nas')
+      const t2 = compileUserTask(emRow, { actions: () => vi.fn(), placement: () => NAS, ready: () => { throw offline } })
+      const e2 = await t2.run({} as never).catch((x) => x)
+      expect(e2).toBe(offline)
+      expect(e2.message.startsWith('[设备 linux:nas] ')).toBe(true)
+
+      const { f } = flakyDevice()
+      const t3 = compileUserTask(emRow, {
+        actions: () => async () => { await f(URL_, { method: 'POST' }); throw new Error('券商回了 500') },
+        placement: () => NAS, ready: () => {},
+      })
+      const e3 = await t3.run({} as never).catch((x) => x)
+      expect(e3.message.startsWith('[设备 linux:nas] ')).toBe(true)
+      expect(e3.message).toContain('状态未知，需要人工核对')
+      expect(e3.message).toContain('券商回了 500')
+
+      const refused = new DeviceIncapable('linux:nas', 'browser')
+      const { f: f4 } = flakyDevice()
+      const t4b = compileUserTask(emRow, {
+        actions: () => async () => { await f4(URL_, { method: 'POST' }); throw refused },
+        placement: () => NAS, ready: () => {},
+      })
+      const e4 = await t4b.run({} as never).catch((x) => x)
+      expect(e4).toBe(refused)
+      expect(e4.message).toContain('状态未知，需要人工核对')
+    })
+
+    it('local 的失败不加前缀', async () => {
+      const boom = new Error('x')
+      const t = compileUserTask(emRow, { actions: () => async () => { throw boom }, placement: () => ({ deviceId: 'local', allowHosts: [] }) })
+      await expect(t.run({} as never)).rejects.toThrow(/^x$/)
+    })
+
     it('什么都没发出就失败的普通错误照旧可重试', async () => {
       const t = compileUserTask(emRow, {
         actions: () => async () => { throw new Error('读配置失败') },

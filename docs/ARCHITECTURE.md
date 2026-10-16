@@ -1808,10 +1808,13 @@ Design record: `openspec/changes/device-execution/design.md`.
 | Device lacks the op | `device-incapable` | no | no (misconfiguration) |
 | Host not allowed | `host-not-allowed` | no | no (misconfiguration) |
 | Device fetch queue wait timed out | `device-fetch-queue-timeout` | no | by task `maxAttempts` |
-| Disconnect / timeout mid-run | `device-lost` | maybe | **no**; the run is marked state-unknown |
+| Disconnect / timeout mid-run | `device-lost` | maybe | **no**; the failure message says `状态未知，需要人工核对` |
 | User aborts on the device | `HostAbortedByUser` | maybe | no |
 
   Re-running after `device-lost` or an abort could repeat an order that was half placed, which is why those never retry.
+  - **"Already sent" is tracked per run, not inferred from the error.** Each non-`local` action run carries a dispatch marker in its placement; `fetchFor` sets it the moment an `http.fetch` frame is written to the socket. Once it is set, *any* failure of that run is final: a package that swallowed a `device-lost` into a plain `Error`, or a second request that hits `device-offline` after the first already reached the broker, is rethrown as `device-lost` (original error as `cause`, its message appended) unless it already is a non-retryable device error or `HostAbortedByUser`. `device-offline` / `device-fetch-queue-timeout` are retried only when nothing was sent yet (e.g. the pre-run readiness check). `failureDisposition` follows `cause` chains, so a package that wraps a device error with `{ cause }` keeps it final.
+  - A request whose caller aborts **while it is still queued** for one of the device's 4 fetch slots is removed from the queue and never sent (rejects with the caller's `signal.reason`, retryable); an abort after the frame was sent is `device-lost`.
+  - **Every non-`local` failure names its device**: the task center prefixes the error's message with `[设备 <deviceId>] ` (same error instance, class and `cause`), and a failure after something was sent also carries `状态未知，需要人工核对`. The task notification and run history only keep that message.
 
 ## Diagnostics — Two "Flight Recorders", Different Layers, Do Not Mix
 

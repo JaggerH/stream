@@ -68,13 +68,17 @@ function runAction(row: UserTaskRow, opts: CompileOptions): ScheduledTask['run']
     // 每次执行一个新标记：同一条任务的上一轮发没发过，和这一轮无关。
     const marker: DispatchMarker = { dispatched: false }
     const p: RunPlacement = { ...resolved, dispatch: marker }
-    // 派发前的就绪检查原样抛：此刻什么都没发，DeviceOffline 按 maxAttempts 重试是安全的。
-    opts.ready?.(p)
+    // 派发前的就绪检查原样抛（只加设备前缀）：此刻什么都没发，DeviceOffline 按 maxAttempts 重试是安全的。
+    try {
+      opts.ready?.(p)
+    } catch (e) {
+      throw nameDevice(p.deviceId, e)
+    }
     let out: Awaited<ReturnType<PackageAction>>
     try {
       out = await runOnDevice(p, () => fn(params))
     } catch (e) {
-      throw marker.dispatched ? afterDispatch(p.deviceId, e) : e
+      throw nameDevice(p.deviceId, marker.dispatched ? afterDispatch(p.deviceId, e) : e, marker.dispatched)
     }
     // 运行记录要看得出在哪台设备上跑的；local 原样返回，存量任务的明细形状不变。
     return { ...(out ?? { summary: '' }), detail: { device: p.deviceId, detail: out?.detail } }
@@ -89,7 +93,25 @@ function runAction(row: UserTaskRow, opts: CompileOptions): ScheduledTask['run']
 function afterDispatch(deviceId: string, e: unknown): unknown {
   if (e instanceof DeviceError && !e.retryable) return e
   if (e instanceof Error && e.name === 'HostAbortedByUser') return e
-  return new DeviceLost(deviceId, e)
+  const lost = new DeviceLost(deviceId, e)
+  // DeviceLost 的固定文案里没有原因；失败通知只剩这条消息，把包自己说的那句接上，不然没法核对。
+  if (e instanceof Error && e.message) lost.message += `（原错误：${e.message}）`
+  return lost
+}
+
+const UNKNOWN_STATE = '状态未知，需要人工核对'
+
+/**
+ * 非 local 执行的失败要说出在哪台设备上：任务通知与运行记录只有这条消息。**改的是同一个实例的
+ * message**——类、`cause`、`retryable` 都不动，failureDisposition 的判断不受影响。
+ * 发出过请求之后的失败再补一句「状态未知」（DeviceLost 自己已经说了）。
+ */
+function nameDevice(deviceId: string, e: unknown, dispatched = false): unknown {
+  if (!(e instanceof Error)) return e
+  const prefix = `[设备 ${deviceId}] `
+  if (dispatched && !e.message.includes(UNKNOWN_STATE)) e.message += `——已有请求经设备发出，${UNKNOWN_STATE}`
+  if (!e.message.startsWith(prefix)) e.message = prefix + e.message
+  return e
 }
 
 /** 执行体之一：跑一条外部命令（原样保留）。 */
