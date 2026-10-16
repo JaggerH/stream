@@ -43,6 +43,16 @@ jobs:
       - run: pnpm -C app typecheck
       - run: pnpm -C app test
 
+  # Rust host agent 的平台无关部分（协议、重连、设备模式的 http.fetch 与配对）都能在 Linux 上测；
+  # 设备模式本身就是 Linux 构建，这里是它唯一的 CI 闸门。
+  host-agent:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test --manifest-path app/host-agent/Cargo.toml
+
   # `hosts/<宿主>/` 各自带一套 npm 依赖（不在 pnpm workspace 里，见 hosts/README.md），所以单开
   # 一个 job。加一个宿主目录就往 matrix 加一行——`src/hosts-boundary.guard.test.ts` 断言每个
   # `hosts/*` 都有 `test` 与 `typecheck` 两个脚本，这个 job 就按这两个固定名字调用。

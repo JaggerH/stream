@@ -12,9 +12,13 @@
 - [x] 10. recipe 采集源跟随 facility 的设备
 - [x] 11. serve 接线、端到端测试、文档（ARCHITECTURE / PACKAGE / API）
 
-## 计划 2：Linux 无界面 agent
+## 计划 2：Linux 无界面 agent（device-execution-linux-agent）
 
-- [ ] 待写（`http.fetch` 的设备侧实现、主机校验与私网拒绝、配对启动）
+- [x] 1. 设备侧主机后缀匹配、`ALLOW_HOSTS`、私网地址判定（`netguard.rs`）
+- [x] 2. `http.fetch` 设备侧实现：逐跳主机与私网检查、10MB 上限、超时、不走代理（`httpfetch.rs`）
+- [x] 3. 会话复用同一份 WS 客户端与协议；`http.fetch` 并发执行；撤销结束监督循环
+- [x] 4. 设备模式：无人值守配对、device token 持久化、撤销后重配、被拒的码不重试（`device.rs`）
+- [x] 5. CI 跑 `cargo test`；README 设备模式一节
 
 ## 计划 3：浏览器转发与 NAS 镜像
 

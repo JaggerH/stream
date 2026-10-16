@@ -61,6 +61,42 @@ cargo build --release            # → target/release/stream-desktop.exe
 （`WSLENV=STREAM_HOST_URL:STREAM_HOST_TOKEN`）——否则 Windows 那侧读到的是空值，而且不会说
 为什么。这也正是默认值存在的理由：常规路径上根本不该碰到这个坑。
 
+## 设备模式（Linux）
+
+同一个二进制在 Linux 上还能当**主实例的执行位置**用（NAS、另一台常开的机器）：它不连本机后端，而是连
+`STREAM_BACKEND_URL` 指向的主实例，替主实例发 HTTP 请求（`http.fetch`）。绑定到这台设备的任务，出站
+请求全部从这里发出。设计：`openspec/changes/device-execution/`。
+
+```bash
+# 首次：在主实例那台机器上生成配对码（只对本机请求签发）
+curl -sS -X POST http://127.0.0.1:8900/api/devices/pairing-code
+
+# 在设备上
+STREAM_BACKEND_URL=http://100.101.102.103:8900 \
+STREAM_PAIRING_CODE=123456 \
+STREAM_DEVICE_NAME=家里的NAS \
+./stream-desktop
+```
+
+| 变量 | 作用 |
+|---|---|
+| `STREAM_BACKEND_URL` | 主实例的 http(s) 地址。**设了它就是设备模式。** 用 IP 地址（Tailscale / 局域网）最省事：用主机名时主实例要把它登记为可信主机，否则配对请求会被 Host 检查拒掉。 |
+| `STREAM_PAIRING_CODE` | 一次性配对码，只在还没配对时用。配对成功后 token 存进状态目录，之后的启动不再需要它（留着过期的码也没关系）。 |
+| `STREAM_AGENT_DATA` | 状态目录，缺省 `$XDG_DATA_HOME/stream-agent` 或 `~/.local/share/stream-agent`。容器里指向挂载的数据卷，否则每次重建容器都要重新配对。 |
+| `STREAM_DEVICE_NAME` | 设备列表里显示的名字，缺省主机名。 |
+| `ALLOW_HOSTS` | 逗号分隔的主机名后缀。设了它，这台设备**只**替主实例访问这些主机，主实例下发的清单不再算数——给不完全信任主实例的人用。 |
+
+几件不能配置的事：
+
+- **私网目标一律拒绝**：目标解析到 loopback、局域网、链路本地、CGNAT（含 Tailscale 的 100.64/10）、ULA
+  时以 `private-target` 拒绝，跟随重定向时每一跳都查。设备不会被当成进入你内网的跳板。
+- **不走系统代理**：`HTTP_PROXY` / `HTTPS_PROXY` 对设备请求无效。
+- **日志不含内容**：每个请求只记 `方法 主机 → 状态码 (耗时)`，没有 header、body、路径和查询串。
+
+配对状态在 `<状态目录>/device.json`（0600）。在主实例上撤销这台设备后，agent 会把它改名为
+`device.json.revoked`，然后用 `STREAM_PAIRING_CODE` 重新配对；那个码若已用过，agent 停在原地每小时提示一次
+——**被拒的码不会重试**（重试会让主实例作废你刚生成的新码），换一个新码再重启即可。
+
 ## `clickables` 的模型文件（可缺席）
 
 `readScreen` 的 `want` 里带 `clickables` 时，agent 会拿一个小的 ONNX 图去问"画面上哪些地方
