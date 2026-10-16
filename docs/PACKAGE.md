@@ -1827,6 +1827,16 @@ follow its four boundaries:
 `dsh-mcp-client` pointing at it is enough (the handshake takes three steps: `initialize` → `notifications/initialized` → `tools/list`; skip the middle
 one and `tools/list` silently returns `null`; `Authorization` carries the permanent token bare, with no `Bearer`).
 
+### 5.4 Outbound from a package: `stream.network.hosts` and `ctx.fetch`
+
+A run can be bound to a device (e.g. a NAS in mainland China), so a package's HTTP must go out from **that run's device**, not from the backend machine. Two rules follow.
+
+- **Use `ctx.fetch`, not the global `fetch`.** `ctx.fetch` has the standard `fetch` signature but resolves the device per run (`fetchFor`, `src/devices/fetch.ts`). Code that is not handed `ctx` receives an injected `fetch` parameter (the recipe fetchers and the `client.ts` of `@streamapp/eastmoney` do this) — never capture the global. The guard test `src/no-bare-fetch-in-packages.guard.test.ts` fails on a bare `fetch(` anywhere in `packages/**`.
+  - **`HOST_CONTAINER_ONLY` exemption**: a file may stay on the global `fetch` only if it talks exclusively to **this package's own backend container on the main instance** (those requests must stay local; routing them to a device would only end in `host-not-allowed`). Such a file is listed in the `HOST_CONTAINER_ONLY` map in that test with its reason, and adding an entry needs a reviewer to confirm the file never touches an external host. A stale entry (file gone) fails the test.
+- **`stream.network.hosts: string[]`** in `package.json` declares the hostnames (suffix match: `h === d || h.endsWith('.' + d)`, not substring) the package may reach through a device. Absent = the same list as `stream.credentials`. The backend rejects a non-matching target before sending anything (`host-not-allowed`) and passes the list to the agent, which checks again and always refuses private / loopback / CGNAT targets. The install gate lists these hosts on the confirmation page.
+
+A run with no owning package (host-internal outbound) cannot be dispatched to a non-`local` device. See `docs/ARCHITECTURE.md` "Execution Placement".
+
 ---
 
 ## 5.9 Slot: capability (`stream.capability`)

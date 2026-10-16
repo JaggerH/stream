@@ -62,6 +62,8 @@ export interface Boot {
 }
 
 export interface BootOptions {
+  /** facility → 默认执行设备（serve 在 bootstrap 之前就能建：它只要 stream.db 路径）。缺席 = 全部本机。 */
+  facilityDevices?: import('./devices/facility-devices.ts').FacilityDeviceStore
   /** fired (in addition to the item-store write) for each newly-persisted item */
   onItem?: (item: StreamItem, type: SourceType) => void
   /** push a debug entry (download queue diagnostics) to the frontend DebugBox over the WS */
@@ -553,7 +555,7 @@ export async function bootstrap(
   // bootstrap 自己一格都不解：下游域经 inject 从 `ctx.adapters` 自取（进程内实现的注册面
   // `register()` 在 Provider 域里，采集调度域吃这张 Map）。
   // `intervention` 同 harvest 那处：经 config 递 thunk，从根 kernel 现取，不在插件里读 `ctx.intervention`。
-  await kernel.plugin(adaptersPlugin, { dataDir, log, runtimeConfigFor, onDebug: opts.onDebug, intervention: () => kernel.intervention })
+  await kernel.plugin(adaptersPlugin, { dataDir, log, runtimeConfigFor, onDebug: opts.onDebug, intervention: () => kernel.intervention, facilityDevices: opts.facilityDevices })
 
   // ── Provider 执行面整域进内核 ──────────────────────────────────────────────
   // 解析面（resolveEngine / intentResolver / radarMatcher）+ 进程内成员的注册 + 读模型 /

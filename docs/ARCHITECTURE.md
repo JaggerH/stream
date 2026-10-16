@@ -1789,6 +1789,29 @@ The embedded RSSHub request-rewriter patches `globalThis.fetch` and
   (`media/serving.ts` `refererForUrl`; data comes from the package's `serving[].referer` declaration) are **business-layer** responsibilities; they run above owned and do not sink into owned.
 - **Do not create a fourth private bypass**: outbound traffic that must be unreachable by the rewriter should import owned; do not write another node-http snapshot. The remaining
   global `fetch` callsites are migrated in evidence-based batches (see `openspec/changes/owned-outbound-http/recon.md`).
+- **A package's outbound goes through `ctx.fetch` / `fetchFor`** (`src/devices/fetch.ts`), not the global `fetch` and not `ownedFetch` directly: `fetchFor` reads the run's placement (see "Execution Placement" below) and sends from `local` (`ownedFetch`) or from the bound device (`http.fetch`). A guard test (`src/no-bare-fetch-in-packages.guard.test.ts`) keeps bare `fetch(` out of `packages/**`.
+
+## Execution Placement: Which Device a Run Executes On
+
+Design record: `openspec/changes/device-execution/design.md`.
+
+- **A device is an execution location.** The backend itself is the virtual device `local` (always online, never in the pairing list; binding to `local` clears a binding). Paired devices (PC, phone, a home NAS) are the others. Scheduling looks only at the **ops a device declared in its `hello`**, not at its platform: `http.fetch` for HTTP, the browser channel for browser recipes. A missing capability is reported before any frame is sent.
+- **Two binding layers, resolved once when a run starts and fixed for the whole run**: `task.device` -> the default device of the facility the action's package belongs to (`facility_devices` table in `data/stream.db`) -> `local`. A recipe source that belongs to a facility resolves the same way, without the task layer. `command` tasks cannot set `device` (400).
+- **`fetchFor`** is the single outbound entry. It reads the run context (`src/devices/run-context.ts`, an `AsyncLocalStorage`): `local` -> `ownedFetch`; any other device -> `http.fetch` over the host relay, returned as a standard `Response`. On a non-`local` device **no failure ever falls back to `ownedFetch`**. `serve.ts` calls `installFetchFor` right after the kernel is assembled, before the schedulers dispatch anything; before that, `fetchFor` reports every non-`local` target as offline.
+- **Login state is per (device, domain)**: `data/cookies/<deviceId>.json` (0600); the old `data/cookies.json` is renamed to `cookies/local.json` on first start.
+- **Allowed hosts**: the target host must match the running package's `stream.network.hosts` (default: `stream.credentials`) by hostname suffix. The backend checks before dispatch and ships the same list as `allowHosts`; the agent re-checks and always rejects private targets.
+- **Failure semantics**:
+
+| When | Error | Action already sent | Auto retry |
+|---|---|---|---|
+| Device offline before dispatch | `device-offline` | no | by task `maxAttempts` |
+| Device lacks the op | `device-incapable` | no | no (misconfiguration) |
+| Host not allowed | `host-not-allowed` | no | no (misconfiguration) |
+| Device fetch queue wait timed out | `device-fetch-queue-timeout` | no | by task `maxAttempts` |
+| Disconnect / timeout mid-run | `device-lost` | maybe | **no**; the run is marked state-unknown |
+| User aborts on the device | `HostAbortedByUser` | maybe | no |
+
+  Re-running after `device-lost` or an abort could repeat an order that was half placed, which is why those never retry.
 
 ## Diagnostics — Two "Flight Recorders", Different Layers, Do Not Mix
 

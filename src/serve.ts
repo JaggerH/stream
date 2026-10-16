@@ -38,6 +38,11 @@ import { loadOrCreateExtToken, loadOrCreateApiToken } from './http/secrets.ts'
 import { authorizeAccess, parseTrustedOrigins, isLoopbackAddress, peerAddress, lanBaseUrls } from './http/access-guard.ts'
 import { mountDeviceRoutes } from './http/device-routes.ts'
 import { DeviceStore } from './devices/device-store.ts'
+import { FacilityDeviceStore } from './devices/facility-devices.ts'
+import { assertDeviceReady, resolvePlacement } from './devices/placement.ts'
+import { installFetchFor, makeFetchFor } from './devices/fetch.ts'
+import type { RunPlacement } from './devices/run-context.ts'
+import type { UserTaskRow } from './tasks/task-store.ts'
 import { attachEnrichCommands } from './http/enrich-ws.ts'
 import { attachAuthLoginCommands } from './http/auth-login.ts'
 
@@ -272,6 +277,14 @@ async function main() {
 // 后端只在 /api/ext/verify 上用它签一条 proof 自证身份。握手仍走 WS subprotocol，用户全程无感。
 const extToken = loadOrCreateExtToken(dirname(config.item_db))
 const deviceStore = new DeviceStore(join(dirname(config.item_db), 'devices.json'), { log: console.log })
+// facility → 默认设备，与 TaskStore 同一个 stream.db。在 bootstrap 之前建：adapters 域要它，而它只依赖路径。
+// 开不起来（文件锁/损坏）只丢「绑定」这一格：全部按本机跑，和升级前一样。
+let facilityDevices: FacilityDeviceStore | undefined
+try {
+  facilityDevices = new FacilityDeviceStore(join(dirname(config.item_db), 'stream.db'))
+} catch (e) {
+  console.log(`[stream] facility device bindings disabled — open failed: ${errText(e)}`)
+}
 // `/api/*` 与 `/ws` 的访问令牌。**默认就有**（用户没配 api_token 时自动生成一份持久的）——
 // 后端绑 0.0.0.0 是有意的（用户要从手机访问），那就必须有一把默认的锁，而不是默认没有。
 // 本机 loopback 请求免密，所以自己机器上用完全无感（判据与实测见 http/access-guard.ts）。
@@ -341,6 +354,7 @@ const apiToken = config.api_token || loadOrCreateApiToken(dirname(config.item_db
     mcpEndpoint: () => ({ url: `http://127.0.0.1:${PORT}/api/mcp`, token: apiToken }),
     onItem: (item, type) => hub.broadcast({ type: 'item', item_type: type, item: toClientItem({ ...item, type }) }),
     onDebug: recordDebug,
+    ...(facilityDevices ? { facilityDevices } : {}),
     broadcast: (msg) => hub.broadcast(msg),
     track,
     trackSync,
@@ -373,6 +387,9 @@ const apiToken = config.api_token || loadOrCreateApiToken(dirname(config.item_db
   // WS hub 的两条命令、TaskDeps 的 reapIdle），漏改任一处都是静默的：extRelay 那次的形状是
   // 「扩展 popup 显示已连、后端 status() 恒 disconnected、采集每轮只报『环境没就绪』」。
   const harvest = kernel.harvest
+  // 出站唯一入口接上设备目录。之前（装配早期）的 fetchFor 对非 local 一律报离线，这一步之后才能派到设备。
+  // 必须早于调度中心 / 任务中心开始派活（它们在本函数更靠后才启动）。
+  installFetchFor(makeFetchFor({ directory: harvest.hostRelays, debug: recordDebug }))
   // 授权健康住 `ctx.auth`（横幅 / 对账 / 重登）。`focusLoginTab` 不在这儿——它是 lane 的薄壳，
   // 归 harvest 域。
   const auth = kernel.auth
@@ -814,12 +831,20 @@ const apiToken = config.api_token || loadOrCreateApiToken(dirname(config.item_db
     ...(taskLogDir ? { logDir: taskLogDir } : {}),
     actions: (name: string) => packageActions.get(name),
     paramsFor: (ref: string) => settingsStore.runtimeConfig(ref),
+    // 执行位置：行的 device → 包 facility 的默认设备 → local，开跑时解一次。
+    placement: (row: UserTaskRow) => {
+      const pkgId = row.action?.split(':')[0]
+      const net = pkgId ? pkgs.networkFor(pkgId) : undefined
+      return resolvePlacement({ taskDevice: row.device, facility: net?.facility, binding: (f) => facilityDevices?.get(f), hosts: net?.hosts ?? [] })
+    },
+    ready: (p: RunPlacement) => assertDeviceReady(p, harvest.hostRelays, 'http.fetch'),
   })
   mountDeviceRoutes(app, {
     store: deviceStore,
     registry: harvest.hostRelays,
     isLocal: (c) => isLoopbackAddress(peerAddress(c)),
     backendUrls: () => lanBaseUrls(String(PORT)),
+    ...(facilityDevices ? { bindings: facilityDevices } : {}),
   })
   if (taskStore && runLedger) {
     mountTaskRoutes(app, {
