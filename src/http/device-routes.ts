@@ -21,6 +21,11 @@ export interface DeviceRoutesDeps {
   registry: Pick<HostRelayRegistry, 'devices' | 'kick'>
   /** Facility default devices. Optional so callers that only pair devices need not provide it. */
   bindings?: FacilityDeviceStore
+  /**
+   * 这个 facility 有没有包认领（`pkgs.networkForFacility`）。PUT 绑定只收认识的：打错的名字存进去
+   * 不报错，真正的执行照旧按本机跑——用户以为绑好了。与 `bindings` 同在时必须给。
+   */
+  knownFacility?: (facility: string) => boolean
   isLocal: (c: Context) => boolean
   /** Base URLs where a phone on the LAN can reach this backend (`http://<ip>:<port>`). */
   backendUrls: (c: Context) => string[]
@@ -121,12 +126,15 @@ export function mountDeviceRoutes(app: Hono, deps: DeviceRoutesDeps): void {
     if (typeof deviceId !== 'string' || deviceId.trim() === '') return c.json({ error: 'deviceId 必填' }, 400)
     // 绑到一台不认识的设备，表现是这个账号的每一次执行都 device-offline——当场拒比几小时后红一片好。
     if (!known(deviceId.trim())) return c.json({ error: `没有这台设备：${deviceId}` }, 400)
-    bindings.set(c.req.param('facility'), deviceId.trim())
-    return c.json({ facility: c.req.param('facility'), deviceId: bindings.get(c.req.param('facility')) ?? LOCAL_DEVICE })
+    const facility = c.req.param('facility').trim()
+    // 没注入判据 = 一个都不认（fail closed）：宁可绑不上，也不存一个永远不会被查到的名字。
+    if (!deps.knownFacility?.(facility)) return c.json({ error: `没有这个账号（facility）：${facility}` }, 400)
+    bindings.set(facility, deviceId.trim())
+    return c.json({ facility, deviceId: bindings.get(facility) ?? LOCAL_DEVICE })
   })
 
   app.delete('/api/devices/bindings/:facility', (c) => {
-    bindings.clear(c.req.param('facility'))
+    bindings.clear(c.req.param('facility').trim())
     return c.body(null, 204)
   })
 }

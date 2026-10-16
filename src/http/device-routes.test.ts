@@ -22,6 +22,7 @@ beforeEach(() => {
   mountDeviceRoutes(app, {
     store, registry,
     bindings: new FacilityDeviceStore(join(dir, 'stream.db')),
+    knownFacility: (f) => f === 'eastmoney',
     isLocal: () => local,
     backendUrls: () => ['http://10.9.8.21:8900', 'http://100.70.0.5:8900'],
   })
@@ -43,6 +44,21 @@ describe('device routes', () => {
     expect(await (await app.request('/api/devices/bindings')).json()).toEqual({ bindings: [] })
     await put('eastmoney', deviceId)
     expect((await app.request('/api/devices/bindings/eastmoney', { method: 'DELETE' })).status).toBe(204)
+  })
+
+  // 打错一个 facility 名（`eastmony`）存进去不报错，真正的东财执行照旧在本机跑——用户以为绑好了。
+  it('facility 绑定：不认识的 facility 400，参数去首尾空白', async () => {
+    const { code } = await (await post('/api/devices/pairing-code')).json() as { code: string }
+    const { deviceId } = await (await post('/api/devices/pair', { code, name: 'NAS', platform: 'linux' })).json() as { deviceId: string }
+    const put = (f: string) =>
+      app.request(`/api/devices/bindings/${encodeURIComponent(f)}`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ deviceId }) })
+    const bad = await put('eastmony')
+    expect(bad.status).toBe(400)
+    expect(await bad.json()).toEqual({ error: '没有这个账号（facility）：eastmony' })
+    const ok = await put(' eastmoney ')
+    expect(ok.status).toBe(200)
+    expect(await ok.json()).toEqual({ facility: 'eastmoney', deviceId })
+    expect(await (await app.request('/api/devices/bindings')).json()).toEqual({ bindings: [{ facility: 'eastmoney', deviceId }] })
   })
 
   it('pair accepts platform linux and rejects unknown platforms', async () => {

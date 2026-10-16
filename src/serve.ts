@@ -850,6 +850,8 @@ const apiToken = config.api_token || loadOrCreateApiToken(dirname(config.item_db
     isLocal: (c) => isLoopbackAddress(peerAddress(c)),
     backendUrls: () => lanBaseUrls(String(PORT)),
     ...(facilityDevices ? { bindings: facilityDevices } : {}),
+    // 只收有包认领的 facility；调用时才问（包热装卸会变）。
+    knownFacility: (f) => pkgs.networkForFacility(f) !== undefined,
   })
   if (taskStore && runLedger) {
     mountTaskRoutes(app, {
