@@ -183,6 +183,20 @@ describe('action tasks run on their placement', () => {
     expect(fn).not.toHaveBeenCalled()
   })
 
+  it('中止原因是 DOMException（message 只读）：照样点名设备，原错误留在 cause，仍可重试', async () => {
+    const reason = new DOMException('This operation was aborted', 'AbortError')
+    const t = compileUserTask(emRow, {
+      actions: () => async () => { throw reason },
+      placement: () => ({ deviceId: 'linux:nas', allowHosts: [] }),
+      ready: () => {},
+    })
+    const e = await t.run({} as never).catch((x: unknown) => x) as Error
+    expect(e).not.toBeInstanceOf(TypeError)
+    expect(e.message).toBe('[设备 linux:nas] This operation was aborted')
+    expect(e.cause).toBe(reason)
+    expect(failureDisposition(e)).toBe('retry')
+  })
+
   describe('发出过请求之后的失败一律不重试（dispatch 标记）', () => {
     const NAS = { deviceId: 'linux:nas', allowHosts: ['eastmoneysec.com'] }
     const URL_ = 'https://jywg.eastmoneysec.com/Trade/SubmitTrade'

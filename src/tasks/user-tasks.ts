@@ -102,16 +102,28 @@ function afterDispatch(deviceId: string, e: unknown): unknown {
 const UNKNOWN_STATE = '状态未知，需要人工核对'
 
 /**
- * 非 local 执行的失败要说出在哪台设备上：任务通知与运行记录只有这条消息。**改的是同一个实例的
- * message**——类、`cause`、`retryable` 都不动，failureDisposition 的判断不受影响。
+ * 非 local 执行的失败要说出在哪台设备上：任务通知与运行记录只有这条消息。**能改就改同一个实例的
+ * message**——类、`cause`、`retryable` 都不动，failureDisposition 的判断不受影响；改不动的
+ * （DOMException）见 `withMessage`。
  * 发出过请求之后的失败再补一句「状态未知」（DeviceLost 自己已经说了）。
  */
 function nameDevice(deviceId: string, e: unknown, dispatched = false): unknown {
   if (!(e instanceof Error)) return e
   const prefix = `[设备 ${deviceId}] `
-  if (dispatched && !e.message.includes(UNKNOWN_STATE)) e.message += `——已有请求经设备发出，${UNKNOWN_STATE}`
-  if (!e.message.startsWith(prefix)) e.message = prefix + e.message
-  return e
+  let message = e.message
+  if (dispatched && !message.includes(UNKNOWN_STATE)) message += `——已有请求经设备发出，${UNKNOWN_STATE}`
+  if (!message.startsWith(prefix)) message = prefix + message
+  return message === e.message ? e : withMessage(e, message)
+}
+
+/**
+ * 改写错误消息，**改不动就包一层**。中止 / 超时信号给的 `reason` 是 DOMException，它的
+ * `message` 只有 getter——严格模式下直接赋值抛 TypeError，原错误和设备名一起丢掉。包一层
+ * 时原错误挂在 `cause` 上：`failureDisposition` 顺着 cause 判，重试与否不变。
+ */
+function withMessage(e: Error, message: string): Error {
+  try { e.message = message } catch { /* 只读的 message（DOMException 等），走下面包一层 */ }
+  return e.message === message ? e : new Error(message, { cause: e })
 }
 
 /** 执行体之一：跑一条外部命令（原样保留）。 */
