@@ -1,0 +1,104 @@
+{
+  "version": 1,
+  "kind": "browser",
+  "sourceId": "chatgpt-image",
+  "_why": "在用户自己登录着的 ChatGPT 网页版上出一张图：新对话（不能用临时聊天——临时聊天里调不了生图）→ 往 #prompt-textarea 派 paste 写入「请直接画一张方形图……」+ 提示词（写法照 chatgpt-chat）→ 点发送 → 等回复里出现生成图（img 的 src 是 /backend-api/estuary/content 或 oaiusercontent.com）、页面不在生成（没有 stop-button、没有「正在创建图片」）、且 src 3s 不再变——生成过程中会先出模糊的半成品，读到它就是半张图。完成后**在页内**带登录 cookie fetch 原图、画进 canvas 缩到长边 ≤1024、编成 base64 交出来，由 output.files 落盘、结果里是文件路径（图片地址是页内 blob:，出了页面就没了）。只回文字（拒绝 / 反问）就把它说的话抛出来，不报成 drift。",
+  "_why_action": "会在用户的 ChatGPT 账号里新建一条对话（会留在聊天历史里）、消耗它的生图额度，归 write。只经 run_action_recipe / /api/recipes/action / /v1/images/generations 跑。",
+  "cookieDomain": "chatgpt.com",
+  "entryUrl": "https://chatgpt.com/",
+  "_why_entryUrl": "冷启动（标签被用户关了、后端重启后第一次）时打开的页面；平时不走它（rideCurrentPage）。",
+  "entryWait": "load",
+  "loginCheck": {
+    "loggedIn": "#prompt-textarea, form .ProseMirror[contenteditable=\"true\"]",
+    "wall": "[data-testid=\"login-button\"]",
+    "_why_wall": "照 chatgpt-chat：登录墙选择器没有在退出登录的页面上量过。"
+  },
+  "session": {
+    "facility": "chatgpt",
+    "lifecycle": "persistent",
+    "visibility": "unattended",
+    "keepAlive": true
+  },
+  "steps": [
+    {
+      "kind": "evaluate",
+      "_why": "整段在页内做，按 cursor 分页绕开 relay 一次求值 30s 的上限（照 chatgpt-chat / doubao-image）：第 1 页写入并发送，之后每页最多等 22s，没出图回 pending:true。ChatGPT 出一张图一般 30～120s。",
+      "call": "async (cursor, num, params) => {\n  const sleep = ms => new Promise(r => setTimeout(r, ms));\n  const pageStart = Date.now();\n  const turns = () => [...document.querySelectorAll('[data-turn-key], [data-message-author-role]')].filter(e => e.getClientRects().length);   // 只算看得见的：点「新聊天」后首页 DOM 里会留一个隐藏的旧对话节点\n  const asst = () => [...document.querySelectorAll('[data-message-author-role=\"assistant\"]')];\n  const busy = () => !!document.querySelector('[data-testid=\"stop-button\"], form button[aria-label*=\"停止\"], form button[aria-label*=\"Stop\"]');\n  const INPUT = '#prompt-textarea, form .ProseMirror[contenteditable=\"true\"]';\n  // 只认看得见的：点「新聊天」后上一条对话的整块表单被缓存成隐藏节点留在 DOM 里，querySelector 先拿到的是它（2026-10-17 两次把 prompt 粘进隐藏的旧输入框，发送按钮自然不亮）\n  const shown = sel => [...document.querySelectorAll(sel)].find(e => e.getClientRects().length) || null;\n  const sendBtn = () => shown('[data-testid=\"send-button\"], form button[aria-label=\"发送\"], form button[aria-label=\"Send prompt\"], form button[aria-label=\"Send\"]');\n  const creating = () => !!document.evaluate('//*[contains(text(),\"正在创建图片\") or contains(text(),\"Creating image\") or contains(text(),\"正在生成图片\") or contains(text(),\"Generating image\")]', document, null, 9, null).singleNodeValue;\n  const genImgs = () => [...document.querySelectorAll('[data-testid=\"generated-image-gallery\"] img, main img')].filter(i => (i.closest('[data-testid=\"generated-image-gallery\"]') || /已生成图像|Generated image/.test(i.alt || '') || /backend-api\\/estuary\\/content|oaiusercontent\\.com/.test(i.currentSrc || i.src)) && !i.closest('[data-message-author-role=\"user\"]') && i.complete && i.naturalWidth >= 256 && i.getClientRects().length && !(window.__cgiBefore && window.__cgiBefore.has(i.currentSrc || i.src)));   // 只认看得见的、发送前不在的：缓存成隐藏节点的旧对话里的图不算（2026-10-17 曾把上一张仓鼠当成这一轮的取回来）\n  const turnDone = i => { const t = i.closest('[data-talvt-turn-state]'); return t ? t.getAttribute('data-talvt-turn-state') === 'complete' : null; };\n  // 风控页：整页「无法加载你的账户 / 浏览器检查未能完成」，或回复位置的 cloudflare_challenge。要人在这个常驻标签上点「重新加载」/ 过验证\n  const blockedPage = () => /浏览器检查未能完成|无法加载你的账户|Verify you are human|browser check|cloudflare_challenge/i.test((document.body && document.body.innerText) || '');\n  if (blockedPage()) throw new Error('[chatgpt-image] ChatGPT 风控页（浏览器检查 / Cloudflare）：在 ChatGPT 标签上点「重新加载」/ 过验证 —— ' + ((document.body.innerText || '').trim().split('\\n').slice(0, 3).join(' / ').slice(0, 120)));\n  if (!cursor) {\n    let pm = null;\n    for (let i = 0; i < 30 && !(pm = shown(INPUT)); i++) await sleep(300);\n    if (!pm) throw new Error('[chatgpt-image] 没找到输入框 url=' + location.pathname + location.search);\n    // 常驻标签：上一轮停在 /c/<id>。点侧栏「新聊天」开新对话（页内跳转，不整页重载——每轮重载像脚本，2026-10-17 撞过风控）\n    if (turns().length || /^\\/c\\//.test(location.pathname)) {\n      const leaf = t => [...document.querySelectorAll('a,button,div,span')].find(e => e.childElementCount === 0 && e.textContent.trim() === t);\n      const btn = document.querySelector('[data-testid=\"create-new-chat-button\"]') || leaf('新聊天') || leaf('New chat');\n      if (btn) (btn.closest('a,button') || btn).click();\n      else location.assign('/');   // 找不到按钮才整页回首页（少见，下一轮又能点按钮了）\n      const t1 = Date.now();\n      while (Date.now() - t1 < 8000 && (turns().length || /^\\/c\\//.test(location.pathname) || !shown(INPUT))) await sleep(300);\n      if (turns().length) throw new Error('[chatgpt-image] 点了「新聊天」，页面上还是上一条对话 url=' + location.pathname);\n      pm = shown(INPUT);\n      if (!pm) throw new Error('[chatgpt-image] 开了新对话却没找到输入框');\n    }\n    const text = '请直接用图像生成工具画一张方形（1:1）的图，不要提问、不要解释，只出图：\\n' + params.prompt;\n    const dt = new DataTransfer();\n    dt.setData('text/plain', text);\n    const paste = el => { el.focus(); el.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true })); };\n    paste(pm);\n    let send = null;\n    const t0 = Date.now();\n    let repasted = false;\n    while (Date.now() - t0 < 15000) {\n      send = sendBtn();\n      if (send && !send.disabled) break;\n      // 新对话刚切过去时输入框会被 React 换掉一次：字粘进了旧的那个、发送按钮不亮（2026-10-17 16:07）。6s 还不亮就重新找输入框、清空再粘一次\n      if (!repasted && Date.now() - t0 > 6000) { repasted = true; pm = shown(INPUT) || pm; pm.focus(); document.execCommand('selectAll'); document.execCommand('delete'); paste(pm); }\n      await sleep(300);\n    }\n    if (!send || send.disabled) throw new Error('[chatgpt-image] 粘贴后 15s 发送按钮仍不可用（输入框字数 ' + pm.textContent.length + '）');\n    const sent = () => turns().length > 0 || busy() || /^\\/c\\//.test(location.pathname);\n    const tries = [\n      ['click', () => send.click()],\n      ['requestSubmit', () => { const f = send.closest('form'); if (f) f.requestSubmit(send); }],\n      ['enter', () => pm.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true }))],\n    ];\n    window.__cgiBefore = null; window.__cgiBefore = new Set(genImgs().map(i => i.currentSrc || i.src));\n    const used = [];\n    for (const [name, fire] of tries) {\n      used.push(name);\n      fire();\n      for (let i = 0; i < 10 && !sent(); i++) await sleep(300);\n      if (sent()) break;\n    }\n    if (!sent()) throw new Error('[chatgpt-image] 试过 ' + used.join(' / ') + ' 都没把消息发出去');\n    window.__cgiT0 = Date.now();\n    window.__cgiSrc = null; window.__cgiSince = 0; window.__cgiTxt = null; window.__cgiTxtSince = 0;\n  }\n  const deadline = Math.min(Date.now() + 22000, pageStart + 26000);\n  const challenged = () => /cloudflare_challenge/.test((document.querySelector('main') || document.body).innerText || '');\n  while (Date.now() < deadline) {\n    // ChatGPT 风控：回复位置出现「cloudflare_challenge / 重试」，消息根本没到服务端（对话 id 还是 local-…）。马上抛，别干等 190s\n    if (challenged() || blockedPage()) throw new Error('[chatgpt-image] ChatGPT 弹了 Cloudflare 校验 / 浏览器检查——发得太勤，歇一阵；要人在 ChatGPT 标签上点「重试」「重新加载」/ 过验证');\n    const imgs = genImgs();\n    const img = imgs.at(-1);\n    const done = img ? turnDone(img) : null;\n    const working = done === null ? (busy() || creating()) : !done;\n    if (img && !working) {\n      const src = img.currentSrc || img.src;\n      if (src !== window.__cgiSrc) { window.__cgiSrc = src; window.__cgiSince = Date.now(); }\n      else if (Date.now() - window.__cgiSince > 3000) {\n        const r = await fetch(src, { credentials: 'include' });\n        if (!r.ok) throw new Error('[chatgpt-image] 取图 HTTP ' + r.status);\n        const bmp = await createImageBitmap(await r.blob());\n        const k = Math.min(1, 1024 / Math.max(bmp.width, bmp.height));\n        const c = document.createElement('canvas');\n        c.width = Math.round(bmp.width * k); c.height = Math.round(bmp.height * k);\n        c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height);\n        const png = c.toDataURL('image/png').split(',')[1];\n        const m = src.match(/id=([^&]+)/);\n        return { items: [{ guid: m ? m[1] : ('cg' + Date.now()), png, index: '0' }], cursor: '' };\n      }\n    } else if (!img && !working) {\n      // 只回了文字（拒绝 / 反问）：只看 ChatGPT 自己那一轮——跳过含我们提示词的那轮（2026-10-17 误把自己发的消息当成回复、生图途中判了失败），\n      // 那一轮要标着完成、文字 8s 不变、离发送已过 45s，才算\n      const head = String(params.prompt).slice(0, 24);\n      const a = asst().at(-1) || [...document.querySelectorAll('[data-talvt-turn-state]')].filter(t => !(t.innerText || '').includes(head)).at(-1);\n      const st = a ? (a.closest('[data-talvt-turn-state]') || a).getAttribute('data-talvt-turn-state') : null;\n      const txt = a ? (a.innerText || '').trim() : '';\n      if (txt && !txt.includes(head) && st !== 'streaming' && st !== 'pending' && st !== 'in_progress') {\n        if (txt === window.__cgiTxt) {\n          if (Date.now() - window.__cgiTxtSince > 8000 && Date.now() - window.__cgiT0 > 45000 && (st === null || st === 'complete')) throw new Error('[chatgpt-image] ChatGPT 只回了文字、没出图：' + txt.slice(0, 200));\n        } else { window.__cgiTxt = txt; window.__cgiTxtSince = Date.now(); }\n      }\n    }\n    await sleep(500);\n  }\n  const elapsed = Date.now() - (window.__cgiT0 || pageStart);\n  if (elapsed > 190000) throw new Error('[chatgpt-image] 190s 内没等到图');\n  return { items: [], pending: true, cursor: String(Number(cursor || 0) + 1) };\n}\n",
+      "itemsAt": "items",
+      "cursorField": "cursor",
+      "pendingField": "pending",
+      "maxPages": 9,
+      "_why_pending": "9 页 ≈ 26 + 8×22 = 202s，压在宿主 /v1/images 等 recipe 的 210s 上限以内；页内 190s 自己先抛。"
+    }
+  ],
+  "observers": [],
+  "output": {
+    "itemsAt": "items",
+    "dedupeBy": "guid",
+    "targetCount": 1,
+    "mapping": {
+      "guid": "guid",
+      "png": "png",
+      "index": "index"
+    },
+    "assert": [
+      {
+        "path": "items.0.png",
+        "desc": "没有读到生成图（页面结构变了，或生成失败）"
+      }
+    ],
+    "_why_targetCount": "网页版一轮出 1 张。",
+    "files": {
+      "png": {
+        "ext": "png"
+      }
+    },
+    "_why_files": "图（长边 1024 的 PNG，base64 约 1.5MB）经 output.files 落盘、结果里换成绝对路径：账本只收 1MB 以内的 result（2026-10-17 实测 1.7MB 被拒），文件类产物没有第二条路。"
+  },
+  "policy": {
+    "minActionIntervalMs": 500,
+    "maxTaskMs": 205000
+  },
+  "meta": {
+    "action": true,
+    "effects": [
+      "write"
+    ],
+    "type": "post",
+    "title": "ChatGPT生图",
+    "description": "在你自己的 ChatGPT 网页版里新开一条对话出一张图，页内取回原图（缩到长边 1024），落成本机 PNG 文件回路径（items[].png）。会留在聊天历史里。",
+    "facility": {
+      "key": "chatgpt",
+      "label": "ChatGPT"
+    },
+    "key_param": "prompt",
+    "discoverable": false,
+    "pick_in": [],
+    "_why_rateLimit": "生图额度按账号算、数字没公开；量级取「一个人手动在画」：每分钟 1 张、每小时 20 张。",
+    "rateLimit": {
+      "burst": 1,
+      "perMinute": 1,
+      "perHour": 20,
+      "bucket": "chatgpt-image"
+    },
+    "member_timeout_ms": 210000,
+    "auth": {
+      "type": "session",
+      "facility": "chatgpt",
+      "login": "cookie",
+      "cookieDomain": "chatgpt.com"
+    },
+    "params_schema": {
+      "prompt": {
+        "type": "string",
+        "required": true,
+        "description": "生图提示词；前面会自动加一句「请直接画一张方形图，不要提问」。"
+      }
+    },
+    "_why_no_produces": "不申报 produces:\"images\"：/v1/images/generations 按 url 下载，落盘的路径它用不了。直接走 /api/recipes/action，结果 items[].png 是本机文件路径。"
+  },
+  "_why_selectors": "2026-10-17 ChatGPT 改版（实测）：输入框不再是 #prompt-textarea，是 form 里一个 .ProseMirror[contenteditable]（aria-label「询问 ChatGPT」）；发送按钮没有 data-testid，只有 aria-label「发送」；消息上没有 data-message-author-role 了，一轮是一个 [data-turn-key]，生成状态在祖先 [data-talvt-turn-state]（complete = 完了）；生成图在 [data-testid=generated-image-gallery] 里、alt「已生成图像 1」、src 是 blob:（页内 fetch blob: 照样取得到）。新旧两套选择器都写上。chatgpt-chat 用的还是旧选择器，也会坏。",
+  "_why_challenge": "2026-10-17 每 3 分钟一张跑了约一小时、20 多张后，回复位置出现 cloudflare_challenge + 「重试」，对话 id 停在 /c/local-…（没到服务端）。页内见到就抛，消息里带「Cloudflare」，调用方据此歇着。",
+  "rideCurrentPage": true,
+  "_why_session": "常驻一个 ChatGPT 标签（keepAlive：不闲置回收、不腾位置），每轮骑着它（rideCurrentPage：不跳回 entryUrl），在页内点「新聊天」开新对话——像人一样在同一个页面里一张接一张地画。2026-10-17 之前每轮都整页重载 / 闲置后关掉再开，跑一小时撞了 Cloudflare 校验。entryUrl 只在标签冷启动时用。"
+}
