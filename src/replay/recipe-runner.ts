@@ -548,6 +548,7 @@ async function runEvaluateStep(ctx: StepContext, step: EvaluateStep, index: numb
     const next = step.cursorField == null ? null : getPath(body, step.cursorField)
     cursor = next == null ? '' : String(next)
     if (!cursor) break
+    if (step.pumpFrames && driver.shotViewport) await driver.shotViewport().catch(() => null)   // 后台标签出一帧，见 EvaluateStep.pumpFrames
     await driver.sleep(Math.max(ctx.minInterval, 900 + (page % 3) * 400))
   }
   probe.mark(`step#${index} ${step.kind}`)

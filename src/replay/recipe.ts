@@ -915,6 +915,13 @@ export type RecipeStep = RecipeAction | {
    */
   siteErrorField?: string
   /**
+   * 每页之间截一帧视口（`shotViewport`，结果丢掉），逼后台标签画一帧。后台标签不出帧，页面里
+   * 等 `requestAnimationFrame` 的逻辑就一直挂着：2026-10-17 豆包点了发送，消息要等到 recipe
+   * 超时、失败现场截图那一下才真发出去（6 分钟后）。截图是这条路上唯一能让隐藏标签出帧的手段，
+   * 不抢焦点、不前台。只给「发出去之后页面要自己动起来」的 recipe 开，读数据的不需要。
+   */
+  pumpFrames?: boolean
+  /**
    * 动作前的闸门，和动作步骤上的 `settle` 同一契约（见 `StepSettle`）。
    * 这一步不操作页面、只调站点自己的 JS，所以**通常没必要声明它**——收下它只是因为
    * 「所有 step 都过同一道闸门」比「这一类是例外」少一条要记的规则，不声明就是零代价的空操作。
