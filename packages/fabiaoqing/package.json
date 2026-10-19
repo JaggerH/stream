@@ -1,0 +1,17 @@
+{
+  "name": "@streamapp/fabiaoqing",
+  "version": "1.0.0",
+  "author": "stream",
+  "keywords": ["stream-recipe"],
+  "stream": {
+    "type": "recipe",
+    "name": "发表情",
+    "tagline": "表情包站：关键词 → 单张表情（老牌斗图库）",
+    "facility": "fabiaoqing",
+    "schemaVersion": 1,
+    "cookieDomain": "fabiaoqing.com",
+    "_why_rateLimit": "同 pdan：无登录的个人站，人的节奏，排不上就放弃这一腿。",
+    "rateLimit": { "burst": 3, "perMinute": 10, "maxWaitMs": 3000 }
+  },
+  "license": "Apache-2.0"
+}

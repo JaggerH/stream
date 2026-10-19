@@ -1,0 +1,85 @@
+{
+  "version": 1,
+  "kind": "html",
+  "sourceId": "fabiaoqing-search",
+  "_why": "发表情（fabiaoqing.com）是老牌斗图库：熊猫头、猫猫狗狗、各种情绪表情的单张图，量大但更新慢（2026-10-19 搜「负鼠」一张没有，搜「猫」全是 2017～2019 的老图）。所以它补的是**历史 / 经典情绪**那一半，当年新梗看 pdan。单张表情是 img.bqppsearch，懒加载：真图在 data-original（img.soutula.com 图床），src 是透明 gif；title 属性是「配文 - 系列名_标签…」。没结果时页面照常 200，allowEmpty。",
+  "allowEmpty": true,
+  "request": {
+    "url": "https://fabiaoqing.com/search/bqb/keyword/{keyword}/type/bq/page/1.html",
+    "method": "GET"
+  },
+  "list": {
+    "selector": "img.bqppsearch",
+    "limit": 40,
+    "fields": {
+      "title": {
+        "attr": "title",
+        "extract": "^([^_]+)"
+      },
+      "image": {
+        "attr": "data-original"
+      },
+      "link": {
+        "attr": "data-original"
+      },
+      "guid": {
+        "attr": "data-original"
+      }
+    }
+  },
+  "pagination": {
+    "mode": "increment",
+    "param": "page",
+    "start": 1,
+    "step": 1,
+    "maxPages": 1
+  },
+  "_why_assert": "断言的是「拿到的是发表情的真页面」（顶部搜索框），不是「有结果」：搜不到时页面照样有搜索框、只是没有图，那是合法的 0 条（allowEmpty）。",
+  "assert": [
+    {
+      "selector": "#searchinput",
+      "desc": "真页面（不是人机验证 / 空壳）"
+    }
+  ],
+  "meta": {
+    "normalizer": "rsshub",
+    "type": "post",
+    "description": "发表情 — 关键词搜单张表情包（老牌斗图库，经典情绪）",
+    "topics": [
+      "fabiaoqing",
+      "发表情",
+      "表情包",
+      "斗图",
+      "sticker",
+      "meme"
+    ],
+    "categories": [
+      "picture"
+    ],
+    "facility": {
+      "key": "fabiaoqing",
+      "label": "发表情"
+    },
+    "capabilities": [
+      "search"
+    ],
+    "provides": [
+      "search-sticker"
+    ],
+    "key_param": "keyword",
+    "priority": 60,
+    "discoverable": true,
+    "cadence_hint_seconds": 86400,
+    "auth": {
+      "type": "none"
+    },
+    "homepage": "fabiaoqing.com",
+    "params_schema": {
+      "keyword": {
+        "type": "string",
+        "required": true,
+        "description": "搜索关键词（情绪、动物、梗名）"
+      }
+    }
+  }
+}

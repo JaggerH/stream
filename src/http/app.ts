@@ -2808,17 +2808,17 @@ export function createHttpApp(deps: HttpDeps): Hono {
     try {
     const q = (c.req.query('q') ?? '').trim()
     const scope = c.req.query('scope')
-    if (scope !== 'content' && scope !== 'music' && scope !== 'price' && scope !== 'resale' && scope !== 'resources' && scope !== 'video') {
-      return c.json(errorBody('validation_error', 'scope must be content | music | price | resale | resources | video'), 400)
+    if (scope !== 'content' && scope !== 'music' && scope !== 'price' && scope !== 'resale' && scope !== 'sticker' && scope !== 'resources' && scope !== 'video') {
+      return c.json(errorBody('validation_error', 'scope must be content | music | price | resale | sticker | resources | video'), 400)
     }
-    if (scope === 'content' || scope === 'music' || scope === 'price' || scope === 'resale') {
+    if (scope === 'content' || scope === 'music' || scope === 'price' || scope === 'resale' || scope === 'sticker') {
       if (!q) return c.json({ items: [] })
       if (!deps.providers) return c.json(errorBody('unavailable', `${scope} search not available`), 503)
       // 经 content-search / music-search / price-search / resale-search Provider 行（并发分支：成员结果合并，失败入 misses）。
       // price / resale 与 content 同形（并发 + 按产源 manifest 归一化），只是意图独立、成员各是各的：
       // price = 新品各平台报价，resale = 型号二手回收价——混排会让回收价看起来像一个便宜的购买选项。
-      const callsite = scope === 'music' ? 'search.music' : scope === 'price' ? 'search.price' : scope === 'resale' ? 'search.resale' : 'search.content'
-      const fallbackProviderId = scope === 'music' ? 'music-search' : scope === 'price' ? 'price-search' : scope === 'resale' ? 'resale-search' : 'content-search'
+      const callsite = scope === 'music' ? 'search.music' : scope === 'price' ? 'search.price' : scope === 'resale' ? 'search.resale' : scope === 'sticker' ? 'search.sticker' : 'search.content'
+      const fallbackProviderId = scope === 'music' ? 'music-search' : scope === 'price' ? 'price-search' : scope === 'resale' ? 'resale-search' : scope === 'sticker' ? 'sticker-search' : 'content-search'
       const providerId = deps.providerBindings?.fixed(callsite, slotCtx(c))
       const r = await deps.providers.executor.invoke(providerId ?? fallbackProviderId, q)
       if (!r) return c.json(errorBody('unavailable', `${scope} search not available`), 503)

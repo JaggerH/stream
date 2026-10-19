@@ -1,0 +1,17 @@
+{
+  "name": "@streamapp/pdan",
+  "version": "1.0.0",
+  "author": "stream",
+  "keywords": ["stream-recipe"],
+  "stream": {
+    "type": "recipe",
+    "name": "皮蛋表情包",
+    "tagline": "表情包站：关键词 → 表情包合集（当年的新梗）",
+    "facility": "pdan",
+    "schemaVersion": 1,
+    "cookieDomain": "pdan.com.cn",
+    "_why_rateLimit": "个人站点、不要登录。和别的无登录搜索源一个节奏：连着三次可以，持续每分钟十次以上不像人；排不上 3 秒就放弃这一腿，别让整次扇出等它。",
+    "rateLimit": { "burst": 3, "perMinute": 10, "maxWaitMs": 3000 }
+  },
+  "license": "Apache-2.0"
+}

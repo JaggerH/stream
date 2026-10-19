@@ -1,0 +1,89 @@
+{
+  "version": 1,
+  "kind": "html",
+  "sourceId": "pdan-search",
+  "_why": "皮蛋表情包（pdan.com.cn）是 WordPress 站，站内搜索 /?s= 直接出 SSR 的合集卡片：a.imageLink 包一张 200px 封面缩略图，img 的 alt 就是合集标题（例如「负鼠表情包_负鼠背手站窗台原图搞笑图」）。2026-10-19 实测：搜「负鼠」出 5 月、7 月的负鼠合集，是这类当年新梗最快的落脚处之一；没结果时页面照常回 200、只是没有卡片，所以 allowEmpty。合集详情页（/<数字>.html）里每张图是 img[data-original]，要整套图时再钻，搜索这一层只拿封面。",
+  "allowEmpty": true,
+  "request": {
+    "url": "https://pdan.com.cn/?s={keyword}",
+    "method": "GET"
+  },
+  "list": {
+    "selector": "a.imageLink",
+    "limit": 20,
+    "fields": {
+      "title": {
+        "selector": "img",
+        "attr": "alt"
+      },
+      "link": {
+        "attr": "href",
+        "resolve": true
+      },
+      "guid": {
+        "attr": "href",
+        "resolve": true
+      },
+      "image": {
+        "selector": "img",
+        "attr": "src",
+        "extract": "^([^?]+)"
+      }
+    }
+  },
+  "pagination": {
+    "mode": "increment",
+    "param": "paged",
+    "start": 1,
+    "step": 1,
+    "maxPages": 1
+  },
+  "_why_assert": "断言的是「拿到的是皮蛋表情包的真页面」（站点 logo），不是「有结果」：搜不到时页面照样有 logo、只是没有卡片，那是合法的 0 条（allowEmpty）。拿卡片选择器当断言会把「这个词没有表情包」判成漂移。",
+  "assert": [
+    {
+      "selector": "img[alt=\"皮蛋表情包网\"]",
+      "desc": "真页面（不是人机验证 / 空壳）"
+    }
+  ],
+  "meta": {
+    "normalizer": "rsshub",
+    "type": "post",
+    "description": "皮蛋表情包 — 关键词搜表情包合集（封面图 + 标题）",
+    "topics": [
+      "pdan",
+      "皮蛋表情包",
+      "表情包",
+      "梗图",
+      "sticker",
+      "meme"
+    ],
+    "categories": [
+      "picture"
+    ],
+    "facility": {
+      "key": "pdan",
+      "label": "皮蛋表情包"
+    },
+    "capabilities": [
+      "search"
+    ],
+    "provides": [
+      "search-sticker"
+    ],
+    "key_param": "keyword",
+    "priority": 60,
+    "discoverable": true,
+    "cadence_hint_seconds": 86400,
+    "auth": {
+      "type": "none"
+    },
+    "homepage": "pdan.com.cn",
+    "params_schema": {
+      "keyword": {
+        "type": "string",
+        "required": true,
+        "description": "搜索关键词（梗名、动物、情绪）"
+      }
+    }
+  }
+}

@@ -1,5 +1,5 @@
 /**
- * 系统 Provider 身份的**静态表**（18 条，一条一个模块）。**它不是全表**：包声明的 Provider
+ * 系统 Provider 身份的**静态表**（19 条，一条一个模块）。**它不是全表**：包声明的 Provider
  * 行（`package.json#stream.providers`）在装配期并进来，合并表在 `src/providers/identities.ts`。
  *
  * 字面量 import，照 `packages/index.ts` 的 `BUILTIN_ACTIVATIONS` 先例——这样 esbuild 打得进
@@ -26,6 +26,7 @@ import { videoSearch } from './video-search.ts'
 import { contentSearch } from './content-search.ts'
 import { priceSearch } from './price-search.ts'
 import { resaleSearch } from './resale-search.ts'
+import { stickerSearch } from './sticker-search.ts'
 import { resourceSearch } from './resource-search.ts'
 import { lyricsSearch } from './lyrics-search.ts'
 import { downloadResolve } from './download-resolve.ts'
@@ -50,6 +51,7 @@ const IDENTITIES: SystemIdentity[] = [
   contentSearch,
   priceSearch,
   resaleSearch,
+  stickerSearch,
   resourceSearch,
   subtitleSearch,
   lyricsSearch,

@@ -51,6 +51,7 @@ export const PROVIDER_CALLSITES: ProviderCallsiteDescriptor[] = [
   { id: 'search.content', label: '内容搜索', description: '跨平台内容搜索', category: 'search', mode: 'fixed', defaultProviderIds: ['content-search'], entries: timeline },
   { id: 'search.price', label: '比价搜索', description: '商品比价搜索 → 各平台报价', category: 'search', mode: 'fixed', defaultProviderIds: ['price-search'], entries: timeline },
   { id: 'search.resale', label: '残值搜索', description: '型号 → 二手回收 / 挂牌价', category: 'search', mode: 'fixed', defaultProviderIds: ['resale-search'], entries: timeline },
+  { id: 'search.sticker', label: '表情包搜索', description: '关键词 → 各表情包站的图', category: 'search', mode: 'fixed', defaultProviderIds: ['sticker-search'], entries: timeline },
   // 时间线 + 影视两个现场都用它：影视作品页的「找资源」就地换 Provider 写的正是这个槽位，
   // 挂上 video 后该覆盖才出现在 video Present 的 slots 里、能在频道管理里看见并清掉（同 netdisk.* 的双挂法）。
   { id: 'search.resources', label: '资源搜索', description: '影视与下载资源搜索', category: 'search', mode: 'fixed', defaultProviderIds: ['resource-search'], entries: [...timeline, ...video] },

@@ -34,11 +34,11 @@ const KNOWN_DUPLICATE_SERVE_KEYS: Array<{ category: ProviderCategory; key: strin
 describe('SYSTEM_IDENTITIES', () => {
   const identities = [...SYSTEM_IDENTITIES.values()]
 
-  // 18：平台行（`netease-track` / `video-bilibili` / `video-douyin` / `video-tiktok`）、资源站的组合体
+  // 19：平台行（`netease-track` / `video-bilibili` / `video-douyin` / `video-tiktok`）、资源站的组合体
   // 与网盘行（`netdisk-*-quark` / `netdisk-verify-baidu`）各住自己包的 `stream.providers`（站点知识归包），
   // 经合并身份表进来，不在这张宿主静态表里。
-  it('has exactly 18 rows, keyed by their own id', () => {
-    expect(identities).toHaveLength(18)
+  it('has exactly 19 rows, keyed by their own id', () => {
+    expect(identities).toHaveLength(19)
     for (const identity of identities) expect(SYSTEM_IDENTITIES.get(identity.id)).toBe(identity)
   })
 
