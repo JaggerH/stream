@@ -13,7 +13,7 @@
  * `node:fs`/`node:path`），随包带上的代价可以忽略。
  */
 import { WebSocketServer } from 'ws'
-import type { Server } from 'node:http'
+import type { IncomingMessage, Server } from 'node:http'
 import { tokenEqual } from './token.ts'
 import { EnvironmentUnavailableError } from '../failure/environment.ts'
 import { parseExtHandshake, type ExtHandshake } from './handshake.ts'
@@ -594,7 +594,26 @@ export function verifyExtUpgrade(
   info: { origin?: string; protocolHeader?: string },
   token: string,
 ): boolean {
-  if (/^https?:\/\//i.test(info.origin ?? '')) return false
+  const candidate = offeredToken(info)
+  return candidate !== undefined && tokenEqual(candidate, token)
+}
+
+/**
+ * 同 `verifyExtUpgrade` 的两道判据，但 token 不止一把（design D7：本机那把 + 每条配对绑定一把）：
+ * 回这把 token 属于哪条绑定，都不是就 null。比对交给 `resolveToken`——配对绑定只存哈希，
+ * 定长比较在 `ExtBindingStore.bindingForToken` 里。
+ */
+export function resolveExtUpgrade(
+  info: { origin?: string; protocolHeader?: string },
+  resolveToken: (token: string) => string | null,
+): string | null {
+  const candidate = offeredToken(info)
+  return candidate === undefined ? null : resolveToken(candidate)
+}
+
+/** Origin 不是网页、且子协议里**恰好**带了一把 token 时回它，否则 undefined。 */
+function offeredToken(info: { origin?: string; protocolHeader?: string }): string | undefined {
+  if (/^https?:\/\//i.test(info.origin ?? '')) return undefined
   const offered = (info.protocolHeader ?? '')
     .split(',')
     .map((s) => s.trim())
@@ -602,10 +621,24 @@ export function verifyExtUpgrade(
   // noUncheckedIndexedAccess（同上，`@streamapp/desktop` 那份更严的 tsconfig 会较真）：
   // 数组下标访问的类型天然带 `| undefined`，即便上一行已经确认了 length===1——TS 不会替我们
   // 把这层收窄传导到 `offered[0]`，所以显式取一次值再判。
-  if (offered.length !== 1) return false
-  const candidate = offered[0]
-  if (candidate === undefined) return false
-  return tokenEqual(candidate, token)
+  if (offered.length !== 1) return undefined
+  return offered[0]
+}
+
+/** 按绑定收发的那一端（`ExtRelayRegistry` 满足它）。单个 `ExtRelay` 由 attachExtRelay 包成 `local`。 */
+export interface ExtRelayTarget {
+  connect(bindingId: string, socket: ExtSocket & { close?: (code: number, reason: string) => void }, info?: ExtHandshake): void
+  disconnect(bindingId: string, socket: ExtSocket): void
+  handleMessage(bindingId: string, raw: string): void
+}
+
+function asTarget(t: ExtRelay | ExtRelayTarget): ExtRelayTarget {
+  if (!(t instanceof ExtRelay)) return t
+  return {
+    connect: (_id, socket, info) => t.connect(socket, info),
+    disconnect: (_id, socket) => t.disconnect(socket),
+    handleMessage: (_id, raw) => t.handleMessage(raw),
+  }
 }
 
 /**
@@ -621,13 +654,22 @@ export function verifyExtUpgrade(
  */
 export function attachExtRelay(
   server: Server,
-  relay: ExtRelay,
-  opts: { token: string; path?: string; log?: (line: string) => void },
+  relay: ExtRelay | ExtRelayTarget,
+  opts: (
+    | { token: string; resolveToken?: undefined }
+    | { token?: undefined; resolveToken: (token: string) => string | null }
+  ) & { path?: string; log?: (line: string) => void },
 ): WebSocketServer {
-  const { token, path = '/api/ext', log = console.log } = opts
+  const { path = '/api/ext', log = console.log } = opts
+  const target = asTarget(relay)
+  // 只给了一把 token（插件、老调用点）= 只有本机绑定。
+  const token = opts.token
+  const resolveToken = opts.resolveToken ?? ((t: string) => (token !== undefined && tokenEqual(t, token) ? 'local' : null))
   // noServer + 自路由：`{ server, path }` 模式下同一 http server 上的多个 WSS 会互相
   // 对不匹配路径的 upgrade 回 400（/ws 的实例会抢先拒掉发往 /api/ext 的握手）。
   // 各自只认领自己的路径，其余 upgrade 留给其他监听器。
+  // upgrade → connection 之间带过去「这条连接是哪条绑定」：ws 的 connection 事件只给 (socket, req)。
+  const upgraded = new WeakMap<IncomingMessage, string>()
   const wss = new WebSocketServer({
     noServer: true,
     // 只回选协议名 —— 绝不把 token 那一项回显进响应头
@@ -641,19 +683,20 @@ export function attachExtRelay(
     // 只在真有值时才带这个键。
     const origin = req.headers.origin
     const protocolHeader = req.headers['sec-websocket-protocol']
-    const ok = verifyExtUpgrade(
+    const bindingId = resolveExtUpgrade(
       {
         ...(origin !== undefined ? { origin } : {}),
         ...(protocolHeader !== undefined ? { protocolHeader } : {}),
       },
-      token,
+      resolveToken,
     )
-    if (!ok) {
+    if (bindingId === null) {
       log(`[ext-relay] rejected upgrade (origin=${req.headers.origin ?? '<none>'})`)
       socket.write('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n')
       socket.destroy()
       return
     }
+    upgraded.set(req, bindingId)
     wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req))
   })
   wss.on('connection', (socket, req) => {
@@ -662,8 +705,10 @@ export function attachExtRelay(
     const origin = req?.headers?.origin ?? '<none>'
     // 扩展自报的 extVersion/browser/platform 走升级请求的 query（token 仍走 subprotocol —— 那个是
     // secret，不进 URL）。不带 query 的老版本扩展照常连上，只是缓存里那三格空着。
-    relay.connect(socket, parseExtHandshake(req?.url))
-    log(`[ext-relay] connected (origin=${origin})`)
+    // 升级时认出的绑定。拿不到（测试里直接 emit 的连接）= 本机，与只有一条 relay 时的行为一致。
+    const bindingId = (req && upgraded.get(req)) ?? 'local'
+    target.connect(bindingId, socket, parseExtHandshake(req?.url))
+    log(`[ext-relay] connected (origin=${origin}, binding=${bindingId})`)
     const ping = setInterval(() => {
       try {
         socket.ping()
@@ -671,15 +716,15 @@ export function attachExtRelay(
         /* socket 关闭时 ping 抛错，close 处理器会清理 */
       }
     }, 20_000)
-    socket.on('message', (data) => relay.handleMessage(data.toString()))
+    socket.on('message', (data) => target.handleMessage(bindingId, data.toString()))
     // close + error 可能都触发：只放行第一次，断开日志一条连接只出一行。
     let torndown = false
     const teardown = () => {
       if (torndown) return
       torndown = true
       clearInterval(ping)
-      relay.disconnect(socket)
-      log(`[ext-relay] disconnected (origin=${origin})`)
+      target.disconnect(bindingId, socket)
+      log(`[ext-relay] disconnected (origin=${origin}, binding=${bindingId})`)
     }
     socket.on('close', teardown)
     socket.on('error', teardown)

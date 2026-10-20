@@ -76,6 +76,33 @@ describe('POST /api/ext/verify', () => {
   })
 })
 
+describe('POST /api/ext/verify — 配对绑定（design D7）', () => {
+  const HASH = 'h'.repeat(64)
+  const buildWithBindings = () =>
+    fixture.build(undefined, {
+      extRelayAuth: { token: EXT_TOKEN, extId: EXT_ID, tokenHashOf: (id) => (id === 'ext:a' ? HASH : undefined) },
+    })
+
+  it('带 binding 时用那条绑定的 token 哈希作 key', async () => {
+    const res = await verify(buildWithBindings(), { nonce: NONCE, binding: 'ext:a' })
+    expect(res.status).toBe(200)
+    const expected = createHmac('sha256', HASH).update(`${EXT_VERIFY_PREFIX}${NONCE}`).digest('hex')
+    expect(await res.json()).toMatchObject({ proof: expected })
+  })
+
+  it('不认识的绑定照样 200，但 proof 对不上本机 token 也对不上任何哈希', async () => {
+    const res = await verify(buildWithBindings(), { nonce: NONCE, binding: 'ext:nope' })
+    expect(res.status).toBe(200)
+    const { proof } = (await res.json()) as { proof: string }
+    expect(proof).not.toBe(extVerifyProof(EXT_TOKEN, NONCE))
+    expect(proof).not.toBe(extVerifyProof(HASH, NONCE))
+  })
+
+  it('binding 不是字符串 → 400', async () => {
+    expect((await verify(buildWithBindings(), { nonce: NONCE, binding: 1 })).status).toBe(400)
+  })
+})
+
 describe('extVerifyProof', () => {
   // 扩展侧用 WebCrypto 独立实现同一个式子（backend-identity.ts）。两边都对着这条**手写的**
   // 期望值，而不是互相对着对方的实现——同源比对验不出任何东西。

@@ -1,5 +1,5 @@
 import { Hono, type Context, type MiddlewareHandler } from 'hono'
-import { randomUUID } from 'node:crypto'
+import { randomBytes, randomUUID } from 'node:crypto'
 import type { CookieHealth } from '../credentials/pushed-cookie-store.ts'
 import { buildIdentity, type BuildIdentity } from './build-identity.ts'
 import { registerResolveRoutes } from './resolve-routes.ts'
@@ -109,7 +109,7 @@ import { toClientItem, sortKeyOf, encodeCursor, decodeCursor, isAfterCursor } fr
 import { attachStoryGroups } from '../story-fold/project.ts'
 import type { StoryFoldStore } from '../story-fold/store.ts'
 import { EXT_RELAY_PROTOCOL } from './ext-relay.ts'
-import { extVerifyProof } from './ext-verify.ts'
+import { extVerifyProof, extVerifyProofForBinding } from './ext-verify.ts'
 import { authorizeAccess, peerAddress, isLoopbackAddress, isTrustedHost, isTrustedOrigin, lanUrls } from './access-guard.ts'
 import { tokenEqual } from './secrets.ts'
 import { TOKEN_EXEMPT_ROUTES } from './device-routes.ts'
@@ -282,7 +282,12 @@ export interface HttpDeps {
   }
   /** 后端自证身份用的那把 secret（`POST /api/ext/verify` 拿它签 proof）。**不外发**。
    *  Origin 门控；extId 固定后强校验单一扩展来源。 */
-  extRelayAuth?: { token: string; extId?: string }
+  extRelayAuth?: {
+    token: string
+    extId?: string
+    /** 配对绑定的 token 哈希（`ExtBindingStore.tokenHashOf`）：verify 带 `binding` 时拿它当 key（design D7）。 */
+    tokenHashOf?: (bindingId: string) => string | undefined
+  }
   /** **没有路由消费它，serve.ts 也不接线——这一格只为看门狗存在。**
    *  `src/http/app.ext-cookies.test.ts` 塞一个假的进来，断言已撤销的 `POST /api/ext/cookies`
    *  不但 404、而且没有偷偷往里写。删掉它就把那条断言的后半截拆了。 */
@@ -667,7 +672,7 @@ const SHARE_SAVE_KEYS = [...SHARE_VERIFY_KEYS, 'dest', 'subdir', 'bind'] as cons
 //    那几个键**，多一个会把正常调用挡在门外、少一个会留下一处静默丢弃。
 
 /** `POST /api/ext/verify` 认识的字段。 */
-const EXT_VERIFY_KEYS = ['nonce'] as const
+const EXT_VERIFY_KEYS = ['nonce', 'binding'] as const
 /** `POST /api/ext/debug-log` 认识的字段。 */
 const EXT_DEBUG_LOG_KEYS = ['event', 'summary', 'fields', 'ok'] as const
 /** `POST /api/events/read` 认识的字段（`EventsService.markRead` 的两种选法）。 */
@@ -1267,6 +1272,13 @@ export function createHttpApp(deps: HttpDeps): Hono {
     // 所以空/非串一律拒，绝不用默认值兜底签一个可预测的挑战。
     if (!body || typeof body.nonce !== 'string' || body.nonce.length < 16) {
       return c.json({ error: 'nonce required (>=16 chars)' }, 400)
+    }
+    const binding = (body as { binding?: unknown }).binding
+    if (binding !== undefined) {
+      if (typeof binding !== 'string') return c.json({ error: 'binding must be a string' }, 400)
+      // 不认识的绑定也照样签一个（随机 key）：回 404 就等于告诉对方哪些 id 存在。
+      const key = auth.tokenHashOf?.(binding) ?? randomBytes(32).toString('hex')
+      return c.json({ proof: extVerifyProofForBinding(key, body.nonce), protocol: EXT_RELAY_PROTOCOL })
     }
     return c.json({ proof: extVerifyProof(auth.token, body.nonce), protocol: EXT_RELAY_PROTOCOL })
   })

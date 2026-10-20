@@ -12,3 +12,13 @@ export { VERIFY_PREFIX } from './wire.ts'
 export function extVerifyProof(token: string, nonce: string): string {
   return createHmac('sha256', token).update(VERIFY_PREFIX + nonce).digest('hex')
 }
+
+/**
+ * 配对绑定的挑战应答（design D7）。实例只存 token 的 SHA-256（小写 hex），算不出
+ * `HMAC(token, …)`，所以 key 就是那个哈希；扩展侧先算 `sha256hex(token)` 再签。
+ * 代价：拿到 `ext-bindings.json` 的人能冒充这个实例骗过挑战——但他随后从握手里拿到的 token
+ * 只对这一条绑定有效，而能读那个文件的人本来就在实例机器上。
+ */
+export function extVerifyProofForBinding(tokenHashHex: string, nonce: string): string {
+  return extVerifyProof(tokenHashHex, nonce)
+}
