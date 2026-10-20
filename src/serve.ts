@@ -37,12 +37,15 @@ import { wireCookiesFeed } from './event-source/cookies-feed.ts'
 import { loadOrCreateExtToken, loadOrCreateApiToken } from './http/secrets.ts'
 import { authorizeAccess, parseTrustedOrigins, isLoopbackAddress, peerAddress, lanBaseUrls } from './http/access-guard.ts'
 import { mountDeviceRoutes } from './http/device-routes.ts'
+import { mountExtBindingRoutes, REVOKED_CLOSE_CODE } from './http/ext-binding-routes.ts'
 import { DeviceStore } from './devices/device-store.ts'
+import { ExtBindingStore } from './devices/ext-binding-store.ts'
+import { tokenEqual } from '../shared/browser-relay/token.ts'
 import { FacilityDeviceStore } from './devices/facility-devices.ts'
 import { assertDeviceReady, resolvePlacement, unavailableBindings, type FacilityBindings } from './devices/placement.ts'
 import { installFetchFor, makeFetchFor } from './devices/fetch.ts'
 import { installGlobalFetchTrap } from './devices/global-fetch-trap.ts'
-import type { RunPlacement } from './devices/run-context.ts'
+import { LOCAL_BINDING, type RunPlacement } from './devices/run-context.ts'
 import type { UserTaskRow } from './tasks/task-store.ts'
 import { attachEnrichCommands } from './http/enrich-ws.ts'
 import { attachAuthLoginCommands } from './http/auth-login.ts'
@@ -278,6 +281,8 @@ async function main() {
 // 后端只在 /api/ext/verify 上用它签一条 proof 自证身份。握手仍走 WS subprotocol，用户全程无感。
 const extToken = loadOrCreateExtToken(dirname(config.item_db))
 const deviceStore = new DeviceStore(join(dirname(config.item_db), 'devices.json'), { log: console.log })
+// 扩展绑定（design D7）：别的机器上的 Chrome 用一次性码挂到某台已配对设备上。本机扩展不在表里。
+const extBindings = new ExtBindingStore(join(dirname(config.item_db), 'ext-bindings.json'), { log: console.log })
 // facility → 默认设备，与 TaskStore 同一个 stream.db。在 bootstrap 之前建：adapters 域要它，而它只依赖路径。
 // 开不起来（文件锁/损坏）不让启动失败，但**不是**「没有绑定 = 全部本机」：用户把东财绑在大陆的 NAS 上，
 // 表一坏就改从本机下单，正是这套设计要防的事。换成查就抛的替身——有 facility 的执行一律拒绝，
@@ -361,6 +366,7 @@ const apiToken = config.api_token || loadOrCreateApiToken(dirname(config.item_db
     onItem: (item, type) => hub.broadcast({ type: 'item', item_type: type, item: toClientItem({ ...item, type }) }),
     onDebug: recordDebug,
     facilityDevices: facilityBindings,
+    extBindings,
     broadcast: (msg) => hub.broadcast(msg),
     track,
     trackSync,
@@ -647,7 +653,7 @@ const apiToken = config.api_token || loadOrCreateApiToken(dirname(config.item_db
       trustedHosts: config.trusted_hosts,
       trustedOrigins: parseTrustedOrigins(process.env.STREAM_TRUSTED_ORIGINS),
     },
-    extRelayAuth: { token: extToken, extId: EXT_ID },
+    extRelayAuth: { token: extToken, extId: EXT_ID, tokenHashOf: (id) => extBindings.tokenHashOf(id) },
     intents: agentDomain.intents,
     // 「组件」页那一列：这个包给了哪些工具。**thunk**——见 HttpDeps.capabilityTools 的头注。
     // 键是**包 id**（界面按包列行），值来自 host 按**能力名**分的那张表，装载回执里两者对得上。
@@ -856,6 +862,17 @@ const apiToken = config.api_token || loadOrCreateApiToken(dirname(config.item_db
     ...(facilityDevices ? { bindings: facilityDevices } : {}),
     // 只收有包认领的 facility；调用时才问（包热装卸会变）。
     knownFacility: (f) => pkgs.networkForFacility(f) !== undefined,
+    // 设备没了，挂在它上面的 Chrome 也就没有执行位置可言——一并撤销并断开。
+    onRevoked: (id) => {
+      for (const b of extBindings.revokeDevice(id)) harvest.extRelays.kick(b, REVOKED_CLOSE_CODE, 'revoked')
+    },
+  })
+  mountExtBindingRoutes(app, {
+    store: extBindings,
+    registry: harvest.extRelays,
+    devices: { name: (id) => deviceStore.list().find((d) => d.deviceId === id)?.name },
+    isLocal: (c) => isLoopbackAddress(peerAddress(c)),
+    extId: EXT_ID,
   })
   if (taskStore && runLedger) {
     mountTaskRoutes(app, {
@@ -1092,7 +1109,15 @@ const apiToken = config.api_token || loadOrCreateApiToken(dirname(config.item_db
   // 最后一处常驻连接泄漏。`closeRelayServer` 先断连再关服务器（interval 挂在连接上，
   // 光 close 服务器清不掉它）。
   kernel.effect(() => {
-    const wss = attachExtRelay(server as unknown as Server, harvest.extRelay, { token: extToken })
+    // 本机 token → 本机绑定；配对 token → 那条绑定（design D7）。连上即记一次 lastSeen。
+    const wss = attachExtRelay(server as unknown as Server, harvest.extRelays, {
+      resolveToken: (t) => {
+        if (tokenEqual(t, extToken)) return LOCAL_BINDING
+        const b = extBindings.bindingForToken(t)
+        if (b) extBindings.touch(b.bindingId)
+        return b?.bindingId ?? null
+      },
+    })
     return () => closeRelayServer(wss)
   })
   // host-desktop Engine relay at /api/host — Stream Desktop's native process (enigo + OS a11y)

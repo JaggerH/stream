@@ -113,6 +113,7 @@ import { extVerifyProof, extVerifyProofForBinding } from './ext-verify.ts'
 import { authorizeAccess, peerAddress, isLoopbackAddress, isTrustedHost, isTrustedOrigin, lanUrls } from './access-guard.ts'
 import { tokenEqual } from './secrets.ts'
 import { TOKEN_EXEMPT_ROUTES } from './device-routes.ts'
+import { isExtensionOrigin } from './ext-binding-routes.ts'
 import { callSitesOf, PROVIDER_DEFAULT_SOURCE, PLANNED_PROVIDERS } from '../providers/seed.ts'
 import { identityOf } from '../providers/identities.ts'
 import { identityServes } from '../providers/system/types.ts'
@@ -297,7 +298,7 @@ export interface HttpDeps {
   extRelayStatus?: () => { connected: boolean; since: string | null }
   /** 后端此刻真正骑着的浏览器标签 id（`GET /api/ext/claimed-tabs`）。扩展拿它对账、
    *  回收后端重启后留在用户 Chrome 里的孤儿采集标签。 */
-  claimedTabs?: () => number[]
+  claimedTabs?: (bindingId?: string) => number[]
   /** 浏览器采集能力的**快判**（`GET /api/browser-capability`）：relay 现状 + 落盘的 everSeen 缓存。
    *  纯读，**不探测、不等待、不唤醒**，永远秒回。全量诊断是另一个端点（见 harvestBrowser）。
    *  absent → 端点 404（同 relay-status：后端没接 relay 就别伪装成"扩展没连"）。 */
@@ -1261,10 +1262,7 @@ export function createHttpApp(deps: HttpDeps): Hono {
     const auth = deps.extRelayAuth
     if (!auth) return c.json({ error: 'ext relay disabled' }, 404)
     const origin = c.req.header('Origin') ?? ''
-    const ok = auth.extId
-      ? origin === `chrome-extension://${auth.extId}`
-      : /^chrome-extension:\/\/[a-p]{32}$/.test(origin)
-    if (!ok) return c.json({ error: 'forbidden' }, 403)
+    if (!isExtensionOrigin(origin, auth.extId)) return c.json({ error: 'forbidden' }, 403)
     const body = (await c.req.json().catch(() => null)) as { nonce?: unknown } | null
     const gate = strictBody(c, body, EXT_VERIFY_KEYS)
     if (gate) return gate
@@ -1300,7 +1298,8 @@ export function createHttpApp(deps: HttpDeps): Hono {
   // 扩展的对账不该依赖它先拿到凭证。
   app.get('/api/ext/claimed-tabs', (c) => {
     if (!deps.claimedTabs) return c.json(errorBody('unavailable', 'facility sessions not available'), 503)
-    return c.json({ tabIds: deps.claimedTabs() })
+    // 每个扩展绑定只拿自己那个 Chrome 里的标签对账（design D7）；不带 = 本机扩展，与以前一致。
+    return c.json({ tabIds: deps.claimedTabs(c.req.query('binding') || undefined) })
   })
 
   /*

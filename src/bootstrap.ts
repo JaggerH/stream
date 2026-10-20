@@ -66,6 +66,8 @@ export interface BootOptions {
   /** facility → 默认执行设备（serve 在 bootstrap 之前就能建：它只要 stream.db 路径）。缺席 = 全部本机；
    *  表打不开时 serve 传 `unavailableBindings()`——有 facility 的执行一律拒绝，不悄悄回落本机。 */
   facilityDevices?: import('./devices/placement.ts').FacilityBindings
+  /** 扩展绑定表（design D7）：别的机器上的 Chrome 挂在哪台设备上。缺席 = 只有本机扩展。 */
+  extBindings?: import('./kernel/plugins/harvest.ts').HarvestConfig['extBindings']
   /** fired (in addition to the item-store write) for each newly-persisted item */
   onItem?: (item: StreamItem, type: SourceType) => void
   /** push a debug entry (download queue diagnostics) to the frontend DebugBox over the WS */
@@ -474,6 +476,7 @@ export async function bootstrap(
     browserLanes: config.browser_lanes,
     harvestBrowser: config.harvest_browser,
     hostSessionWaitMs: config.desktop?.session_wait_ms,
+    ...(opts.extBindings && { extBindings: opts.extBindings }),
     onDebug: opts.onDebug,
     notify: notifyDefect,
     broadcast: opts.broadcast,

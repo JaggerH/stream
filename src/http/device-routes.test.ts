@@ -179,4 +179,15 @@ describe('device routes', () => {
     expect(store.deviceForToken(r.deviceToken)).toBeUndefined()
     expect((await app.request(`/api/devices/${encodeURIComponent(r.deviceId)}`, { method: 'DELETE' })).status).toBe(404)
   })
+
+  // design D7：挂在这台设备上的扩展绑定随之撤销——由 onRevoked 接（serve.ts 里撤绑定并断开）。
+  it('revoking a device tells onRevoked which device went', async () => {
+    const revoked: string[] = []
+    const app2 = new Hono()
+    mountDeviceRoutes(app2, { store, registry, isLocal: () => true, backendUrls: () => [], onRevoked: (id) => revoked.push(id) })
+    const r = store.pair(store.createPairingCode().code, 'NAS', 'linux')
+    if (!r.ok) throw new Error('expected ok')
+    expect((await app2.request(`/api/devices/${encodeURIComponent(r.deviceId)}`, { method: 'DELETE' })).status).toBe(204)
+    expect(revoked).toEqual([r.deviceId])
+  })
 })

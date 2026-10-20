@@ -14,6 +14,8 @@ import type { HostRelayRegistry } from './host-registry.ts'
 
 export const TOKEN_EXEMPT_ROUTES: ReadonlyArray<{ method: string; path: string }> = [
   { method: 'POST', path: '/api/devices/pair' },
+  // 扩展用一次性码换 token（ext-binding-routes.ts）：同理，扩展此刻还没有 API token。
+  { method: 'POST', path: '/api/ext/pair' },
 ]
 
 export interface DeviceRoutesDeps {
@@ -29,6 +31,8 @@ export interface DeviceRoutesDeps {
   isLocal: (c: Context) => boolean
   /** Base URLs where a phone on the LAN can reach this backend (`http://<ip>:<port>`). */
   backendUrls: (c: Context) => string[]
+  /** 设备撤销之后：挂在它上面的扩展绑定一并撤销、断开（design D7）。 */
+  onRevoked?: (deviceId: string) => void
 }
 
 export function mountDeviceRoutes(app: Hono, deps: DeviceRoutesDeps): void {
@@ -109,6 +113,7 @@ export function mountDeviceRoutes(app: Hono, deps: DeviceRoutesDeps): void {
     const id = c.req.param('id')
     if (!deps.store.revoke(id)) return c.json({ error: '没有这台设备' }, 404)
     deps.registry.kick(id, 4003, 'revoked')
+    deps.onRevoked?.(id)
     return c.body(null, 204)
   })
 
