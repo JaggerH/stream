@@ -177,8 +177,8 @@ error:  { code: 'host-not-allowed' | 'private-target' | 'timeout' | 'network' | 
 - 扩展的 driver 从模块级单例改成**每条绑定一个会话**：自己的 WS、退避、会话标签组（组名带绑定的 label）、tab 归属账本。
 - 一张 tab 至多属于一条绑定的组。命令里引用了不属于本绑定组的 tab，扩展以错误拒绝——实例 A 驱动不了实例 B 的 tab，也借不走用户
   拖进 B 组的 tab。`chrome.debugger` 的附着天然按 tab，组不相交就不冲突。
-- cookie 推送按绑定：推往该绑定的地址、用该绑定的 token、只推该绑定批准过的域；实例收下后写入**绑定所挂设备**的快照
-  `data/cookies/<deviceId>.json`（D4）。
+- cookie 按绑定取：实例经该绑定的 relay `cookiePull`，扩展只交出该绑定范围内（批准过）的域、其余明说 `refused`；
+  实例收下后写入**绑定所挂设备**的快照 `data/cookies/<deviceId>.json`（D4）。`cookieNames` 同样限在范围内。
 - 撤销：实例删掉绑定后以专用关闭码断开 WS；扩展把该绑定标 `revoked`、停止重连，popup 里显示「已被撤销」。
 
 **实例侧**
