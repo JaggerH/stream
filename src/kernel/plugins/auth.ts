@@ -22,7 +22,7 @@ import { makeTransportLoginPage } from '../../auth/transport-login-page.ts'
 import type { LoginCheck } from '../../replay/recipe.ts'
 import { loginToFacility } from '../../credentials/facility-login.ts'
 import { currentPlacement } from '../../devices/run-context.ts'
-import { assertLocalBrowser } from '../../devices/placement.ts'
+import { assertRecipeRunnable } from '../../devices/placement.ts'
 import type { SessionAuthSpec, SourceManifest } from '../../manifest/types.ts'
 import type { RuntimeConfigResolver } from './runtime-config.ts'
 
@@ -221,7 +221,8 @@ export const authPlugin = {
      * **位置有讲究**：必须排在 `cookiePuller` 之后——登完要靠它去浏览器把新 cookie 取回来。
      */
     ctx.packages.setFacilityLogin(async (facility) => {
-      assertLocalBrowser(currentPlacement())
+      // 还没接扩展绑定 registry：远程设备上的登录照旧 fail closed（Task 6 接上）。
+      assertRecipeRunnable(currentPlacement(), 'browser')
       return loginToFacility(
         {
           // 都现取：recipe 表会因为热重载/装卸包变化，执行器与 cookieProvider 也可能被

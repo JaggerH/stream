@@ -1,6 +1,6 @@
 /** 一次执行在哪台设备上：任务覆盖 → facility 默认设备 → local。执行开始时解析一次，之后不变。 */
 import { DeviceIncapable, DeviceOffline } from './errors.ts'
-import { LOCAL_DEVICE, type RunPlacement } from './run-context.ts'
+import { LOCAL_BINDING, LOCAL_DEVICE, currentPlacement, type RunPlacement } from './run-context.ts'
 
 /** 包的执行位置相关声明：它的 facility 与允许访问的主机（`stream.network.hosts` ?? `stream.credentials`）。 */
 export interface PackageNetwork {
@@ -65,12 +65,23 @@ export function assertDeviceReady(
   if (!dir.hasOp(p.deviceId, need)) throw new DeviceIncapable(p.deviceId, need)
 }
 
+/** 设备 → 它上面的一条在线扩展绑定（`ExtRelayRegistry` 满足它）。没有绑定 / 都离线时抛。 */
+export interface BrowserPicker {
+  pick(deviceId: string): string
+}
+
 /**
- * 浏览器通道（登录）目前只通本机——远程设备的浏览器中继在 device-browser-relay 接上。
- * 在那之前，绑定到远程设备的执行若在本机 Chrome 里登录，就是「PC 登录、NAS 下单」，宁可失败。
+ * 本次执行用哪个扩展绑定（design D7）。第一次问时选、记在执行上下文的 `browser` 记号上，之后整次
+ * 执行不变——中途新连上的 Chrome 不会把一半的登录切到另一个浏览器里。没有执行上下文（面板、MCP
+ * 工具）或执行在 `local` 上 = 本机扩展。
  */
-export function assertLocalBrowser(p: RunPlacement): void {
-  if (p.deviceId !== LOCAL_DEVICE) throw new DeviceIncapable(p.deviceId, 'browser')
+export function pickBrowser(reg: BrowserPicker): string {
+  const p = currentPlacement()
+  if (p.deviceId === LOCAL_DEVICE) return LOCAL_BINDING
+  if (p.browser?.bindingId) return p.browser.bindingId
+  const id = reg.pick(p.deviceId)
+  if (p.browser) p.browser.bindingId = id
+  return id
 }
 
 /**
@@ -78,16 +89,18 @@ export function assertLocalBrowser(p: RunPlacement): void {
  * - `http` / `html`：只走 `fetchFor`，要设备有 `http.fetch`（`ready`）。
  * - `desktop`：第一版不把桌面 recipe 派到绑定设备（spec「无界面设备不接 UI recipe」）——
  *   不判就会在本机桌面上点，结果却记在设备名下。
- * - 其余（`browser` / `fetch` 会话类）：浏览器中继落地前一律只通本机，**不看设备声明的 op**——
- *   设备即便声明了 `browser`，采集也只会在本机 Chrome 上跑。
+ * - 其余（`browser` / `fetch` 会话类）：要设备上有在线的扩展绑定（`browsers`，同时把这次执行的
+ *   绑定选定）。没接 `browsers` 的调用点 fail closed：宁可失败，也不在本机 Chrome 里替远程设备登录。
  */
 export function assertRecipeRunnable(
   p: RunPlacement,
   kind: string,
   ready?: (p: RunPlacement, need: string) => void,
+  browsers?: BrowserPicker,
 ): void {
   if (p.deviceId === LOCAL_DEVICE) return
   if (kind === 'http' || kind === 'html') { ready?.(p, 'http.fetch'); return }
   if (kind === 'desktop') throw new DeviceIncapable(p.deviceId, 'desktop')
-  assertLocalBrowser(p)
+  if (!browsers) throw new DeviceIncapable(p.deviceId, 'browser')
+  pickBrowser(browsers)
 }

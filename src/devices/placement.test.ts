@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
-import { assertDeviceReady, assertLocalBrowser, makeFacilityPlacement, resolvePlacement, unavailableBindings } from './placement.ts'
+import { assertDeviceReady, assertRecipeRunnable, makeFacilityPlacement, pickBrowser, resolvePlacement, unavailableBindings } from './placement.ts'
 import { DeviceIncapable, DeviceOffline } from './errors.ts'
+import { runOnDevice } from './run-context.ts'
 
 const bindings: Record<string, string> = { eastmoney: 'linux:nas' }
 const binding = (f: string) => bindings[f]
@@ -30,9 +31,54 @@ describe('assertDeviceReady', () => {
   it('就绪', () => expect(() => assertDeviceReady({ deviceId: 'linux:nas', allowHosts: [] }, dir, 'http.fetch')).not.toThrow())
 })
 
-describe('assertLocalBrowser', () => {
-  it('local 放行', () => expect(() => assertLocalBrowser({ deviceId: 'local', allowHosts: [] })).not.toThrow())
-  it('远程设备 fail-closed', () => expect(() => assertLocalBrowser({ deviceId: 'linux:nas', allowHosts: [] })).toThrow(DeviceIncapable))
+describe('pickBrowser（一次执行选一次扩展绑定，design D7）', () => {
+  const NAS = { deviceId: 'linux:nas', allowHosts: [] }
+  const seq = (...ids: string[]) => {
+    let i = 0
+    return { pick: (_dev: string) => ids[i++] ?? 'exhausted' }
+  }
+  it('执行之外 = local，不问 registry', () => {
+    expect(pickBrowser({ pick: () => { throw new Error('should not be asked') } })).toBe('local')
+  })
+  it('local 设备上的执行 = local', async () => {
+    await runOnDevice({ deviceId: 'local', allowHosts: [] }, async () => expect(pickBrowser(seq('ext:a'))).toBe('local'))
+  })
+  it('keeps the first pick for the whole run', async () => {
+    const r = seq('ext:a', 'ext:b')
+    await runOnDevice(NAS, async () => {
+      expect(pickBrowser(r)).toBe('ext:a')
+      await new Promise((res) => setTimeout(res, 1))
+      expect(pickBrowser(r)).toBe('ext:a')
+    })
+  })
+  it('两次执行各选各的', async () => {
+    const r = seq('ext:a', 'ext:b')
+    await runOnDevice(NAS, async () => expect(pickBrowser(r)).toBe('ext:a'))
+    await runOnDevice(NAS, async () => expect(pickBrowser(r)).toBe('ext:b'))
+  })
+  it('registry 的 DeviceIncapable / DeviceOffline 原样抛出', async () => {
+    const no = { pick: () => { throw new DeviceIncapable('linux:nas', 'browser') } }
+    await expect(runOnDevice(NAS, async () => pickBrowser(no))).rejects.toBeInstanceOf(DeviceIncapable)
+    const off = { pick: () => { throw new DeviceOffline('linux:nas') } }
+    await expect(runOnDevice(NAS, async () => pickBrowser(off))).rejects.toBeInstanceOf(DeviceOffline)
+  })
+})
+
+describe('assertRecipeRunnable', () => {
+  const NAS = { deviceId: 'linux:nas', allowHosts: [] }
+  it('浏览器类 recipe 在远程设备上：没接 registry 就 fail closed', () => {
+    expect(() => assertRecipeRunnable(NAS, 'browser')).toThrow(DeviceIncapable)
+  })
+  it('接了 registry：设备上有在线绑定就放行', async () => {
+    await runOnDevice(NAS, async () => expect(() => assertRecipeRunnable(NAS, 'browser', undefined, { pick: () => 'ext:a' })).not.toThrow())
+  })
+  it('接了 registry：没有绑定照样 DeviceIncapable', async () => {
+    const no = { pick: () => { throw new DeviceIncapable('linux:nas', 'browser') } }
+    await expect(runOnDevice(NAS, async () => assertRecipeRunnable(NAS, 'browser', undefined, no))).rejects.toBeInstanceOf(DeviceIncapable)
+  })
+  it('桌面 recipe 仍不派到远程设备', () => {
+    expect(() => assertRecipeRunnable(NAS, 'desktop', undefined, { pick: () => 'ext:a' })).toThrow(DeviceIncapable)
+  })
 })
 
 describe('makeFacilityPlacement（采集与调度器共用的同一个解析器）', () => {

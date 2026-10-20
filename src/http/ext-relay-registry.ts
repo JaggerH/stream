@@ -6,11 +6,11 @@
  * 这是唯一不需要用户配置就说得通的规则（刚开的那个 Chrome 最可能是用户正看着的）。
  */
 import { DeviceIncapable, DeviceOffline } from '../devices/errors.ts'
-import { LOCAL_DEVICE } from '../devices/run-context.ts'
+import { LOCAL_BINDING, LOCAL_DEVICE } from '../devices/run-context.ts'
 import type { ExtHandshake } from '../../shared/browser-relay/handshake.ts'
 import type { ExtRelay, ExtSocket } from './ext-relay.ts'
 
-export const LOCAL_BINDING = 'local'
+export { LOCAL_BINDING }
 
 export interface ExtRelayRegistryDeps {
   local: ExtRelay
