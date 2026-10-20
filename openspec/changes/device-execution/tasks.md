@@ -22,7 +22,7 @@
 
 ## 计划 3：扩展绑定（扩展 ↔ 实例多对多，绑定挂在设备上）
 
-- [ ] 待写实施计划。范围：实例侧扩展绑定表与 `/api/ext/pair`、按设备签发扩展配对码、`ExtRelayRegistry`、
+- [ ] 实施计划：`docs/superpowers/plans/2026-10-21-device-execution-extension-bindings.md`（Task 1–10 完成后在此逐条展开打勾）。范围：实例侧扩展绑定表与 `/api/ext/pair`、按设备签发扩展配对码、`ExtRelayRegistry`、
   按设备选绑定与能力判定、cookie 按绑定落到设备快照、撤销；扩展侧一组绑定与迁移、配对码配对、driver 按绑定的会话与组隔离、
   按绑定的 cookie 同步与待批准域名、popup。不做镜像。
 
