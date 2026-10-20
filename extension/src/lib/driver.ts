@@ -1,4 +1,7 @@
-import { getConfig, setConfig, mergeDomains, matchesSyncedDomain, PROBE_CANDIDATES } from './config.ts'
+import {
+  getConfig, setConfig, mergeDomains, matchesSyncedDomain, PROBE_CANDIDATES,
+  LOCAL_BINDING, allowedDomains, getBinding, getBindings, setBinding, storageKey, type Binding,
+} from './config.ts'
 import { serializeCookie } from './cookie-shape.ts'
 import { setNotifySocket } from './relay-notify.ts'
 // sync.ts 只依赖 config / stream-api / relay-notify，不依赖本文件——加这条不会成环。
@@ -106,14 +109,68 @@ function debugLog(
 let ownedMem: Set<number> | null = null
 let mutateQueue: Promise<unknown> = Promise.resolve()
 let nextSubscriptionId = 1
-const subscriptions = new Map<number, { tabId: number; domains: Set<string> }>()
-let eventSocket: WebSocket | null = null
+
+/**
+ * 一条扩展绑定的会话状态（design D7：一个扩展可以同时服务好几个 Stream）。今天模块级的那几样——
+ * 会话标签组与它的串行队列、订阅、事件 socket、退避、在线标记——每条绑定一份：实例 A 的组里的标签，
+ * 实例 B 碰不到。**按 tab 的状态不进来**（childSessions、autoAttached、closingTabs、memberBornAt、
+ * owned 集合）：一张 tab 至多属于一条绑定，按 tabId 记本来就不会串。
+ *
+ * 本机那条（`local`）的存储键、组名与以前一字不差——升级后已有的组与账本原样认领。
+ */
+export class BindingRuntime {
+  groupMem: GroupState | null = null
+  // 组身份（groupId）是共享状态：慢操作 chrome.tabs.group 同时读它（要不要新建组）又写它，
+  // 故整条 addTabToGroup 串行化，保证"一会话一组"不变量（不像 owned 那样把慢操作放 mutex 外）。
+  groupQueue: Promise<unknown> = Promise.resolve()
+  // once-guard：memoize in-flight hydrate promise（不只 memoize 结果 groupMem）。groupMem 冷时，
+  // 队列内 hydrate 与队列外只读访问器（groupId/tabOrigin/groupMembers，不走 groupQueue）会并发
+  // 触发两次「读 storage → 赋值 groupMem」，后写者用冷快照覆盖已立好 groupId 的单例 → 下一个
+  // addTabToGroup 误判「无组」建出第二个组，破坏「一会话一组」。共享同一 in-flight promise 后，
+  // 并发只 hydrate 一次、都拿到同一个 GroupState，杜绝覆盖。
+  hydratingGroup: Promise<GroupState> | null = null
+  readonly subscriptions = new Map<number, { tabId: number; domains: Set<string> }>()
+  eventSocket: WebSocket | null = null
+  backoff = 1000
+  pendingRetry: { timer: ReturnType<typeof setTimeout>; run: () => void } | null = null
+  relayUp = false
+  /** 这条绑定的连接已经起过（本 SW 实例内）——同一条绑定只连一条，见 startExtCdp 头注。 */
+  started = false
+  /** 用户移除了这条绑定：断线后不再重连。 */
+  stopped = false
+  constructor(
+    readonly id: string,
+    /** 标签栏上的组名。本机是 `Stream`；配对绑定带上它的名字，好让用户分得清是哪个 Stream 在动。 */
+    readonly groupTitle: string = GROUP_TITLE,
+    readonly windowGroupTitle: string = WINDOW_GROUP_TITLE,
+  ) {}
+  get groupKey(): string {
+    return storageKey(GROUP_KEY, this.id)
+  }
+}
+
+const runtimes = new Map<string, BindingRuntime>()
+
+/** 某条绑定的会话状态（没有就建）。缺省 = 本机那条。 */
+export function runtime(id: string = LOCAL_BINDING, label?: string): BindingRuntime {
+  let rt = runtimes.get(id)
+  if (!rt) {
+    rt = id === LOCAL_BINDING
+      ? new BindingRuntime(id)
+      : new BindingRuntime(id, `${GROUP_TITLE} · ${label ?? id}`, `${WINDOW_GROUP_TITLE} · ${label ?? id}`)
+    runtimes.set(id, rt)
+  }
+  return rt
+}
+// 本机那条永远在：遍历 runtimes 的那些监听（拖入/拖出、新开标签、CDP 事件）不能因为还没人问过它就漏掉它。
+runtime()
 
 function domainOf(method: string): string {
   return method.split('.')[0] ?? ''
 }
 
-async function clearSubscriptions(): Promise<void> {
+async function clearSubscriptions(rt: BindingRuntime = runtime()): Promise<void> {
+  const subscriptions = rt.subscriptions
   const entries = [...subscriptions.values()]
   subscriptions.clear()
   for (const { tabId, domains } of entries) {
@@ -124,15 +181,19 @@ async function clearSubscriptions(): Promise<void> {
   }
 }
 
+/** 一张 tab 至多属于一条绑定，但它的订阅挂在哪条上不必知道——每条都清一遍。 */
 async function clearTabSubscriptions(tabId: number): Promise<void> {
-  const ids = [...subscriptions.entries()].filter(([, sub]) => sub.tabId === tabId).map(([id]) => id)
-  for (const id of ids) {
-    const sub = subscriptions.get(id)
-    subscriptions.delete(id)
-    if (!sub) continue
-    for (const domain of sub.domains) {
-      const stillUsed = [...subscriptions.values()].some((s) => s.tabId === tabId && s.domains.has(domain))
-      if (!stillUsed) await chrome.debugger.sendCommand({ tabId }, `${domain}.disable`).catch(() => {})
+  for (const rt of runtimes.values()) {
+    const subscriptions = rt.subscriptions
+    const ids = [...subscriptions.entries()].filter(([, sub]) => sub.tabId === tabId).map(([id]) => id)
+    for (const id of ids) {
+      const sub = subscriptions.get(id)
+      subscriptions.delete(id)
+      if (!sub) continue
+      for (const domain of sub.domains) {
+        const stillUsed = [...subscriptions.values()].some((s) => s.tabId === tabId && s.domains.has(domain))
+        if (!stillUsed) await chrome.debugger.sendCommand({ tabId }, `${domain}.disable`).catch(() => {})
+      }
     }
   }
 }
@@ -211,14 +272,18 @@ chrome.debugger.onEvent.addListener((source, method, params) => {
     void chrome.debugger.sendCommand({ tabId }, 'Page.handleJavaScriptDialog', { accept: true }).catch(() => {})
     return
   }
-  if (!eventSocket) return
   const domain = domainOf(method)
-  for (const [subscriptionId, sub] of subscriptions) {
-    if (sub.tabId !== tabId || !sub.domains.has(domain)) continue
-    try {
-      eventSocket.send(JSON.stringify({ type: 'cdp-event', subscriptionId, tabId, method, params }))
-    } catch {
-      /* reconnect cleanup drops subscriptions */
+  // 订阅挂在哪条绑定上，事件就从那条绑定的连接回去——别的 Stream 收不到这张 tab 的事件。
+  for (const rt of runtimes.values()) {
+    const eventSocket = rt.eventSocket
+    if (!eventSocket) continue
+    for (const [subscriptionId, sub] of rt.subscriptions) {
+      if (sub.tabId !== tabId || !sub.domains.has(domain)) continue
+      try {
+        eventSocket.send(JSON.stringify({ type: 'cdp-event', subscriptionId, tabId, method, params }))
+      } catch {
+        /* reconnect cleanup drops subscriptions */
+      }
     }
   }
 })
@@ -297,43 +362,33 @@ function isOurGroup(g: GroupState, gid: number | undefined): boolean {
   return gid != null && gid !== -1 && (gid === g.groupId || g.windowGroups.includes(gid))
 }
 
-let groupMem: GroupState | null = null
-// 组身份（groupId）是共享状态：慢操作 chrome.tabs.group 同时读它（要不要新建组）又写它，
-// 故整条 addTabToGroup 串行化，保证"一会话一组"不变量（不像 owned 那样把慢操作放 mutex 外）。
-let groupQueue: Promise<unknown> = Promise.resolve()
-// once-guard：memoize in-flight hydrate promise（不只 memoize 结果 groupMem）。groupMem 冷时，
-// 队列内 hydrate 与队列外只读访问器（groupId/tabOrigin/groupMembers，不走 groupQueue）会并发
-// 触发两次「读 storage → 赋值 groupMem」，后写者用冷快照覆盖已立好 groupId 的单例 → 下一个
-// addTabToGroup 误判「无组」建出第二个组，破坏「一会话一组」。共享同一 in-flight promise 后，
-// 并发只 hydrate 一次、都拿到同一个 GroupState，杜绝覆盖。
-let hydratingGroup: Promise<GroupState> | null = null
-
-async function hydrateGroup(): Promise<GroupState> {
-  if (groupMem) return groupMem
-  if (!hydratingGroup)
-    hydratingGroup = (async () => {
+// 组状态与它的串行队列、水合闸按绑定各一份，住在 BindingRuntime 上（理由见那边的注释）。
+async function hydrateGroup(rt: BindingRuntime = runtime()): Promise<GroupState> {
+  if (rt.groupMem) return rt.groupMem
+  if (!rt.hydratingGroup)
+    rt.hydratingGroup = (async () => {
       await ensureLedgerFresh() // 先判时效：上一次浏览器会话的账本必须在这里就死掉
-      const s = await chrome.storage.local.get(GROUP_KEY)
-      const snap = s[GROUP_KEY] as GroupSnapshot | undefined
-      groupMem = {
+      const s = await chrome.storage.local.get(rt.groupKey)
+      const snap = s[rt.groupKey] as GroupSnapshot | undefined
+      rt.groupMem = {
         groupId: snap?.groupId ?? null,
         windowGroups: snap?.windowGroups ?? [],
         popups: new Set(snap?.popups ?? []),
         members: new Map(snap?.members ?? []),
       }
-      return groupMem
+      return rt.groupMem
     })()
-  return hydratingGroup
+  return rt.hydratingGroup
 }
 
-async function persistGroup(g: GroupState): Promise<void> {
+async function persistGroup(g: GroupState, rt: BindingRuntime = runtime()): Promise<void> {
   const snap: GroupSnapshot = {
     groupId: g.groupId,
     ...(g.windowGroups.length ? { windowGroups: g.windowGroups } : {}), // 没有别的窗里的组就不写这格
     ...(g.popups.size ? { popups: [...g.popups] } : {}),
     members: [...g.members],
   }
-  await chrome.storage.local.set({ [GROUP_KEY]: snap })
+  await chrome.storage.local.set({ [rt.groupKey]: snap })
 }
 
 // ── 账本的时效：存哪儿、什么时候作废 ──────────────────────────────────────────
@@ -405,16 +460,25 @@ function ensureLedgerFresh(): Promise<void> {
     const mark = await chrome.storage.session.get(LEDGER_CHECKED_KEY)
     if (mark[LEDGER_CHECKED_KEY]) return // 本次扩展加载已判过（SW 回收不清 session）
     const stored = await chrome.storage.local.get(GROUP_KEY)
-    if (startupWatchable && stored[GROUP_KEY]) {
+    // 配对绑定的账本同一个时效：tabId 只在一次浏览器会话内有意义，与是哪个 Stream 的组无关。
+    const pairedKeys = (await getBindings())
+      .filter((b) => b.kind === 'paired')
+      .map((b) => storageKey(GROUP_KEY, b.id))
+    const pairedStored = pairedKeys.length ? await chrome.storage.local.get(pairedKeys) : {}
+    const pairedLedgers = pairedKeys.filter((k) => pairedStored[k])
+    if (startupWatchable && (stored[GROUP_KEY] || pairedLedgers.length)) {
       // 有账本才值得等 onStartup：等的是"这到底是重载还是重启"这一个问题的答案。
       if (!startupSeen)
         await Promise.race([startupFired, new Promise((r) => setTimeout(r, STARTUP_GRACE_MS))])
       if (startupSeen) {
-        await chrome.storage.local.remove(GROUP_KEY) // 新一次浏览器会话 → 旧账本作废
-        const snap = stored[GROUP_KEY] as { members?: unknown[] } | undefined
-        debugLog('ledger-cleared', '上一次浏览器会话的账本已作废', {
-          members: Array.isArray(snap?.members) ? snap.members.length : '未知',
-        })
+        if (stored[GROUP_KEY]) {
+          await chrome.storage.local.remove(GROUP_KEY) // 新一次浏览器会话 → 旧账本作废
+          const snap = stored[GROUP_KEY] as { members?: unknown[] } | undefined
+          debugLog('ledger-cleared', '上一次浏览器会话的账本已作废', {
+            members: Array.isArray(snap?.members) ? snap.members.length : '未知',
+          })
+        }
+        for (const k of pairedLedgers) await chrome.storage.local.remove(k)
       }
     }
     await chrome.storage.session.set({ [LEDGER_CHECKED_KEY]: true })
@@ -451,9 +515,9 @@ async function nameGroup(groupId: number, title = GROUP_TITLE): Promise<void> {
  * 返回第一个匹配组的 id + 它当前的 tab ids；无匹配 / 无 tabGroups 权限 → null。
  * 多个同名组（修复前攒下的残留）只取第一个；修复后不再新增残留，故不特意合并。
  */
-async function findExistingGroup(): Promise<{ groupId: number; tabIds: number[] } | null> {
+async function findExistingGroup(rt: BindingRuntime = runtime()): Promise<{ groupId: number; tabIds: number[] } | null> {
   try {
-    const groups = await chrome.tabGroups.query({ title: GROUP_TITLE })
+    const groups = await chrome.tabGroups.query({ title: rt.groupTitle })
     if (!groups.length) return null
     const groupId = groups[0].id
     const tabs = await chrome.tabs.query({ groupId })
@@ -471,22 +535,22 @@ async function findExistingGroup(): Promise<{ groupId: number; tabIds: number[] 
 const memberBornAt = new Map<number, number>()
 
 /** 把一个 tab 归入会话标签组（首个 tab 建新组，其后追加进同一组），记出身标记并持久化。返回 groupId。 */
-export async function addTabToGroup(tabId: number, origin: TabOrigin): Promise<number> {
+export async function addTabToGroup(tabId: number, origin: TabOrigin, rt: BindingRuntime = runtime()): Promise<number> {
   memberBornAt.set(tabId, Date.now())
-  const run = groupQueue.then(async () => {
-    const g = await hydrateGroup()
+  const run = rt.groupQueue.then(async () => {
+    const g = await hydrateGroup(rt)
     // g.groupId=null（浏览器重启作废了账本、或从未建组）但浏览器里旧 "Stream" 组可能还在。
     // 先认领它（绑 id + 把它现有的 tab 当 adopted 收回账本），别无视后另建 —— 否则每次都攒一个
     // 新组、旧组的 tab 全孤儿化。恢复的 tab 认不出原始出身，一律 adopted（红线:绝不 remove）。
     if (g.groupId == null) {
-      const existing = await findExistingGroup()
+      const existing = await findExistingGroup(rt)
       if (existing) {
         g.groupId = existing.groupId
         for (const t of existing.tabIds) if (!g.members.has(t)) g.members.set(t, 'adopted')
-        await persistGroup(g)
+        await persistGroup(g, rt)
         // 认领来的 tab 一律 adopted（红线：绝不 remove），所以这条分支走没走过、收回了几个，
         // 直接决定之后 reclaimOrphanTabs 还能不能动它们。低频（每次浏览器会话至多一次）。
-        debugLog('group-adopted', `认领了浏览器里遗留的 ${GROUP_TITLE} 组`, {
+        debugLog('group-adopted', `认领了浏览器里遗留的 ${rt.groupTitle} 组`, {
           groupId: existing.groupId,
           tabs: existing.tabIds.length,
         })
@@ -507,13 +571,13 @@ export async function addTabToGroup(tabId: number, origin: TabOrigin): Promise<n
         created = true // 重建出的也是新组，同样要命名（否则解散一次就永久退化成无名灰块）
       } else throw e
     }
-    if (created) await nameGroup(groupId)
+    if (created) await nameGroup(groupId, rt.groupTitle)
     g.groupId = groupId
     g.members.set(tabId, origin)
-    await persistGroup(g)
+    await persistGroup(g, rt)
     return groupId
   })
-  groupQueue = run.then(
+  rt.groupQueue = run.then(
     () => {},
     () => {},
   ) // 无论成败都推进队列，一次失败不卡死后续
@@ -521,13 +585,13 @@ export async function addTabToGroup(tabId: number, origin: TabOrigin): Promise<n
 }
 
 /** 当前会话组 id（未建组时 null）。 */
-export async function groupId(): Promise<number | null> {
-  return (await hydrateGroup()).groupId
+export async function groupId(rt: BindingRuntime = runtime()): Promise<number | null> {
+  return (await hydrateGroup(rt)).groupId
 }
 
 /** 某 tab 的出身（不在组内则 undefined）——close/reap 按它分流。 */
-export async function tabOrigin(tabId: number): Promise<TabOrigin | undefined> {
-  return (await hydrateGroup()).members.get(tabId)
+export async function tabOrigin(tabId: number, rt: BindingRuntime = runtime()): Promise<TabOrigin | undefined> {
+  return (await hydrateGroup(rt)).members.get(tabId)
 }
 
 /**
@@ -546,7 +610,7 @@ export async function tabOrigin(tabId: number): Promise<TabOrigin | undefined> {
  * 「此刻 active / 被选中过 / 账本不认识」三条猜「接管」再交还（ungroup 不 remove），结果三条里
  * 两条是猜的、还带一本会丢条目的账本——探针莫名飘在组外、没人说得清为什么。别把它加回来。
  */
-async function releaseTab(tabId: number, origin: TabOrigin): Promise<void> {
+async function releaseTab(tabId: number, origin: TabOrigin, rt: BindingRuntime = runtime()): Promise<void> {
   if (mayRemove(origin)) {
     await clearTabSubscriptions(tabId)
     await removeAcceptingUnload(tabId)
@@ -556,7 +620,7 @@ async function releaseTab(tabId: number, origin: TabOrigin): Promise<void> {
     await detachTab(tabId)
     await chrome.tabs.ungroup(tabId).catch(() => {})
   }
-  await forgetMember(tabId)
+  await forgetMember(tabId, rt)
 }
 
 /**
@@ -594,9 +658,9 @@ async function removeAcceptingUnload(tabId: number): Promise<void> {
  * 拖出撤销（onTabGroupChange）与醒来对账（reconcileOnWake）都走它：两者面对的都是
  * "这个 tab 已经不归我管了"，区别只在于是当场听见的还是事后补上的。
  */
-async function dropMember(tabId: number): Promise<void> {
+async function dropMember(tabId: number, rt: BindingRuntime = runtime()): Promise<void> {
   await detachTab(tabId)
-  await forgetMember(tabId)
+  await forgetMember(tabId, rt)
 }
 
 /** 放掉对某 tab 的控制（清订阅 + detach）。不动 tab 本身，也不动账本。 */
@@ -606,17 +670,17 @@ async function detachTab(tabId: number): Promise<void> {
 }
 
 /** 把一个 tab 从账本抹掉。组成员表与 owned 快照两处都要清 —— 任一处残留都会骗过后续判据。 */
-async function forgetMember(tabId: number): Promise<void> {
-  const g = await hydrateGroup()
+async function forgetMember(tabId: number, rt: BindingRuntime = runtime()): Promise<void> {
+  const g = await hydrateGroup(rt)
   g.members.delete(tabId)
   g.popups.delete(tabId)
-  await persistGroup(g)
+  await persistGroup(g, rt)
   await withOwned((o) => o.delete(tabId))
 }
 
 /** 组成员快照（{tabId, origin}[]，插入序）——供 list 用。 */
-export async function groupMembers(): Promise<Array<{ tabId: number; origin: TabOrigin }>> {
-  const g = await hydrateGroup()
+export async function groupMembers(rt: BindingRuntime = runtime()): Promise<Array<{ tabId: number; origin: TabOrigin }>> {
+  const g = await hydrateGroup(rt)
   return [...g.members].map(([tabId, origin]) => ({ tabId, origin }))
 }
 
@@ -633,8 +697,9 @@ export async function groupMembers(): Promise<Array<{ tabId: number; origin: Tab
  * 维护的 groupId 才是组归属的真相，且页面伪造不了它。reconcileOnWake 会在醒来时补账，这里
  * 再逐次现场核一遍 —— 撤销授权这件事不能只靠"事件没丢"。
  */
-async function inGroup(tabId: number): Promise<boolean> {
-  const g = await hydrateGroup()
+async function inGroup(tabId: number, rt: BindingRuntime = runtime()): Promise<boolean> {
+  // 按绑定判：别的 Stream 组里的标签对这条绑定来说就是「组外」——实例 A 驱动不了实例 B 的 tab。
+  const g = await hydrateGroup(rt)
   if (!g.members.has(tabId)) return false
   try {
     const tab = await chrome.tabs.get(tabId)
@@ -652,22 +717,27 @@ async function inGroup(tabId: number): Promise<boolean> {
 // 全程走 groupQueue 串行化，与 addTabToGroup 共享一条队列：既杜绝并发读改写丢更新，又保证
 // 程序化 chrome.tabs.group() 触发的 onUpdated 回声排在 addTabToGroup 的 members.set 之后
 // （否则回声会把刚建的 'created' tab 误标 'adopted'）。
+// 每条绑定各判一遍：拖进 A 的组 = 授权给 A（同时对 B 而言是"离开"，B 若在册就撤销）。
 function onTabGroupChange(tabId: number, newGroupId: number): Promise<void> {
-  const run = groupQueue.then(async () => {
-    const g = await hydrateGroup()
+  return Promise.all([...runtimes.values()].map((rt) => onTabGroupChangeFor(rt, tabId, newGroupId))).then(() => {})
+}
+
+function onTabGroupChangeFor(rt: BindingRuntime, tabId: number, newGroupId: number): Promise<void> {
+  const run = rt.groupQueue.then(async () => {
+    const g = await hydrateGroup(rt)
     if (isOurGroup(g, newGroupId)) {
       // 进入本会话组：用户拖入 → 采纳为可操作成员，出身 'adopted'。已是成员则不动
       // （程序化建组的事件回声会走到这里，绝不能把 'created' 覆写成 'adopted'）。
       if (!g.members.has(tabId)) {
         g.members.set(tabId, 'adopted')
-        await persistGroup(g)
+        await persistGroup(g, rt)
       }
       return
     }
     // 离开本会话组（groupId 变走 / 变 -1）：仅对在册成员生效 = 撤销授权。
-    if (g.members.has(tabId)) await dropMember(tabId)
+    if (g.members.has(tabId)) await dropMember(tabId, rt)
   })
-  groupQueue = run.then(
+  rt.groupQueue = run.then(
     () => {},
     () => {},
   ) // 无论成败都推进队列，一次失败不卡死后续
@@ -713,12 +783,21 @@ async function adoptOpenedTab(tab: chrome.tabs.Tab): Promise<void> {
   const tabId = tab.id
   const openerTabId = tab.openerTabId
   if (tabId == null || openerTabId == null) return
-  const origin = (await hydrateGroup()).members.get(openerTabId)
-  if (!origin || !mayRemove(origin)) return
+  // 开启者在哪条绑定的组里，新标签就归哪条绑定（一张 tab 至多属于一条）。
+  let rt: BindingRuntime | undefined
+  let origin: TabOrigin | undefined
+  for (const r of runtimes.values()) {
+    origin = (await hydrateGroup(r)).members.get(openerTabId)
+    if (origin) { rt = r; break }
+  }
+  if (!rt || !origin || !mayRemove(origin)) return
+  const owner = rt
+  const openerOrigin = origin
   memberBornAt.set(tabId, Date.now())
-  await withOwned((o) => o.add(tabId))
-  const run = groupQueue.then(async () => {
-    const g = await hydrateGroup()
+  // owned 只记本机绑定的自建标签：醒来对账拿它兜底回收「不在本机组里」的残留，配对绑定的标签进去会被误收。
+  if (owner.id === LOCAL_BINDING) await withOwned((o) => o.add(tabId))
+  const run = owner.groupQueue.then(async () => {
+    const g = await hydrateGroup(owner)
     // 已在册只可能是 Chrome 自动进组的回声抢先把它记成了 adopted——出身以开启者为准，覆写掉。
     if (g.members.has(tabId)) {
       // 什么都不用挪
@@ -732,20 +811,20 @@ async function adoptOpenedTab(tab: chrome.tabs.Tab): Promise<void> {
         await chrome.tabs.group({ groupId: opener.groupId, tabIds: [tabId] })
       } else {
         const gid = await chrome.tabs.group({ tabIds: [tabId], createProperties: { windowId: tab.windowId } })
-        await nameGroup(gid, WINDOW_GROUP_TITLE)
+        await nameGroup(gid, owner.windowGroupTitle)
         if (!g.windowGroups.includes(gid)) g.windowGroups.push(gid)
       }
     }
-    g.members.set(tabId, origin)
-    await persistGroup(g)
+    g.members.set(tabId, openerOrigin)
+    await persistGroup(g, owner)
   })
-  groupQueue = run.then(
+  owner.groupQueue = run.then(
     () => {},
     () => {},
   )
   await run
   try {
-    eventSocket?.send(
+    owner.eventSocket?.send(
       JSON.stringify({ type: 'tab-opened', tabId, openerTabId, url: tab.pendingUrl ?? tab.url ?? '' }),
     )
   } catch {
@@ -765,10 +844,10 @@ chrome.tabs.onCreated?.addListener?.((tab) => void onTabCreated(tab))
  * - 账本有、浏览器里已经没有 tab 的组（用户关了那扇窗）→ 从账本删掉；
  * - 组里有、账本没有的 tab → 认不出出身，一律 adopted（红线：绝不 remove）。
  */
-async function reconcileWindowGroups(g: GroupState): Promise<Set<number>> {
+async function reconcileWindowGroups(g: GroupState, rt: BindingRuntime = runtime()): Promise<Set<number>> {
   let named: number[] = []
   try {
-    named = (await chrome.tabGroups.query({ title: WINDOW_GROUP_TITLE })).map((x) => x.id)
+    named = (await chrome.tabGroups.query({ title: rt.windowGroupTitle })).map((x) => x.id)
   } catch {
     /* 没有 tabGroups 权限 —— 只对账本里已有的 */
   }
@@ -783,7 +862,7 @@ async function reconcileWindowGroups(g: GroupState): Promise<Set<number>> {
   if (kept.length === 0 && g.windowGroups.length === 0) return live
   g.windowGroups = kept
   for (const tabId of live) if (!g.members.has(tabId)) g.members.set(tabId, 'adopted')
-  await persistGroup(g)
+  await persistGroup(g, rt)
   return live
 }
 
@@ -802,9 +881,9 @@ async function reconcileWindowGroups(g: GroupState): Promise<Set<number>> {
  * 同时补上 SW 死着时漏掉的 onUpdated：以浏览器真实组成员为准双向对账（账本有·浏览器无
  * → 撤销；浏览器有·账本无 → 采纳为 adopted）。
  */
-export async function reconcileOnWake(): Promise<void> {
-  const g = await hydrateGroup()
-  const windowLive = await reconcileWindowGroups(g)
+export async function reconcileOnWake(rt: BindingRuntime = runtime()): Promise<void> {
+  const g = await hydrateGroup(rt)
+  const windowLive = await reconcileWindowGroups(g, rt)
   if (g.groupId != null) {
     const live = new Set(
       (await chrome.tabs.query({ groupId: g.groupId }).catch(() => []))
@@ -821,32 +900,34 @@ export async function reconcileOnWake(): Promise<void> {
     }
     // ① 账本有、浏览器无 = 用户趁 SW 死时拖出或关掉了它 → 撤销，绝不 remove
     //    （拖出的还在用户手里；关掉的 remove 也只是空操作。分不清也不必分——处理一样）。
-    for (const { tabId } of await groupMembers()) {
-      if (!live.has(tabId)) await dropMember(tabId)
+    for (const { tabId } of await groupMembers(rt)) {
+      if (!live.has(tabId)) await dropMember(tabId, rt)
     }
     // ② 浏览器有、账本无 = 用户趁 SW 死时拖了进来 → 拖入即授权，补记为 adopted
     for (const tabId of inMain) {
-      if (!g.members.has(tabId)) await addTabToGroup(tabId, 'adopted')
+      if (!g.members.has(tabId)) await addTabToGroup(tabId, 'adopted', rt)
     }
     // ③ 对完账再回收探针（没人看的泄漏兜底）
-    for (const { tabId, origin } of await groupMembers()) {
-      if (origin === 'probe') await releaseTab(tabId, origin)
+    for (const { tabId, origin } of await groupMembers(rt)) {
+      if (origin === 'probe') await releaseTab(tabId, origin, rt)
     }
   } else {
     // groupId=null（账本被浏览器重启作废，或从未建组）。若浏览器里旧 "Stream" 组还在，认领它
     // + 把它的 tab 收回账本（一律 adopted，红线:绝不 remove），让旧 tab 继续 list/close 得到。
     // 没有就是全新会话。**这里的 adopted 是"认不出出身"的保守默认，不是观测事实**——所以它
     // 现在只该发生在真正跨浏览器会话的那一格；扩展重载不再走到这条路（账本活着，出身还在）。
-    const existing = await findExistingGroup()
+    const existing = await findExistingGroup(rt)
     if (existing) {
       g.groupId = existing.groupId
       for (const t of existing.tabIds) g.members.set(t, 'adopted')
-      await persistGroup(g)
+      await persistGroup(g, rt)
     }
   }
   // 兜底：在 owned 快照里但不在组内的 tab —— 旧版扩展（无组概念）建的残留。owned 历来只记
   // AI 自建的 tab，故一律回收；不会误伤用户 tab（用户 tab 从不进 owned）。少了这条，升级后
   // 那批遗留自动化 tab 会永远留在浏览器里没人清。组内成员由上面按出身处理，这里跳过。
+  // owned 只记本机绑定的自建标签，所以只在本机那条的对账里做。
+  if (rt.id !== LOCAL_BINDING) return
   const owned = await hydrateOwned()
   const stale = [...owned].filter((tabId) => !g.members.has(tabId))
   for (const tabId of stale) {
@@ -874,11 +955,14 @@ export async function reconcileOnWake(): Promise<void> {
 export async function reclaimOrphanTabs(
   baseUrl: string,
   opts: { minAgeMs?: number } = {},
+  rt: BindingRuntime = runtime(),
 ): Promise<void> {
   const minAgeMs = opts.minAgeMs ?? 60_000
   let claimed: Set<number>
   try {
-    const res = await fetch(`${baseUrl}/api/ext/claimed-tabs`)
+    // 每个 Stream 只答它在这条绑定上认领的标签（本机不带参数，与以前同一个请求）。
+    const q = rt.id === LOCAL_BINDING ? '' : `?binding=${encodeURIComponent(rt.id)}`
+    const res = await fetch(`${baseUrl}/api/ext/claimed-tabs${q}`)
     if (!res.ok) return // 「不知道」≠「一个都不认」——见头注红线
     const body = (await res.json()) as { tabIds?: unknown }
     if (!Array.isArray(body?.tabIds)) return
@@ -887,12 +971,12 @@ export async function reclaimOrphanTabs(
     return // 后端没起 / 断网 —— 一个都不动
   }
   const now = Date.now()
-  for (const { tabId, origin } of await groupMembers()) {
+  for (const { tabId, origin } of await groupMembers(rt)) {
     if (origin !== 'probe') continue
     if (claimed.has(tabId)) continue
     const bornAt = memberBornAt.get(tabId)
     if (bornAt != null && now - bornAt < minAgeMs) continue // 刚建出来，后端可能还没登记
-    await releaseTab(tabId, origin)
+    await releaseTab(tabId, origin, rt)
     memberBornAt.delete(tabId)
   }
 }
@@ -920,8 +1004,8 @@ async function mitigateThrottle(tabId: number): Promise<void> {
 }
 
 /** 确保对某组内 tab 已 attach（幂等）。组外一律拒 —— 未经授权的 tab 绝不 attach。 */
-async function ensureAttached(tabId: number): Promise<void> {
-  if (!(await inGroup(tabId)))
+async function ensureAttached(tabId: number, rt: BindingRuntime = runtime()): Promise<void> {
+  if (!(await inGroup(tabId, rt)))
     throw new Error(`refuse to attach tab ${tabId}: not in the session tab group (拖入组即授权)`)
   try {
     await chrome.debugger.attach({ tabId }, DEBUGGER_VERSION)
@@ -1248,7 +1332,22 @@ async function sendCdpCommand(
  * 这条通道**已知会被触发**：背景标签下 `Input.dispatchMouseEvent` 的 ack 实测就永不返回
  * （见 `browser-ext-drive.ts` scrollOnce 的注释），而 `Page.navigate` 偶发挂满 30s 是同一个形状。
  */
-export async function dispatch(msg: Inbound): Promise<{ id: number; result?: unknown; error?: string; swMs: number }> {
+/**
+ * 这条绑定的实例能拿走哪些域的 cookie。本机 = `cfg.domains`（用户填的）∪ `cfg.requiredDomains`
+ * （Stream 按已装 manifest 推出来、上次同步缓存下来的），与以前一字不差；配对绑定还要过用户批准
+ * 那一道（`allowedDomains`）。绑定没了（刚被移除）= 空范围，fail closed。
+ */
+async function scopeOf(rt: BindingRuntime): Promise<string[]> {
+  if (rt.id === LOCAL_BINDING) {
+    const cfg = await getConfig()
+    return mergeDomains(cfg.domains, cfg.requiredDomains ?? [])
+  }
+  const b = await getBinding(rt.id)
+  return b ? allowedDomains(b) : []
+}
+
+/** 处理一条中继命令。`rt` = 命令从哪条绑定的连接上来：所有按组判的闸都只认这条绑定的组。 */
+export async function dispatch(msg: Inbound, rt: BindingRuntime = runtime()): Promise<{ id: number; result?: unknown; error?: string; swMs: number }> {
   const label = 'op' in msg ? msg.op : msg.method
   const started = Date.now()
   // 分段用的记号，全部盖 **SW 自己的钟**（跨侧的减法一律不做，见 HopMarks 头注）。
@@ -1270,7 +1369,7 @@ export async function dispatch(msg: Inbound): Promise<{ id: number; result?: unk
     }, { ok: false })
   }, SLOW_COMMAND_MS)
   try {
-    const reply = await dispatchInner(msg, marks)
+    const reply = await dispatchInner(msg, marks, rt)
     // `swMs` 随每一条回执回后端（不只是慢的那些）：后端拿它减出 WS 那两段，不去猜。
     return { ...reply, swMs: Date.now() - started }
   } finally {
@@ -1303,7 +1402,8 @@ interface HopMarks {
   cdpDoneAt?: number
 }
 
-async function dispatchInner(msg: Inbound, marks: HopMarks = {}): Promise<{ id: number; result?: unknown; error?: string }> {
+async function dispatchInner(msg: Inbound, marks: HopMarks = {}, rt: BindingRuntime = runtime()): Promise<{ id: number; result?: unknown; error?: string }> {
+  const subscriptions = rt.subscriptions
   try {
     if ('op' in msg) {
       switch (msg.op) {
@@ -1339,13 +1439,14 @@ async function dispatchInner(msg: Inbound, marks: HopMarks = {}): Promise<{ id: 
           }
           if (tabId == null) tabId = (await chrome.tabs.create({ url: msg.url, active: msg.background !== true })).id ?? null
           if (tabId == null) throw new Error('failed to create harvest tab')
-          await withOwned((o) => o.add(tabId)) // 出身=自建（供 close/reap 分流；不再是可操作判据）
+          // 出身=自建（供 close/reap 分流；不再是可操作判据）。只记本机绑定的——见 adoptOpenedTab。
+          if (rt.id === LOCAL_BINDING) await withOwned((o) => o.add(tabId))
           // 入会话组：现在"可操作"的判据是组成员（inGroup），自建 tab 不入组会被自己的
           // ensureAttached 拒、且 list 看不到它。
           // background 同时决定生命周期轴：后台档没人看着（probe，SW 醒来兜底回收），
           // 前台档是给人看的（created，SW 醒来不动，只由 close 命令或用户亲手关）。
-          await addTabToGroup(tabId, msg.background === true ? 'probe' : 'created')
-          await ensureAttached(tabId) // attach 先于 waitForNav（readyState 走 debugger 通道）
+          await addTabToGroup(tabId, msg.background === true ? 'probe' : 'created', rt)
+          await ensureAttached(tabId, rt) // attach 先于 waitForNav（readyState 走 debugger 通道）
           await waitForNav(tabId, msg.waitUntil, undefined, msg.url) // 慢操作在 mutex 之外，不阻塞其他 tab
           return { id: msg.id, result: { tabId } }
         }
@@ -1376,9 +1477,9 @@ async function dispatchInner(msg: Inbound, marks: HopMarks = {}): Promise<{ id: 
           if ((await chrome.windows.getAll({})).length === 0) tabId = await createUnfocusedFullscreenWindow(msg.url)
           if (tabId == null) tabId = (await chrome.tabs.create({ url: msg.url, active: true })).id ?? null
           if (tabId == null) throw new Error(`failed to open tab for ${msg.url}`)
-          await withOwned((o) => o.add(tabId!)) // 出身=自建（close 时才 remove 得掉）
+          if (rt.id === LOCAL_BINDING) await withOwned((o) => o.add(tabId!)) // 出身=自建（close 时才 remove 得掉）
           // 出身记 'created' 而不是 'probe'：这是开给人看的页面，SW 醒来不该把它回收掉。
-          await addTabToGroup(tabId, 'created')
+          await addTabToGroup(tabId, 'created', rt)
           // 建完把窗抬前台：这条命令的语义就是"给用户打开一个页面看"，藏在后面等于没开。
           const win = (await chrome.tabs.get(tabId).catch(() => undefined))?.windowId
           if (win != null) await chrome.windows.update(win, { focused: true }).catch(() => undefined)
@@ -1386,9 +1487,9 @@ async function dispatchInner(msg: Inbound, marks: HopMarks = {}): Promise<{ id: 
         }
         case 'closeTab': {
           // 组内才可关（组外拒）；关法按出身分流——自建才 remove，用户拖入的只 detach+移出组。
-          const origin = await tabOrigin(msg.tabId)
+          const origin = await tabOrigin(msg.tabId, rt)
           if (!origin) throw new Error(`refuse to close tab ${msg.tabId}: not in the session tab group`)
-          await releaseTab(msg.tabId, origin)
+          await releaseTab(msg.tabId, origin, rt)
           return { id: msg.id, result: {} }
         }
         case 'list': {
@@ -1399,7 +1500,7 @@ async function dispatchInner(msg: Inbound, marks: HopMarks = {}): Promise<{ id: 
           // 带 grouped：账本说它是成员 ≠ 它真的在 Chrome 的会话标签组里（用户拖出、组被解散、
           // group() 失败后账本还留着都会分叉）。拿 Chrome 自己的 tab.groupId 和账本的 groupId 对一下，
           // 让「标签飘在组外」这件事能从列表上直接看出来，而不是靠人眼数标签。
-          const g = await hydrateGroup()
+          const g = await hydrateGroup(rt)
           // openerTabId：它是被哪张标签开出来的（点一下开了新标签，从这里认出来）。
           // active：它是不是那扇窗当前显示的标签——原生窗口档按窗口标题寻址，只有 active 那张对得上。
           const tabs: Array<{
@@ -1412,7 +1513,7 @@ async function dispatchInner(msg: Inbound, marks: HopMarks = {}): Promise<{ id: 
             openerTabId?: number
             popup?: boolean
           }> = []
-          for (const { tabId, origin } of await groupMembers()) {
+          for (const { tabId, origin } of await groupMembers(rt)) {
             try {
               const t = await chrome.tabs.get(tabId)
               tabs.push({
@@ -1450,7 +1551,7 @@ async function dispatchInner(msg: Inbound, marks: HopMarks = {}): Promise<{ id: 
           // 还不回去（目标标签被用户关了）不是错误：用户当下在看的东西比我们的礼貌重要。
           // 一律回 {restored} 让调用方知道结果，但不抛。
           const [cur] = await chrome.tabs.query({ active: true, currentWindow: true })
-          if (cur?.id == null || !(await tabOrigin(cur.id))) return { id: msg.id, result: { restored: false } }
+          if (cur?.id == null || !(await tabOrigin(cur.id, rt))) return { id: msg.id, result: { restored: false } }
           try {
             await chrome.tabs.update(msg.tabId, { active: true })
             return { id: msg.id, result: { restored: true } }
@@ -1466,6 +1567,9 @@ async function dispatchInner(msg: Inbound, marks: HopMarks = {}): Promise<{ id: 
           //
           // 不做归属校验：这里读的是**域**不是 tab，没有"用户私人 tab"那条边界要守；而域本身
           // 由后端按 manifest 指定，用户没登过的域自然就是空列表。
+          // **配对绑定例外**：远处的实例不该能探测任意站点"登没登录"——只答它的范围之内的域。
+          if (rt.id !== LOCAL_BINDING && !matchesSyncedDomain(msg.domain, await scopeOf(rt)))
+            return { id: msg.id, result: { names: [] } }
           const all = await chrome.cookies.getAll({ domain: msg.domain })
           return { id: msg.id, result: { names: all.map((c) => c.name) } }
         }
@@ -1475,8 +1579,8 @@ async function dispatchInner(msg: Inbound, marks: HopMarks = {}): Promise<{ id: 
           // 判据用扩展自己申报过的同步域——`cfg.domains`（用户填的）∪ `cfg.requiredDomains`
           // （Stream 按已装 manifest 推出来、上次同步缓存下来的）。范围外的域一个字都不回，
           // 并且**明说拒了哪些**：静默丢弃会让后端把"没权限"读成"用户没登录"。
-          const cfg = await getConfig()
-          const allowed = mergeDomains(cfg.domains, cfg.requiredDomains ?? [])
+          // 配对绑定的范围还要过用户批准那一道（见 config.ts allowedDomains）。
+          const allowed = await scopeOf(rt)
           const wanted = [...new Set(msg.domains ?? [])]
           const granted = wanted.filter((d) => matchesSyncedDomain(d, allowed))
           const refused = wanted.filter((d) => !granted.includes(d))
@@ -1488,11 +1592,11 @@ async function dispatchInner(msg: Inbound, marks: HopMarks = {}): Promise<{ id: 
           return { id: msg.id, result: { cookies, refused } }
         }
         case 'subscribe': {
-          if (!(await inGroup(msg.tabId)))
+          if (!(await inGroup(msg.tabId, rt)))
             throw new Error(`refuse to subscribe tab ${msg.tabId}: not in the session tab group`)
           const domains = new Set(msg.domains.filter((d) => /^[A-Z][A-Za-z]+$/.test(d)))
           if (domains.size === 0) throw new Error('subscribe requires at least one valid CDP domain')
-          await ensureAttached(msg.tabId)
+          await ensureAttached(msg.tabId, rt)
           for (const domain of domains) {
             await chrome.debugger.sendCommand({ tabId: msg.tabId }, `${domain}.enable`)
           }
@@ -1504,7 +1608,7 @@ async function dispatchInner(msg: Inbound, marks: HopMarks = {}): Promise<{ id: 
           // 组外一律拒（ensureAttached 自己会拒）。刚开 auto-attach 的那一刻，已存在的 OOPIF 的
           // attachedToTarget 事件还在路上——等一小会儿再答，不然第一次问总是"没有 iframe"。
           const fresh = !autoAttached.has(msg.tabId)
-          await ensureAttached(msg.tabId)
+          await ensureAttached(msg.tabId, rt)
           if (fresh) await new Promise((r) => setTimeout(r, 300))
           return { id: msg.id, result: { sessions: frameSessionsOf(msg.tabId) } }
         }
@@ -1521,7 +1625,7 @@ async function dispatchInner(msg: Inbound, marks: HopMarks = {}): Promise<{ id: 
       }
     }
     // CDP 命令
-    await ensureAttached(msg.tabId)
+    await ensureAttached(msg.tabId, rt)
     // 逐动作域名校验：带 expectDomain 的（mutating）动作，执行前确认 tab 还在那个域名上。
     // 必须在 sendCommand 之前——校验通过才允许动作落到页面。
     if (msg.expectDomain) await assertDomain(msg.tabId, msg.expectDomain)
@@ -1541,33 +1645,29 @@ async function dispatchInner(msg: Inbound, marks: HopMarks = {}): Promise<{ id: 
 }
 
 // ── WS 连接：心跳给 MV3 SW 续命，断线指数退避重连（reconnect 去重、心跳按连接隔离）──
-let backoff = 1000
+// 退避、在线标记、排着的重试都按绑定各一份（BindingRuntime）：一条绑定反复失败不拖慢别的绑定。
 const BACKOFF_MAX = 30_000
 
 // relay 连接状态（SW 内存即可：popup 查询会唤醒 SW，唤醒即重走 startExtCdp 连接流程，
 // 状态随 open/close 事件实时翻转，无需持久化）。
-let relayUp = false
-
-/** popup 健康检查用：当前到后端 /api/ext 的 WS 是否在线。 */
-export function isRelayUp(): boolean {
-  return relayUp
+/** popup 健康检查用：某条绑定到它的 Stream 的 WS 是否在线。缺省 = 本机。 */
+export function isRelayUp(id: string = LOCAL_BINDING): boolean {
+  return runtimes.get(id)?.relayUp ?? false
 }
 
 /**
- * 排着的那一次重试。**同一时刻只有一个**——三处失败路径（配对失败、握手前验身份失败、
+ * 排着的那一次重试。**每条绑定同一时刻只有一个**——三处失败路径（配对失败、握手前验身份失败、
  * 连接断开）以前各自裸 `setTimeout` 并各自把 `backoff` 翻一倍，谁也不知道谁；这里把它们
  * 收成一个句柄，为的是能被"立刻重连"取消并提前引爆。
  */
-let pendingRetry: { timer: ReturnType<typeof setTimeout>; run: () => void } | null = null
-
-function scheduleRetry(run: () => void): void {
-  if (pendingRetry) clearTimeout(pendingRetry.timer)
+function scheduleRetry(run: () => void, rt: BindingRuntime = runtime()): void {
+  if (rt.pendingRetry) clearTimeout(rt.pendingRetry.timer)
   const timer = setTimeout(() => {
-    pendingRetry = null
+    rt.pendingRetry = null
     run()
-  }, backoff)
-  pendingRetry = { timer, run }
-  backoff = Math.min(backoff * 2, BACKOFF_MAX) // 指数退避
+  }, rt.backoff)
+  rt.pendingRetry = { timer, run }
+  rt.backoff = Math.min(rt.backoff * 2, BACKOFF_MAX) // 指数退避
 }
 
 /**
@@ -1577,39 +1677,53 @@ function scheduleRetry(run: () => void): void {
  * 折叠掉：把退避复位到 1s 并把排着的那一次重试提前引爆。返回值如实说发生了什么，好让
  * 弹窗照着说人话——**不假装"已重连"**：这里只能保证"这就去试"，连没连上要等 open 事件。
  */
-export function forceReconnect(): 'connected' | 'reconnecting' {
-  if (relayUp) return 'connected'
-  backoff = 1000
-  const p = pendingRetry
+export function forceReconnect(id: string = LOCAL_BINDING): 'connected' | 'reconnecting' {
+  const rt = runtime(id)
+  if (rt.relayUp) return 'connected'
+  rt.backoff = 1000
+  const p = rt.pendingRetry
   if (p) {
     clearTimeout(p.timer)
-    pendingRetry = null
+    rt.pendingRetry = null
     p.run()
-  } else {
+  } else if (id === LOCAL_BINDING) {
     // 没有排着的重试：SW 刚被这次查询唤醒、顶层那次 start() 还没走到失败，或者一次连接
     // 正在飞。走正常入口即可（`starting` 闸保证不会开出第二条连接）。
     void startExtCdp().catch(console.error)
+  } else {
+    void startBinding(id).catch(console.error)
   }
   return 'reconnecting'
 }
 
-async function connect(wsUrl: string, baseUrl: string): Promise<void> {
+/** 实例撤销了这条绑定（与设备撤销同一个关闭码）。收到它就别再重连——那把 token 已经作废了。 */
+export const REVOKED_CLOSE_CODE = 4003
+
+async function connect(wsUrl: string, baseUrl: string, rt: BindingRuntime = runtime(), binding?: Binding): Promise<void> {
   // 每次（重）连都重走这两步，不缓存：token 从 native host 现取（后端轮换 secret 后自愈），
   // 身份现验（上一次验过不代表这一次连的还是同一个进程——后端重启、端口易主都在这中间）。
+  // 配对绑定的 token 是配对时实例发的、存在绑定上；身份照样现验（带 binding，key 是 token 的哈希）。
   //
   // **顺序不能反，也不能省。** 先拿正确的 token，再让对端证明它也知道这个 token，最后才把
   // token 放进握手交出去。跳过验证直接握手 = 把 secret 白送给任何抢到这个口的进程。
   let token: string
   try {
-    token = await nativeHostToken()
-    await verifyBackend(baseUrl, token)
+    if (binding?.kind === 'paired') {
+      if (!binding.token) throw new Error('这条绑定没有 token——重新配对')
+      token = binding.token
+      await verifyBackend(baseUrl, token, { binding: binding.id })
+    } else {
+      token = await nativeHostToken()
+      await verifyBackend(baseUrl, token)
+    }
   } catch (e) {
     // 停在原地重试，**绝不降级去问后端要 token**——那条路就是这次要拆掉的东西。
     // 日志要吵：这两类失败（没配对 / 对端不是我们）用户看不见任何症状，只会觉得"采集不动了"。
     debugLog('pairing-refused', '没连——token 取不到或对端身份验不过', {
+      binding: rt.id,
       reason: e instanceof Error ? e.message : String(e),
     })
-    scheduleRetry(() => void connect(wsUrl, baseUrl))
+    scheduleRetry(() => void connect(wsUrl, baseUrl, rt, binding), rt)
     return
   }
   // token 走 Sec-WebSocket-Protocol（不进 URL/日志）；服务端只回选协议名
@@ -1617,31 +1731,39 @@ async function connect(wsUrl: string, baseUrl: string): Promise<void> {
   let hb: ReturnType<typeof setInterval> | null = null
   let settled = false // error 与 close 会双发 —— 保证只重连一次、只清一次心跳
 
-  const scheduleReconnect = () => {
+  const scheduleReconnect = (ev?: Event) => {
     if (settled) return
     settled = true
-    relayUp = false
-    if (eventSocket === sock) {
-      eventSocket = null
-      setNotifySocket(null)
+    rt.relayUp = false
+    if (rt.eventSocket === sock) {
+      rt.eventSocket = null
+      if (rt.id === LOCAL_BINDING) setNotifySocket(null)
     }
-    void clearSubscriptions()
+    void clearSubscriptions(rt)
     if (hb) {
       clearInterval(hb)
       hb = null
     }
-    scheduleRetry(() => void connect(wsUrl, baseUrl))
+    if (rt.stopped) return
+    // 实例撤销了这条绑定：token 已作废，重连只会一直被拒。标记出来，popup 里让用户移除。
+    if (rt.id !== LOCAL_BINDING && (ev as CloseEvent | undefined)?.code === REVOKED_CLOSE_CODE) {
+      debugLog('binding-revoked', '这条扩展绑定被它的 Stream 撤销了，不再重连', { binding: rt.id })
+      void setBinding(rt.id, { revoked: true })
+      return
+    }
+    scheduleRetry(() => void connect(wsUrl, baseUrl, rt, binding), rt)
   }
 
   sock.addEventListener('open', () => {
-    relayUp = true
-    eventSocket = sock
-    setNotifySocket(sock) // 「cookie 变了」那条通知也从这条连接走（见 relay-notify.ts）
-    backoff = 1000 // 连上即复位退避
+    rt.relayUp = true
+    rt.eventSocket = sock
+    // 「cookie 变了」那条通知也从这条连接走（见 relay-notify.ts）。配对绑定的通知走 Task 10 的按绑定分发。
+    if (rt.id === LOCAL_BINDING) setNotifySocket(sock)
+    rt.backoff = 1000 // 连上即复位退避
     // 连上即对账，回收上一个后端进程留下的孤儿采集标签。**时机必须是这里，不能只在 SW 启动时**：
     // 后端重启是最常制造孤儿的事件，而那一刻 SW 往往还活得好好的（reconcileOnWake 根本不会跑）。
     // 不 await —— 对账是兜底，不该挡住这条连接开始收命令；失败一律静默（见 reclaimOrphanTabs 红线）。
-    void reclaimOrphanTabs(baseUrl)
+    void reclaimOrphanTabs(baseUrl, {}, rt)
     /**
      * 连上即刷新同步域名单（`requiredDomains`）。**这是它唯一的主动更新路径**。
      *
@@ -1656,7 +1778,7 @@ async function connect(wsUrl: string, baseUrl: string): Promise<void> {
      * 而那一刻 SW 往往活得好好的，启动钩子根本不会跑——和上面 reclaimOrphanTabs 同一个理由。
      * 不 await：它是兜底，不该挡住这条连接开始收命令。
      */
-    void runSync().catch(() => {})
+    if (rt.id === LOCAL_BINDING) void runSync().catch(() => {})
     // WS 消息活动给 MV3 非持久 SW 续命（~20s 一次）；心跳是这条连接私有的
     hb = setInterval(() => {
       try {
@@ -1675,7 +1797,7 @@ async function connect(wsUrl: string, baseUrl: string): Promise<void> {
       return
     }
     if ((msg as { type?: string }).type === 'ping') return // 忽略自己的心跳回声（若后端回传）
-    const reply = await dispatch(msg)
+    const reply = await dispatch(msg, rt)
     sock.send(JSON.stringify(reply))
   })
 
@@ -1700,6 +1822,8 @@ export function startExtCdp(): Promise<void> {
 }
 
 async function start(): Promise<void> {
+  // 配对绑定各自起各自的连接，不等本机这条配没配上——远处的 Stream 与本机有没有 Stream 无关。
+  void startPairedBindings().catch(console.error)
   await reconcileOnWake() // SW 启动即与浏览器对账（补漏掉的拖入/拖出），并回收没人看的探针
   const cfg = await getConfig()
 
@@ -1752,4 +1876,36 @@ async function start(): Promise<void> {
   // 自己重取 token、重验身份（后端轮换 secret 后能自愈、端口易主也能发现，见 connect 头注）。
   const wsUrl = peer.baseUrl.replace(/^http/, 'ws') + '/api/ext'
   void connect(wsUrl, peer.baseUrl)
+}
+
+async function startPairedBindings(): Promise<void> {
+  for (const b of await getBindings()) if (b.kind === 'paired' && !b.revoked) await startBinding(b.id)
+}
+
+/**
+ * 起一条配对绑定的连接（SW 启动时、popup 刚配对成功时）。**每条绑定每个 SW 实例只起一次**——
+ * 与本机那条的 `starting` 闸同一个理由：两条连接都收命令，同一个动作就被执行两遍。
+ * 断线重连由 `connect` 自己管；被撤销的、已移除的不起。
+ */
+export async function startBinding(id: string): Promise<void> {
+  const b = await getBinding(id)
+  if (!b || b.kind !== 'paired' || b.revoked) return
+  const rt = runtime(id, b.label)
+  if (rt.started) return
+  rt.started = true
+  rt.stopped = false
+  await reconcileOnWake(rt)
+  const base = b.baseUrl.replace(/\/$/, '')
+  void connect(base.replace(/^http/, 'ws') + '/api/ext', base, rt, b)
+}
+
+/** 用户在 popup 里移除了一条绑定：断开、不再重连。它组里的标签留给用户（不关、不解组）。 */
+export function stopBinding(id: string): void {
+  const rt = runtimes.get(id)
+  if (!rt || id === LOCAL_BINDING) return
+  rt.stopped = true
+  rt.started = false
+  if (rt.pendingRetry) clearTimeout(rt.pendingRetry.timer)
+  rt.pendingRetry = null
+  try { rt.eventSocket?.close() } catch { /* 已经断了 */ }
 }
