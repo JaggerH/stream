@@ -57,6 +57,32 @@ app/host-agent/target/x86_64-pc-windows-gnu/release/stream-desktop.exe \
 **每次用 token 之前都先 `verify`。** 握手会把 token 交出去，而这条中继的能力等于用户的全部
 登录态——把它交给一个抢到 8900 的进程，比采集停一轮严重得多。
 
+## Serve another Stream (extension bindings)
+
+一个扩展可以同时服务好几个 Stream：本机那个（上面那条 native host 路径，什么都不用配）之外，
+还可以绑定远处的主实例——那个 Stream 会把这台机器上的 Chrome 当成**它某台已配对设备**的浏览器，
+绑到那台设备上的任务（登录、浏览器类采集）就在这个 Chrome 里跑。
+
+1. 在那个 Stream 所在的机器上，为这台设备签一个扩展配对码（面板按钮在计划 4；之前用接口）：
+   ```bash
+   curl -X POST http://127.0.0.1:8900/api/devices/<deviceId>/ext-pairing-code   # → {"code":"123456",…}
+   ```
+   设备要先配对好（这台机器上的 agent，`linux:<uuid>` 之类）；`local` 不需要也不允许签。
+2. 弹窗 → **Streams** 页签 → 填那个 Stream 的地址与 6 位码 → Pair。地址只接受 `https://` 或本机地址
+   （配对这一步 token 要过一次网络）。
+3. 那个 Stream 第一次来要某个站的 cookie 时，那个域会出现在这条绑定下面的 **Wants cookies for**，
+   点 Allow 之后才给。**远处的 Stream 要什么不会自动给**——本机那条照旧自动。
+
+每条绑定有自己的连接和自己的标签组（`Stream · <设备名>`），一个 Stream 碰不到另一个 Stream 组里的标签。
+那个 Stream 撤销这条绑定（`DELETE /api/ext/bindings/<id>`，或撤销它挂的设备）之后，弹窗里显示 revoked，
+扩展不再重连；在弹窗里移除即可。
+
+| Action（配对绑定） | Call |
+|---|---|
+| Pair | `POST {stream}/api/ext/pair {code, name, browser, platform}` → `{bindingId, token, deviceId, deviceName}` |
+| Prove the backend is ours | `POST {stream}/api/ext/verify {nonce, binding}` → `{proof}`（key = token 的 SHA-256） |
+| Learn the sync scope | 不问 sync-config（远程要 API token）：它在 `cookiePull` 里要的域记成待批准 |
+
 ## Develop
 
 ```bash

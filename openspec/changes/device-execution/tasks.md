@@ -22,10 +22,21 @@
 
 ## 计划 3：扩展绑定（扩展 ↔ 实例多对多，绑定挂在设备上）
 
-- [ ] 实施计划：`docs/superpowers/plans/2026-10-21-device-execution-extension-bindings.md`（Task 1–10 完成后在此逐条展开打勾）。范围：实例侧扩展绑定表与 `/api/ext/pair`、按设备签发扩展配对码、`ExtRelayRegistry`、
-  按设备选绑定与能力判定、cookie 按绑定落到设备快照、撤销；扩展侧一组绑定与迁移、配对码配对、driver 按绑定的会话与组隔离、
-  按绑定的 cookie 同步与待批准域名、popup。不做镜像。
+实施计划：`docs/superpowers/plans/2026-10-21-device-execution-extension-bindings.md`。不做镜像。
+
+- [x] 1. 扩展绑定表 `ExtBindingStore`：为设备签的配对码、只存 token 哈希、撤销设备连带撤绑定
+- [x] 2. `ExtRelayRegistry`：每条绑定一条 relay、按设备选绑定（最近连上）、撤销断开 4003
+- [x] 3. `/api/ext` 升级按 token 认绑定；`/api/ext/verify` 带 `binding` 用 token 哈希签
+- [x] 4. 执行上下文的 `browser` 记号：一次执行第一次用浏览器时选定、整次不变（`pickBrowser`）
+- [x] 5. lane 与 Transport 按绑定；预算按绑定计；常驻标签文件本机形状不变
+- [x] 6. 登录与 cookie 拉取在执行设备上（按设备的 `CookiePuller`，远程设备只取绑到它的 facility 的域）
+- [x] 7. 配对 / 列表 / 撤销接口与 serve 接线；`claimed-tabs?binding=`
+- [x] 8. 扩展：一组绑定（本机那条就是原 `config`，不迁移）、配对码配对（只认 HTTPS / 回环）
+- [x] 9. 扩展：driver 按绑定的会话（`BindingRuntime`），别的绑定的 tab 一律拒
+- [x] 10. 扩展：按绑定同步、待批准域名（远程实例经 `cookiePull` 申报）、popup 的 Streams 页签
+- [x] 11. ARCHITECTURE / 扩展 README；后端实机冒烟（配对、验身份、连上、列表、撤销 4003、撤销后 401）
+- [ ] 两端真机冒烟：同一个 Chrome 绑本机与另一个实例、各自开组、跨组命令被拒、新域待批准（需要有 Chrome 的机器）
 
 ## 计划 4：面板
 
-- [ ] 待写（facility 默认设备选择、任务覆盖、运行记录显示设备名）
+- [ ] 待写（facility 默认设备选择、任务覆盖、运行记录显示设备名；设备卡片上签扩展配对码、设备的默认扩展绑定、绑定列表与撤销）

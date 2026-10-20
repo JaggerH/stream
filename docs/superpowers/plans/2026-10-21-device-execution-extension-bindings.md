@@ -883,6 +883,15 @@ export function runtime(id = 'local'): BindingRuntime { /* get-or-create */ }
 
 ---
 
+## 执行记录：与上文的偏离（2026-10-21）
+
+- **扩展配置不迁移。** 原 `config` 原样就是本机那条绑定，配对绑定另存 `bindings` 键——没有迁移步骤，回滚到旧扩展也照常能用（Task 8）。
+- **配对绑定拿不到 `/api/ext/sync-config`**：那一口对非本机来源要 API token。远程实例要哪些域，改由它在 `cookiePull` 里请求的域记成待批准；批准前照样 `refused`（Task 10）。
+- **`run_action_recipe` 不接 registry**：MCP 动作 recipe 在远程设备上的浏览器类仍 `device-incapable`（Task 4/5 只给 `ReplayAdapter` 与 facility 登录接了）。
+- **本机绑定的常驻标签文件形状不变**：键里绑定前缀只对配对绑定落盘（Task 5）。
+- **4003 撤销的扩展侧只有单测覆盖路径以外的逻辑**：`driver.bindings.test.ts` 没模拟 WebSocket 关闭码；后端的 4003 由实机冒烟验证。
+- **测试环境**：box 的系统 node 是 20，pnpm 11 需要更新的 node——装到 `~/.local/node22`。全量后端套件在本机负载下偶发 5 个计时类用例超时（与本计划无关，单独跑全过）。
+
 ## 计划 3 之后（计划 4：面板）
 
 - 设备卡片上「添加浏览器」→ 调 `ext-pairing-code`，显示码与倒计时。
