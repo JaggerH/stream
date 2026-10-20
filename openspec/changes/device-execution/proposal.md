@@ -34,12 +34,12 @@ Stream 的执行今天**只有一个位置**：后端进程所在的那台机器
 - **允许访问的主机由包声明。** `package.json#stream.network.hosts`（缺省 = `stream.credentials`），
   安装闸门展示给用户；后端派发前校验、agent 收到后再校验。agent **始终拒绝私网目标**（在设备侧
   DNS 解析之后判）。设备侧 `ALLOW_HOSTS` 作为高级选项，配置后优先级最高。
-- **设备上的浏览器经本机 agent 转发。** 扩展不改：仍连 `127.0.0.1:8900`、仍经 native host 取 token。
-  监听这个端口的是本机 agent，它把扩展的 relay 与 cookie 推送以设备身份复用进自己已配对的 WS。
-  后端的 ExtRelay 从一条变成按设备区分。
-- **Linux 无界面 agent 与 NAS 镜像。** 复用 `app/host-agent` 的平台无关核心，新增 `linux` 平台构建
-  （只有 relay、`http.fetch`、浏览器转发）；发布一个镜像：agent + Chromium（Xvfb + noVNC）+ 预装扩展，
-  x86_64 与 aarch64。配对沿用一次性码，设备 id 为 `linux:<uuid>`。
+- **扩展与 Stream 实例多对多绑定，每条绑定挂在一台设备上。** 一个扩展可以同时绑定多个实例（本机的 Stream、
+  远处的主实例），一个实例可以绑定多个扩展。本机绑定沿用 native host 的信任链；远程绑定用为某台设备签发的
+  一次性配对码换得专属 token，扩展直连实例。每条绑定在扩展里有自己的连接、标签组与 cookie 同步范围，互不越界；
+  远程实例新要的 cookie 域名需用户批准。实例侧 ExtRelay 从一条变成按绑定区分，「设备有浏览器」即「设备上有在线的绑定」。
+- **Linux 无界面 agent。** 复用 `app/host-agent` 的平台无关核心，新增 `linux` 平台构建（relay 与 `http.fetch`）。
+  配对沿用一次性码，设备 id 为 `linux:<uuid>`。不发布容器镜像。
 - **失败可分辨。** 触发时设备不在线 = `device-offline`（未发出任何动作，可按 `maxAttempts` 重试）；
   执行中途断连 = `device-lost`（状态未知，**不自动重试**，发通知）。运行记录带 `deviceId`。
 
@@ -49,8 +49,8 @@ Stream 的执行今天**只有一个位置**：后端进程所在的那台机器
 - `device-execution`：设备作为执行位置；facility 默认设备 + 任务覆盖；执行上下文；离线与断连的失败语义。
 - `device-scoped-credentials`：登录态按（设备，域名）存取与刷新。
 - `device-http-fetch`：`http.fetch` op、`fetchFor` 唯一入口、包声明主机、agent 侧私网拒绝。
-- `device-browser-relay`：设备上的浏览器经本机 agent 转发，ExtRelay 按设备区分。
-- `linux-device-agent`：Linux 无界面 agent 与 NAS 镜像。
+- `device-browser-relay`：扩展与实例多对多绑定、绑定挂在设备上、按绑定的 ExtRelay 与隔离。
+- `linux-device-agent`：Linux 无界面 agent。
 
 ### Modified Capabilities
 - `owned-outbound-http`：owned 通道成为 `fetchFor` 在 `local` 设备上的实现；包不再直接调全局 `fetch`。
@@ -68,13 +68,13 @@ Stream 的执行今天**只有一个位置**：后端进程所在的那台机器
 - **不做卫星运行时**：设备上不运行 recipe 解释器或 code 包，逻辑全在主后端。
 - **不做流式响应、大文件下载、WebSocket 代发**；响应体上限 10MB。
 - **RSSHub worker 的出站不经设备**（它不走 `ctx.fetch`）。
-- **不改扩展的信任模型**，不让扩展直连远程后端。
-- 不做远程看屏的交互优化（只给 noVNC），不做一台设备上多个 Chrome profile。
+- **不发布 NAS / 执行端容器镜像**，不做远程看屏（noVNC 等）。
+- 扩展不能脱离设备单独作为执行位置：没有 agent 的机器上的 Chrome 不进绑定下拉。
 
 ## Impact
 
 - 后端：`src/http/host-registry.ts`（平台 `linux`）、`src/http/host-relay.ts`（`http.fetch` 不占 UI 租约、
-  独立并发上限、浏览器通道复用）、`shared/browser-relay/relay.ts`（按设备的 ExtRelay）、新模块
+  独立并发上限）、`shared/browser-relay/relay.ts`（按绑定的 ExtRelay）、新的扩展绑定表与 `/api/ext/pair`、新模块
   `src/devices/`（绑定表、执行上下文、`fetchFor`）、`src/http/owned-outbound.ts`。
 - 凭据：`src/credentials/pushed-cookie-store.ts`、`cookie-puller.ts`、`cookie-provider.ts`（按设备）、
   `src/serve.ts`（`cookieFor` 读执行上下文）。
@@ -83,10 +83,11 @@ Stream 的执行今天**只有一个位置**：后端进程所在的那台机器
 - 包：`src/packages/activate.ts`（`ctx.fetch`）、`src/replay/recipe-package.ts`（`stream.network.hosts`
   解析与安装闸门展示）、`src/adapters/replay/adapter.ts`（`makeHttpFetch` / `makeHtmlFetch` 走 `fetchFor`）、
   `packages/eastmoney/`（`client.ts` 用注入的 fetch，声明 `network.hosts`）。
-- agent：`app/host-agent`（`linux` 构建、`http.fetch`、私网拒绝、`ALLOW_HOSTS`、`127.0.0.1:8900` 转发）、
-  新镜像（agent + Chromium + 扩展 + noVNC）。
+- agent：`app/host-agent`（`linux` 构建、`http.fetch`、私网拒绝、`ALLOW_HOSTS`）。
+- 扩展：`extension/src/lib/config.ts`（一组绑定）、`pairing.ts`（配对码配对）、`driver.ts`（按绑定的会话、组隔离）、
+  `sync.ts`（按绑定推 cookie、待批准域名）、popup（绑定列表、配对、批准）。
 - 面板：facility 卡片的默认设备选择、任务编辑器的设备覆盖、运行记录显示设备。
 - 守卫：`packages/**` 的 code 包禁止直接调全局 `fetch`。
 - 文档：`docs/ARCHITECTURE.md`（执行位置一节、出站一节）、`docs/PACKAGE.md`（`stream.network.hosts`、
-  `ctx.fetch`）、`docs/ops/nas-device.md`（群晖部署、配对、网络可达）。
+  `ctx.fetch`）、扩展 README（绑定与配对）。
 - 删除 `openspec/changes/package-egress-proxy/`。

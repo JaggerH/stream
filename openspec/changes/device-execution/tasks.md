@@ -20,9 +20,11 @@
 - [x] 4. 设备模式：无人值守配对、device token 持久化、撤销后重配、被拒的码不重试（`device.rs`）
 - [x] 5. CI 跑 `cargo test`；README 设备模式一节
 
-## 计划 3：浏览器转发与 NAS 镜像
+## 计划 3：扩展绑定（扩展 ↔ 实例多对多，绑定挂在设备上）
 
-- [ ] 待写（`channel: 'browser'` 帧、`ExtRelay` 按设备、`stream-node` 镜像、`docs/ops/nas-device.md`）
+- [ ] 待写实施计划。范围：实例侧扩展绑定表与 `/api/ext/pair`、按设备签发扩展配对码、`ExtRelayRegistry`、
+  按设备选绑定与能力判定、cookie 按绑定落到设备快照、撤销；扩展侧一组绑定与迁移、配对码配对、driver 按绑定的会话与组隔离、
+  按绑定的 cookie 同步与待批准域名、popup。不做镜像。
 
 ## 计划 4：面板
 

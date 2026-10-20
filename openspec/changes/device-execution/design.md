@@ -36,7 +36,7 @@ NAS。驱动场景是 `@streamapp/eastmoney`：登录要在大陆网络里的真
 - 后端本机是一个虚拟设备 `local`：始终在线，能力是后端进程自己的（`ownedFetch`、本机 ExtRelay、
   本机 host agent 若有）。它不出现在配对列表里，但出现在绑定下拉里，作为缺省项。
 - `HostPlatform` 增加 `linux`。平台只用于展示与默认图标，**调度只看 op**：要派 HTTP 就要求 `http.fetch`，
-  要派浏览器类 recipe 就要求设备有浏览器通道（D6），要派桌面 / 安卓 recipe 沿用 `android-phone-surface`
+  要派浏览器类 recipe 就要求设备上有在线的扩展绑定（D7），要派桌面 / 安卓 recipe 沿用 `android-phone-surface`
   的 surface 判定。
 - 能力不满足在**派发前**就报出，错误说明「设备 X 没有 Y 能力」，不发任何帧。
 
@@ -87,7 +87,7 @@ task.device                               // 任务覆盖
 
 - `PushedCookieStore` 由 `data/cookies.json` 变为 `data/cookies/<deviceId>.json`，每台设备一份，仍整份替换、
   仍 0600。首启迁移：旧文件存在且新目录无 `local.json` 时改名为 `cookies/local.json`。
-- `CookiePuller` 按设备实例化：每台有浏览器通道的设备一个 puller，拉自己的扩展、写自己的快照。
+- `CookiePuller` 按设备实例化：每台有浏览器的设备一个 puller，经该设备当前选中的扩展绑定（D7）拉、写自己的快照。
   `requiredDomains` 只取**绑定到这台设备**的 facility 的域（`local` 取未绑定的全部），避免 NAS 上的 Chrome
   被要求交出与它无关的站点。
 - `CookieProvider.cookieString(domain)` 读执行上下文的设备快照。签名不变。
@@ -137,45 +137,72 @@ error:  { code: 'host-not-allowed' | 'private-target' | 'timeout' | 'network' | 
 设备被当代理是增量很小的风险。所以默认防护针对「包越界」与「用户内网被打」，不要求用户在设备上配清单；
 不信任后端的运维者用 `ALLOW_HOSTS`。
 
-### D7. 设备上的浏览器经本机 agent 转发
+### D7. 扩展绑定：扩展与 Stream 实例多对多，每条绑定挂在一台设备上
 
 ```
-设备（NAS / PC）                                  主实例
- Chrome + Stream 扩展
-   └ ws://127.0.0.1:8900  (relay, token 经 native host)
-   └ POST 127.0.0.1:8900/api/…/cookies
-        │
-     host agent ── 已配对的 /api/host WS（device token）──▶ host-registry
-        （本机监听 8900，复用通道 'browser'）                └ ExtRelay[deviceId]
+ 用户 PC 的 Chrome + Stream 扩展
+   ├ 绑定 A：本机 Stream  ws://127.0.0.1:8900   token 经 native host   → 设备 local（该实例的）
+   └ 绑定 B：主实例      wss://main.example     token 经配对码         → 设备 PC（主实例上已配对的 agent）
+
+ 主实例
+   ExtRelayRegistry: Map<bindingId, ExtRelay>
+     ├ local      ← 本机扩展（native host 信任链，今天的行为）
+     ├ ext:<uuid> → 设备 PC
+     └ ext:<uuid> → 设备 NAS（NAS 上用户自己开着的 Chrome）
 ```
 
-- agent 在本机 `127.0.0.1:8900` 提供扩展所需的最小面：relay WS 升级、挑战应答、cookie 推送端点。
-  它**不是后端**：其他路径一律 404。
-- 挑战应答：agent 持有一份**本机** token（首启生成，写 agent 数据目录 0600），native host（即 agent 二进制）
-  读它交给扩展。扩展与 agent 之间的信任链与今天扩展与后端之间的一模一样；扩展代码不改。
-- 复用：host-relay v2 帧增加 `channel` 字段，缺席 = `host`（今天的 op 帧），`browser` = 扩展 relay 帧原样封装。
-  agent 在 `hello.ops` 里声明 `browser` 表示有浏览器通道；扩展未连时 agent 以帧通知后端该通道下线。
-- 后端：`ExtRelay` 从单例变为 `Map<deviceId, ExtRelay>`；`local` 的那条仍由后端自己监听本机连接。
-  浏览器类 recipe 的 driver 按执行上下文设备取 ExtRelay；会话标签组、tab 归属、hop timing 逻辑不变。
-- 设备本身就运行着后端（即它是 `local`）时，agent 不启用 8900 转发——那个端口归后端。
+一个扩展可以绑定多个 Stream 实例；一个 Stream 实例可以绑定多个扩展。**扩展直连每个实例**，agent 不转发浏览器。
 
-**为什么不让扩展直连远程后端**：要重做扩展的信任模型（nativeMessaging 带外通道失效，token 只能经网络
-索取），且每个扩展都要知道后端地址与配对流程。经 agent 转发，浏览器成为设备的一项能力，与 `http.fetch`、
-UI op 同层，所有设备一套模型。
+**绑定的两种来源**
+- **本机绑定**：今天的路径原样保留——探测 `127.0.0.1:8900/8907`，token 由 native host 带外交出，挑战应答通过才连。
+  在该实例上它挂在 `local`，不落盘，`bindingId = 'local'`。
+- **配对绑定**：用户在 Stream 面板上**为某台设备**签发一次性扩展配对码（码里记着目标 `deviceId`，5 分钟、一次性，
+  与设备配对码同一套限流），在扩展 popup 里填实例地址 + 码，`POST /api/ext/pair` 换回 `{ bindingId, token }`。
+  一台设备可以挂多个扩展。签发同设备配对码一样只对实例本机请求开放。
 
-### D8. Linux 无界面 agent 与 NAS 镜像
+**存储**
+- 实例侧：`data/ext-bindings.json`，行 `{ bindingId: 'ext:<uuid>', deviceId, name, browser, platform, tokenHash, pairedAt, lastSeenAt }`，
+  只存 token 的哈希，定长比较——与 `DeviceStore` 同样的规矩。设备被撤销时，挂在它上面的绑定一并撤销。
+- 扩展侧：`config.bindings: [{ id, baseUrl, token, label, kind: 'local' | 'paired', domains, requiredDomains, autoSync, revoked? }]`，
+  取代单个 `baseUrl` / `domains`。旧配置首启迁成一条本机绑定。本机绑定的 token 不落盘（每次经 native host 取）。
 
-- `app/host-agent` 新增 Linux 构建：只编入 relay、`http.fetch`（`reqwest` + rustls，自定义 resolver 做 D6 的地址检查）、
-  浏览器转发与 native host。`hello.platform = 'linux'`，`ops = ['http.fetch', 'browser']`（扩展在线时）。
+**信任**
+- 配对绑定的 token 经配对得到之后，**每次连之前仍先挑战应答**（`verifyBackend` 用该绑定的 token），对端证明不了就不连、不推 cookie。
+  地址被劫持也拿不到 token。
+- 配对时 token 走网络一次：扩展**只接受 `https://` 或回环地址**做配对；Tailscale 用户用 `tailscale serve` 的 HTTPS 地址。
+- 远程实例能要的东西必须由用户点头：**配对绑定的 `requiredDomains` 不自动生效**——实例新要一个域名，扩展把它挂成「待批准」，
+  用户在 popup 里批准之后才同步、才允许经 relay 拉取该域 cookie。本机绑定照旧自动生效（同机、同用户，信任不变）。
+
+**隔离：一个 Chrome 同时服务几个实例**
+- 扩展的 driver 从模块级单例改成**每条绑定一个会话**：自己的 WS、退避、会话标签组（组名带绑定的 label）、tab 归属账本。
+- 一张 tab 至多属于一条绑定的组。命令里引用了不属于本绑定组的 tab，扩展以错误拒绝——实例 A 驱动不了实例 B 的 tab，也借不走用户
+  拖进 B 组的 tab。`chrome.debugger` 的附着天然按 tab，组不相交就不冲突。
+- cookie 推送按绑定：推往该绑定的地址、用该绑定的 token、只推该绑定批准过的域；实例收下后写入**绑定所挂设备**的快照
+  `data/cookies/<deviceId>.json`（D4）。
+- 撤销：实例删掉绑定后以专用关闭码断开 WS；扩展把该绑定标 `revoked`、停止重连，popup 里显示「已被撤销」。
+
+**实例侧**
+- `ExtRelay` 从单例变为 `ExtRelayRegistry`；每条在线绑定一条 relay，hop timing、标签组、tab 归属逻辑不变。
+- 浏览器能力：**设备 X 有浏览器 ⇔ 至少一条挂在 X 上的绑定在线**。不再是 agent 的 `hello` op（D1 的「浏览器通道」即指此）。
+- 选哪一个：执行上下文设备上在线的绑定里，取设备的默认绑定（面板设置，计划 4），没设则取最近连上的那条；选中的 `bindingId`
+  在本次执行内固定，写进运行记录。设备上没有在线绑定 → 派发前 `device-incapable`（绑定存在但都离线 → `device-offline`）。
+- 现有 `extRelayStatus` / `browserCapability` 等状态接口保留 `local` 那条的语义，另加一个列出全部绑定的接口给面板用。
+
+**为什么扩展直连而不经 agent 转发**：多对多之后，经 agent 转发要让 agent 也扇出到多个实例，并在本机抢 8900（与本机 Stream 冲突）；
+扩展本来就要改成存一组绑定，直连少一跳、少一套帧封装。**为什么绑定挂在设备上而不是自成设备**：东财要求登录与之后的
+`http.fetch` 从同一个网络发出，设备是唯一的执行位置单位（D1、D2）；让扩展自成设备会把一台 PC 拆成两台，这条保证就要靠用户自己对齐。
+代价是：没有 agent 的机器上的 Chrome 不能单独作为执行位置——要先在那台机器上配对 agent。
+
+### D8. Linux 无界面 agent
+
+- `app/host-agent` 新增 Linux 构建：只编入 relay 与 `http.fetch`（`reqwest` + rustls，自定义 resolver 做 D6 的地址检查）。
+  `hello.platform = 'linux'`，`ops = ['http.fetch']`。浏览器不经 agent（D7）：那台机器上用户自己开的 Chrome 以配对绑定挂到这台设备。
 - 设备 id 与配对：配对请求体增加 `platform`，返回 `<platform>:<uuid>`；首次启动读环境变量
   `STREAM_MAIN_URL` 与 `STREAM_PAIRING_CODE` 完成配对，device token 写 agent 数据卷，之后不再需要配对码。
   开关不叫 `STREAM_BACKEND_URL`：那个名字已经是 CLI/MCP 的本机后端地址，且会被后端 spawn 的本机 agent 继承，
   拿它触发设备模式会让本机工作台的 agent 误入设备模式（非 Linux 上直接退出）。
-- 镜像 `stream-node`（x86_64 / aarch64）：agent + Chromium（Xvfb）+ 预装 Stream 扩展与 native host 清单 + noVNC。
-  Chrome 与 native host 必须同一文件系统，所以同一容器。noVNC 只用于首次登录或人工介入；验证码识别仍由主实例的
-  识别能力处理。
-- 网络可达交给部署：设备主动外连，设备侧不开入站端口；主实例须对设备可达（Tailscale 或公网 HTTPS + device token）。
-  写 `docs/ops/nas-device.md`，不进代码。
+- 不发布容器镜像。agent 与浏览器各自由用户装在设备上；agent 以 `STREAM_MAIN_URL` + 配对码起，Chrome 装扩展后配对绑定。
+- 网络可达交给部署：设备与扩展都主动外连，设备侧不开入站端口；主实例须对它们可达（Tailscale 或公网 HTTPS + token）。
 
 ### D9. 失败语义
 
@@ -198,17 +225,24 @@ UI op 同层，所有设备一套模型。
 - **ALS 漏传**：某条执行路径忘了 `run(ctx)` 会静默落到 `local`。缓解：任务中心与 Scheduler 的入口各一个测试，
   断言绑定到设备 X 的执行里 `fetchFor` 解析为 X；守卫测试禁止 code 包直接调全局 `fetch`。
 - **cookie 迁移**：迁移失败会让用户看起来「掉登录」。迁移只改名不改内容，失败时保留旧文件并告警。
-- **镜像体积**：Chromium + noVNC 约 600MB–1GB，群晖 ARM 机型可能内存吃紧；文档写明最低配置。
-- **协议演进**：`channel` 字段是 v2 的增量扩展；旧 agent 不发 `channel`，等同 `host`，不需要升到 v3。
+- **远程实例拿 cookie**：配对绑定的实例能请求任意域名。缓解：配对绑定的新域名需在 popup 里逐个批准（D7），
+  relay 的 cookie 拉取同受此限；撤销绑定立刻断开。
+- **一个 Chrome 多个实例抢焦点**：交互式 recipe 开前台 tab，两个实例同时跑会互抢窗口焦点。组与 tab 已隔离，
+  焦点不隔离；先接受，运行记录里能看到是哪条绑定。
+- **扩展 SW 常驻多条 WS**：每条绑定一条，退避各自独立；一条绑定反复失败不影响其他绑定。
+- **扩展 driver 重构面大**：`driver.ts` 的模块级状态（标签组、归属账本、socket、退避）要收进按绑定的会话对象。
+  本机绑定的行为必须与今天逐字节一致——现有 driver 测试全部按 `local` 那条绑定继续跑，作为回归闸门。
 
 ## Migration
 
 1. 首启：`data/cookies.json` → `data/cookies/local.json`；`facility_devices` 建表为空；`user_tasks` 加 `device` 列为空。
    所有行为与升级前一致（全部解析为 `local`）。
-2. 用户配对 NAS，在东财卡片上选「默认设备：NAS」。下一次东财任务在 NAS 上执行；首次需要在 NAS 的 Chrome
-   上登录一次（noVNC，或等自动重登）。
-3. 删除 `openspec/changes/package-egress-proxy/`。
+2. 扩展首启：旧的单个 `baseUrl` / `domains` 迁成一条本机绑定，行为不变。
+3. 用户配对 NAS 的 agent，再在 NAS 的 Chrome 里用为 NAS 签发的扩展配对码绑定主实例，在东财卡片上选「默认设备：NAS」。
+   下一次东财任务在 NAS 上执行；首次需要在 NAS 的 Chrome 上登录一次（或等自动重登）。
+4. 删除 `openspec/changes/package-egress-proxy/`。
 
 ## Open Questions
 
 - 设备 RTT 的测量方式（WS ping 往返）与超时放宽的系数，留给实施计划定具体数值。
+- 配对只接受 HTTPS 或回环：自建 HTTP 内网（非 Tailscale）的用户会被挡住。先按严格做，有人提再加显式的「我知道风险」开关。
