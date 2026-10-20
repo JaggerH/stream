@@ -21,8 +21,9 @@ import { BrowserOAuthLoginProvider } from '../../auth/browser-oauth-login-provid
 import { makeTransportLoginPage } from '../../auth/transport-login-page.ts'
 import type { LoginCheck } from '../../replay/recipe.ts'
 import { loginToFacility } from '../../credentials/facility-login.ts'
-import { currentPlacement } from '../../devices/run-context.ts'
-import { assertRecipeRunnable } from '../../devices/placement.ts'
+import { LOCAL_BINDING, LOCAL_DEVICE, currentDeviceId } from '../../devices/run-context.ts'
+import { pickBrowser } from '../../devices/placement.ts'
+import { makeDeviceCookiePullers } from '../../credentials/device-cookie-pullers.ts'
 import type { SessionAuthSpec, SourceManifest } from '../../manifest/types.ts'
 import type { RuntimeConfigResolver } from './runtime-config.ts'
 
@@ -91,6 +92,8 @@ export interface AuthConfig {
   broadcast?: (msg: unknown) => void
   /** 这台 Stream 需要同步哪些 cookie 域。thunk：它从 registry + 已订阅流推出来。 */
   requiredCookieDomains: () => string[]
+  /** 远程设备的扩展该交出哪些域：只取绑到这台设备的 facility 的域（design D4）。缺席 = 一个都不取。 */
+  requiredCookieDomainsFor?: (deviceId: string) => string[]
 }
 
 /**
@@ -197,16 +200,23 @@ export const authPlugin = {
     // 挂在这一域而不是 relay 内部：relay 只管管道，不该知道 auth 是什么。
     extRelay.onConnected?.(() => { void reconcileAuthNow().catch(() => {}) })
 
-    // 登录态的取数方：后端在中继上向用户的 Chrome 要，整份写回快照。
-    const cookiePuller = new CookiePuller({
-      relay: extRelay,
-      store: ctx.credentials.pushedCookies,
-      requiredDomains: config.requiredCookieDomains,
+    // 登录态的取数方：后端在中继上向用户的 Chrome 要，整份写回快照。每台设备一个（design D4、D7）：
+    // 远程设备经挂在它上面的扩展绑定取、写它自己的快照。本机那一个就是以前的单例。
+    const extRelays = ctx.harvest.extRelays
+    const cookiePullerFor = makeDeviceCookiePullers({
+      local: extRelay,
+      browsers: extRelays,
+      storeFor: (deviceId) => ctx.credentials.cookieStores.forDevice(deviceId),
+      // 本机 = 今天的全集（行为不变）；远程设备只取绑到它的 facility 的域——NAS 上的 Chrome
+      // 不该被要求交出与它无关的站点。
+      requiredDomainsFor: (deviceId) =>
+        deviceId === LOCAL_DEVICE ? config.requiredCookieDomains() : config.requiredCookieDomainsFor?.(deviceId) ?? [],
       log,
       // 这条链路的失败全长一个样（取不到 cookie → 采集变游客态），而 log 只在 stdout 上。
       // 发进 debug bus，"上一次取成功没有"就成了一个 curl 能回答的问题。
-      report: config.onDebug,
+      ...(config.onDebug && { report: config.onDebug }),
     })
+    const cookiePuller = cookiePullerFor(LOCAL_DEVICE)
     /**
      * 把「登录态掉了自己登回来」这条能力回填给包那一层（`ctx.login`）。
      *
@@ -221,8 +231,10 @@ export const authPlugin = {
      * **位置有讲究**：必须排在 `cookiePuller` 之后——登完要靠它去浏览器把新 cookie 取回来。
      */
     ctx.packages.setFacilityLogin(async (facility) => {
-      // 还没接扩展绑定 registry：远程设备上的登录照旧 fail closed（Task 6 接上）。
-      assertRecipeRunnable(currentPlacement(), 'browser')
+      // 先定下这次执行用哪个 Chrome（远程设备上没有在线的扩展绑定就在这里失败，一张标签都不开）。
+      // 登录 recipe 与之后的取 cookie 都落在这同一个 Chrome 里——「PC 登录、NAS 下单」不会发生。
+      pickBrowser(extRelays)
+      const deviceId = currentDeviceId()
       return loginToFacility(
         {
           // 都现取：recipe 表会因为热重载/装卸包变化，执行器与 cookieProvider 也可能被
@@ -233,7 +245,7 @@ export const authPlugin = {
           // `pull` 去**浏览器**要一份新的（登录 recipe 刚跑完时，新 cookie 还只在浏览器里，
           // 本地快照要等扩展推过来），`refresh` 再把 provider 那 60 秒 TTL 缓存顶掉。
           adoptCookies: async () => {
-            await cookiePuller.pull('facility-login')
+            await cookiePullerFor(deviceId).pull('facility-login')
             await ctx.credentials.cookieProvider.refresh()
           },
         },
@@ -249,6 +261,19 @@ export const authPlugin = {
     // 也是周期闹钟撤掉之后仍然不会落后的原因。
     extRelay.onCookiesChanged?.(() => {
       void cookiePuller.pull('cookies-changed').catch(() => {})
+    })
+    // 配对绑定的 relay 在它第一次连上时才建，没法提前挂——由 registry 叫一声，同样的两个时机。
+    const hooked = new Set<string>()
+    extRelays.onBindingConnected?.((bindingId) => {
+      if (bindingId === LOCAL_BINDING) return
+      const deviceId = extRelays.deviceOf(bindingId)
+      if (!deviceId) return
+      void cookiePullerFor(deviceId).pull('relay-connected').catch(() => {})
+      if (hooked.has(bindingId)) return
+      hooked.add(bindingId)
+      extRelays.relay(bindingId).onCookiesChanged(() => {
+        void cookiePullerFor(deviceId).pull('cookies-changed').catch(() => {})
+      })
     })
     // 时机 ②（动手采集前，快照太旧就补一轮）挂在 scheduler 的 beforeTick 上（调度侧接线）。
     //

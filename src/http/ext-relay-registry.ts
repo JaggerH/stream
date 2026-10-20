@@ -43,6 +43,21 @@ export class ExtRelayRegistry {
     r.connect(socket, info)
     this.sockets.set(bindingId, socket)
     this.connectedAt.set(bindingId, (this.deps.now ?? Date.now)())
+    for (const fn of this.connectedListeners) {
+      try { fn(bindingId) } catch { /* 听众的问题不是中继的问题 */ }
+    }
+  }
+
+  private readonly connectedListeners: Array<(bindingId: string) => void> = []
+
+  /** 任何一条绑定连上（含重连）时叫一声——登录态取数挂在这儿（配对绑定的 relay 是连上时才建的，
+   *  没法提前在它身上挂 `onConnected`）。 */
+  onBindingConnected(fn: (bindingId: string) => void): void {
+    this.connectedListeners.push(fn)
+  }
+
+  deviceOf(bindingId: string): string | undefined {
+    return bindingId === LOCAL_BINDING ? LOCAL_DEVICE : this.deps.deviceOf(bindingId)
   }
 
   disconnect(bindingId: string, socket: ExtSocket): void {

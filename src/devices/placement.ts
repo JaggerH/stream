@@ -24,6 +24,8 @@ export function resolvePlacement(input: {
 /** facility → 默认设备的读口（`FacilityDeviceStore` 满足它；表打不开时换成 `unavailableBindings`）。 */
 export interface FacilityBindings {
   get(facility: string): string | undefined
+  /** 全部绑定——远程设备的 cookie 域靠它反查（哪些 facility 绑到了这台）。表打不开时没有它。 */
+  list?(): Array<{ facility: string; deviceId: string }>
 }
 
 /**

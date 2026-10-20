@@ -549,6 +549,13 @@ export async function bootstrap(
     onDebug: opts.onDebug,
     broadcast: opts.broadcast,
     requiredCookieDomains: requiredCookieDomainsNow,
+    // 远程设备：只取绑到它的 facility 的包声明的主机（`stream.network.hosts` ?? `stream.credentials`）。
+    // 都现取：绑定会改、包会热装卸。绑定表打不开（没有 list）= 一个域都不取。
+    requiredCookieDomainsFor: (deviceId) => [...new Set(
+      (opts.facilityDevices?.list?.() ?? [])
+        .filter((b) => b.deviceId === deviceId)
+        .flatMap((b) => kernel.packages.networkForFacility(b.facility)?.hosts ?? []),
+    )].sort(),
   })
   const auth = kernel.auth
 
