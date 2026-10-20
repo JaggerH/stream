@@ -73,3 +73,108 @@ export function matchesSyncedDomain(cookieDomain: string, synced: string[]): boo
  *  就是唯一的配对对象）——**端口数字与该包 `src/index.ts` 的 `DEFAULT_PORT` 是同一个数写在
  *  两处**，改一边记得同步另一边。 */
 export const PROBE_CANDIDATES = ['http://127.0.0.1:8900', 'http://127.0.0.1:8907']
+
+// ── 扩展绑定（design D7）：一个扩展可以同时服务好几个 Stream ──
+//
+// 本机那条（`local`）就是上面的 `config`，**原样不动**：没有迁移，回滚到旧扩展也照常能用。
+// 配对来的那些存在另一个键（`bindings`）里，各带一把实例发的 token。
+
+export const LOCAL_BINDING = 'local'
+const BINDINGS_KEY = 'bindings'
+
+export interface Binding {
+  /** `local` 或实例发的 `ext:<uuid>`。 */
+  id: string
+  kind: 'local' | 'paired'
+  baseUrl: string
+  /** 只有配对绑定落盘 token；本机绑定每次经 native host 现取（见 native-host.ts）。 */
+  token?: string
+  label: string
+  /** 绑定挂在实例上的哪台设备（配对时实例回的设备名）。 */
+  deviceName?: string
+  domains: string[]
+  requiredDomains?: string[]
+  /** 配对绑定：用户批准过的 requiredDomains。**远程实例新要的域名不自动生效。** */
+  approvedDomains?: string[]
+  autoSync: boolean
+  /** 实例撤销了这条绑定（关闭码 4003）：不再重连，等用户在 popup 里移除。 */
+  revoked?: boolean
+  lastSync?: number
+}
+
+function localBinding(cfg: Config): Binding {
+  return {
+    id: LOCAL_BINDING,
+    kind: 'local',
+    baseUrl: cfg.baseUrl,
+    label: '本机 Stream',
+    domains: cfg.domains,
+    ...(cfg.requiredDomains ? { requiredDomains: cfg.requiredDomains } : {}),
+    autoSync: cfg.autoSync,
+    ...(cfg.lastSync !== undefined ? { lastSync: cfg.lastSync } : {}),
+  }
+}
+
+async function pairedBindings(): Promise<Binding[]> {
+  const stored = await chrome.storage.local.get(BINDINGS_KEY)
+  const list = stored[BINDINGS_KEY]
+  return Array.isArray(list) ? (list as Binding[]) : []
+}
+
+/** 全部绑定：本机那条在前。 */
+export async function getBindings(): Promise<Binding[]> {
+  return [localBinding(await getConfig()), ...(await pairedBindings())]
+}
+
+export async function getBinding(id: string): Promise<Binding | undefined> {
+  return (await getBindings()).find((b) => b.id === id)
+}
+
+export async function addBinding(b: Binding): Promise<void> {
+  const rest = (await pairedBindings()).filter((x) => x.id !== b.id)
+  await chrome.storage.local.set({ [BINDINGS_KEY]: [...rest, b] })
+}
+
+/** 改一条绑定。本机那条落回 `config`（只认 config 里有的那几格）。 */
+export async function setBinding(id: string, patch: Partial<Binding>): Promise<void> {
+  if (id === LOCAL_BINDING) {
+    const { baseUrl, domains, requiredDomains, autoSync, lastSync } = patch
+    await setConfig({
+      ...(baseUrl !== undefined && { baseUrl }),
+      ...(domains !== undefined && { domains }),
+      ...(requiredDomains !== undefined && { requiredDomains }),
+      ...(autoSync !== undefined && { autoSync }),
+      ...(lastSync !== undefined && { lastSync }),
+    })
+    return
+  }
+  const list = await pairedBindings()
+  await chrome.storage.local.set({ [BINDINGS_KEY]: list.map((b) => (b.id === id ? { ...b, ...patch } : b)) })
+}
+
+export async function removeBinding(id: string): Promise<void> {
+  if (id === LOCAL_BINDING) return
+  await chrome.storage.local.set({ [BINDINGS_KEY]: (await pairedBindings()).filter((b) => b.id !== id) })
+}
+
+/**
+ * 这条绑定的实例能拿走哪些域的 cookie。本机 = 用户填的 ∪ Stream 申报的（与以前一致）；
+ * 配对 = 用户填的 ∪（申报的 ∩ 用户批准过的）——远处那个实例说要什么就给什么，等于没有范围。
+ */
+export function allowedDomains(b: Binding): string[] {
+  if (b.kind === 'local') return mergeDomains(b.domains, b.requiredDomains ?? [])
+  const approved = new Set(mergeDomains(b.approvedDomains ?? []))
+  return mergeDomains(b.domains, mergeDomains(b.requiredDomains ?? []).filter((d) => approved.has(d)))
+}
+
+/** 配对绑定的实例要了、用户还没批准的域（popup 列出来让人点头）。 */
+export function pendingDomains(b: Binding): string[] {
+  if (b.kind === 'local') return []
+  const have = new Set(allowedDomains(b))
+  return mergeDomains(b.requiredDomains ?? []).filter((d) => !have.has(d))
+}
+
+/** 按绑定分开的存储键。本机沿用原来的键名——升级后已有的标签组与账本原样认领。 */
+export function storageKey(base: string, bindingId: string): string {
+  return bindingId === LOCAL_BINDING ? base : `${base}:${bindingId}`
+}

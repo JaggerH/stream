@@ -35,6 +35,12 @@ export async function expectedProof(token: string, nonce: string): Promise<strin
   return [...new Uint8Array(sig)].map((b) => b.toString(16).padStart(2, '0')).join('')
 }
 
+/** 小写 hex 的 SHA-256。与后端 `ExtBindingStore` 存的 tokenHash 同一个式子。 */
+export async function sha256hex(s: string): Promise<string> {
+  const d = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s))
+  return [...new Uint8Array(d)].map((b) => b.toString(16).padStart(2, '0')).join('')
+}
+
 /** 定长比较——proof 是公开值，时序泄露的收益接近零，但比较判据本来就不该给坏习惯留样板。 */
 export function proofEqual(a: string, b: string): boolean {
   if (a.length !== b.length) return false
@@ -55,14 +61,14 @@ export function freshNonce(): string {
  * **调用方必须把它当闸门，不能当日志**：验不过就别连、别推 cookie。这条路上没有"降级继续"
  * 那一档——降级就等于没有这道锁。
  */
-export async function verifyBackend(baseUrl: string, token: string): Promise<void> {
+export async function verifyBackend(baseUrl: string, token: string, opts?: { binding?: string }): Promise<void> {
   const nonce = freshNonce()
   let res: Response
   try {
     res = await fetch(baseUrl.replace(/\/$/, '') + '/api/ext/verify', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ nonce }),
+      body: JSON.stringify(opts?.binding ? { nonce, binding: opts.binding } : { nonce }),
     })
   } catch (e) {
     throw new BackendNotTrusted(`验身份的请求没发出去：${e instanceof Error ? e.message : String(e)}`)
@@ -75,7 +81,9 @@ export async function verifyBackend(baseUrl: string, token: string): Promise<voi
     throw new BackendNotTrusted('验身份的应答不是 JSON')
   }
   if (typeof proof !== 'string') throw new BackendNotTrusted('验身份的应答里没有 proof')
-  if (!proofEqual(proof, await expectedProof(token, nonce))) {
+  // 配对绑定：实例只存 token 的 SHA-256，它签名用的 key 就是那个哈希（后端 extVerifyProofForBinding）。
+  const key = opts?.binding ? await sha256hex(token) : token
+  if (!proofEqual(proof, await expectedProof(key, nonce))) {
     throw new BackendNotTrusted('对端算不出正确的 proof —— 它不是我们配对的那台 Stream')
   }
 }
