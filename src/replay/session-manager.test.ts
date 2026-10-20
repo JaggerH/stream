@@ -499,3 +499,66 @@ describe('RecipeSessionManager 复用前探活', () => {
     expect(f.urlCalls).toHaveLength(0)
   })
 })
+
+/** design D7：lane、预算、常驻标签都按扩展绑定分开——一个 tabId 只在它那个 Chrome 里有意义。 */
+describe('RecipeSessionManager — 按扩展绑定', () => {
+  const spec = { facility: 'eastmoney', lifecycle: 'persistent' as const, visibility: 'unattended' as const }
+
+  it('同 facility 同 lane、不同绑定 = 两条 lane，各用各的 transport', async () => {
+    const a = fakeLauncher()
+    const b = fakeLauncher()
+    let current = 'ext:a'
+    const asked: string[] = []
+    const m = new RecipeSessionManager((_s, binding) => { asked.push(binding); return binding === 'ext:a' ? a.launcher : b.launcher }, { bindingOf: () => current })
+    await (await m.acquire(spec, 'https://demo.test/')).release()
+    current = 'ext:b'
+    await (await m.acquire(spec, 'https://demo.test/')).release()
+    expect(a.launches).toHaveLength(1)
+    expect(b.launches).toHaveLength(1)
+    expect(asked).toEqual(['ext:a', 'ext:b'])
+    expect(m.lanes()).toHaveLength(2)
+  })
+
+  it('预算按绑定计：B 上开 lane 不回收 A 上的闲置 lane', async () => {
+    const a = fakeLauncher()
+    let now = 0
+    let current = 'ext:a'
+    const m = new RecipeSessionManager(() => a.launcher, { maxLanesGlobal: 1, graceMs: 0, now: () => now, bindingOf: () => current })
+    await (await m.acquire(spec, 'https://demo.test/')).release()
+    now += 1_000
+    current = 'ext:b'
+    await (await m.acquire({ ...spec, facility: 'other' }, 'https://demo.test/')).release()
+    expect(a.closes).toEqual([])
+  })
+
+  it('同一绑定上超预算照旧回收', async () => {
+    const a = fakeLauncher()
+    let now = 0
+    const m = new RecipeSessionManager(() => a.launcher, { maxLanesGlobal: 1, graceMs: 0, now: () => now, bindingOf: () => 'ext:a' })
+    await (await m.acquire(spec, 'https://demo.test/')).release()
+    now += 1_000
+    await (await m.acquire({ ...spec, facility: 'other' }, 'https://demo.test/')).release()
+    expect(a.closes).toEqual([1])
+  })
+
+  it('常驻标签按绑定认领；本机的落盘形状不变', async () => {
+    let pins: Record<string, number> = { 'photopea\0default': 42, 'ext:a\0photopea\0default': 7 }
+    const store = { load: () => ({ ...pins }), save: (p: Record<string, number>) => { pins = { ...p } } }
+    const m = new RecipeSessionManager(() => fakeLauncher().launcher, { keepAliveStore: store })
+    expect(m.pinnedTabIds()).toEqual([42])
+    expect(m.pinnedTabIds('local')).toEqual([42])
+    expect(m.pinnedTabIds('ext:a')).toEqual([7])
+    expect(m.pinnedTabIds('ext:b')).toEqual([])
+  })
+
+  it('closeFacility 关掉每个绑定上的那个 facility', async () => {
+    const a = fakeLauncher()
+    let current = 'ext:a'
+    const m = new RecipeSessionManager(() => a.launcher, { bindingOf: () => current })
+    await (await m.acquire(spec, 'https://demo.test/')).release()
+    current = 'local'
+    await (await m.acquire(spec, 'https://demo.test/')).release()
+    await m.closeFacility('eastmoney')
+    expect(a.closes.sort()).toEqual([1, 2])
+  })
+})

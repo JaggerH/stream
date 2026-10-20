@@ -10,6 +10,9 @@ import type { EventInput } from '../../events/store.ts'
 import { ExtRelay, ExtRelayDisconnected } from '../../http/ext-relay.ts'
 import { INTERACTIVE_SESSION_WAIT_MS } from '../../http/host-relay.ts'
 import { HostRelayRegistry } from '../../http/host-registry.ts'
+import { ExtRelayRegistry } from '../../http/ext-relay-registry.ts'
+import { pickBrowser } from '../../devices/placement.ts'
+import { LOCAL_BINDING } from '../../devices/run-context.ts'
 import { BrowserCapabilityStore } from '../../browser/capability-store.ts'
 import { discoverChromeCandidates, nodeDiscoverFs } from '../../browser/discover-chrome.ts'
 import { harvestBrowserStatus, type HarvestBrowserStatus } from '../../browser/harvest-browser.ts'
@@ -45,8 +48,10 @@ declare module 'cordis' {
  * 旧名字一字不差**——搬家不改名。
  */
 export interface HarvestService {
-  /** extension CDP transport 中继单例；serve.ts 用 attachExtRelay 把它挂到 `/api/ext`。 */
+  /** 本机扩展那条中继（= `extRelays.local`）。读它的地方都只关心本机 Chrome。 */
   extRelay: ExtRelay
+  /** 每条扩展绑定一条中继（design D7）；serve.ts 用 attachExtRelay 把它挂到 `/api/ext`。 */
+  extRelays: ExtRelayRegistry
   /** host-desktop Engine 中继单例；serve.ts 用 attachHostRelay 把它挂到 `/api/host`。 */
   hostRelays: HostRelayRegistry
   /** 「这台机器装过 Chrome + 扩展吗」的落盘缓存。 */
@@ -95,8 +100,8 @@ export interface HarvestService {
   closeFacilityTabs: (facility: string) => Promise<void>
   /** 关掉闲置超时的 lane，返回关掉了谁。兜的是收尾回调跑不到的异常路径。 */
   reapIdleLanes: (maxIdleMs: number) => Promise<string[]>
-  /** 后端此刻真正骑着的浏览器标签 id（给扩展对账）。 */
-  claimedTabs: () => number[]
+  /** 后端此刻在某条扩展绑定上真正骑着的浏览器标签 id（给那个扩展对账）。缺省 = 本机。 */
+  claimedTabs: (bindingId?: string) => number[]
   /** 把某 facility 的标签放到用户面前，让他自己在浏览器里完成登录。 */
   focusLoginTab: (facility: string) => Promise<boolean>
 }
@@ -149,6 +154,11 @@ export interface HarvestConfig {
    * 走到 model 段会明说宿主没配。
    */
   llmForTask?: LlmForTask
+  /** 扩展绑定表（`ExtBindingStore`）：绑定挂在哪台设备、设备上有哪些绑定。缺席 = 只有本机扩展。 */
+  extBindings?: {
+    get(bindingId: string): { deviceId: string } | undefined
+    forDevice(deviceId: string): Array<{ bindingId: string }>
+  }
 }
 
 /**
@@ -230,7 +240,32 @@ export const harvestPlugin = {
     // Single transport seam (CP1): the session manager, the executor and look/act/shot all read
     // the page through this one object rather than each holding a Playwright page.
     const transport = resolveTransport({ extLauncher, extRelay, onDebug: config.onDebug })
-    const transportFor = (_spec: RecipeSessionSpec) => transport
+    // 每条扩展绑定一条 relay（design D7）。本机那条就是上面的单例；配对绑定的在它第一次连上时建。
+    // 配对绑定的 relay 不接能力缓存：那份缓存答的是「**这台**机器装过 Chrome 没有」。
+    const extRelays = new ExtRelayRegistry({
+      local: extRelay,
+      makeRelay: () => new ExtRelay({
+        ...(config.onDebug && { onDebug: config.onDebug }),
+        ...(config.notify && { onNotify: config.notify }),
+      }),
+      deviceOf: (id) => config.extBindings?.get(id)?.deviceId,
+      bindingsOf: (dev) => config.extBindings?.forDevice(dev).map((b) => b.bindingId) ?? [],
+    })
+    // 每条绑定一个 Transport，按需建、建了就留（无状态，留着只省一次构造）。被撤销的绑定，
+    // registry 已经忘了它的 relay，这里的旧 Transport 发命令会拿到 ExtRelayDisconnected。
+    const transports = new Map<string, Transport>([[LOCAL_BINDING, transport]])
+    const transportOf = (bindingId: string): Transport => {
+      let t = transports.get(bindingId)
+      if (!t) {
+        const relay = extRelays.relay(bindingId)
+        t = resolveTransport({ extLauncher: makeExtensionLauncher(relay, { onDebug: config.onDebug }), extRelay: relay, onDebug: config.onDebug })
+        transports.set(bindingId, t)
+      }
+      return t
+    }
+    // 这一次调用落在哪个 Chrome：执行上下文说了算（没有上下文 = 本机）。
+    const bindingOf = () => pickBrowser(extRelays)
+    const transportFor = (_spec: RecipeSessionSpec, bindingId: string = bindingOf()) => transportOf(bindingId)
     // The registry bounds the TABS we open: idle lanes get reaped when a facility/global lane cap
     // is hit (a live-leased lane is never touched). There is no memory ceiling — the tabs live in
     // the user's Chrome, so they are not this container's RAM to police.
@@ -241,6 +276,7 @@ export const harvestPlugin = {
     // 后端重启时不关它、启动就认领它、下一轮原地骑回去（见 SessionBudget.keepAliveStore）。
     const keepAlivePath = join(dataDir, 'keepalive-lanes.json')
     const recipeSessions = new RecipeSessionManager(transportFor, {
+      bindingOf,
       ...(config.browserLanes?.per_facility != null && { maxLanesPerFacility: config.browserLanes.per_facility }),
       ...(config.browserLanes?.global != null && { maxLanesGlobal: config.browserLanes.global }),
       keepAliveStore: {
@@ -482,6 +518,12 @@ export const harvestPlugin = {
      * 那个 500ms 轮询有 deadline 自止，所以不进 effect。
      */
     const ensureHarvestBrowser = async (): Promise<void> => {
+      // 落在配对绑定上的执行：那个 Chrome 在别的机器上，这里唤不起它——在线就过，不在线就是环境没就绪。
+      const bindingId = bindingOf()
+      if (bindingId !== LOCAL_BINDING) {
+        if (!extRelays.isOnline(bindingId)) throw new ExtRelayDisconnected()
+        return
+      }
       if (extRelay.connected) return
       const dev = hostRelays.deviceFor('desktop')
       if (dev) {
@@ -545,9 +587,12 @@ export const harvestPlugin = {
     }
     // 后端认领的标签 = 每条活 lane 骑着的那个 tab。lanes() 是"什么标签存在"的唯一真相源。
     // 再加上常驻 lane 落盘的标签：重启后、骑回去之前，它们也得算认领，否则扩展重连对账就当孤儿收走了。
-    const claimedTabs = (): number[] => [...new Set([
-      ...recipeSessions.lanes().map((l) => l.tabId).filter((id): id is number => typeof id === 'number'),
-      ...recipeSessions.pinnedTabIds(),
+    // 按绑定：每个 Chrome 只拿自己的标签去对账（别的 Chrome 的 tabId 在它那里是另一张标签）。
+    const claimedTabs = (bindingId: string = LOCAL_BINDING): number[] => [...new Set([
+      ...recipeSessions.lanes()
+        .filter((l) => (l.binding ?? LOCAL_BINDING) === bindingId)
+        .map((l) => l.tabId).filter((id): id is number => typeof id === 'number'),
+      ...recipeSessions.pinnedTabIds(bindingId),
     ])]
     const pageLook = (facility: string, expression: string) => recipeSessions.look(facility, expression)
     const pageShot = (facility: string) => recipeSessions.shot(facility)
@@ -557,6 +602,7 @@ export const harvestPlugin = {
     }
     ctx.provide('harvest', {
       extRelay,
+      extRelays,
       hostRelays,
       browserCapability,
       harvestBrowser,

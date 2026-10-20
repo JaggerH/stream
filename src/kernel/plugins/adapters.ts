@@ -169,6 +169,7 @@ export const adaptersPlugin = {
             network: (f) => ctx.packages.networkForFacility(f),
           }),
           ready: (p: import('../../devices/run-context.ts').RunPlacement, need: string) => assertDeviceReady(p, ctx.harvest.hostRelays, need),
+          browsers: ctx.harvest.extRelays,
         } : {}),
         // outcome → items | typed error (NeedsLoginError / ReplayDriftError / RecipeBlockedError),
         // so session recipes surface the same health/ledger classification as the legacy runner.

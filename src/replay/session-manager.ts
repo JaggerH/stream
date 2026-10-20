@@ -3,6 +3,7 @@ import type { GroupTab } from '../../shared/browser-relay/relay.ts'
 import type { RecipeSessionSpec } from './recipe.ts'
 import type { Transport } from './transport.ts'
 import { actWithConfirm } from './run-action.ts'
+import { LOCAL_BINDING } from '../devices/run-context.ts'
 import { detectLoginState } from './actions.ts'
 import type { LoginCheck, LoginState } from './recipe.ts'
 import {
@@ -46,6 +47,8 @@ export interface RecipeSessionState {
   /** 这条 lane 正骑着的浏览器标签 id（ext-cdp 档才有）。**这是「后端还认不认这个标签」的
    *  唯一凭据**——扩展拿它对账、回收后端重启后留下的孤儿标签（见 GET /api/ext/claimed-tabs）。 */
   tabId?: number
+  /** 哪个扩展绑定上的标签。本机那条不带这一格（存量形状不变）。 */
+  binding?: string
 }
 
 export interface RecipeSessionLease {
@@ -84,6 +87,12 @@ export interface SessionBudget {
    * 原地骑回去（`launcher.adopt`）。缺席 = 只在本进程内常驻（测试、没有数据目录的宿主）。
    */
   keepAliveStore?: KeepAliveStore
+  /**
+   * 这一次调用落在哪个扩展绑定（哪个 Chrome）上——design D7。lane、预算、常驻标签都按绑定分开：
+   * 一个 tabId 只在它那个 Chrome 里有意义，A 机器上的闲置标签腾不出 B 机器的位置。每次调用现取
+   * （执行上下文决定），缺席 = 只有本机那一条。
+   */
+  bindingOf?: () => string
 }
 
 /** lane key → tabId 的持久化（一个 JSON 文件就够：条目数 = 常驻 lane 数，个位数）。 */
@@ -95,6 +104,8 @@ export interface KeepAliveStore {
 interface PersistentEntry {
   facility: string
   laneKey: string
+  /** 哪个扩展绑定上的标签（`SessionBudget.bindingOf`）。 */
+  binding: string
   page: ReplayPage
   rawPage?: unknown
   /** the session's Transport — look/act/shot ride its primitives instead of Playwright semantics */
@@ -141,6 +152,7 @@ export class RecipeSessionManager {
   private readonly graceMs: number
   private readonly now: () => number
   private readonly keepAliveStore?: KeepAliveStore
+  private readonly bindingOf: () => string
   /** keepAlive lane → 它骑着的 tabId（跨进程：启动时从 store 读回，骑回去之前也算「后端认领」） */
   private readonly pinned = new Map<string, number>()
 
@@ -149,7 +161,7 @@ export class RecipeSessionManager {
     // tab AND the primitives look/act/shot ride (evaluate / driverFactory / screenshot) — from a
     // single object, the same seam the executor reads (session-recipe-executor). Everything
     // browser-specific lives there, not here.
-    private readonly resolveTransport: (spec: RecipeSessionSpec) => Transport,
+    private readonly resolveTransport: (spec: RecipeSessionSpec, binding: string) => Transport,
     budget: SessionBudget = {},
   ) {
     this.maxLanesPerFacility = budget.maxLanesPerFacility ?? 4
@@ -157,8 +169,13 @@ export class RecipeSessionManager {
     this.graceMs = budget.graceMs ?? 250
     this.now = budget.now ?? Date.now
     this.keepAliveStore = budget.keepAliveStore
+    this.bindingOf = budget.bindingOf ?? (() => LOCAL_BINDING)
     try {
-      for (const [k, id] of Object.entries(this.keepAliveStore?.load() ?? {})) if (typeof id === 'number') this.pinned.set(k, id)
+      for (const [k, id] of Object.entries(this.keepAliveStore?.load() ?? {})) {
+        if (typeof id !== 'number') continue
+        // 绑定进键之前落的盘只有 facility\0lane 两段——那时只有本机一个 Chrome。
+        this.pinned.set(k.split('\0').length === 2 ? `${LOCAL_BINDING}\0${k}` : k, id)
+      }
     } catch {
       /* 读坏了就当没有：最坏多开一张标签 */
     }
@@ -167,16 +184,22 @@ export class RecipeSessionManager {
   private pin(k: string, tabId: number | undefined): void {
     if (tabId == null) this.pinned.delete(k)
     else this.pinned.set(k, tabId)
+    // 本机绑定的键落盘时去掉绑定前缀：文件形状与绑定进键之前一模一样，回滚到旧版本也认得。
+    const local = `${LOCAL_BINDING}\0`
     try {
-      this.keepAliveStore?.save(Object.fromEntries(this.pinned))
+      this.keepAliveStore?.save(
+        Object.fromEntries([...this.pinned].map(([key, id]) => [key.startsWith(local) ? key.slice(local.length) : key, id])),
+      )
     } catch {
       /* 写不进就只在本进程内常驻 */
     }
   }
 
-  /** 常驻 lane 的标签——含上一个进程留下、这个进程还没骑回去的。扩展对账时它们算「后端认领」，不收。 */
-  pinnedTabIds(): number[] {
-    return [...this.pinned.values()]
+  /** 常驻 lane 的标签——含上一个进程留下、这个进程还没骑回去的。扩展对账时它们算「后端认领」，不收。
+   *  按绑定：每个 Chrome 只拿自己的那几张去对账。 */
+  pinnedTabIds(binding: string = LOCAL_BINDING): number[] {
+    const prefix = `${binding}\0`
+    return [...this.pinned.entries()].filter(([k]) => k.startsWith(prefix)).map(([, id]) => id)
   }
 
   /**
@@ -192,9 +215,10 @@ export class RecipeSessionManager {
    */
   private static readonly LIVENESS_PROBE_MS = 2_000
 
-  /** composite key: lanes of one facility share a context but are tracked independently. */
-  private key(facility: string, laneKey: string): string {
-    return `${facility}\0${laneKey}`
+  /** composite key: lanes of one facility share a context but are tracked independently —
+   *  and per extension binding, since a tab lives in one particular Chrome. */
+  private key(facility: string, laneKey: string, binding: string = this.bindingOf()): string {
+    return `${binding}\0${facility}\0${laneKey}`
   }
 
   /**
@@ -223,7 +247,7 @@ export class RecipeSessionManager {
 
   /** The tabs in the session tab group for this spec's transport ([] when it cannot adopt). */
   async listTabs(spec: RecipeSessionSpec): Promise<GroupTab[]> {
-    const launcher = this.resolveTransport(spec).launcher
+    const launcher = this.resolveTransport(spec, this.bindingOf()).launcher
     return launcher.listTabs ? launcher.listTabs() : []
   }
 
@@ -237,7 +261,7 @@ export class RecipeSessionManager {
    * (a wall on the user's own page is theirs to deal with, not ours to reap).
    */
   async adopt(spec: RecipeSessionSpec, tabId: number): Promise<RecipeSessionLease> {
-    const launcher = this.resolveTransport(spec).launcher
+    const launcher = this.resolveTransport(spec, this.bindingOf()).launcher
     if (!launcher.adopt) throw new Error(`facility "${spec.facility}": this transport cannot ride an existing tab`)
     const ridden = await launcher.adopt(tabId)
     let released = false
@@ -277,7 +301,9 @@ export class RecipeSessionManager {
     // **但要真帧的命令（截图/settle）另算**：那一格由 OS 那层"窗口显不显示"说了算，仿真救不了。
     const interactive = spec.visibility === 'interactive'
     // resolved by facility only — every lane of a facility reuses the pooled login context.
-    const transport = this.resolveTransport(spec)
+    // 绑定只取这一次：整个 acquire（含排队、建 lane）都落在同一个 Chrome 上。
+    const binding = this.bindingOf()
+    const transport = this.resolveTransport(spec, binding)
     const launcher = transport.launcher
     if (spec.lifecycle === 'one-shot') {
       const launched = await launcher.launch(entryUrl, waitUntil, { interactive })
@@ -297,7 +323,7 @@ export class RecipeSessionManager {
     }
 
     const laneKey = spec.laneKey ?? DEFAULT_LANE
-    const k = this.key(spec.facility, laneKey)
+    const k = this.key(spec.facility, laneKey, binding)
 
     let entry = this.persistent.get(k)
     // 这个 tab 还在吗？**它是用户的浏览器，用户随时可以把标签关掉**，而关掉这件事没有任何东西
@@ -319,7 +345,7 @@ export class RecipeSessionManager {
         // the same lane joins it instead of launching a second tab. Making room (evicting idle
         // lanes to stay under budget) happens INSIDE the promise, before the launch.
         creation = (async () => {
-          await this.reapForRoom(spec.facility)
+          await this.reapForRoom(spec.facility, binding)
           const keepAlive = spec.keepAlive === true
           // 常驻 lane:上一个进程留下的那张标签还在就原地骑回去——不开新的、不导航(rideCurrentPage
           // 的 recipe 就接着用里面的东西)。骑不上 / 探活不过 = 那张没了,忘掉它、照常开新的。
@@ -340,6 +366,7 @@ export class RecipeSessionManager {
           const made: PersistentEntry = {
             facility: spec.facility,
             laneKey,
+            binding,
             page: launched.page,
             rawPage: launched.rawPage,
             transport,
@@ -579,6 +606,7 @@ export class RecipeSessionManager {
       status: e.status,
       ...(e.reason == null ? {} : { reason: e.reason }),
       ...(laneTabId(e.rawPage) == null ? {} : { tabId: laneTabId(e.rawPage) }),
+      ...(e.binding === LOCAL_BINDING ? {} : { binding: e.binding }),
     }))
   }
 
@@ -616,8 +644,8 @@ export class RecipeSessionManager {
 
   /** Close every lane of a facility (the whole facility's browser footprint). */
   async closeFacility(facility: string): Promise<void> {
-    const prefix = `${facility}\0`
-    await Promise.all([...this.persistent.keys()].filter((k) => k.startsWith(prefix)).map((k) => this.closeEntry(k)))
+    // 每个绑定上的都关：关掉一个 facility（卸包、登出）不分它开在哪个 Chrome 里。
+    await Promise.all([...this.persistent.entries()].filter(([, e]) => e.facility === facility).map(([k]) => this.closeEntry(k)))
   }
 
   /** 关停：把采集标签还给用户。**常驻 lane 不关**——只从内存放掉，tabId 留在 store 里，下个进程骑回去
@@ -633,30 +661,37 @@ export class RecipeSessionManager {
   /** Evict idle lanes (LRU) while adding one more lane for `facility` would exceed a ceiling.
    *  Only touches lanes with no in-flight lease; if none are evictable it returns and the new
    *  lane is admitted anyway (never deadlock a harvest under genuine concurrent load). */
-  private async reapForRoom(facility: string): Promise<void> {
+  private async reapForRoom(facility: string, binding: string): Promise<void> {
     for (;;) {
-      if (!this.overBudget(facility)) return
-      const victim = this.lruEvictable()
+      if (!this.overBudget(facility, binding)) return
+      const victim = this.lruEvictable(binding)
       if (!victim) return
       await this.closeEntry(victim)
     }
   }
 
-  private overBudget(facility: string): boolean {
-    const prefix = `${facility}\0`
+  /** 预算按绑定计：两条闸门管的都是**一个** Chrome 里的标签（同站标签数是风控特征，总数是那台机器的资源）。 */
+  private overBudget(facility: string, binding: string): boolean {
     let facCount = 0
-    for (const k of this.persistent.keys()) if (k.startsWith(prefix)) facCount++
+    let all = 0
+    for (const e of this.persistent.values()) {
+      if (e.binding !== binding) continue
+      all++
+      if (e.facility === facility) facCount++
+    }
     if (facCount >= this.maxLanesPerFacility) return true
-    if (this.persistent.size >= this.maxLanesGlobal) return true
+    if (all >= this.maxLanesGlobal) return true
     return false
   }
 
-  /** The least-recently-used lane with no in-flight lease and past the grace window, or null. */
-  private lruEvictable(): string | null {
+  /** The least-recently-used lane with no in-flight lease and past the grace window, or null.
+   *  Only within one binding: closing a tab in another Chrome makes no room in this one. */
+  private lruEvictable(binding: string): string | null {
     const now = this.now()
     let bestKey: string | null = null
     let bestAt = Infinity
     for (const [k, e] of this.persistent) {
+      if (e.binding !== binding) continue
       if (e.leaseCount !== 0 || e.keepAlive) continue
       if (now - e.lastUsedAt <= this.graceMs) continue
       if (e.lastUsedAt < bestAt) { bestAt = e.lastUsedAt; bestKey = k }

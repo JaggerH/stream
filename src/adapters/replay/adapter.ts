@@ -24,7 +24,7 @@ import { isCanonicalBrowserRecipe } from '../../replay/recipe.ts'
 import { EnvironmentUnavailableError, type DeclaresFailureCategory } from '../../failure.ts'
 import { sessionPrecheck } from '../../auth/session-precheck.ts'
 import { LOCAL_DEVICE, runOnDevice, type RunPlacement } from '../../devices/run-context.ts'
-import { assertRecipeRunnable } from '../../devices/placement.ts'
+import { assertRecipeRunnable, type BrowserPicker } from '../../devices/placement.ts'
 
 /**
  * The source's login session is gone (login wall) — a USER action, not a broken
@@ -215,6 +215,9 @@ export interface ReplayAdapterDeps {
   /** 非 local 设备上、第一次出站（或确保浏览器传输）之前的就绪检查：离线抛 `DeviceOffline`，
    *  缺能力抛 `DeviceIncapable`。缺席 = 不检查（只有注入了 placementFor 的装配才会配它）。 */
   ready?: (p: RunPlacement, need: string) => void
+  /** 设备上的扩展绑定（`ExtRelayRegistry`，design D7）：浏览器类 recipe 派到远程设备时，要那台设备
+   *  有在线的 Chrome，并顺带定下这次执行用哪一个。缺席 = 浏览器类 recipe 只通本机。 */
+  browsers?: BrowserPicker
   /** Optional facility session executor. `undefined` means this recipe uses the normal runner. */
   sessionFetch?: (
     recipe: import('../../replay/recipe.ts').Recipe,
@@ -486,7 +489,7 @@ export class ReplayAdapter implements Adapter {
     // 执行位置排在动作闸与隔离之后、任何出站与 ensureTransport 之前：一个本就不该跑的源不该被
     // 报成「设备离线、本轮跳过」；判不过时也不能已经唤起了浏览器或发了桌面帧。
     // 浏览器类与桌面类在远程 placement 上一律 fail closed（见 assertRecipeRunnable 头注）。
-    assertRecipeRunnable(p, recipe.kind, this.deps.ready)
+    assertRecipeRunnable(p, recipe.kind, this.deps.ready, this.deps.browsers)
 
     const stringParams: Record<string, string> = {}
     for (const [k, v] of Object.entries(params)) stringParams[k] = String(v)
