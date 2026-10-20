@@ -1,4 +1,4 @@
-import { getConfig, setConfig, mergeDomains } from './config.ts'
+import { getConfig, setConfig, mergeDomains, LOCAL_BINDING, allowedDomains, getBinding, setBinding } from './config.ts'
 import { getSyncConfig } from './stream-api.ts'
 import { notifyCookiesChanged } from './relay-notify.ts'
 
@@ -31,7 +31,8 @@ export interface SyncResult {
  * 取数由后端发起，因为**只有它知道什么时候要用**：要采集了、手里那份多旧、刚刚是不是吃了个
  * 401。扩展一样都不知道，所以定时推只能靠猜，猜出来的就是"最长干等一个周期"。
  */
-export async function runSync(): Promise<SyncResult> {
+export async function runSync(bindingId: string = LOCAL_BINDING): Promise<SyncResult> {
+  if (bindingId !== LOCAL_BINDING) return runPairedSync(bindingId)
   const cfg = await getConfig()
   if (!cfg.baseUrl) return { reason: 'no_stream_url', counts: {} }
 
@@ -60,5 +61,24 @@ export async function runSync(): Promise<SyncResult> {
   // 中继没连（Stream 没起）不是错误：它下次连上会自己拉一次全量（后端的 onConnected）。
   const nudged = notifyCookiesChanged(Object.keys(counts))
   if (nudged) await setConfig({ lastSync: Date.now() })
+  return { reason: nudged ? 'nudged' : 'relay_down', counts }
+}
+
+/**
+ * 配对绑定的一轮：只在**它批准过的范围**里数一数、叫它一声。不问 sync-config——远处那个实例的
+ * 这一口要 API token（扩展没有）；它要哪些域，由它发来的 cookiePull 自己说（driver.ts noteRequested）。
+ */
+async function runPairedSync(bindingId: string): Promise<SyncResult> {
+  const b = await getBinding(bindingId)
+  if (!b || b.revoked) return { reason: 'relay_down', counts: {} }
+  const domains = allowedDomains(b)
+  if (!domains.length) return { reason: 'no_domains', counts: {} }
+  const counts: Record<string, number> = {}
+  for (const domain of domains) {
+    const n = (await chrome.cookies.getAll({ domain })).length
+    if (n) counts[domain] = n
+  }
+  const nudged = notifyCookiesChanged(Object.keys(counts), bindingId)
+  if (nudged) await setBinding(bindingId, { lastSync: Date.now() })
   return { reason: nudged ? 'nudged' : 'relay_down', counts }
 }

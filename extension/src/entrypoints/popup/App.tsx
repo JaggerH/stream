@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Plus, Radar, Cookie, Pencil, Check, Radio, RefreshCw } from 'lucide-react'
+import { Plus, Radar, Cookie, Pencil, Check, Radio, RefreshCw, Link2 } from 'lucide-react'
 import { getConfig, setConfig, PROBE_CANDIDATES, syncableDomains, type Config } from '../../lib/config.ts'
 import { getRadar, getBrowserCapability, type RadarResult } from '../../lib/stream-api.ts'
 import { relayHealth, type CapabilitySnapshot, type RelayHealth } from '../../lib/relay-health.ts'
@@ -14,6 +14,7 @@ import { findPairedPeer } from '../../lib/pairing.ts'
 import { nativeHostToken, nativeHostStatus } from '../../lib/native-host.ts'
 import { verifyBackend } from '../../lib/backend-identity.ts'
 import { CookiePanel } from './CookiePanel.tsx'
+import { BindingsPanel } from './BindingsPanel.tsx'
 import { Backdrop } from '@/components/acrylic/backdrop.tsx'
 import { Card } from '@/components/acrylic/card.tsx'
 import { Item, ItemContent, ItemTitle, ItemDescription, ItemActions } from '@/components/acrylic/item.tsx'
@@ -61,7 +62,7 @@ async function queryRelay(): Promise<boolean> {
   }
 }
 
-type Tab = 'radar' | 'cookie'
+type Tab = 'radar' | 'cookie' | 'streams'
 
 export default function App() {
   const [cfg, setCfg] = useState<Config | null>(null)
@@ -367,9 +368,19 @@ export default function App() {
               >
                 <Cookie /> Cookies
               </Button>
+              <Button
+                size="small"
+                variant={tab === 'streams' ? 'default' : 'ghost'}
+                className="h-6 flex-1"
+                onClick={() => setTab('streams')}
+              >
+                <Link2 /> Streams
+              </Button>
             </div>
 
-            {tab === 'radar' ? (
+            {tab === 'streams' ? (
+              <BindingsPanel />
+            ) : tab === 'radar' ? (
             /* Radar */
             <div className="flex flex-col gap-2">
               <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
@@ -427,6 +438,15 @@ export default function App() {
             ) : (
               <CookiePanel cfg={cfg} onConfig={applyConfig} syncing={syncing} onSyncNow={syncNow} syncResult={sync} />
             )}
+          </>
+        )}
+
+        {/* 本机没有 Stream 的机器（NAS 上的 Chrome）照样要能配对远处那个——上面的页签只在本机
+            Stream 找到时才出现，所以这里单独给一份。 */}
+        {!cfg.baseUrl && (
+          <>
+            <Separator />
+            <BindingsPanel />
           </>
         )}
 

@@ -152,6 +152,16 @@ describe('driver — 按扩展绑定', () => {
     expect(JSON.stringify(reply)).not.toContain('mail-secret')
   })
 
+  it('cookiePull：远处实例新要的域记成待批准，批准前照样不给', async () => {
+    const chrome = makeChrome({ bindings: [{ ...PAIRED, requiredDomains: [], approvedDomains: [] }] })
+    const mod = await load(chrome)
+    const a = mod.runtime('ext:a', 'NAS')
+    const reply = await mod.dispatch({ id: 1, op: 'cookiePull', domains: ['eastmoneysec.com'] }, a)
+    expect((reply.result as { refused: string[] }).refused).toEqual(['eastmoneysec.com'])
+    const saved = (chrome._local.bindings as Array<{ requiredDomains: string[] }>)[0]
+    expect(saved.requiredDomains).toEqual(['eastmoneysec.com'])
+  })
+
   it('cookieNames：配对绑定范围外的域答空，不探测', async () => {
     const chrome = makeChrome({ bindings: [PAIRED] })
     const mod = await load(chrome)

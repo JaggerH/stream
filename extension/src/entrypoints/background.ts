@@ -1,6 +1,10 @@
 import { runSync } from '../lib/sync.ts'
-import { getConfig, matchesSyncedDomain, mergeDomains } from '../lib/config.ts'
-import { startExtCdp, isRelayUp, forceReconnect } from '../lib/driver.ts'
+import {
+  getConfig, matchesSyncedDomain, mergeDomains,
+  addBinding, allowedDomains, getBinding, getBindings, pendingDomains, removeBinding, setBinding,
+} from '../lib/config.ts'
+import { startExtCdp, isRelayUp, forceReconnect, startBinding, stopBinding } from '../lib/driver.ts'
+import { pairWithCode } from '../lib/pair-code.ts'
 import { keepDevReloadAlive } from '../lib/dev-reload.ts'
 
 /**
@@ -60,6 +64,8 @@ export default defineBackground(() => {
         const cfg = await getConfig()
         domainsCache = mergeDomains(cfg.domains, cfg.requiredDomains ?? [])
       }
+      // 配对绑定各自一道门、各自去抖：只叫醒范围（批准过的域）里有这个域的那些 Stream。
+      void nudgePairedBindings(info.cookie.domain)
       if (!matchesSyncedDomain(info.cookie.domain, domainsCache)) return
       clearTimeout(t)
       t = setTimeout(async () => {
@@ -67,6 +73,16 @@ export default defineBackground(() => {
       }, 5000)
     })()
   })
+
+  const pairedTimers = new Map<string, ReturnType<typeof setTimeout>>()
+  async function nudgePairedBindings(cookieDomain: string): Promise<void> {
+    for (const b of await getBindings()) {
+      if (b.kind !== 'paired' || b.revoked || !b.autoSync) continue
+      if (!matchesSyncedDomain(cookieDomain, allowedDomains(b))) continue
+      clearTimeout(pairedTimers.get(b.id))
+      pairedTimers.set(b.id, setTimeout(() => void runSync(b.id).catch(console.error), 5000))
+    }
+  }
 
   // Let the popup/options trigger an immediate sync — always available, regardless of autoSync.
   chrome.runtime.onMessage.addListener((msg, _sender, send) => {
@@ -84,8 +100,53 @@ export default defineBackground(() => {
       // 弹窗那个「立刻重连」。它**不是恢复的前提**——退避重连一直在跑（见 driver.ts
       // forceReconnect 的头注），这里只是把最坏 30s 的等待折叠掉。回的是"这就去试"，
       // 不是"已连上"：连上与否由 open 事件决定，弹窗自己复查 relay-status。
-      send({ result: forceReconnect() })
+      send({ result: forceReconnect(typeof msg.id === 'string' ? msg.id : undefined) })
       return // 同步应答
+    }
+    // ── 扩展绑定（design D7）：弹窗的绑定列表、配对、移除、批准域名 ──
+    if (msg?.type === 'bindings-status') {
+      getBindings()
+        .then((list) => send({
+          // token 不出 SW：弹窗只需要知道有没有、连没连。
+          bindings: list.map(({ token: _t, ...b }) => ({ ...b, connected: isRelayUp(b.id), pending: pendingDomains(b) })),
+        }))
+        .catch((e) => send({ error: String(e) }))
+      return true
+    }
+    if (msg?.type === 'binding-pair') {
+      void (async () => {
+        try {
+          const r = await pairWithCode(String(msg.baseUrl ?? ''), String(msg.code ?? ''), {
+            name: 'Chrome',
+            browser: 'chrome',
+            platform: navigator.platform,
+          })
+          await addBinding({
+            id: r.bindingId, kind: 'paired', baseUrl: String(msg.baseUrl).trim().replace(/\/$/, ''), token: r.token,
+            label: r.deviceName, deviceName: r.deviceName, domains: [], requiredDomains: [], approvedDomains: [], autoSync: true,
+          })
+          await startBinding(r.bindingId)
+          send({ ok: true, bindingId: r.bindingId, deviceName: r.deviceName })
+        } catch (e) {
+          send({ ok: false, error: e instanceof Error ? e.message : String(e) })
+        }
+      })()
+      return true
+    }
+    if (msg?.type === 'binding-remove' && typeof msg.id === 'string') {
+      stopBinding(msg.id)
+      removeBinding(msg.id).then(() => send({ ok: true })).catch((e) => send({ ok: false, error: String(e) }))
+      return true
+    }
+    if (msg?.type === 'binding-approve' && typeof msg.id === 'string' && typeof msg.domain === 'string') {
+      void (async () => {
+        const b = await getBinding(msg.id)
+        if (!b) return send({ ok: false, error: '没有这条绑定' })
+        await setBinding(msg.id, { approvedDomains: mergeDomains(b.approvedDomains ?? [], [msg.domain]) })
+        void runSync(msg.id).catch(console.error)
+        send({ ok: true })
+      })()
+      return true
     }
   })
 })

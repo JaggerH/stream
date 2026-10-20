@@ -12,11 +12,13 @@ interface Sendable {
   send(data: string): void
 }
 
-let socket: Sendable | null = null
+/** 每条扩展绑定一条连接（design D7）；本机那条的 id 是 `local`。 */
+const sockets = new Map<string, Sendable>()
 
-/** `driver` 连上/断开时调。断开传 null。 */
-export function setNotifySocket(s: Sendable | null): void {
-  socket = s
+/** `driver` 连上/断开时调。断开传 null。缺省 = 本机绑定。 */
+export function setNotifySocket(s: Sendable | null, bindingId = 'local'): void {
+  if (s) sockets.set(bindingId, s)
+  else sockets.delete(bindingId)
 }
 
 /**
@@ -28,7 +30,8 @@ export function setNotifySocket(s: Sendable | null): void {
  * 中继没连就静默算了（返回 false）：后端下次连上会自己拉一次全量，这条通知只负责让"已经连着"
  * 的那段时间里也别落后。它绝不能因为 Stream 没起就抛。
  */
-export function notifyCookiesChanged(domains: string[]): boolean {
+export function notifyCookiesChanged(domains: string[], bindingId = 'local'): boolean {
+  const socket = sockets.get(bindingId)
   if (!socket) return false
   try {
     socket.send(JSON.stringify({ type: 'cookies-changed', domains }))

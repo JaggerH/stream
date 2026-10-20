@@ -1346,6 +1346,18 @@ async function scopeOf(rt: BindingRuntime): Promise<string[]> {
   return b ? allowedDomains(b) : []
 }
 
+/**
+ * 配对绑定的实例这次来要了哪些域——记进它的 `requiredDomains`，没批准的就是 popup 里的「待批准」。
+ * 本机绑定从 sync-config 得到这份名单；远处的实例那一口要 API token，扩展拿不到，于是它的请求本身
+ * 就是名单。记下不等于给：给不给只看 `approvedDomains`（scopeOf）。
+ */
+async function noteRequested(id: string, wanted: string[]): Promise<void> {
+  const b = await getBinding(id)
+  if (!b) return
+  const merged = mergeDomains(b.requiredDomains ?? [], wanted)
+  if (merged.length !== (b.requiredDomains ?? []).length) await setBinding(id, { requiredDomains: merged })
+}
+
 /** 处理一条中继命令。`rt` = 命令从哪条绑定的连接上来：所有按组判的闸都只认这条绑定的组。 */
 export async function dispatch(msg: Inbound, rt: BindingRuntime = runtime()): Promise<{ id: number; result?: unknown; error?: string; swMs: number }> {
   const label = 'op' in msg ? msg.op : msg.method
@@ -1580,8 +1592,9 @@ async function dispatchInner(msg: Inbound, marks: HopMarks = {}, rt: BindingRunt
           // （Stream 按已装 manifest 推出来、上次同步缓存下来的）。范围外的域一个字都不回，
           // 并且**明说拒了哪些**：静默丢弃会让后端把"没权限"读成"用户没登录"。
           // 配对绑定的范围还要过用户批准那一道（见 config.ts allowedDomains）。
-          const allowed = await scopeOf(rt)
           const wanted = [...new Set(msg.domains ?? [])]
+          if (rt.id !== LOCAL_BINDING) await noteRequested(rt.id, wanted)
+          const allowed = await scopeOf(rt)
           const granted = wanted.filter((d) => matchesSyncedDomain(d, allowed))
           const refused = wanted.filter((d) => !granted.includes(d))
           const cookies: Record<string, Array<Record<string, unknown>>> = {}
@@ -1738,6 +1751,7 @@ async function connect(wsUrl: string, baseUrl: string, rt: BindingRuntime = runt
     if (rt.eventSocket === sock) {
       rt.eventSocket = null
       if (rt.id === LOCAL_BINDING) setNotifySocket(null)
+      else setNotifySocket(null, rt.id)
     }
     void clearSubscriptions(rt)
     if (hb) {
@@ -1757,8 +1771,9 @@ async function connect(wsUrl: string, baseUrl: string, rt: BindingRuntime = runt
   sock.addEventListener('open', () => {
     rt.relayUp = true
     rt.eventSocket = sock
-    // 「cookie 变了」那条通知也从这条连接走（见 relay-notify.ts）。配对绑定的通知走 Task 10 的按绑定分发。
+    // 「cookie 变了」那条通知也从这条连接走（见 relay-notify.ts），按绑定各走各的。
     if (rt.id === LOCAL_BINDING) setNotifySocket(sock)
+    else setNotifySocket(sock, rt.id)
     rt.backoff = 1000 // 连上即复位退避
     // 连上即对账，回收上一个后端进程留下的孤儿采集标签。**时机必须是这里，不能只在 SW 启动时**：
     // 后端重启是最常制造孤儿的事件，而那一刻 SW 往往还活得好好的（reconcileOnWake 根本不会跑）。
@@ -1778,6 +1793,8 @@ async function connect(wsUrl: string, baseUrl: string, rt: BindingRuntime = runt
      * 而那一刻 SW 往往活得好好的，启动钩子根本不会跑——和上面 reclaimOrphanTabs 同一个理由。
      * 不 await：它是兜底，不该挡住这条连接开始收命令。
      */
+    // 配对绑定没有这一步：远处那个实例的 sync-config 要 API token，扩展拿不到。它要哪些域，
+    // 由它发来的 cookiePull 本身说出来（见 dispatchInner 的 cookiePull：记成待批准）。
     if (rt.id === LOCAL_BINDING) void runSync().catch(() => {})
     // WS 消息活动给 MV3 非持久 SW 续命（~20s 一次）；心跳是这条连接私有的
     hb = setInterval(() => {
