@@ -398,7 +398,7 @@ export function TaskEditor({
                 {actions.map((a) => <option key={a} value={a}>{a}</option>)}
               </select>
             </Field>
-            <Field label="执行设备" hint="不选 = 跟随这个账号在「设置 → 账号在哪台设备上执行」里的设备">
+            <Field label="执行设备" hint="不选 = 跟随这个账号在「管理 → 设备 → 账号在哪台设备上执行」里的设备">
               <select
                 data-testid="task-field-device"
                 className="h-7 w-full rounded-md border border-input bg-transparent px-2 text-[12px]"

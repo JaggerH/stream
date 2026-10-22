@@ -63,10 +63,9 @@ app/host-agent/target/x86_64-pc-windows-gnu/release/stream-desktop.exe \
 还可以绑定远处的主实例——那个 Stream 会把这台机器上的 Chrome 当成**它某台已配对设备**的浏览器，
 绑到那台设备上的任务（登录、浏览器类采集）就在这个 Chrome 里跑。
 
-1. 在那个 Stream 所在的机器上，为这台设备签一个扩展配对码（面板按钮在计划 4；之前用接口）：
-   ```bash
-   curl -X POST http://127.0.0.1:8900/api/devices/<deviceId>/ext-pairing-code   # → {"code":"123456",…}
-   ```
+1. 在那个 Stream 所在的机器上打开面板 → 管理 → **设备** → 这台设备那一行的「添加浏览器」，面板显示 6 位码
+   和扩展里该填的地址（只能在那台机器上本地打开面板时签；没有面板时用
+   `curl -X POST http://127.0.0.1:8900/api/devices/<deviceId>/ext-pairing-code`）。
    设备要先配对好（这台机器上的 agent，`linux:<uuid>` 之类）；`local` 不需要也不允许签。
 2. 弹窗 → **Streams** 页签 → 填那个 Stream 的地址与 6 位码 → Pair。`http://` 和 `https://` 都行。
    远程的 `http://` 地址 popup 会提示**不加密**：配对码、token 和之后交出去的 cookie 在路上都是明文，

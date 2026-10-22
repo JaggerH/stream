@@ -140,3 +140,12 @@
 - [ ] `tasks.md` 计划 4 展开为本计划 Task 1–7 逐条勾。
 - [ ] `cd app && npm run build:panel`；起一个测试实例打开面板截图确认设备节、facility 节、任务编辑器。
 - [ ] Commit `docs(device-execution): panel` + push。
+
+## 执行记录：与上文的偏离（2026-10-22）
+
+- **facility 那一节挂在「管理 → 设备」页，不在 `BackendSettings`。** `BackendSettings` 自首次发布起就没有任何地方渲染它（死代码）；设备列表唯一能打开的入口是 `manage-entry.tsx` 的「设备」标签页（原「手机」），facility 那一节放在同一页设备列表下面。`BackendSettings` 只随改名改了 import。
+- **facility 列表只列绑到非本机的**（Task 2 实测 51 个，含宿主伪包），其余经「账号 + 设备 + 指定」添加；选回本机即删除那一行。
+- **运行记录的设备名只在有远程 run 时才查**（`/api/devices` + `/api/ext/bindings` 各一次），查不到退成 id。
+- **构建**：这台机器没有 `npx`，`scripts/build-panel.mjs` 起不来 vite；改为逐入口 `PANEL_ENTRY=<name> node_modules/.bin/vite build --config vite.panel.config.ts`，脚本未改。
+- **配对码的 `backends`** 来自 `lanBaseUrls`，在有公网网卡的机器上会列出公网 `http://` 地址；扩展对远程明文地址有不加密提示，面板不另做过滤。
+

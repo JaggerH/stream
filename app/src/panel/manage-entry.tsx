@@ -51,6 +51,7 @@ import '../entry.css'
 import '../i18n/index.ts'   // 副作用 import：设好 react-i18next 的全局默认实例
 import { applyBackend, LOCAL } from '../lib/api.ts'
 import { DevicesSettings } from '../components/DevicesSettings.tsx'
+import { FacilityDevicesSettings } from '../components/FacilityDevicesSettings.tsx'
 import { PackagesPage } from '../components/packages/PackagesPage.tsx'
 import { PreviewModal } from '../components/PreviewModal.tsx'
 import { PreviewContext, type PreviewTarget } from '../lib/previewStage.ts'
@@ -92,7 +93,16 @@ function ManageShell({ backend, initial }: { backend: string; initial?: ManageTa
       <div role="tablist" className="flex gap-1 border-b px-2">{tab('packages', '包与插件')}{tab('source-health', '源健康')}{tab('phones', '设备')}</div>
       <div className="min-h-0 flex-1 overflow-y-auto">
         {view.page === 'packages' ? <PackagesPage apiBase={backend} />
-          : view.page === 'phones' ? <div className="p-4"><DevicesSettings conn={LOCAL} /></div>
+          : view.page === 'phones' ? (
+            <div className="space-y-5 p-4">
+              <DevicesSettings conn={LOCAL} />
+              <section className="space-y-2">
+                <h3 className="text-[13px] font-semibold">账号在哪台设备上执行</h3>
+                <p className="text-[12px] text-muted-foreground">账号的动作和采集都在这台设备上跑；单条任务可以在任务编辑器里另指定。</p>
+                <FacilityDevicesSettings conn={LOCAL} />
+              </section>
+            </div>
+          )
           : view.sourceId ? <SourceRepairPage apiBase={backend} sourceId={view.sourceId} onBack={() => setView({ page: 'source-health' })} />
           : <SourceHealthList apiBase={backend} onOpen={(sourceId) => setView({ page: 'source-health', sourceId })} />}
       </div>

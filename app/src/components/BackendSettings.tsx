@@ -4,7 +4,6 @@ import { useDebugEnabled } from '../lib/debugFlag.ts'
 import { Switch } from './ui/switch.tsx'
 import { RemoteAccessSettings } from './RemoteAccessSettings.tsx'
 import { DevicesSettings } from './DevicesSettings.tsx'
-import { FacilityDevicesSettings } from './FacilityDevicesSettings.tsx'
 import { HarvestBrowserSettings } from './HarvestBrowserSettings.tsx'
 import { DiagnosticsSettings } from './DiagnosticsSettings.tsx'
 import { Sheet, SheetContent, SheetFooter, SheetHeader, SheetTitle } from './acrylic/sheet.tsx'
@@ -160,17 +159,6 @@ export function BackendSettings({ open, onClose }: { open: boolean; onClose: () 
               >
                 <SettingsBlock>
                   <DevicesSettings conn={conn} />
-                </SettingsBlock>
-              </SettingsSection>
-
-              <SettingsSection
-                title="账号在哪台设备上执行"
-                collapsible
-                {...section('facility-devices')}
-                footnote="账号的动作和采集都在这台设备上跑；单条任务可以在任务编辑器里另指定"
-              >
-                <SettingsBlock>
-                  <FacilityDevicesSettings conn={conn} />
                 </SettingsBlock>
               </SettingsSection>
 
