@@ -169,7 +169,7 @@ error:  { code: 'host-not-allowed' | 'private-target' | 'timeout' | 'network' | 
 **信任**
 - 配对绑定的 token 经配对得到之后，**每次连之前仍先挑战应答**（`verifyBackend` 用该绑定的 token），对端证明不了就不连、不推 cookie。
   地址被劫持也拿不到 token。
-- 配对时 token 走网络一次：扩展**只接受 `https://` 或回环地址**做配对；Tailscale 用户用 `tailscale serve` 的 HTTPS 地址。
+- 配对时 token 走网络一次：扩展接受 `http://` 与 `https://`。远程明文地址照配，但 popup 明说不加密（token 与之后交出的 cookie 路上可见）；内网 / Tailscale 下代价基本不存在，公网请用 HTTPS。
 - 远程实例能要的东西必须由用户点头：**配对绑定的 `requiredDomains` 不自动生效**——实例新要一个域名，扩展把它挂成「待批准」，
   用户在 popup 里批准之后才同步、才允许经 relay 拉取该域 cookie。本机绑定照旧自动生效（同机、同用户，信任不变）。
 
@@ -245,4 +245,4 @@ error:  { code: 'host-not-allowed' | 'private-target' | 'timeout' | 'network' | 
 ## Open Questions
 
 - 设备 RTT 的测量方式（WS ping 往返）与超时放宽的系数，留给实施计划定具体数值。
-- 配对只接受 HTTPS 或回环：自建 HTTP 内网（非 Tailscale）的用户会被挡住。先按严格做，有人提再加显式的「我知道风险」开关。
+- ~~配对只接受 HTTPS 或回环~~（2026-10-22 放开）：自建的 Stream 多半没有证书，只收 HTTPS 把它们全挡住了。改为 HTTP 也配、远程明文时在 popup 提示不加密，不设开关。

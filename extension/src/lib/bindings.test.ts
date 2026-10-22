@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createHash, createHmac } from 'node:crypto'
 import { allowedDomains, pendingDomains, storageKey, type Binding } from './config.ts'
-import { isPairableAddress, pairWithCode, PairAddressRefused, PairFailed } from './pair-code.ts'
+import { isPairableAddress, isPlaintextRemote, pairWithCode, PairAddressRefused, PairFailed } from './pair-code.ts'
 import { verifyBackend, VERIFY_PREFIX } from './backend-identity.ts'
 
 afterEach(() => {
@@ -75,20 +75,38 @@ describe('isPairableAddress', () => {
     ['http://127.0.0.1:8900', true],
     ['http://localhost:8900', true],
     ['http://[::1]:8900', true],
-    ['http://203.0.113.5:8900', false],
-    ['http://100.70.0.5:8900', false],
+    ['http://203.0.113.5:8900', true],
+    ['http://100.70.0.5:8900', true],
     ['ftp://main.example', false],
     ['not a url', false],
   ])('%s → %s', (url, ok) => expect(isPairableAddress(url)).toBe(ok))
 })
 
+describe('isPlaintextRemote', () => {
+  it.each([
+    ['https://main.example', false],
+    ['http://127.0.0.1:8900', false],
+    ['http://localhost:8900', false],
+    ['http://[::1]:8900', false],
+    ['http://203.0.113.5:8900', true],
+    ['http://nas.lan:8900', true],
+    ['not a url', false],
+  ])('%s → %s', (url, plain) => expect(isPlaintextRemote(url)).toBe(plain))
+})
+
 describe('pairWithCode', () => {
   const reply = (status: number, body: unknown) => ({ ok: status < 300, status, json: async () => body }) as Response
 
-  it('明文远程地址：一个请求都不发', async () => {
+  it('不是 http(s) 的地址：一个请求都不发', async () => {
     const f = vi.fn()
-    await expect(pairWithCode('http://203.0.113.5:8900', '123456', {}, { fetch: f })).rejects.toBeInstanceOf(PairAddressRefused)
+    await expect(pairWithCode('ftp://203.0.113.5:8900', '123456', {}, { fetch: f })).rejects.toBeInstanceOf(PairAddressRefused)
     expect(f).not.toHaveBeenCalled()
+  })
+
+  it('明文远程地址照样配', async () => {
+    const f = vi.fn(async () => reply(200, { bindingId: 'ext:a', token: 'tok', deviceId: 'linux:nas', deviceName: 'NAS' }))
+    await pairWithCode('http://192.168.1.10:8900', '123456', {}, { fetch: f as never })
+    expect(f).toHaveBeenCalledWith('http://192.168.1.10:8900/api/ext/pair', expect.anything())
   })
 
   it('成功：回绑定 id、token 与设备', async () => {

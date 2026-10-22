@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Check, Link2, RefreshCw, Trash2, X } from 'lucide-react'
 import type { Binding } from '../../lib/config.ts'
-import { isPairableAddress } from '../../lib/pair-code.ts'
+import { isPairableAddress, isPlaintextRemote } from '../../lib/pair-code.ts'
 import { Button } from '@/components/acrylic/button.tsx'
 import { Badge } from '@/components/acrylic/badge.tsx'
 import { Item, ItemContent, ItemTitle, ItemDescription, ItemActions } from '@/components/acrylic/item.tsx'
@@ -123,7 +123,13 @@ export function BindingsPanel() {
           <InputGroupInput value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} placeholder="https://stream.example.com" />
         </InputGroup>
         {!addressOk && (
-          <p className="text-[11px] text-[var(--acr-orange)]">Only HTTPS or this computer’s address can be paired.</p>
+          <p className="text-[11px] text-[var(--acr-orange)]">Enter an http:// or https:// address.</p>
+        )}
+        {addressOk && isPlaintextRemote(baseUrl.trim()) && (
+          <p className="text-[11px] text-muted-foreground">
+            Not encrypted: anyone on the network path can read the pairing token and the cookies you
+            share. Fine on your home network or Tailscale; use https:// over the internet.
+          </p>
         )}
         <InputGroup>
           <InputGroupInput

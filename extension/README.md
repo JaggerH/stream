@@ -68,8 +68,9 @@ app/host-agent/target/x86_64-pc-windows-gnu/release/stream-desktop.exe \
    curl -X POST http://127.0.0.1:8900/api/devices/<deviceId>/ext-pairing-code   # → {"code":"123456",…}
    ```
    设备要先配对好（这台机器上的 agent，`linux:<uuid>` 之类）；`local` 不需要也不允许签。
-2. 弹窗 → **Streams** 页签 → 填那个 Stream 的地址与 6 位码 → Pair。地址只接受 `https://` 或本机地址
-   （配对这一步 token 要过一次网络）。
+2. 弹窗 → **Streams** 页签 → 填那个 Stream 的地址与 6 位码 → Pair。`http://` 和 `https://` 都行。
+   远程的 `http://` 地址 popup 会提示**不加密**：配对码、token 和之后交出去的 cookie 在路上都是明文，
+   家里内网或 Tailscale 上无所谓，走公网请用 `https://`。
 3. 那个 Stream 第一次来要某个站的 cookie 时，那个域会出现在这条绑定下面的 **Wants cookies for**，
    点 Allow 之后才给。**远处的 Stream 要什么不会自动给**——本机那条照旧自动。
 

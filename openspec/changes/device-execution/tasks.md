@@ -31,7 +31,7 @@
 - [x] 5. lane 与 Transport 按绑定；预算按绑定计；常驻标签文件本机形状不变
 - [x] 6. 登录与 cookie 拉取在执行设备上（按设备的 `CookiePuller`，远程设备只取绑到它的 facility 的域）
 - [x] 7. 配对 / 列表 / 撤销接口与 serve 接线；`claimed-tabs?binding=`
-- [x] 8. 扩展：一组绑定（本机那条就是原 `config`，不迁移）、配对码配对（只认 HTTPS / 回环）
+- [x] 8. 扩展：一组绑定（本机那条就是原 `config`，不迁移）、配对码配对（HTTP / HTTPS 都认，远程明文时提示不加密）
 - [x] 9. 扩展：driver 按绑定的会话（`BindingRuntime`），别的绑定的 tab 一律拒
 - [x] 10. 扩展：按绑定同步、待批准域名（远程实例经 `cookiePull` 申报）、popup 的 Streams 页签
 - [x] 11. ARCHITECTURE / 扩展 README；后端实机冒烟（配对、验身份、连上、列表、撤销 4003、撤销后 401）

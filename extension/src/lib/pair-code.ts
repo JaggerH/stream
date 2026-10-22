@@ -4,13 +4,15 @@
  * 码是用户在那个 Stream 上**为某台设备**签的：配上之后，这个 Chrome 就是那台设备的浏览器。
  * 换回来的 token 只对这一条绑定有效，之后每次连接前仍先挑战应答（`verifyBackend` 带 `binding`）。
  *
- * **只配 HTTPS 或本机地址。** 配对这一步 token 要过一次网络——明文 HTTP 上谁在路上谁就拿走了它。
- * 地址不合格时在发出任何请求之前就拒绝：码也不该被明文送出去。
+ * **HTTPS 和 HTTP 都配。** 自建的 Stream 多半没有证书，只收 HTTPS 等于把它们全挡在门外。
+ * 代价要说清：明文 HTTP 上，配对码、token、之后 `cookiePull` 交出去的 cookie 都是路上可见的，
+ * 同一网络里能截包的人就拿得到——所以远程明文地址照配，但 popup 要明说（`isPlaintextRemote`）。
+ * 内网 / Tailscale（WireGuard 本身加密）下这个代价基本不存在。
  */
 
 export class PairAddressRefused extends Error {
   constructor(baseUrl: string) {
-    super(`只能配对 HTTPS 或本机地址：${baseUrl}`)
+    super(`只能配对 http:// 或 https:// 地址：${baseUrl}`)
     this.name = 'PairAddressRefused'
   }
 }
@@ -24,14 +26,23 @@ export class PairFailed extends Error {
 
 const LOOPBACK = new Set(['127.0.0.1', 'localhost', '[::1]'])
 
-export function isPairableAddress(baseUrl: string): boolean {
-  let u: URL
+function parse(baseUrl: string): URL | null {
   try {
-    u = new URL(baseUrl)
+    return new URL(baseUrl)
   } catch {
-    return false
+    return null
   }
-  return u.protocol === 'https:' || (u.protocol === 'http:' && LOOPBACK.has(u.hostname))
+}
+
+export function isPairableAddress(baseUrl: string): boolean {
+  const u = parse(baseUrl)
+  return u?.protocol === 'https:' || u?.protocol === 'http:'
+}
+
+/** 明文、且不在本机：token 和 cookie 会不加密地过网络（popup 据此提醒，不拦）。 */
+export function isPlaintextRemote(baseUrl: string): boolean {
+  const u = parse(baseUrl)
+  return u?.protocol === 'http:' && !LOOPBACK.has(u.hostname)
 }
 
 export interface PairedReply {
