@@ -37,7 +37,7 @@ function parseLines(text: string): string[] {
   return text.split('\n').map((l) => l.trim()).filter(Boolean)
 }
 
-/** Collapsible section — same framing as BackendSettings so the sheet stays scannable
+/** Collapsible section — same framing as the other settings sheets so this one stays scannable
  *  (bordered box, title + chevron, body collapses). Each section keeps its own open state. */
 function Section({ title, defaultOpen = false, children }: { title: string; defaultOpen?: boolean; children: ReactNode }) {
   const [open, setOpen] = useState(defaultOpen)

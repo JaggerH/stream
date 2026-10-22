@@ -53,7 +53,7 @@ export function SourceParamField({
   const options = paramOptions(spec)
   const fieldId = `param-${name}`
   // 走 Field + acrylic Input，不再由调用方传一串手搓的 inputClassName —— 那是本 Sheet 的字阶/
-  // 控件样式和别处对不上的来源之一。Field 不带 size：13px 的默认字阶，和 BackendSettings /
+  // 控件样式和别处对不上的来源之一。Field 不带 size：13px 的默认字阶，和
   // StreamSettingPage 等其他 config sheet 对齐。
   return (
     <Field orientation="vertical">

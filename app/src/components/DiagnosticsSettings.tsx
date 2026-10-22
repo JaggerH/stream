@@ -12,9 +12,8 @@ import type { DiagnosticSession } from '../lib/diagnostics/types.ts'
  * 诊断飞行记录器的控制面。开关默认关闭；开启后 App 才会建 recorder。
  * 这里只做「开关 / 提示 / 导出 / 清除」—— 原始时间线不常驻渲染到页面上（spec）。
  *
- * 渲染成 SettingsRow/SettingsBlock 而不是自带排版：它和 Debug 面板、卡顿归因同住
- * BackendSettings 的「调试」一节，自己另起一套行距和控件（原先是原生 checkbox）会在
- * 三者并排时露馅。
+ * 渲染成 SettingsRow/SettingsBlock 而不是自带排版：它要和 Debug 面板开关、卡顿归因说明
+ * 并排放在同一节，自己另起一套行距和控件（原先是原生 checkbox）会在三者并排时露馅。
  */
 export function DiagnosticsSettings() {
   const [enabled, setEnabled] = useDiagnosticsEnabled()
