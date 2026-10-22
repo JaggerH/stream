@@ -27,4 +27,16 @@ describe('DSH 设置里的 Stream 分区', () => {
     expect(screen.getByRole('button', { name: /添加手机/ })).toBeTruthy()
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('http://127.0.0.1:8900/api/devices', expect.anything()))
   })
+
+  /** 采集浏览器、远程访问令牌、音频归档原先住在一张从没挂载过的弹窗里，面板里一直找不到。 */
+  it('有一页「设置」：采集浏览器、远程访问、音频归档', async () => {
+    const el = document.createElement('div')
+    document.body.appendChild(el)
+    act(() => mount(el, { backend: 'http://127.0.0.1:8900' }))
+    fireEvent.click(await screen.findByRole('tab', { name: '设置' }))
+    expect(await screen.findByText('采集浏览器')).toBeTruthy()
+    expect(screen.getByText('远程访问')).toBeTruthy()
+    expect(screen.getByText('音频归档')).toBeTruthy()
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('http://127.0.0.1:8900/api/access-token', expect.anything()))
+  })
 })
