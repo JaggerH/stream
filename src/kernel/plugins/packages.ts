@@ -106,6 +106,8 @@ export interface PackagesService {
   networkFor: (pkgId: string) => PackageNetwork | undefined
   /** facility → 执行位置声明（recipe 源按 facility 找到它的包）。 */
   networkForFacility: (facility: string) => PackageNetwork | undefined
+  /** 全部 facility（每个一份，同 `networkForFacility` 的索引）：面板列「账号在哪台设备上」。 */
+  facilities: () => PackageNetwork[]
   /** 「所有带 backend 的包」的唯一合并名单（内置 + 用户装的第三方）。 */
   backendDirectory: BackendDirectory
   /** 容器取址走哪个档（host loopback / compose 容器 DNS / 没有容器）。 */
@@ -672,6 +674,7 @@ export const packagesPlugin = {
       layerPick: picked.pick,
       networkFor: (id) => networkIndex.get(id),
       networkForFacility: (f) => facilityIndex.get(f),
+      facilities: () => [...facilityIndex.values()],
       backendDirectory,
       netMode,
       isPluginEnabled,

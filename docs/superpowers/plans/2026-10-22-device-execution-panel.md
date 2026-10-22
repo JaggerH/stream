@@ -120,7 +120,7 @@
 
 **Files:** `app/src/components/FacilityDevicesSettings.tsx`(+test)、`BackendSettings.tsx`
 
-- [ ] 失败的测试：每个 facility 一行，下拉 = 本机 + 已配对设备（离线的也列、标「离线」）；改选调 PUT，选回本机调 DELETE；后端 400 原话 toast 并回滚下拉。
+- [ ] 失败的测试：**只列绑到非本机设备的 facility**（实测 `GET /api/devices/facilities` 有 51 个，含 `builtin` / `rsshub` 这类宿主伪包，平铺不可用），每行一个设备下拉 = 本机 + 已配对设备（离线的也列、标「离线」）；「添加」是一个按名过滤的 facility 选择 + 设备选择；改选调 PUT，选回本机调 DELETE（该行消失）；后端 400 原话 toast 并回滚下拉。
 - [ ] 实现，挂在「设备」节下面一个子节「账号在哪台设备上执行」。
 - [ ] Commit `feat(panel): pick the device a facility runs on` + push。
 

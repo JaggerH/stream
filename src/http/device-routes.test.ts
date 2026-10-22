@@ -22,7 +22,8 @@ beforeEach(() => {
   mountDeviceRoutes(app, {
     store, registry,
     bindings: new FacilityDeviceStore(join(dir, 'stream.db')),
-    knownFacility: (f) => f === 'eastmoney',
+    knownFacility: (f) => f === 'eastmoney' || f === 'bilibili',
+    facilities: () => [{ facility: 'eastmoney', packageId: '@streamapp/eastmoney' }, { facility: 'bilibili', packageId: '@streamapp/bilibili' }],
     isLocal: () => local,
     backendUrls: () => ['http://10.9.8.21:8900', 'http://100.70.0.5:8900'],
   })
@@ -59,6 +60,16 @@ describe('device routes', () => {
     expect(ok.status).toBe(200)
     expect(await ok.json()).toEqual({ facility: 'eastmoney', deviceId })
     expect(await (await app.request('/api/devices/bindings')).json()).toEqual({ bindings: [{ facility: 'eastmoney', deviceId }] })
+  })
+
+  it('facility 列表：全部已知 facility 按名排序，绑了的带设备，没绑的是 local', async () => {
+    const { code } = await (await post('/api/devices/pairing-code')).json() as { code: string }
+    const { deviceId } = await (await post('/api/devices/pair', { code, name: 'NAS', platform: 'linux' })).json() as { deviceId: string }
+    await app.request('/api/devices/bindings/eastmoney', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ deviceId }) })
+    expect(await (await app.request('/api/devices/facilities')).json()).toEqual({ facilities: [
+      { facility: 'bilibili', packageId: '@streamapp/bilibili', deviceId: 'local' },
+      { facility: 'eastmoney', packageId: '@streamapp/eastmoney', deviceId },
+    ] })
   })
 
   it('pair accepts platform linux and rejects unknown platforms', async () => {

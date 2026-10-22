@@ -862,6 +862,7 @@ const apiToken = config.api_token || loadOrCreateApiToken(dirname(config.item_db
     ...(facilityDevices ? { bindings: facilityDevices } : {}),
     // 只收有包认领的 facility；调用时才问（包热装卸会变）。
     knownFacility: (f) => pkgs.networkForFacility(f) !== undefined,
+    facilities: () => pkgs.facilities(),
     // 设备没了，挂在它上面的 Chrome 也就没有执行位置可言——一并撤销并断开。
     onRevoked: (id) => {
       for (const b of extBindings.revokeDevice(id)) harvest.extRelays.kick(b, REVOKED_CLOSE_CODE, 'revoked')

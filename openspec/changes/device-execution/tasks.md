@@ -42,7 +42,7 @@
 实施计划：`docs/superpowers/plans/2026-10-22-device-execution-panel.md`。
 
 - [x] 1. 设备的默认扩展绑定（`pick` 先看它，离线退回最近连上）；配对码回 `backends`
-- [ ] 2. `GET /api/devices/facilities`：全部 facility 及其默认设备
+- [x] 2. `GET /api/devices/facilities`：全部 facility 及其默认设备
 - [ ] 3. 运行记录带 `deviceId` / `bindingId`
 - [ ] 4. 面板 API 层
 - [ ] 5. 设备卡片：Linux 设备、添加浏览器（码 + 倒计时 + 地址）、浏览器列表、设为默认、撤销

@@ -28,6 +28,8 @@ export interface DeviceRoutesDeps {
    * 不报错，真正的执行照旧按本机跑——用户以为绑好了。与 `bindings` 同在时必须给。
    */
   knownFacility?: (facility: string) => boolean
+  /** 全部已知 facility（与 `knownFacility` 同源：`pkgs.facilities`），面板据此画「账号在哪台设备上」。 */
+  facilities?: () => Array<{ facility: string; packageId: string }>
   isLocal: (c: Context) => boolean
   /** Base URLs where a phone on the LAN can reach this backend (`http://<ip>:<port>`). */
   backendUrls: (c: Context) => string[]
@@ -123,6 +125,15 @@ export function mountDeviceRoutes(app: Hono, deps: DeviceRoutesDeps): void {
     id === LOCAL_DEVICE || deps.store.list().some((d) => d.deviceId === id) || deps.registry.devices().some((d) => d.hello.deviceId === id)
 
   app.get('/api/devices/bindings', (c) => c.json({ bindings: bindings.list() }))
+
+  // 没绑的也列出来（设备 = local）：面板要给每个账号一个下拉，只列绑过的就没法绑第一次。
+  app.get('/api/devices/facilities', (c) => {
+    const bound = new Map(bindings.list().map((b) => [b.facility, b.deviceId]))
+    const facilities = (deps.facilities?.() ?? [])
+      .map((f) => ({ facility: f.facility, packageId: f.packageId, deviceId: bound.get(f.facility) ?? LOCAL_DEVICE }))
+      .sort((a, b) => a.facility.localeCompare(b.facility))
+    return c.json({ facilities })
+  })
 
   app.put('/api/devices/bindings/:facility', async (c) => {
     let body: unknown
