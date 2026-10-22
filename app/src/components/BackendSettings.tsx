@@ -3,7 +3,7 @@ import { useBackend } from '../lib/backend.tsx'
 import { useDebugEnabled } from '../lib/debugFlag.ts'
 import { Switch } from './ui/switch.tsx'
 import { RemoteAccessSettings } from './RemoteAccessSettings.tsx'
-import { PhoneDevicesSettings } from './PhoneDevicesSettings.tsx'
+import { DevicesSettings } from './DevicesSettings.tsx'
 import { HarvestBrowserSettings } from './HarvestBrowserSettings.tsx'
 import { DiagnosticsSettings } from './DiagnosticsSettings.tsx'
 import { Sheet, SheetContent, SheetFooter, SheetHeader, SheetTitle } from './acrylic/sheet.tsx'
@@ -150,15 +150,15 @@ export function BackendSettings({ open, onClose }: { open: boolean; onClose: () 
                 </SettingsBlock>
               </SettingsSection>
 
-              {/* 手机配对：配对码只在本机生成（后端对非 loopback 直接 403）。 */}
+              {/* 设备与它们的浏览器：配对码只在本机生成（后端对非 loopback 直接 403）。 */}
               <SettingsSection
-                title="手机"
+                title="设备"
                 collapsible
                 {...section('phones')}
-                footnote="手机装 Stream 后扫码配对"
+                footnote="手机装 Stream 后扫码配对；电脑上的 Chrome 用「添加浏览器」"
               >
                 <SettingsBlock>
-                  <PhoneDevicesSettings conn={conn} />
+                  <DevicesSettings conn={conn} />
                 </SettingsBlock>
               </SettingsSection>
 

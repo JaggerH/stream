@@ -5,7 +5,7 @@
  * 频道自己的配置已经回到频道里了（各 Present 顶栏下的「配置」分页），剩下这些全局的没有
  * 归属，落点是 DSH 设置里的一个 Stream 分区（`settings.section` 插槽，注册在
  * dsh-plugin-stream-ui 那侧）。**三页**（分页条切换）：包与插件（`PackagesPage`）、源健康
- * （`SourceHealthList` / `SourceRepairPage`，spec 2026-09-12 §4）、手机（`PhoneDevicesSettings`：
+ * （`SourceHealthList` / `SourceRepairPage`，spec 2026-09-12 §4）、设备（`DevicesSettings`：
  * 配对码与二维码、设备列表、撤销——配对码只在本机生成，这一页正是在本机打开的）。
  *
  * **为什么是独立 bundle 而不是塞进主面板**：主 bundle 是**开页必载**的那一份，而这一页
@@ -50,7 +50,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import '../entry.css'
 import '../i18n/index.ts'   // 副作用 import：设好 react-i18next 的全局默认实例
 import { applyBackend, LOCAL } from '../lib/api.ts'
-import { PhoneDevicesSettings } from '../components/PhoneDevicesSettings.tsx'
+import { DevicesSettings } from '../components/DevicesSettings.tsx'
 import { PackagesPage } from '../components/packages/PackagesPage.tsx'
 import { PreviewModal } from '../components/PreviewModal.tsx'
 import { PreviewContext, type PreviewTarget } from '../lib/previewStage.ts'
@@ -89,10 +89,10 @@ function ManageShell({ backend, initial }: { backend: string; initial?: ManageTa
     <PreviewContext.Provider value={{ openPreview: setPreview }}>
     <VideoStageProvider baseUrl={backend} openId={openVideoId} onOpenIdChange={setOpenVideoId}>
     <div className="flex h-full min-h-0 flex-col text-foreground">
-      <div role="tablist" className="flex gap-1 border-b px-2">{tab('packages', '包与插件')}{tab('source-health', '源健康')}{tab('phones', '手机')}</div>
+      <div role="tablist" className="flex gap-1 border-b px-2">{tab('packages', '包与插件')}{tab('source-health', '源健康')}{tab('phones', '设备')}</div>
       <div className="min-h-0 flex-1 overflow-y-auto">
         {view.page === 'packages' ? <PackagesPage apiBase={backend} />
-          : view.page === 'phones' ? <div className="p-4"><PhoneDevicesSettings conn={LOCAL} /></div>
+          : view.page === 'phones' ? <div className="p-4"><DevicesSettings conn={LOCAL} /></div>
           : view.sourceId ? <SourceRepairPage apiBase={backend} sourceId={view.sourceId} onBack={() => setView({ page: 'source-health' })} />
           : <SourceHealthList apiBase={backend} onOpen={(sourceId) => setView({ page: 'source-health', sourceId })} />}
       </div>

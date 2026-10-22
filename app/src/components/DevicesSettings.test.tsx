@@ -1,6 +1,6 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
-import { PhoneDevicesSettings } from './PhoneDevicesSettings.tsx'
+import { DevicesSettings } from './DevicesSettings.tsx'
 
 const conn = { baseUrl: 'http://127.0.0.1:8900' } as never
 const fetchMock = vi.fn()
@@ -12,7 +12,7 @@ beforeEach(() => {
 
 const json = (body: unknown, status = 200) => Promise.resolve({ ok: status < 400, status, json: async () => body })
 
-describe('PhoneDevicesSettings', () => {
+describe('DevicesSettings', () => {
   it('lists devices with their online state and revokes a paired phone', async () => {
     fetchMock.mockImplementation((_url: string, init?: RequestInit) => {
       if (init?.method === 'DELETE') return Promise.resolve({ ok: true, status: 204, json: async () => null })
@@ -21,7 +21,7 @@ describe('PhoneDevicesSettings', () => {
         { deviceId: 'desktop:pc', name: 'PC', platform: 'windows', paired: false, online: true },
       ] })
     })
-    render(<PhoneDevicesSettings conn={conn} />)
+    render(<DevicesSettings conn={conn} />)
     expect(await screen.findByText('K80')).toBeTruthy()
     expect(screen.getByText('PC')).toBeTruthy()
     expect(screen.queryByRole('button', { name: '撤销 PC' })).toBeNull()
@@ -35,7 +35,7 @@ describe('PhoneDevicesSettings', () => {
       { deviceId: 'android:1', name: 'K80', platform: 'android', paired: true, online: true,
         state: { a11yEnabled: false, screenOn: true, keyguardLocked: false, battery: 40, charging: false } },
     ] }))
-    render(<PhoneDevicesSettings conn={conn} />)
+    render(<DevicesSettings conn={conn} />)
     expect(await screen.findByText('无障碍已关')).toBeTruthy()
     expect(screen.getByRole('link', { name: '下载安卓 App' }).getAttribute('href'))
       .toBe('http://127.0.0.1:8900/panel/android/stream.apk')
@@ -50,7 +50,7 @@ describe('PhoneDevicesSettings', () => {
       }
       return json({ devices: [] })
     })
-    const { container } = render(<PhoneDevicesSettings conn={conn} />)
+    const { container } = render(<DevicesSettings conn={conn} />)
     fireEvent.click(await screen.findByRole('button', { name: '添加手机' }))
     expect(await screen.findByText('123456')).toBeTruthy()
     // Both addresses are listed (for manual entry), under a single code.
@@ -69,7 +69,7 @@ describe('PhoneDevicesSettings', () => {
     // Fake only the interval so findBy*/waitFor keep running on real timers.
     vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
     try {
-      render(<PhoneDevicesSettings conn={conn} />)
+      render(<DevicesSettings conn={conn} />)
       fireEvent.click(await screen.findByRole('button', { name: '添加手机' }))
       await screen.findByText('123456')
       const listCalls = () => fetchMock.mock.calls.filter(([u]) => String(u).endsWith('/api/devices')).length
@@ -93,7 +93,7 @@ describe('PhoneDevicesSettings', () => {
     })
     vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
     try {
-      render(<PhoneDevicesSettings conn={conn} />)
+      render(<DevicesSettings conn={conn} />)
       fireEvent.click(await screen.findByRole('button', { name: '添加手机' }))
       await screen.findByText('123456')
       paired = true
@@ -117,7 +117,7 @@ describe('PhoneDevicesSettings', () => {
     })
     vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval', 'Date'] })
     try {
-      render(<PhoneDevicesSettings conn={conn} />)
+      render(<DevicesSettings conn={conn} />)
       fireEvent.click(await screen.findByRole('button', { name: '添加手机' }))
       await screen.findByText('123456')
       await vi.advanceTimersByTimeAsync(6000)
@@ -130,5 +130,88 @@ describe('PhoneDevicesSettings', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  describe('browsers on a device', () => {
+    const NAS = { deviceId: 'linux:nas', name: 'NAS', platform: 'linux', paired: true, online: true }
+    const K80 = { deviceId: 'android:1', name: 'K80', platform: 'android', paired: true, online: true }
+    const chrome = (over: Record<string, unknown> = {}) => ({
+      bindingId: 'ext:a', deviceId: 'linux:nas', name: 'Chrome', platform: 'Win32', pairedAt: 1, online: true, default: false, ...over,
+    })
+    /** 一张路由表：URL 结尾 + 方法 → 回答。没写到的 GET 回空列表。 */
+    const routes = (bindings: () => unknown[], extra: (url: string, init?: RequestInit) => unknown = () => undefined) =>
+      fetchMock.mockImplementation((url: string, init?: RequestInit) => {
+        const hit = extra(String(url), init)
+        if (hit !== undefined) return hit
+        if (init?.method === 'PUT' || init?.method === 'DELETE') return Promise.resolve({ ok: true, status: 204, json: async () => null })
+        if (String(url).endsWith('/api/ext/bindings')) return json({ bindings: bindings() })
+        return json({ devices: [NAS, K80] })
+      })
+
+    it('a Linux device says Linux and can add a browser; a phone cannot', async () => {
+      routes(() => [])
+      render(<DevicesSettings conn={conn} />)
+      expect(await screen.findByText('NAS')).toBeTruthy()
+      expect(screen.getByText('Linux')).toBeTruthy()
+      expect(screen.getByRole('button', { name: 'NAS 添加浏览器' })).toBeTruthy()
+      expect(screen.queryByRole('button', { name: 'K80 添加浏览器' })).toBeNull()
+    })
+
+    it('lists the browsers under their device, marks the default, sets and revokes', async () => {
+      routes(() => [chrome(), chrome({ bindingId: 'ext:b', name: 'Edge', online: false, default: true })])
+      render(<DevicesSettings conn={conn} />)
+      expect(await screen.findByText('Chrome')).toBeTruthy()
+      expect(screen.getByText('Edge')).toBeTruthy()
+      expect(screen.getByText('默认')).toBeTruthy()
+      expect(screen.queryByRole('button', { name: 'Edge 设为默认' })).toBeNull()
+      fireEvent.click(screen.getByRole('button', { name: 'Chrome 设为默认' }))
+      await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+        'http://127.0.0.1:8900/api/ext/bindings/ext%3Aa/default', expect.objectContaining({ method: 'PUT' })))
+      fireEvent.click(screen.getByRole('button', { name: 'Edge 取消默认' }))
+      await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+        'http://127.0.0.1:8900/api/ext/bindings/ext%3Ab/default', expect.objectContaining({ method: 'DELETE' })))
+      fireEvent.click(screen.getByRole('button', { name: '撤销浏览器 Chrome' }))
+      await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
+        'http://127.0.0.1:8900/api/ext/bindings/ext%3Aa', expect.objectContaining({ method: 'DELETE' })))
+    })
+
+    it('"添加浏览器" shows the code and the addresses to type into the extension', async () => {
+      routes(() => [], (url) => url.endsWith('/api/devices/linux%3Anas/ext-pairing-code')
+        ? json({ code: '654321', expiresAt: Date.now() + 300_000, backends: ['http://10.9.8.21:8900', 'http://100.70.0.5:8900'] })
+        : undefined)
+      render(<DevicesSettings conn={conn} />)
+      fireEvent.click(await screen.findByRole('button', { name: 'NAS 添加浏览器' }))
+      expect(await screen.findByText('654321')).toBeTruthy()
+      expect(screen.getByText('http://10.9.8.21:8900')).toBeTruthy()
+      expect(screen.getByText('http://100.70.0.5:8900')).toBeTruthy()
+    })
+
+    it('says what the backend said when it will not mint a code', async () => {
+      routes(() => [], (url) => url.endsWith('/ext-pairing-code')
+        ? json({ error: '配对码只能在运行 Stream 的那台机器上生成' }, 403)
+        : undefined)
+      render(<DevicesSettings conn={conn} />)
+      fireEvent.click(await screen.findByRole('button', { name: 'NAS 添加浏览器' }))
+      expect(await screen.findByText('配对码只能在运行 Stream 的那台机器上生成')).toBeTruthy()
+    })
+
+    it('a browser that pairs while the code is up clears the code', async () => {
+      let list: unknown[] = []
+      routes(() => list, (url) => url.endsWith('/ext-pairing-code')
+        ? json({ code: '654321', expiresAt: Date.now() + 300_000, backends: [] })
+        : undefined)
+      vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
+      try {
+        render(<DevicesSettings conn={conn} />)
+        fireEvent.click(await screen.findByRole('button', { name: 'NAS 添加浏览器' }))
+        await screen.findByText('654321')
+        list = [chrome()]
+        await vi.advanceTimersByTimeAsync(3000)
+        await waitFor(() => expect(screen.queryByText('654321')).toBeNull())
+        expect(screen.getByText('Chrome')).toBeTruthy()
+      } finally {
+        vi.useRealTimers()
+      }
+    })
   })
 })

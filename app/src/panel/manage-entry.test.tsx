@@ -22,7 +22,7 @@ describe('DSH 设置里的 Stream 分区', () => {
     const el = document.createElement('div')
     document.body.appendChild(el)
     act(() => mount(el, { backend: 'http://127.0.0.1:8900' }))
-    fireEvent.click(await screen.findByRole('tab', { name: '手机' }))
+    fireEvent.click(await screen.findByRole('tab', { name: '设备' }))
     expect(await screen.findByText('K80')).toBeTruthy()
     expect(screen.getByRole('button', { name: /添加手机/ })).toBeTruthy()
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('http://127.0.0.1:8900/api/devices', expect.anything()))

@@ -98,7 +98,7 @@ export interface SearchWarning {
 export interface DeviceRow {
   deviceId: string
   name: string
-  platform: 'windows' | 'macos' | 'android'
+  platform: 'windows' | 'macos' | 'android' | 'linux'
   paired: boolean
   online: boolean
   pairedAt?: number
@@ -106,6 +106,27 @@ export interface DeviceRow {
   agentVersion?: string
   /** Latest self-report of an online phone; absent until it has sent one. */
   state?: { a11yEnabled: boolean; screenOn: boolean; keyguardLocked: boolean; battery: number; charging: boolean }
+}
+
+/** One row of `GET /api/ext/bindings`: a Chrome extension paired onto a device. Never carries the token. */
+export interface ExtBindingRow {
+  bindingId: string
+  deviceId: string
+  name: string
+  browser?: string
+  platform?: string
+  pairedAt: number
+  lastSeenAt?: number
+  online: boolean
+  /** The device's default browser: runs on that device use it while it is online. */
+  default: boolean
+}
+
+/** One row of `GET /api/devices/facilities`: a facility some package claims, and where it runs (`local` if unbound). */
+export interface FacilityDeviceRow {
+  facility: string
+  packageId: string
+  deviceId: string
 }
 
 /** 一个成员跑了多久、结果如何。搜索是并发扇出，**总耗时只等于最慢那个成员**——所以"谁慢"
@@ -336,6 +357,8 @@ async function put<T>(conn: Connection, path: string, body: unknown, opts?: { ke
     const detail = (await res.json().catch(() => null)) as unknown
     throw new ApiError(apiErrorMessage(detail) || `PUT ${path} → ${res.status}`, res.status, apiErrorCode(detail))
   }
+  // 204 No Content (e.g. PUT /api/ext/bindings/:id/default) has no body to parse.
+  if (res.status === 204) return undefined as T
   return res.json() as Promise<T>
 }
 
@@ -891,6 +914,20 @@ export const api = {
     list: (c: Connection) => get<{ devices: DeviceRow[] }>(c, '/api/devices'),
     pairingCode: (c: Connection) => post<{ code: string; expiresAt: number; qr: string[] }>(c, '/api/devices/pairing-code', {}),
     revoke: (c: Connection, id: string) => del<null>(c, `/api/devices/${encodeURIComponent(id)}`),
+    /** A one-time code for pairing a Chrome extension onto this device. This machine only. */
+    extPairingCode: (c: Connection, id: string) =>
+      post<{ code: string; expiresAt: number; backends: string[] }>(c, `/api/devices/${encodeURIComponent(id)}/ext-pairing-code`, {}),
+    facilities: (c: Connection) => get<{ facilities: FacilityDeviceRow[] }>(c, '/api/devices/facilities'),
+    setFacilityDevice: (c: Connection, facility: string, deviceId: string) =>
+      put<{ facility: string; deviceId: string }>(c, `/api/devices/bindings/${encodeURIComponent(facility)}`, { deviceId }),
+    clearFacilityDevice: (c: Connection, facility: string) => del<null>(c, `/api/devices/bindings/${encodeURIComponent(facility)}`),
+  },
+  /** Chrome extensions paired onto devices (design D7). */
+  extBindings: {
+    list: (c: Connection) => get<{ bindings: ExtBindingRow[] }>(c, '/api/ext/bindings'),
+    revoke: (c: Connection, id: string) => del<null>(c, `/api/ext/bindings/${encodeURIComponent(id)}`),
+    setDefault: (c: Connection, id: string) => put<null>(c, `/api/ext/bindings/${encodeURIComponent(id)}/default`, {}),
+    clearDefault: (c: Connection, id: string) => del<null>(c, `/api/ext/bindings/${encodeURIComponent(id)}/default`),
   },
   /** 摘要 prompt（settings 里唯一还归 LLM 的字段）+ 梯子就绪状态。连接与模型走 Providers 页
    *  （`llm` 行的成员实例 + 调用点绑定），不在这里写。 */

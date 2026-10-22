@@ -12,6 +12,10 @@ export interface TaskRunView {
   errors: unknown
   /** 失败的那句人话（后端从 errors 里取并翻译）；没失败或没说明就是 null。老后端没有这一格。 */
   failure?: string | null
+  /** 在哪台设备上跑的（`local` = 主实例本机）。老后端没有这一格。 */
+  deviceId?: string
+  /** 远程执行用过浏览器时选定的扩展绑定。 */
+  bindingId?: string
 }
 
 export interface TaskListItem {
@@ -28,6 +32,8 @@ export interface TaskListItem {
   command?: string
   /** 执行体之二：包提供的动作（`<包 id>:<动作名>`）。与 `command` 二选一。 */
   action?: string
+  /** 执行设备覆盖；缺席 = 跟随动作所属 facility 的默认设备。只对 `action` 任务有意义。 */
+  device?: string
   args?: string[]
   cwd?: string
   env?: Record<string, string>
