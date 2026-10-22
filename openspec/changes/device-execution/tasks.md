@@ -35,7 +35,7 @@
 - [x] 9. 扩展：driver 按绑定的会话（`BindingRuntime`），别的绑定的 tab 一律拒
 - [x] 10. 扩展：按绑定同步、待批准域名（远程实例经 `cookiePull` 申报）、popup 的 Streams 页签
 - [x] 11. ARCHITECTURE / 扩展 README；后端实机冒烟（配对、验身份、连上、列表、撤销 4003、撤销后 401）
-- [ ] 两端真机冒烟：同一个 Chrome 绑本机与另一个实例、各自开组、跨组命令被拒、新域待批准（需要有 Chrome 的机器）
+- [x] 两端真机冒烟：同一个 Chrome 绑本机与另一个实例、各自开组、跨组命令被拒、新域待批准（2026-10-22：无头 Chrome 跑全五条；Windows 真机 Chrome 经 tailnet `http://` 配对、待批准、批准、撤销）
 
 ## 计划 4：面板
 
