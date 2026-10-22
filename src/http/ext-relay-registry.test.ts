@@ -4,13 +4,14 @@ import { ExtRelayRegistry } from './ext-relay-registry.ts'
 import { DeviceIncapable, DeviceOffline } from '../devices/errors.ts'
 
 const sock = () => ({ send: () => {} })
-const make = (bindings: Record<string, string>) => {
+const make = (bindings: Record<string, string>, defaults: Record<string, string> = {}) => {
   let t = 0
   const reg = new ExtRelayRegistry({
     local: new ExtRelay(),
     makeRelay: () => new ExtRelay(),
     deviceOf: (id) => bindings[id],
     bindingsOf: (dev) => Object.keys(bindings).filter((k) => bindings[k] === dev),
+    defaultOf: (dev) => defaults[dev],
     now: () => ++t,
   })
   return reg
@@ -36,6 +37,20 @@ describe('ExtRelayRegistry', () => {
     reg.connect('ext:b', sock())
     expect(reg.pick('linux:nas')).toBe('ext:b')
     expect(reg.hasBrowser('linux:nas')).toBe(true)
+  })
+
+  it('the device default wins over a more recent connection while it is online', () => {
+    const reg = make({ 'ext:a': 'linux:nas', 'ext:b': 'linux:nas' }, { 'linux:nas': 'ext:a' })
+    reg.connect('ext:a', sock())
+    reg.connect('ext:b', sock())
+    expect(reg.pick('linux:nas')).toBe('ext:a')
+  })
+
+  it('an offline default falls back to the most recent online binding, not an error', () => {
+    const reg = make({ 'ext:a': 'linux:nas', 'ext:b': 'linux:nas', 'ext:c': 'linux:nas' }, { 'linux:nas': 'ext:a' })
+    reg.connect('ext:b', sock())
+    reg.connect('ext:c', sock())
+    expect(reg.pick('linux:nas')).toBe('ext:c')
   })
 
   it('a disconnected binding is skipped', () => {

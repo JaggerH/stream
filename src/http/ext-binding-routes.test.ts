@@ -22,6 +22,7 @@ beforeEach(() => {
     registry: { isOnline: (id) => id.endsWith('online'), kick: vi.fn((id: string, code: number) => { kicked.push([id, code]); return true }) },
     devices: { name: (id) => (id === 'linux:nas' ? 'NAS' : undefined) },
     isLocal: () => local,
+    backendUrls: () => ['http://192.168.1.5:8900'],
     extId: EXT_ID,
   })
 })
@@ -39,7 +40,7 @@ describe('extension binding routes', () => {
     expect((await mint('linux:nope')).status).toBe(404)
     const res = await mint('linux:nas')
     expect(res.status).toBe(200)
-    expect(await res.json()).toMatchObject({ code: expect.stringMatching(/^\d{6}$/) })
+    expect(await res.json()).toMatchObject({ code: expect.stringMatching(/^\d{6}$/), backends: ['http://192.168.1.5:8900'] })
   })
 
   it('配对：只认扩展 Origin；错码 403；对码换回 token 与设备名', async () => {
@@ -58,7 +59,7 @@ describe('extension binding routes', () => {
     await pair({ code })
     const { bindings } = (await (await app.request('/api/ext/bindings')).json()) as { bindings: Array<Record<string, unknown>> }
     expect(bindings).toHaveLength(1)
-    expect(bindings[0]).toMatchObject({ deviceId: 'linux:nas', online: false })
+    expect(bindings[0]).toMatchObject({ deviceId: 'linux:nas', online: false, default: false })
     expect(bindings[0]).not.toHaveProperty('tokenHash')
   })
 
@@ -68,5 +69,18 @@ describe('extension binding routes', () => {
     expect((await app.request(`/api/ext/bindings/${bindingId}`, { method: 'DELETE' })).status).toBe(204)
     expect(kicked).toEqual([[bindingId, 4003]])
     expect((await app.request(`/api/ext/bindings/${bindingId}`, { method: 'DELETE' })).status).toBe(404)
+  })
+
+  it('默认：PUT 设、DELETE 清，列表跟着变；不认识的绑定 404', async () => {
+    const { code } = (await (await mint('linux:nas')).json()) as { code: string }
+    const { bindingId } = (await (await pair({ code })).json()) as { bindingId: string }
+    const list = async () => ((await (await app.request('/api/ext/bindings')).json()) as { bindings: Array<{ default: boolean }> }).bindings
+    expect((await app.request(`/api/ext/bindings/${bindingId}/default`, { method: 'PUT' })).status).toBe(204)
+    expect((await list())[0].default).toBe(true)
+    expect(store.defaultOf('linux:nas')).toBe(bindingId)
+    expect((await app.request(`/api/ext/bindings/${bindingId}/default`, { method: 'DELETE' })).status).toBe(204)
+    expect((await list())[0].default).toBe(false)
+    expect((await app.request('/api/ext/bindings/ext:nope/default', { method: 'PUT' })).status).toBe(404)
+    expect((await app.request('/api/ext/bindings/ext:nope/default', { method: 'DELETE' })).status).toBe(404)
   })
 })

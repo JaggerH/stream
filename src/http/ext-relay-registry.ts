@@ -18,6 +18,8 @@ export interface ExtRelayRegistryDeps {
   /** 绑定挂在哪台设备（`ExtBindingStore.get`）；`local` 不经它。 */
   deviceOf: (bindingId: string) => string | undefined
   bindingsOf: (deviceId: string) => string[]
+  /** 设备的默认浏览器（`ExtBindingStore.defaultOf`）。没注入 = 没有默认。 */
+  defaultOf?: (deviceId: string) => string | undefined
   now?: () => number
 }
 
@@ -107,6 +109,9 @@ export class ExtRelayRegistry {
     if (!all.length) throw new DeviceIncapable(deviceId, 'browser')
     const online = all.filter((b) => this.isOnline(b))
     if (!online.length) throw new DeviceOffline(deviceId)
+    // 默认是偏好不是约束：它离线时照旧选最近连上的，不让这次执行因为一个设置失败。
+    const preferred = this.deps.defaultOf?.(deviceId)
+    if (preferred && online.includes(preferred)) return preferred
     return online.reduce((best, b) => ((this.connectedAt.get(b) ?? 0) > (this.connectedAt.get(best) ?? 0) ? b : best))
   }
 

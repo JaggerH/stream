@@ -22,6 +22,8 @@ export interface ExtBinding {
   platform?: string
   pairedAt: number
   lastSeenAt?: number
+  /** 这台设备的默认浏览器（面板设的）。每台设备至多一条；没有 = 选最近连上的。 */
+  default?: true
 }
 
 export type ExtPairResult =
@@ -137,6 +139,28 @@ export class ExtBindingStore {
     if (this.rows.length === before) return false
     this.save()
     return true
+  }
+
+  /** 设为所在设备的默认：同设备其余行的标记一并清掉（每台设备至多一条默认）。 */
+  setDefault(bindingId: string): boolean {
+    const hit = this.rows.find((r) => r.bindingId === bindingId)
+    if (!hit) return false
+    for (const r of this.rows) if (r.deviceId === hit.deviceId) delete r.default
+    hit.default = true
+    this.save()
+    return true
+  }
+
+  clearDefault(bindingId: string): boolean {
+    const hit = this.rows.find((r) => r.bindingId === bindingId)
+    if (!hit) return false
+    delete hit.default
+    this.save()
+    return true
+  }
+
+  defaultOf(deviceId: string): string | undefined {
+    return this.rows.find((r) => r.deviceId === deviceId && r.default)?.bindingId
   }
 
   /** 设备被撤销，挂在它上面的绑定一并撤销；返回被撤的 id，调用方据此断开连接。 */

@@ -158,6 +158,7 @@ export interface HarvestConfig {
   extBindings?: {
     get(bindingId: string): { deviceId: string } | undefined
     forDevice(deviceId: string): Array<{ bindingId: string }>
+    defaultOf(deviceId: string): string | undefined
   }
 }
 
@@ -250,6 +251,7 @@ export const harvestPlugin = {
       }),
       deviceOf: (id) => config.extBindings?.get(id)?.deviceId,
       bindingsOf: (dev) => config.extBindings?.forDevice(dev).map((b) => b.bindingId) ?? [],
+      defaultOf: (dev) => config.extBindings?.defaultOf(dev),
     })
     // 每条绑定一个 Transport，按需建、建了就留（无状态，留着只省一次构造）。被撤销的绑定，
     // registry 已经忘了它的 relay，这里的旧 Transport 发命令会拿到 ExtRelayDisconnected。

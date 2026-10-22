@@ -60,6 +60,46 @@ describe('ExtBindingStore', () => {
     expect(s.bindingForToken(a.token)).toBeUndefined()
   })
 
+  it('one default per device: setting another moves it, clearing drops it', () => {
+    const s = fresh()
+    const a = s.pair(s.createPairingCode('linux:nas').code, {})
+    const b = s.pair(s.createPairingCode('linux:nas').code, {})
+    const c = s.pair(s.createPairingCode('linux:pc').code, {})
+    if (!a.ok || !b.ok || !c.ok) throw new Error('pair failed')
+    expect(s.defaultOf('linux:nas')).toBeUndefined()
+    expect(s.setDefault(c.bindingId)).toBe(true)
+    expect(s.setDefault(b.bindingId)).toBe(true)
+    expect(s.defaultOf('linux:nas')).toBe(b.bindingId)
+    expect(s.setDefault(a.bindingId)).toBe(true)
+    expect(s.defaultOf('linux:nas')).toBe(a.bindingId)
+    expect(s.get(b.bindingId)?.default).toBeUndefined()
+    // 另一台设备的默认不受影响
+    expect(s.defaultOf('linux:pc')).toBe(c.bindingId)
+    expect(s.clearDefault(a.bindingId)).toBe(true)
+    expect(s.defaultOf('linux:nas')).toBeUndefined()
+    expect(s.setDefault('ext:nope')).toBe(false)
+    expect(s.clearDefault('ext:nope')).toBe(false)
+  })
+
+  it('the default survives a reload and goes away with its row', () => {
+    const s = fresh()
+    const a = s.pair(s.createPairingCode('linux:nas').code, {})
+    if (!a.ok) throw new Error('pair failed')
+    s.setDefault(a.bindingId)
+    const file = (s as unknown as { file: string }).file
+    expect(new ExtBindingStore(file).defaultOf('linux:nas')).toBe(a.bindingId)
+    s.revoke(a.bindingId)
+    expect(new ExtBindingStore(file).defaultOf('linux:nas')).toBeUndefined()
+  })
+
+  it('a file written before defaults existed reads as no default', () => {
+    const file = join(mkdtempSync(join(tmpdir(), 'extb-')), 'ext-bindings.json')
+    writeFileSync(file, JSON.stringify({ bindings: [{ bindingId: 'ext:a', deviceId: 'linux:nas', name: 'Chrome', pairedAt: 1, tokenHash: '00' }] }))
+    const s = new ExtBindingStore(file)
+    expect(s.defaultOf('linux:nas')).toBeUndefined()
+    expect(s.list()[0].default).toBeUndefined()
+  })
+
   it('refuses to start on an unreadable file', () => {
     const file = join(mkdtempSync(join(tmpdir(), 'extb-')), 'ext-bindings.json')
     writeFileSync(file, '{oops')

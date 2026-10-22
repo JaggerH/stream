@@ -872,6 +872,7 @@ const apiToken = config.api_token || loadOrCreateApiToken(dirname(config.item_db
     registry: harvest.extRelays,
     devices: { name: (id) => deviceStore.list().find((d) => d.deviceId === id)?.name },
     isLocal: (c) => isLoopbackAddress(peerAddress(c)),
+    backendUrls: () => lanBaseUrls(String(PORT)),
     extId: EXT_ID,
   })
   if (taskStore && runLedger) {

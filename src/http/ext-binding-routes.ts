@@ -25,6 +25,8 @@ export interface ExtBindingRoutesDeps {
   registry: { isOnline(bindingId: string): boolean; kick(bindingId: string, code: number, reason: string): boolean }
   devices: { name(deviceId: string): string | undefined }
   isLocal: (c: Context) => boolean
+  /** 扩展里该填的地址（同 `/api/devices/pairing-code` 的 `backendUrls`）：面板把它和码一起给用户。 */
+  backendUrls?: (c: Context) => string[]
   extId?: string
 }
 
@@ -34,7 +36,7 @@ export function mountExtBindingRoutes(app: Hono, deps: ExtBindingRoutesDeps): vo
     const id = c.req.param('id')
     if (id === LOCAL_DEVICE) return c.json({ error: '本机的浏览器不需要配对——装上扩展就会自己连上' }, 400)
     if (deps.devices.name(id) === undefined) return c.json({ error: `没有这台设备：${id}` }, 404)
-    return c.json(deps.store.createPairingCode(id))
+    return c.json({ ...deps.store.createPairingCode(id), backends: deps.backendUrls?.(c) ?? [] })
   })
 
   app.post('/api/ext/pair', async (c) => {
@@ -49,7 +51,15 @@ export function mountExtBindingRoutes(app: Hono, deps: ExtBindingRoutesDeps): vo
   })
 
   app.get('/api/ext/bindings', (c) =>
-    c.json({ bindings: deps.store.list().map((b) => ({ ...b, online: deps.registry.isOnline(b.bindingId) })) }),
+    c.json({ bindings: deps.store.list().map((b) => ({ ...b, default: b.default === true, online: deps.registry.isOnline(b.bindingId) })) }),
+  )
+
+  // 设备的默认浏览器：执行选绑定时先看它（离线时退回最近连上的，见 `ExtRelayRegistry.pick`）。
+  app.put('/api/ext/bindings/:id/default', (c) =>
+    deps.store.setDefault(c.req.param('id')) ? c.body(null, 204) : c.json({ error: '没有这条扩展绑定' }, 404),
+  )
+  app.delete('/api/ext/bindings/:id/default', (c) =>
+    deps.store.clearDefault(c.req.param('id')) ? c.body(null, 204) : c.json({ error: '没有这条扩展绑定' }, 404),
   )
 
   app.delete('/api/ext/bindings/:id', (c) => {

@@ -41,7 +41,7 @@
 
 实施计划：`docs/superpowers/plans/2026-10-22-device-execution-panel.md`。
 
-- [ ] 1. 设备的默认扩展绑定（`pick` 先看它，离线退回最近连上）；配对码回 `backends`
+- [x] 1. 设备的默认扩展绑定（`pick` 先看它，离线退回最近连上）；配对码回 `backends`
 - [ ] 2. `GET /api/devices/facilities`：全部 facility 及其默认设备
 - [ ] 3. 运行记录带 `deviceId` / `bindingId`
 - [ ] 4. 面板 API 层
