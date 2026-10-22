@@ -1,0 +1,107 @@
+{
+  "version": 1,
+  "kind": "browser",
+  "sourceId": "grok-image",
+  "_why": "在用户自己登录着的 grok.com 的 Imagine 页上出图（用 SuperGrok / X Premium 订阅的额度）：不在 /imagine 就点侧栏「Imagine」→ 选「图片」「质量 2.0」、宽高比 1:1 → execCommand insertText 写入提示词（tiptap 编辑器）→ 点「提交」→ 页面上方多出一段 #imagine-masonry-section-N（顶上是提示词标签 data-prompt-pill，下面每张图一个 data-masonry-key 卡片）→ 认出提示词标签以我们提示词开头、里面有提交前没有的卡片的那一段，等每张卡都换成最终图、3s 不再变。图是 data:image/jpeg（1408×1408），画进 canvas 缩到长边 ≤1024 编成 PNG base64 交出来，由 output.files 落盘。「图像数量」用默认的「自动模式」（2026-10-22 实测一轮 4 张，约 30s）。没出图、段里只有文字就把文字抛出来。",
+  "_why_action": "会在用户的 Grok 账号里留下一条 Imagine 生成记录、消耗它的生图额度，归 write。只经 run_action_recipe / /api/recipes/action 跑。",
+  "cookieDomain": "grok.com",
+  "entryUrl": "https://grok.com/imagine",
+  "_why_entryUrl": "冷启动（标签被用户关了、后端重启后第一次）时打开的页面；平时不走它（rideCurrentPage）。",
+  "entryWait": "load",
+  "loginCheck": {
+    "loggedIn": "form [role=\"textbox\"][contenteditable=\"true\"]",
+    "wall": "a[href*=\"accounts.x.ai/sign-in\"]",
+    "_why_wall": "没退出登录量过；Grok 未登录时「登录」指向 accounts.x.ai/sign-in。"
+  },
+  "session": {
+    "facility": "grok",
+    "lifecycle": "persistent",
+    "visibility": "unattended",
+    "keepAlive": true
+  },
+  "steps": [
+    {
+      "kind": "evaluate",
+      "_why": "整段在页内做，按 cursor 分页绕开 relay 一次求值 30s 的上限（照 chatgpt-image）：第 1 页选好选项、写入并提交，之后每页最多等 22s，没出图回 pending:true。",
+      "call": "async (cursor, num, params) => {\n  const sleep = ms => new Promise(r => setTimeout(r, ms));\n  const pageStart = Date.now();\n  const shown = sel => [...document.querySelectorAll(sel)].find(e => e.getClientRects().length) || null;\n  const INPUT = 'form [role=\"textbox\"][contenteditable=\"true\"]';\n  const label = (...ls) => [...document.querySelectorAll('button')].find(b => b.getClientRects().length && ls.includes(b.getAttribute('aria-label')));\n  // 一次提交 = 一段 #imagine-masonry-section-N：顶上一个提示词标签（data-prompt-pill），下面是图（每张一个 data-masonry-key）\n  const sections = () => [...document.querySelectorAll('[id^=\"imagine-masonry-section-\"]')];\n  const head = String(params.prompt).trim().slice(0, 40);\n  const QUOTA = /limit|上限|额度|升级|upgrade|rate/i;\n  if (!cursor) {\n    // 常驻标签：不在 Imagine 页就点侧栏「Imagine」（页内跳转），点不到才整页去 /imagine\n    if (!/^\\/imagine\\/?$/.test(location.pathname)) {\n      const a = [...document.querySelectorAll('a')].find(e => e.getClientRects().length && e.innerText.trim() === 'Imagine');\n      if (a) a.click(); else location.assign('/imagine');\n      const t1 = Date.now();\n      while (Date.now() - t1 < 8000 && !(/^\\/imagine\\/?$/.test(location.pathname) && shown(INPUT))) await sleep(300);\n    }\n    let ed = null;\n    for (let i = 0; i < 30 && !(ed = shown(INPUT)); i++) await sleep(300);\n    if (!ed) throw new Error('[grok-image] 没找到 Imagine 输入框 url=' + location.pathname);\n    const radio = t => [...document.querySelectorAll('[role=\"radio\"]')].find(b => b.getClientRects().length && b.innerText.trim() === t);\n    // 模式：「图片」（不是视频）、「质量 2.0」（比「速度」细，像素画边缘更干净）；宽高比 1:1\n    for (const t of ['图片', '质量 2.0']) {\n      const b = radio(t);\n      if (!b) throw new Error('[grok-image] 没找到「' + t + '」选项（界面改了？）');\n      if (b.getAttribute('aria-checked') !== 'true') { b.click(); await sleep(400); }\n    }\n    const ar = label('宽高比', 'Aspect ratio');\n    if (ar && !/^1:1/.test(ar.innerText.trim())) {\n      ar.click();\n      let it = null;\n      for (let i = 0; i < 10 && !it; i++) { await sleep(200); it = [...document.querySelectorAll('[role^=\"menuitem\"], [role=\"option\"]')].find(e => /^1:1/.test(e.innerText.trim())); }\n      if (!it) throw new Error('[grok-image] 宽高比菜单里没有 1:1');\n      it.click(); await sleep(400);\n    }\n    // 参考图（图生图）：经输入框旁的上传框挂上，等缩略图出来\n    if (params.images) {\n      const urls = params.images.split('\\n').filter(Boolean);\n      const fdt = new DataTransfer();\n      for (let i = 0; i < urls.length; i++) { const m = /^data:([^;,]+)?(;base64)?,(.*)$/s.exec(urls[i]); if (!m) throw new Error('[grok-image] 参考图要 data URL'); const type = m[1] || 'image/png'; const bin = m[2] ? atob(m[3]) : decodeURIComponent(m[3]); const bytes = new Uint8Array(bin.length); for (let k = 0; k < bin.length; k++) bytes[k] = bin.charCodeAt(k); fdt.items.add(new File([bytes], 'ref' + i + '.' + (type.split('/')[1] || 'png'), { type })); }\n      const form = ed.closest('form');\n      const thumbs = () => [...form.querySelectorAll('img')].filter(i => i.getClientRects().length).length;\n      const before = thumbs();\n      const inp = [...form.querySelectorAll('input[type=file]')].find(x => /image/.test(x.accept || '')) || form.querySelector('input[type=file]') || document.querySelector('input[type=file]');\n      if (!inp) throw new Error('[grok-image] 没找到上传框（input[type=file]）');\n      inp.files = fdt.files; inp.dispatchEvent(new Event('change', { bubbles: true }));\n      for (let i = 0; i < 30 && thumbs() < before + urls.length; i++) await sleep(300);\n      if (thumbs() < before + urls.length) throw new Error('[grok-image] 参考图没挂到输入框上（输入框里没看到缩略图）');\n      await sleep(1500);\n    }\n    // 写字：tiptap/ProseMirror 编辑器，execCommand insertText（2026-10-22 实测可用）\n    ed.focus();\n    document.execCommand('selectAll'); document.execCommand('delete');\n    document.execCommand('insertText', false, String(params.prompt).trim());\n    let send = null;\n    const t0 = Date.now();\n    while (Date.now() - t0 < 10000) {\n      send = label('提交', 'Submit');\n      if (send && !send.disabled) break;\n      await sleep(300);\n    }\n    if (!send || send.disabled) throw new Error('[grok-image] 写入后 10s 提交按钮仍不可用（输入框字数 ' + ed.innerText.length + '）');\n    window.__grkBefore = new Set(sections().map(s => s.querySelector('[data-prompt-pill]')?.innerText + '|' + [...s.querySelectorAll('[data-masonry-key]')].map(e => e.getAttribute('data-masonry-key')).join(',')));\n    window.__grkBeforeKeys = new Set([...document.querySelectorAll('[data-masonry-key]')].map(e => e.getAttribute('data-masonry-key')));\n    send.click();\n    window.__grkT0 = Date.now();\n    window.__grkSig = null; window.__grkSince = 0;\n  }\n  const deadline = Math.min(Date.now() + 22000, pageStart + 26000);\n  while (Date.now() < deadline) {\n    // 这一轮的段：提示词标签以我们的提示词开头、且里面有提交前没有的图\n    const sec = sections().find(s => (s.querySelector('[data-prompt-pill]')?.innerText || '').trim().startsWith(head) && [...s.querySelectorAll('[data-masonry-key]')].some(e => !window.__grkBeforeKeys.has(e.getAttribute('data-masonry-key'))));\n    if (sec) {\n      const cards = [...sec.querySelectorAll('[data-masonry-key]')].filter(e => !window.__grkBeforeKeys.has(e.getAttribute('data-masonry-key')));\n      const imgs = cards.map(c => [...c.querySelectorAll('img')].find(i => i.complete && i.naturalWidth >= 400 && /^(data:image|https?:)/.test(i.src))).filter(Boolean);\n      const txt = (sec.innerText || '').replace((sec.querySelector('[data-prompt-pill]')?.innerText || ''), '').trim();\n      if (!imgs.length && txt && Date.now() - window.__grkT0 > 20000 && !/\\d+%/.test(txt)) throw new Error('[grok-image] Grok ' + (QUOTA.test(txt) ? '额度/限制：' : '没出图：') + txt.slice(0, 200));\n      // 生成途中每张卡先是占位 / 半成品，全都换成最终图、3s 不再变才收\n      const sig = cards.length + ':' + imgs.map(i => i.src.length + '@' + i.src.slice(-24)).join(',');\n      if (imgs.length && imgs.length === cards.length && !/\\d+%/.test(txt)) {\n        if (sig !== window.__grkSig) { window.__grkSig = sig; window.__grkSince = Date.now(); }\n        else if (Date.now() - window.__grkSince > 3000) {\n          const items = [];\n          for (let n = 0; n < imgs.length; n++) {\n            const img = imgs[n];\n            const k = Math.min(1, 1024 / Math.max(img.naturalWidth, img.naturalHeight));\n            const c = document.createElement('canvas');\n            c.width = Math.round(img.naturalWidth * k); c.height = Math.round(img.naturalHeight * k);\n            c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);\n            let png;\n            try { png = c.toDataURL('image/png').split(',')[1]; } catch (e) { throw new Error('[grok-image] 图画进 canvas 后读不出来（跨域图？src=' + img.src.slice(0, 60) + '）'); }\n            items.push({ guid: 'grok-' + cards[n].getAttribute('data-masonry-key'), png, index: String(n) });\n          }\n          return { items, cursor: '' };\n        }\n      } else { window.__grkSig = null; }\n    }\n    await sleep(500);\n  }\n  if (Date.now() - (window.__grkT0 || pageStart) > 190000) throw new Error('[grok-image] 190s 内没等到图');\n  return { items: [], pending: true, cursor: String(Number(cursor || 0) + 1) };\n}",
+      "itemsAt": "items",
+      "cursorField": "cursor",
+      "pendingField": "pending",
+      "maxPages": 9,
+      "_why_pending": "9 页 ≈ 26 + 8×22 = 202s，压在宿主 /v1/images 等 recipe 的 210s 上限以内；页内 190s 自己先抛。"
+    }
+  ],
+  "observers": [],
+  "output": {
+    "itemsAt": "items",
+    "dedupeBy": "guid",
+    "targetCount": 4,
+    "mapping": {
+      "guid": "guid",
+      "png": "png",
+      "index": "index"
+    },
+    "assert": [
+      {
+        "path": "items.0.png",
+        "desc": "没有读到生成图（页面结构变了，或生成失败）"
+      }
+    ],
+    "_why_targetCount": "「图像数量」自动模式一轮 4 张（2026-10-22 实测）；带参考图或额度紧时可能少于 4，条数不到也是正常收尾。",
+    "files": {
+      "png": {
+        "ext": "png"
+      }
+    },
+    "_why_files": "图（长边 1024 的 PNG，base64 约 1.5MB）经 output.files 落盘、结果里换成绝对路径：账本只收 1MB 以内的 result（2026-10-17 实测 1.7MB 被拒），文件类产物没有第二条路。"
+  },
+  "policy": {
+    "minActionIntervalMs": 500,
+    "maxTaskMs": 205000
+  },
+  "meta": {
+    "action": true,
+    "effects": [
+      "write"
+    ],
+    "type": "post",
+    "title": "Grok生图",
+    "description": "在你自己的 grok.com Imagine 页上出一轮图（自动模式一般 4 张，1:1、质量 2.0），页内取回原图（缩到长边 1024），落成本机 PNG 文件回路径（items[].png）。会留在 Imagine 记录里。",
+    "facility": {
+      "key": "grok",
+      "label": "Grok"
+    },
+    "key_param": "prompt",
+    "discoverable": false,
+    "pick_in": [],
+    "_why_rateLimit": "生图额度按账号算、数字没公开；量级取「一个人手动在画」：每分钟 1 张、每小时 20 张。",
+    "rateLimit": {
+      "burst": 1,
+      "perMinute": 1,
+      "perHour": 20,
+      "bucket": "grok-image"
+    },
+    "member_timeout_ms": 210000,
+    "auth": {
+      "type": "session",
+      "facility": "grok",
+      "login": "cookie",
+      "cookieDomain": "grok.com"
+    },
+    "params_schema": {
+      "prompt": {
+        "type": "string",
+        "required": true,
+        "description": "生图提示词，原样提交（Imagine 页只出图，不用加「不要提问」）。"
+      },
+      "images": {
+        "type": "string",
+        "required": false,
+        "description": "参考图（图生图）：data URL，多张按换行拼；经上传框挂上。没实测过。"
+      }
+    },
+    "_why_no_produces": "不申报 produces:\"images\"：/v1/images/generations 按 url 下载，落盘的路径它用不了。直接走 /api/recipes/action，结果 items[].png 是本机文件路径。"
+  },
+  "rideCurrentPage": true,
+  "_why_session": "常驻一个 Grok 标签（keepAlive），每轮骑着它（rideCurrentPage）停在 /imagine 上连着提交——照 chatgpt-image：每轮整页重载像脚本。entryUrl 只在标签冷启动时用。"
+}

@@ -1,0 +1,24 @@
+{
+  "name": "@streamapp/grok",
+  "version": "1.0.0",
+  "author": "stream",
+  "keywords": [
+    "stream-recipe"
+  ],
+  "stream": {
+    "type": "recipe",
+    "name": "Grok",
+    "tagline": "网页版生图 · Grok Imagine",
+    "facility": "grok",
+    "schemaVersion": 1,
+    "cookieDomain": "grok.com",
+    "_why_rateLimit": "Imagine 额度按订阅档位算（SuperGrok / X Premium，数字没公开、随负载变）；限速取「一个人手动在画」的量级，排不上如实回，不硬顶。",
+    "rateLimit": {
+      "burst": 1,
+      "perMinute": 1,
+      "perHour": 20,
+      "maxWaitMs": 5000
+    }
+  },
+  "license": "Apache-2.0"
+}

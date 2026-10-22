@@ -1,0 +1,24 @@
+{
+  "name": "@streamapp/gemini",
+  "version": "1.0.0",
+  "author": "stream",
+  "keywords": [
+    "stream-recipe"
+  ],
+  "stream": {
+    "type": "recipe",
+    "name": "Gemini",
+    "tagline": "网页版生图 · Nano Banana",
+    "facility": "gemini",
+    "schemaVersion": 1,
+    "cookieDomain": "gemini.google.com",
+    "_why_rateLimit": "网页版按账号计额度（Google AI 订阅档位决定，数字没公开）；限速取「一个人手动在画」的量级，排不上如实回，不硬顶。",
+    "rateLimit": {
+      "burst": 1,
+      "perMinute": 1,
+      "perHour": 20,
+      "maxWaitMs": 5000
+    }
+  },
+  "license": "Apache-2.0"
+}

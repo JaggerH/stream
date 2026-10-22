@@ -1,0 +1,107 @@
+{
+  "version": 1,
+  "kind": "browser",
+  "sourceId": "gemini-image",
+  "_why": "在用户自己登录着的 Gemini 网页版上出一张图（Nano Banana，用 Google AI 订阅的额度）：新对话 → 「上传和工具」里选「制作图片」（输入框下面出现「图片」chip）→ execCommand insertText 写入「请直接画一张方形图……」+ 提示词（Quill 编辑器不接合成 paste）→ 点「发送」→ 等最后一个 model-response 里出现生成图、且这一轮收尾（底下出现「答得好 / 重做」按钮）、src 2s 不再变。图是 blob:，页内 fetch 会被 CSP 拦，画进 canvas 缩到长边 ≤1024 编成 base64 交出来，由 output.files 落盘。只回文字（拒绝 / 额度用完）就把它说的话抛出来。2026-10-22 实测一张约 15s、1024×1024，页面上的图没有可见水印。",
+  "_why_action": "会在用户的 Gemini 账号里新建一条对话（留在活动记录里）、消耗它的生图额度，归 write。只经 run_action_recipe / /api/recipes/action 跑。",
+  "cookieDomain": "gemini.google.com",
+  "entryUrl": "https://gemini.google.com/app",
+  "_why_entryUrl": "冷启动（标签被用户关了、后端重启后第一次）时打开的页面；平时不走它（rideCurrentPage）。",
+  "entryWait": "load",
+  "loginCheck": {
+    "loggedIn": "rich-textarea [role=\"textbox\"][contenteditable=\"true\"]",
+    "wall": "a[href*=\"accounts.google.com/ServiceLogin\"]",
+    "_why_wall": "没退出登录量过；Gemini 未登录时右上角是「登录」链接，指向 accounts.google.com/ServiceLogin。"
+  },
+  "session": {
+    "facility": "gemini",
+    "lifecycle": "persistent",
+    "visibility": "unattended",
+    "keepAlive": true
+  },
+  "steps": [
+    {
+      "kind": "evaluate",
+      "_why": "整段在页内做，按 cursor 分页绕开 relay 一次求值 30s 的上限（照 chatgpt-image）：第 1 页开新对话、选工具、写入并发送，之后每页最多等 22s，没出图回 pending:true。",
+      "call": "async (cursor, num, params) => {\n  const sleep = ms => new Promise(r => setTimeout(r, ms));\n  const pageStart = Date.now();\n  const shown = sel => [...document.querySelectorAll(sel)].find(e => e.getClientRects().length) || null;\n  const INPUT = 'rich-textarea [role=\"textbox\"][contenteditable=\"true\"]';\n  const label = (...ls) => [...document.querySelectorAll('button')].find(b => b.getClientRects().length && ls.includes(b.getAttribute('aria-label')));\n  const responses = () => [...document.querySelectorAll('model-response')].filter(e => e.getClientRects().length);\n  const queries = () => [...document.querySelectorAll('user-query')].filter(e => e.getClientRects().length);\n  // 一轮回复收尾的标志：底下出现「答得好 / 重做」那排按钮（生成途中没有）\n  const finished = m => !!m && [...m.querySelectorAll('button')].some(b => /^(答得好|答得不好|重做|Good response|Bad response|Redo)$/.test(b.getAttribute('aria-label') || ''));\n  const busy = () => !!label('停止回答', 'Stop response');\n  const genImgs = m => m ? [...m.querySelectorAll('generated-image img, single-image img, img')].filter(i => i.complete && i.naturalWidth >= 256 && i.getClientRects().length && !(window.__gmiBefore && window.__gmiBefore.has(i.currentSrc || i.src))) : [];\n  const QUOTA = /已达到.{0,12}(上限|限额)|limit (for today|reached)|额度已用完|明天再|try again tomorrow|reached your/i;\n  if (!cursor) {\n    let ed = null;\n    for (let i = 0; i < 30 && !(ed = shown(INPUT)); i++) await sleep(300);\n    if (!ed) throw new Error('[gemini-image] 没找到输入框 url=' + location.pathname);\n    // 常驻标签：上一轮停在 /app/<对话 id>。点侧栏「发起新对话」开新对话（页内跳转，不整页重载）\n    if (queries().length || /^\\/app\\/./.test(location.pathname)) {\n      const nc = document.querySelector('[data-test-id=\"new-chat-button\"] a, [data-test-id=\"new-chat-button\"]') || [...document.querySelectorAll('a,button')].find(e => /^(发起新对话|New chat)$/.test((e.getAttribute('aria-label') || e.innerText || '').trim()));\n      if (nc) nc.click(); else location.assign('/app');\n      const t1 = Date.now();\n      while (Date.now() - t1 < 8000 && (queries().length || /^\\/app\\/./.test(location.pathname) || !shown(INPUT))) await sleep(300);\n      if (queries().length) throw new Error('[gemini-image] 点了「发起新对话」，页面上还是上一条对话 url=' + location.pathname);\n      ed = shown(INPUT);\n      if (!ed) throw new Error('[gemini-image] 开了新对话却没找到输入框');\n    }\n    // 选上「制作图片」工具（输入框下面多一个「图片」chip，按钮 aria-label「取消选择“图片”」）\n    const imgOn = () => !![...document.querySelectorAll('button')].find(b => b.getClientRects().length && /取消选择“图片”|Deselect.*Image/i.test(b.getAttribute('aria-label') || ''));\n    if (!imgOn()) {\n      const tools = label('上传和工具', 'Upload files and tools', 'Tools', '工具');\n      if (!tools) throw new Error('[gemini-image] 没找到「上传和工具」按钮');\n      tools.click();\n      let item = null;\n      for (let i = 0; i < 15 && !item; i++) { await sleep(200); item = [...document.querySelectorAll('.cdk-overlay-container button, .cdk-overlay-container [role^=\"menuitem\"]')].find(e => /^(制作图片|Create image|Create images)$/.test(e.innerText.trim())); }\n      if (!item) throw new Error('[gemini-image] 工具菜单里没有「制作图片」');\n      item.click();\n      for (let i = 0; i < 15 && !imgOn(); i++) await sleep(200);\n      if (!imgOn()) throw new Error('[gemini-image] 点了「制作图片」，输入框下面没出现「图片」');\n      ed = shown(INPUT) || ed;\n    }\n    // 参考图（图生图）：当剪贴板文件粘进输入框，等缩略图出来、上传转圈没了，再写字\n    if (params.images) {\n      const urls = params.images.split('\\n').filter(Boolean);\n      const fdt = new DataTransfer();\n      for (let i = 0; i < urls.length; i++) { const m = /^data:([^;,]+)?(;base64)?,(.*)$/s.exec(urls[i]); if (!m) throw new Error('[gemini-image] 参考图要 data URL'); const type = m[1] || 'image/png'; const bin = m[2] ? atob(m[3]) : decodeURIComponent(m[3]); const bytes = new Uint8Array(bin.length); for (let k = 0; k < bin.length; k++) bytes[k] = bin.charCodeAt(k); fdt.items.add(new File([bytes], 'ref' + i + '.' + (type.split('/')[1] || 'png'), { type })); }\n      const area = () => ed.closest('input-area-v2, .input-area, fieldset, form') || document;\n      const thumbs = () => [...area().querySelectorAll('img')].filter(i => i.getClientRects().length).length;\n      const before = thumbs();\n      ed.focus(); ed.dispatchEvent(new ClipboardEvent('paste', { clipboardData: fdt, bubbles: true, cancelable: true }));\n      for (let i = 0; i < 20 && thumbs() < before + urls.length; i++) await sleep(300);\n      if (thumbs() < before + urls.length) throw new Error('[gemini-image] 参考图没挂到输入框上（输入框里没看到缩略图）');\n      const uploading = () => !!area().querySelector('mat-progress-spinner, mat-spinner, [role=\"progressbar\"]');\n      const tU = Date.now();\n      while (uploading() && Date.now() - tU < 20000) await sleep(300);\n      if (uploading()) throw new Error('[gemini-image] 参考图 20s 内没传完');\n    }\n    // 写字：Quill 编辑器不接合成的 paste 事件（2026-10-22 实测粘进去 0 字），execCommand insertText 可以\n    const text = '请直接画一张方形（1:1）的图，不要提问、不要解释，只出图：\\n' + params.prompt;\n    ed.focus();\n    document.execCommand('insertText', false, text);\n    let send = null;\n    const t0 = Date.now();\n    while (Date.now() - t0 < 10000) {\n      send = label('发送', 'Send message', 'Send');\n      if (send && !send.disabled && send.getAttribute('aria-disabled') !== 'true') break;\n      await sleep(300);\n    }\n    if (!send || send.disabled) throw new Error('[gemini-image] 写入后 10s 发送按钮仍不可用（输入框字数 ' + ed.innerText.length + '）');\n    window.__gmiBefore = new Set([...document.querySelectorAll('img')].map(i => i.currentSrc || i.src));\n    send.click();\n    for (let i = 0; i < 20 && !queries().length; i++) await sleep(300);\n    if (!queries().length) throw new Error('[gemini-image] 点了发送，消息没发出去');\n    window.__gmiT0 = Date.now();\n    window.__gmiSrc = null; window.__gmiSince = 0; window.__gmiTxt = null; window.__gmiTxtSince = 0;\n  }\n  const deadline = Math.min(Date.now() + 22000, pageStart + 26000);\n  while (Date.now() < deadline) {\n    const m = responses().at(-1);\n    const img = genImgs(m).at(-1);\n    const done = finished(m) && !busy();\n    if (img && done) {\n      const src = img.currentSrc || img.src;\n      if (src !== window.__gmiSrc) { window.__gmiSrc = src; window.__gmiSince = Date.now(); }\n      else if (Date.now() - window.__gmiSince > 2000) {\n        // 图是 blob:，页内 fetch 会被 CSP 拦（2026-10-22 实测 Failed to fetch）；直接画进 canvas（同源 blob 不污染画布）\n        const k = Math.min(1, 1024 / Math.max(img.naturalWidth, img.naturalHeight));\n        const c = document.createElement('canvas');\n        c.width = Math.round(img.naturalWidth * k); c.height = Math.round(img.naturalHeight * k);\n        c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);\n        const png = c.toDataURL('image/png').split(',')[1];\n        return { items: [{ guid: 'gm' + location.pathname.split('/').pop() + '-' + Date.now(), png, index: '0' }], cursor: '' };\n      }\n    } else if (!img && done && m) {\n      // 只回了文字（拒绝 / 额度用完 / 反问）：收尾了、文字 5s 不变，就把它说的话抛出来\n      const txt = (m.innerText || '').replace(/^Gemini 说\\s*/, '').trim();\n      if (txt === window.__gmiTxt) {\n        if (Date.now() - window.__gmiTxtSince > 5000) throw new Error('[gemini-image] Gemini ' + (QUOTA.test(txt) ? '额度用完了：' : '只回了文字、没出图：') + txt.slice(0, 200));\n      } else { window.__gmiTxt = txt; window.__gmiTxtSince = Date.now(); }\n    }\n    await sleep(500);\n  }\n  if (Date.now() - (window.__gmiT0 || pageStart) > 190000) throw new Error('[gemini-image] 190s 内没等到图');\n  return { items: [], pending: true, cursor: String(Number(cursor || 0) + 1) };\n}",
+      "itemsAt": "items",
+      "cursorField": "cursor",
+      "pendingField": "pending",
+      "maxPages": 9,
+      "_why_pending": "9 页 ≈ 26 + 8×22 = 202s，压在宿主 /v1/images 等 recipe 的 210s 上限以内；页内 190s 自己先抛。"
+    }
+  ],
+  "observers": [],
+  "output": {
+    "itemsAt": "items",
+    "dedupeBy": "guid",
+    "targetCount": 1,
+    "mapping": {
+      "guid": "guid",
+      "png": "png",
+      "index": "index"
+    },
+    "assert": [
+      {
+        "path": "items.0.png",
+        "desc": "没有读到生成图（页面结构变了，或生成失败）"
+      }
+    ],
+    "_why_targetCount": "网页版一轮出 1 张。",
+    "files": {
+      "png": {
+        "ext": "png"
+      }
+    },
+    "_why_files": "图（长边 1024 的 PNG，base64 约 1.5MB）经 output.files 落盘、结果里换成绝对路径：账本只收 1MB 以内的 result（2026-10-17 实测 1.7MB 被拒），文件类产物没有第二条路。"
+  },
+  "policy": {
+    "minActionIntervalMs": 500,
+    "maxTaskMs": 205000
+  },
+  "meta": {
+    "action": true,
+    "effects": [
+      "write"
+    ],
+    "type": "post",
+    "title": "Gemini生图",
+    "description": "在你自己的 Gemini 网页版里新开一条对话、用「制作图片」出一张图（Nano Banana），页内取回原图（长边 1024），落成本机 PNG 文件回路径（items[].png）。会留在活动记录里。",
+    "facility": {
+      "key": "gemini",
+      "label": "Gemini"
+    },
+    "key_param": "prompt",
+    "discoverable": false,
+    "pick_in": [],
+    "_why_rateLimit": "生图额度按账号算、数字没公开；量级取「一个人手动在画」：每分钟 1 张、每小时 20 张。",
+    "rateLimit": {
+      "burst": 1,
+      "perMinute": 1,
+      "perHour": 20,
+      "bucket": "gemini-image"
+    },
+    "member_timeout_ms": 210000,
+    "auth": {
+      "type": "session",
+      "facility": "gemini",
+      "login": "cookie",
+      "cookieDomain": "gemini.google.com"
+    },
+    "params_schema": {
+      "prompt": {
+        "type": "string",
+        "required": true,
+        "description": "生图提示词；前面会自动加一句「请直接画一张方形图，不要提问」。"
+      },
+      "images": {
+        "type": "string",
+        "required": false,
+        "description": "参考图（图生图）：data URL，多张按换行拼；不给就是纯文生图。"
+      }
+    },
+    "_why_no_produces": "不申报 produces:\"images\"：/v1/images/generations 按 url 下载，落盘的路径它用不了。直接走 /api/recipes/action，结果 items[].png 是本机文件路径。"
+  },
+  "rideCurrentPage": true,
+  "_why_session": "常驻一个 Gemini 标签（keepAlive），每轮骑着它（rideCurrentPage），在页内点「发起新对话」开新对话——照 chatgpt-image：每轮整页重载像脚本。entryUrl 只在标签冷启动时用。"
+}
