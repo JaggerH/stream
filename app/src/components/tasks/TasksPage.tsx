@@ -42,7 +42,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { ChannelTitleMenu } from '../ChannelTitleMenu.tsx'
 import { ChannelTabs, type ChannelTab } from '../manage/ChannelTabs.tsx'
 import { NextRuns, fmtRelative, scheduleSentence } from './SchedulePreview.tsx'
-import type { Connection } from '../../lib/api.ts'
+import { api, type Connection } from '../../lib/api.ts'
 import { TaskEditor } from './TaskEditor.tsx'
 import { fetchTasks, fetchRuns, runTaskNow, saveTask, type TaskListItem, type TaskRunView } from '../../lib/api.tasks.ts'
 
@@ -136,9 +136,20 @@ function fmtDuration(ms: number | null): string {
   return ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(1)}s`
 }
 
-function RunRow({ run }: { run: TaskRunView }): ReactElement {
+/** 运行记录上「在哪跑的」那一格：本机不标；名字查不到（设备 / 浏览器已撤销）就显示 id，不吞掉。 */
+export function runWhere(run: Pick<TaskRunView, 'deviceId' | 'bindingId'>, names: RunNames): string | null {
+  if (!run.deviceId || run.deviceId === 'local') return null
+  const device = names.devices.get(run.deviceId) ?? run.deviceId
+  return run.bindingId ? `${device} · ${names.browsers.get(run.bindingId) ?? run.bindingId}` : device
+}
+
+interface RunNames { devices: Map<string, string>; browsers: Map<string, string> }
+const NO_NAMES: RunNames = { devices: new Map(), browsers: new Map() }
+
+function RunRow({ run, names = NO_NAMES }: { run: TaskRunView; names?: RunNames }): ReactElement {
   const [open, setOpen] = useState(false)
   const bad = run.state === 'failed'
+  const where = runWhere(run, names)
   return (
     <div className="border-t border-[var(--acr-border-soft)] py-1 text-[12px]">
       <button type="button" className="flex w-full gap-3 text-left" onClick={() => setOpen((v) => !v)}>
@@ -146,6 +157,7 @@ function RunRow({ run }: { run: TaskRunView }): ReactElement {
         <span className={`w-16 shrink-0 ${bad ? 'text-destructive' : 'text-muted-foreground'}`}>{run.state}</span>
         <span className="w-16 shrink-0 text-muted-foreground">{fmtDuration(run.durationMs)}</span>
         <span className="flex-1 truncate">{runText(run)}</span>
+        {where && <span className="shrink-0 text-muted-foreground">{where}</span>}
       </button>
       {open && (run.detail !== undefined || run.errors !== undefined) && (
         <pre className="mt-1 overflow-x-auto rounded-md bg-[var(--acr-card-nested)] p-2 text-[11px]">
@@ -258,6 +270,7 @@ function TaskRows({
   onRemoved: (id: string) => void
 }): ReactElement {
   const [runs, setRuns] = useState<TaskRunView[] | null>(null)
+  const [names, setNames] = useState<RunNames>(NO_NAMES)
   const [open, setOpen] = useState(false)
   const [editing, setEditing] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -293,9 +306,23 @@ function TaskRows({
     try {
       const fetched = await fetchRuns(apiBase, task.id)
       if (aliveRef.current) setRuns(fetched)
+      // 只有在别的设备上跑过才去查名字：绝大多数任务全在本机，不为它们多发两个请求。
+      // 查不到不算错——记录照样显示，只是设备那一格退成 id。
+      if (fetched.some((r) => r.deviceId && r.deviceId !== 'local')) {
+        const [d, b] = await Promise.all([
+          api.devices.list(conn).catch(() => ({ devices: [] })),
+          api.extBindings.list(conn).catch(() => ({ bindings: [] })),
+        ])
+        if (aliveRef.current) {
+          setNames({
+            devices: new Map((d.devices ?? []).map((x) => [x.deviceId, x.name])),
+            browsers: new Map((b.bindings ?? []).map((x) => [x.bindingId, x.name])),
+          })
+        }
+      }
     }
     catch (e) { if (aliveRef.current) setErr((e as Error).message) }
-  }, [apiBase, runs, task.id])
+  }, [apiBase, conn, runs, task.id])
 
   const write = useCallback(async (patch: { schedule?: string; enabled?: boolean }) => {
     setBusy(true)
@@ -498,7 +525,7 @@ function TaskRows({
               <div className="max-h-64 overflow-y-auto scrollbar-mac">
                 {runs === null ? <div className="text-[12px] text-muted-foreground">读取中…</div>
                   : runs.length === 0 ? <div className="text-[12px] text-muted-foreground">还没有执行记录</div>
-                    : runs.map((r) => <RunRow key={r.id} run={r} />)}
+                    : runs.map((r) => <RunRow key={r.id} run={r} names={names} />)}
               </div>
             </div>
           </TableCell>

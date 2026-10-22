@@ -470,6 +470,31 @@ describe('TasksPage', () => {
     expect(screen.queryByText('cookie 历史第一条')).toBeNull()
   })
 
+  it('在别的设备上跑的那次标出设备名（用过浏览器的再带浏览器名）；本机的不标', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+      if (url.endsWith('/api/tasks')) return new Response(JSON.stringify({ tasks }))
+      if (url.endsWith('/api/devices')) {
+        return new Response(JSON.stringify({ devices: [{ deviceId: 'linux:nas', name: 'NAS', platform: 'linux', paired: true, online: true }] }))
+      }
+      if (url.endsWith('/api/ext/bindings')) {
+        return new Response(JSON.stringify({ bindings: [{ bindingId: 'ext:a', deviceId: 'linux:nas', name: 'Chrome', pairedAt: 1, online: true, default: false }] }))
+      }
+      return new Response(JSON.stringify({ runs: [
+        { id: 3, state: 'completed', insertedAt: 300, attemptedAt: 300, completedAt: 400, durationMs: 100, attempt: 1, summary: '远程那次', detail: undefined, errors: undefined, deviceId: 'linux:nas', bindingId: 'ext:a' },
+        { id: 2, state: 'failed', insertedAt: 200, attemptedAt: 200, completedAt: 210, durationMs: 10, attempt: 1, summary: null, detail: undefined, errors: undefined, failure: '设备不在线', deviceId: 'linux:gone' },
+        { id: 1, state: 'completed', insertedAt: 100, attemptedAt: 100, completedAt: 110, durationMs: 10, attempt: 1, summary: '本机那次', detail: undefined, errors: undefined, deviceId: 'local' },
+      ] }))
+    }))
+    render(<TasksPage apiBase="http://x" />)
+    fireEvent.click(await screen.findByTestId('task-expand-em-repo'))
+    expect(await screen.findByText('远程那次')).toBeTruthy()
+    expect(await screen.findByText('NAS · Chrome')).toBeTruthy()
+    // 名字查不到（设备已撤销）就显示 id，不吞掉
+    expect(screen.getByText('linux:gone')).toBeTruthy()
+    expect(screen.queryByText('本机')).toBeNull()
+    vi.unstubAllGlobals()
+  })
+
   it('确认之后才真发 POST', async () => {
     render(<TasksPage apiBase="http://x" />)
     const btn = await screen.findByTestId('task-run-dfcf-subscribe')

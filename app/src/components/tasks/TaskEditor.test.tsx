@@ -228,3 +228,59 @@ describe('TaskEditor —— 互斥组与迟到语义', () => {
     expect((screen.getByTestId('task-field-exclusive-on') as HTMLInputElement).value).toBe('全新的组')
   })
 })
+
+/**
+ * 执行设备（design D2 的任务覆盖）。缺席 = 跟随动作所属 facility 的默认设备；只有动作任务有这一格
+ * ——command 任务设了设备后端会 400（本地命令只能在主实例上执行）。
+ */
+describe('TaskEditor —— 执行设备', () => {
+  const actionTask = (over: Partial<TaskListItem> = {}): TaskListItem => ({
+    id: 'em-repo', label: '东财 逆回购', schedule: '0 55 14 * * 1-5',
+    source: 'user', enabled: true, lastRun: null,
+    action: 'eastmoney:repo', args: [], serial: true, maxAttempts: 1, ...over,
+  })
+
+  beforeEach(() => {
+    const base = vi.mocked(fetch).getMockImplementation()!
+    vi.stubGlobal('fetch', vi.fn(async (url: string | URL, init?: RequestInit) => {
+      if (String(url).endsWith('/api/devices')) {
+        return new Response(JSON.stringify({ devices: [
+          { deviceId: 'linux:nas', name: 'NAS', platform: 'linux', paired: true, online: true },
+          { deviceId: 'linux:pc', name: 'PC', platform: 'linux', paired: true, online: false },
+        ] }))
+      }
+      return base(url, init)
+    }))
+  })
+
+  it('动作任务：默认跟随账号，保存时不发 device', async () => {
+    setup({ task: actionTask() })
+    const sel = (await screen.findByTestId('task-field-device')) as HTMLSelectElement
+    expect(sel.value).toBe('')
+    await waitFor(() => expect([...sel.options].map((o) => o.textContent)).toEqual(['跟随账号的默认设备', '本机', 'NAS', 'PC（离线）']))
+    fireEvent.click(screen.getByTestId('task-editor-save'))
+    await waitFor(() => expect(putBody('em-repo')).toBeTruthy())
+    expect(putBody('em-repo')!).not.toHaveProperty('device')
+  })
+
+  it('选一台设备 ⇒ PUT 带 device；已有的覆盖照原样显示', async () => {
+    setup({ task: actionTask({ device: 'linux:pc' }) })
+    const sel = (await screen.findByTestId('task-field-device')) as HTMLSelectElement
+    await waitFor(() => expect(sel.value).toBe('linux:pc'))
+    fireEvent.change(sel, { target: { value: 'linux:nas' } })
+    fireEvent.click(screen.getByTestId('task-editor-save'))
+    await waitFor(() => expect(putBody('em-repo')).toBeTruthy())
+    expect(putBody('em-repo')!.device).toBe('linux:nas')
+  })
+
+  it('命令任务没有这一格；从动作切回命令时覆盖一并清掉', async () => {
+    setup({ task: actionTask({ device: 'linux:nas' }) })
+    await screen.findByTestId('task-field-device')
+    fireEvent.change(screen.getByTestId('task-field-kind'), { target: { value: 'command' } })
+    expect(screen.queryByTestId('task-field-device')).toBeNull()
+    fireEvent.change(screen.getByTestId('task-field-command'), { target: { value: '/bin/true' } })
+    fireEvent.click(screen.getByTestId('task-editor-save'))
+    await waitFor(() => expect(putBody('em-repo')).toBeTruthy())
+    expect(putBody('em-repo')!).not.toHaveProperty('device')
+  })
+})

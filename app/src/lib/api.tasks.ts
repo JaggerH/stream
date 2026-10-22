@@ -94,6 +94,8 @@ export interface TaskInput {
   command?: string
   /** 与 `command` 二选一：包提供的动作（`<包 id>:<动作名>`）。 */
   action?: string
+  /** 执行设备覆盖；缺席 = 跟随 facility 的默认设备。command 任务不能设（后端 400）。 */
+  device?: string
   args: string[]
   cwd?: string
   env?: Record<string, string>
