@@ -59,6 +59,24 @@ describe('RunLedger', () => {
     expect(r.durationMs).toBeNull()
   })
 
+  it('设备与浏览器：成功行读 detail.device / detail.browser，失败行读错误前缀，存量行是 local', () => {
+    const p = seed([
+      { inserted_at: 1, result: '{"summary":"ok","detail":{"device":"linux:nas","browser":"ext:a","detail":{"n":1}}}' },
+      { inserted_at: 2, state: 'failed', result: null, errors: '[{"message":"[设备 linux:pc] 设备 linux:pc 不在线"}]' },
+      { inserted_at: 3, result: '{"summary":"存量成功","detail":{"n":1}}' },
+      { inserted_at: 4, state: 'failed', result: null, errors: '[{"message":"boom"}]' },
+      { inserted_at: 5, result: '{"summary":"没用浏览器","detail":{"device":"linux:nas"}}' },
+    ])
+    const runs = new RunLedger(p).runs('t1').reverse()
+    expect(runs.map((r) => [r.deviceId, r.bindingId])).toEqual([
+      ['linux:nas', 'ext:a'],
+      ['linux:pc', undefined],
+      ['local', undefined],
+      ['local', undefined],
+      ['linux:nas', undefined],
+    ])
+  })
+
   it('lastRun 给最近一条', () => {
     const p = seed([{ inserted_at: 1, result: '{"summary":"老"}' }, { inserted_at: 9, result: '{"summary":"新"}' }])
     expect(new RunLedger(p).lastRun('t1')?.summary).toBe('新')

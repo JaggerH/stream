@@ -25,8 +25,8 @@ function mk(over: Partial<TaskRoutesDeps> = {}) {
   const deps: TaskRoutesDeps = {
     store: mkStore([userRow]),
     ledger: {
-      runs: () => [{ id: 1, taskId: 'dl-freshness', state: 'completed', insertedAt: 1, attemptedAt: 1, completedAt: 3, durationMs: 2, attempt: 1, summary: '干完了', detail: undefined, errors: undefined, failure: null }],
-      lastRun: () => ({ id: 1, taskId: 'dl-freshness', state: 'completed', insertedAt: 1, attemptedAt: 1, completedAt: 3, durationMs: 2, attempt: 1, summary: '干完了', detail: undefined, errors: undefined, failure: null }),
+      runs: () => [{ id: 1, taskId: 'dl-freshness', state: 'completed', insertedAt: 1, attemptedAt: 1, completedAt: 3, durationMs: 2, attempt: 1, summary: '干完了', detail: undefined, errors: undefined, failure: null, deviceId: 'local' }],
+      lastRun: () => ({ id: 1, taskId: 'dl-freshness', state: 'completed', insertedAt: 1, attemptedAt: 1, completedAt: 3, durationMs: 2, attempt: 1, summary: '干完了', detail: undefined, errors: undefined, failure: null, deviceId: 'local' }),
     },
     builtins: () => [{ id: 'cookie-refresh', label: '登录态刷新', schedule: '0 */5 * * * *' }],
     actions: () => ['eastmoney:subscribe', 'eastmoney:repo'],

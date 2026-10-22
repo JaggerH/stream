@@ -67,7 +67,10 @@ function runAction(row: UserTaskRow, opts: CompileOptions): ScheduledTask['run']
     }
     // 每次执行一个新标记：同一条任务的上一轮发没发过，和这一轮无关。
     const marker: DispatchMarker = { dispatched: false }
-    const p: RunPlacement = { ...resolved, dispatch: marker }
+    // browser 记号由这里建好再交给 runOnDevice：它没有时 runOnDevice 会另建一份，那份在这里读不到，
+    // 运行记录就说不出这次用的是哪个 Chrome。
+    const browser: NonNullable<RunPlacement['browser']> = {}
+    const p: RunPlacement = { ...resolved, dispatch: marker, browser }
     // 派发前的就绪检查原样抛（只加设备前缀）：此刻什么都没发，DeviceOffline 按 maxAttempts 重试是安全的。
     try {
       opts.ready?.(p)
@@ -81,7 +84,10 @@ function runAction(row: UserTaskRow, opts: CompileOptions): ScheduledTask['run']
       throw nameDevice(p.deviceId, marker.dispatched ? afterDispatch(p.deviceId, e) : e, marker.dispatched)
     }
     // 运行记录要看得出在哪台设备上跑的；local 原样返回，存量任务的明细形状不变。
-    return { ...(out ?? { summary: '' }), detail: { device: p.deviceId, detail: out?.detail } }
+    return {
+      ...(out ?? { summary: '' }),
+      detail: { device: p.deviceId, ...(browser.bindingId ? { browser: browser.bindingId } : {}), detail: out?.detail },
+    }
   }
 }
 

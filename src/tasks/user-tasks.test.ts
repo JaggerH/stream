@@ -3,6 +3,7 @@ import { compileUserTask, compileEnabled } from './user-tasks.ts'
 import type { UserTaskRow } from './task-store.ts'
 import type { PackageAction } from './package-actions.ts'
 import { currentDeviceId } from '../devices/run-context.ts'
+import { pickBrowser } from '../devices/placement.ts'
 import { DeviceIncapable, DeviceLost, DeviceOffline, failureDisposition } from '../devices/errors.ts'
 import { makeFetchFor } from '../devices/fetch.ts'
 
@@ -161,6 +162,24 @@ describe('action tasks run on their placement', () => {
     const out = await t.run({} as never)
     expect(seen).toBe('linux:nas')
     expect(out).toEqual({ summary: 'ok', detail: { device: 'linux:nas', detail: { n: 1 } } })
+  })
+
+  it('用过浏览器：结果带这次选定的绑定；没用过就没有这一格', async () => {
+    const used = compileUserTask(emRow, {
+      actions: () => async () => {
+        pickBrowser({ pick: () => 'ext:a' })
+        return { summary: 'ok' }
+      },
+      placement: () => ({ deviceId: 'linux:nas', allowHosts: [] }),
+      ready: () => {},
+    })
+    expect(await used.run({} as never)).toEqual({ summary: 'ok', detail: { device: 'linux:nas', browser: 'ext:a', detail: undefined } })
+    const plain = compileUserTask(emRow, {
+      actions: () => async () => ({ summary: 'ok' }),
+      placement: () => ({ deviceId: 'linux:nas', allowHosts: [] }),
+      ready: () => {},
+    })
+    expect(await plain.run({} as never)).toEqual({ summary: 'ok', detail: { device: 'linux:nas', detail: undefined } })
   })
 
   it('local 时结果原样', async () => {

@@ -27,6 +27,24 @@ export interface TaskRun {
    *  前端「上次」那一格失败时显示它，不显示 summary——失败的 run 基本没有 summary，
    *  照 summary 画出来就是一句「没报摘要」，把"为什么失败"整个藏掉了。 */
   failure: string | null
+  /** 在哪台设备上跑的；本计划之前的行与本机执行都是 `local`。 */
+  deviceId: string
+  /** 远程执行用过浏览器时选定的扩展绑定（只有成功的行记得住）。 */
+  bindingId?: string
+}
+
+/** 失败行的设备只在错误文本里：`user-tasks.ts` 的 `nameDevice` 给它加了这个前缀。 */
+const DEVICE_PREFIX = /^\[设备 ([^\]\s]+)\] /
+
+function placementOf(detail: unknown, errors: unknown): { deviceId: string; bindingId?: string } {
+  const d = detail !== null && typeof detail === 'object' ? (detail as { device?: unknown; browser?: unknown }) : {}
+  if (typeof d.device === 'string') {
+    return { deviceId: d.device, ...(typeof d.browser === 'string' ? { bindingId: d.browser } : {}) }
+  }
+  const first = Array.isArray(errors) ? errors[0] : errors
+  const msg = first !== null && typeof first === 'object' ? (first as { message?: unknown }).message : first
+  const m = typeof msg === 'string' ? DEVICE_PREFIX.exec(msg) : null
+  return { deviceId: m ? m[1] : 'local' }
 }
 
 /**
@@ -80,6 +98,7 @@ function hydrate(r: Raw): TaskRun {
     attempt: r.attempt,
     summary, detail, errors,
     failure: failureOf(r.state, errors),
+    ...placementOf(detail, errors),
   }
 }
 
