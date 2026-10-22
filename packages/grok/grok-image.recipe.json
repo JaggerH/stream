@@ -78,7 +78,7 @@
     "rateLimit": {
       "burst": 1,
       "perMinute": 1,
-      "perHour": 20,
+      "perHour": 30,
       "bucket": "grok-image"
     },
     "member_timeout_ms": 210000,
