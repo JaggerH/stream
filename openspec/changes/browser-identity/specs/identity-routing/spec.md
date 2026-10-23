@@ -32,6 +32,16 @@ facility 的默认目标、`local`。解析 SHALL 在执行开始时进行一次
 - **WHEN** 用户在面板上手动运行一条指定工作号B 的任务，PC 上 Chrome 只开着「个人」profile
 - **THEN** 系统唤起「工作」profile，等它的节点连上后再执行
 
+### Requirement: 唤起的 profile 不留痕迹且对用户可见
+
+执行结束后，系统 SHALL 关闭自己在被唤起的 profile 里打开的标签，以及为它新开的窗口。系统 SHALL 记录哪些 profile 是由它唤起的；
+用户自己打开过该 profile 的窗口后，这条记录 SHALL 被清除。面板 SHALL 列出由 Stream 唤起、此刻仍在后台加载着的 profile，并说明它们
+在 Chrome 完全退出时卸载。
+
+#### Scenario: 定时任务唤起了工作 profile
+- **WHEN** 一条定时任务静默唤起「工作」profile 并执行完毕
+- **THEN** 「工作」profile 里没有 Stream 留下的标签或窗口，面板的设备页显示「工作」由 Stream 在后台打开着
+
 ### Requirement: 执行前核对身份
 
 目标为身份或环境、且 facility 声明了 `whoami` 时，系统 SHALL 在派发任何动作前于选定节点核对身份，除非身份表中的记录足够新：

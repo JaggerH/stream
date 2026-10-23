@@ -46,6 +46,7 @@
 - [ ] 1. `Target` 三种；`facility_devices` 加 `account_id` / `environment` 列，任务行加 `identity` / `environment` 列；`command` 类任务拒绝
 - [ ] 2. 解析器：身份 / 环境候选、在线优先、最近核对优先；预填 `browser.bindingId`；候选为空时没有回落分支
 - [ ] 3. 按需唤起：`ensureApp { profileDirectory, force }`、等节点 30 秒、单节点单飞；按 S2 结论决定定时执行是否唤起
+- [ ] 3a. 唤起后收尾：关掉自己开的标签与为它造的窗；`woken_at` 记录与清除；冒烟时看关窗后 Chrome 是否卸载该 profile
 - [ ] 4. 执行前核对：新鲜度窗口（采集 10 分钟、动作 60 秒）；`identity-mismatch` / `identity-signed-out` / `identity-offline` 与失败处置
 - [ ] 5. 通知：换号与登出指名 profile；运行记录加 `accountId` / `accountName`
 - [ ] 6. 端到端测试：两个本机节点、两个账号，任务指定身份，换号后被拦下
@@ -53,7 +54,7 @@
 ## 计划 5：面板与 popup
 
 - [ ] 1. 面板 API 层（节点、认领、身份表、目标）
-- [ ] 2. 设备页：节点列表（profile、环境、在线、默认）、「识别 profile」、身份表
+- [ ] 2. 设备页：节点列表（profile、环境、在线、默认）、「识别 profile」、身份表、「Stream 在后台打开着的 profile」
 - [ ] 3. facility 默认目标与任务覆盖的选择器：设备 / 身份 / 环境
 - [ ] 4. 运行记录显示 profile、环境、账号
 - [ ] 5. 扩展 popup：当前 profile 与环境；未识别时的说明

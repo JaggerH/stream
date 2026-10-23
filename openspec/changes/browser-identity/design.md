@@ -43,7 +43,8 @@ device-execution 之后，执行位置是「设备」，一台设备上的浏览
   ```
   node_id TEXT PRIMARY KEY, device_id TEXT NOT NULL, binding_id TEXT NOT NULL,
   profile_dir TEXT, profile_name TEXT, label TEXT, environment TEXT,
-  is_default INTEGER, first_seen_at INTEGER, last_seen_at INTEGER
+  is_default INTEGER, first_seen_at INTEGER, last_seen_at INTEGER,
+  woken_at INTEGER   -- 由 Stream 静默唤起的时刻（D8）；用户自己开过窗即清空
   ```
 
   节点第一次连上时建行；`device_id` 来自它连进来的那条绑定。
@@ -201,6 +202,13 @@ type Target =
   没有开任何窗口。所以定时任务也可以唤起，不抢屏。Windows 真机复核前，这一条按「通过」设计；复核不过就退回「只在用户在场时
   触发的执行里唤起，定时任务按 `identity-offline` 失败」。
 - 唤起后的 profile 没有窗口，第一次需要开标签时由 D13 的规则造一扇不聚焦的窗。
+- **唤起的 profile 收不回去，但要看得见。** Cortana 实测：静默加载的 Profile 4 十分钟后仍被加载着，Chrome 不会自己卸载一个从没
+  开过窗口的 profile。扩展 API 与命令行都没有「卸载某个 profile」的办法，只有整个 Chrome 退出时才会卸载。所以：
+  - 执行结束后，Stream 关掉自己在那个 profile 里开的标签；那扇窗若是 Stream 为它造的（D13），一并关掉。不留任何可见的东西。
+  - 节点表记一列 `woken_at`：这个 profile 是 Stream 唤起的、什么时候唤起的。用户自己打开过它的窗口（扩展报告窗口数 > 0）就清空。
+  - 面板的设备页列出「Stream 在后台打开着的 profile」，并说明它会在 Chrome 退出时卸载、要立刻卸载就完全退出 Chrome。
+  - 关掉 Stream 造的窗之后 Chrome 会不会因此卸载该 profile（「最后一扇窗关闭即销毁 profile」），留到计划 4 的冒烟里看；
+    会的话，收回就有了一条可用的路。
 - 一个节点同一时刻只有一次唤起在飞，并发的执行共用它的结果。
 
 ### D9. 执行前核对
@@ -272,6 +280,8 @@ type Target =
   默认节点上。缓解：门面只经 `pickBrowser` 解析；加一个测试，断言一次以身份为目标的执行里，所有 relay 调用都落在同一个节点上。
 - **`page` 形状的 `whoami` 开标签有代价。** 一次核对一个后台标签、一次页面加载。`http` 形状没有这个代价，能用就用。
   动作前 60 秒的新鲜度窗口是安全与开销的折中；高频动作会被 `page` 核对拖慢，那时再考虑在节点侧缓存。
+- **后台 profile 用户看不见。** 唤起之后它一直加载到 Chrome 退出，Chrome 的界面里没有任何地方显示它。占用的是一组渲染 / 扩展进程
+  的内存，以及该 profile 的扩展照常在跑。缓解只有「面板上明说」（D8），没有办法替用户卸载。
 - **挪标签会改变用户的窗口。** 站点开新窗、标签被挪回主组的窗，用户可能正看着那扇新窗。只挪 AI 驱动的标签开出来的标签
   （开启者在组内），用户自己开的窗不碰。
 - **`whoami` 接口会变。** 站点改了「当前用户」接口，结果会落到 `unknown`（不是 `signed-out`），表现为该身份的执行被当作离线
