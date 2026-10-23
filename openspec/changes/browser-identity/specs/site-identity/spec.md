@@ -2,9 +2,15 @@
 
 ### Requirement: 包可声明 whoami
 
-包的会话声明 SHALL 可选地包含 `whoami`，形状为以下二者之一：`http`（一个 GET 地址，响应为 JSON 时取点路径、为 HTML 时取正则捕获组，
-得到账号 id 与可选的昵称），或 `page`（一个站点页面地址，加载后从页面全局对象上按点路径取账号 id 与可选的昵称）。
-`whoami.url` 的主机 SHALL 落在包声明的允许主机内，否则安装校验 SHALL 拒绝该包。
+包的会话声明 SHALL 可选地包含 `whoami`，形状为以下三者之一：`http`（一个 GET 地址，响应为 JSON 时取点路径、为 HTML 时取正则捕获组，
+得到账号 id 与可选的昵称）、`page`（一个站点页面地址，加载后从页面全局对象上按点路径取账号 id 与可选的昵称），或 `login`（账号就是
+登录 recipe 的某个 secret 参数）。`http` 与 `page` SHALL 可带 `signedIn` 路径，取值为 truthy 才算登录。按路径取值 SHALL 自动解开 Vue ref 包装。
+`whoami.url` 的主机 SHALL 落在包声明的允许主机内；`login.param` SHALL 是该包登录 recipe 的 secret 参数之一；否则安装校验 SHALL 拒绝该包。
+`login` 形状的身份 id SHALL 是账号的哈希，账号明文 SHALL NOT 写入身份表。
+
+#### Scenario: 游客不算登录
+- **WHEN** 小红书页面上 `userInfo.userId` 有值但 `loggedIn` 为 false
+- **THEN** 探测结果为 `signed-out`
 
 #### Scenario: B 站声明 http 形状的 whoami
 - **WHEN** bilibili 包声明 `whoami: { kind: 'http', url: 'https://api.bilibili.com/x/web-interface/nav', id: 'data.mid', name: 'data.uname' }`

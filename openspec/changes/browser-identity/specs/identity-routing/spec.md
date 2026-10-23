@@ -34,13 +34,18 @@ facility 的默认目标、`local`。解析 SHALL 在执行开始时进行一次
 
 ### Requirement: 唤起的 profile 不留痕迹且对用户可见
 
-执行结束后，系统 SHALL 关闭自己在被唤起的 profile 里打开的标签，以及为它新开的窗口。系统 SHALL 记录哪些 profile 是由它唤起的；
-用户自己打开过该 profile 的窗口后，这条记录 SHALL 被清除。面板 SHALL 列出由 Stream 唤起、此刻仍在后台加载着的 profile，并说明它们
-在 Chrome 完全退出时卸载。
+执行结束后，系统 SHALL 关闭自己在被唤起的 profile 里打开的标签，以及为它新开的窗口。对由系统唤起、且此刻没有用户自己的窗口的
+profile，系统 SHALL 让它的最后一扇窗关闭以使 Chrome 卸载该 profile；执行中从未开过窗时，系统 SHALL 开一扇不聚焦的窗再关闭它。
+profile 里有不属于 Stream 的窗口或标签时，系统 SHALL NOT 关闭它们。系统 SHALL 记录哪些 profile 是由它唤起的；用户自己打开过该 profile
+的窗口后，这条记录 SHALL 被清除。面板 SHALL 列出由 Stream 唤起、此刻仍在后台加载着的 profile。
 
 #### Scenario: 定时任务唤起了工作 profile
 - **WHEN** 一条定时任务静默唤起「工作」profile 并执行完毕
-- **THEN** 「工作」profile 里没有 Stream 留下的标签或窗口，面板的设备页显示「工作」由 Stream 在后台打开着
+- **THEN** 「工作」profile 里没有 Stream 留下的标签或窗口，「工作」profile 被 Chrome 卸载
+
+#### Scenario: 用户自己也开着那个 profile
+- **WHEN** 一条任务唤起「工作」profile 执行期间，用户自己打开了「工作」的一扇窗
+- **THEN** 执行结束后 Stream 只关自己的标签，用户的窗口照常开着，「工作」不再显示为由 Stream 在后台打开
 
 ### Requirement: 执行前核对身份
 

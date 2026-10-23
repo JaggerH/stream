@@ -3,7 +3,7 @@
 - [x] 1. S1：认领页按 profile 打开、由该 profile 的节点交回，不需要 `web_accessible_resources`（javis CfT 156）
 - [x] 2. S2（Linux）：`--no-startup-window` 唤起 profile，SW 起来、不开窗口
 - [x] 3. S2（Windows 真机）复核：profile 被静默加载，窗口数不变
-- [ ] 4. S3：在登着号的 Chrome 上取 bilibili（`http` / JSON）、xhs（`page` / `__INITIAL_STATE__`）、eastmoney（`http` / HTML）的确切路径
+- [x] 4. S3：bilibili（`http`，`data.mid`）、xhs（`page`，`__INITIAL_STATE__.user.userInfo.userId` + `loggedIn`）、eastmoney（`login`，`zjzh`）
 - [x] 5. S4：`Local State` 的 `info_cache` 字段与 `last_active_profiles`
 - [x] 6. S4：Windows 真机上 `Local State` 的位置复核（`%LOCALAPPDATA%\Google\Chrome\User Data`）
 - [x] 7. 结论回写 design.md（D3 新 profile 补发、D5 两种形状、D8 静默唤起、D13 标签组）
@@ -35,7 +35,7 @@
 
 ## 计划 3：站点身份
 
-- [ ] 1. `whoami` 进 manifest 类型与安装校验（`url` 须在允许主机内）
+- [ ] 1. `whoami` 进 manifest 类型与安装校验（三种形状、`signedIn`、ref 自动解包；`url` 须在允许主机内；`login.param` 须是该包登录 recipe 的 secret_params 之一）
 - [ ] 2. 节点上的探测器：后台标签导航、解析、三态结果、按节点串行
 - [ ] 3. `site_identities` 表；节点连上、会话 cookie 变化、手动刷新三个触发；无 `whoami` 的 facility 记 `node:<nodeId>`
 - [ ] 4. `ctx.login` 成功后重新探测
@@ -46,7 +46,7 @@
 - [ ] 1. `Target` 三种；`facility_devices` 加 `account_id` / `environment` 列，任务行加 `identity` / `environment` 列；`command` 类任务拒绝
 - [ ] 2. 解析器：身份 / 环境候选、在线优先、最近核对优先；预填 `browser.bindingId`；候选为空时没有回落分支
 - [ ] 3. 按需唤起：`ensureApp { profileDirectory, force }`、等节点 30 秒、单节点单飞；按 S2 结论决定定时执行是否唤起
-- [ ] 3a. 唤起后收尾：关掉自己开的标签与为它造的窗；`woken_at` 记录与清除；冒烟时看关窗后 Chrome 是否卸载该 profile
+- [ ] 3a. 唤起后收尾：关掉自己开的标签与为它造的窗（关最后一扇窗即卸载 profile，已实测）；纯 HTTP 执行造一扇不聚焦的窗再关；`woken_at` 记录与清除
 - [ ] 4. 执行前核对：新鲜度窗口（采集 10 分钟、动作 60 秒）；`identity-mismatch` / `identity-signed-out` / `identity-offline` 与失败处置
 - [ ] 5. 通知：换号与登出指名 profile；运行记录加 `accountId` / `accountName`
 - [ ] 6. 端到端测试：两个本机节点、两个账号，任务指定身份，换号后被拦下

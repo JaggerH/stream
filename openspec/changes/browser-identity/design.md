@@ -124,10 +124,21 @@ whoami?:
     }
   | { kind: 'page'              // 在节点的后台标签里打开站点页面，读页面上的全局状态
       url: string
-      id: string                // window 上的点路径，如 '__INITIAL_STATE__.user.userInfo._value.userId'
+      id: string                // window 上的点路径，如 '__INITIAL_STATE__.user.userInfo.userId'
       name?: string
     }
+  | { kind: 'login'             // 账号就是宿主登录时填进去的那一格，不问站点
+      param: string             // 登录 recipe 的 secret_params 之一，如 'zjzh'
+    }
+// http / page 两种都可再带：
+//   signedIn?: string          // 登录标志的路径，取到 truthy 才算 signed-in。有的站点游客也有一份用户信息（小红书 guest）
 ```
+
+- 路径取值时，遇到 Vue 的 ref 包装（带 `_value` / `_rawValue` 的对象）自动解一层。小红书的 `__INITIAL_STATE__` 就是这样，
+  作者照页面上看到的结构写路径即可。
+- `login`：东财这类由 Stream 自己拿配置里的账号去登录的 facility，账号在登录那一刻就已知。身份 id 存账号的 SHA-256 前 16 位，
+  显示为打码后的账号（`12****78`），明文不落库。它不做执行前核对（D9 当作「没有 whoami」处理）；用户在那个 profile 里手动登了
+  另一个号的情况它分辨不出来，这是接受的代价。
 
 - `http`：经 `fetchFor` 发出，cookie 取自**该节点**的快照（D10），远程设备上由设备代发。和采集用的是同一条出站路，不开标签，
   代价最低。适用于有现成「当前用户」接口的站点（B 站 `x/web-interface/nav`），以及本来就走纯 HTTP 的包（东财，账号在交易页的
@@ -207,8 +218,13 @@ type Target =
   - 执行结束后，Stream 关掉自己在那个 profile 里开的标签；那扇窗若是 Stream 为它造的（D13），一并关掉。不留任何可见的东西。
   - 节点表记一列 `woken_at`：这个 profile 是 Stream 唤起的、什么时候唤起的。用户自己打开过它的窗口（扩展报告窗口数 > 0）就清空。
   - 面板的设备页列出「Stream 在后台打开着的 profile」，并说明它会在 Chrome 退出时卸载、要立刻卸载就完全退出 Chrome。
-  - 关掉 Stream 造的窗之后 Chrome 会不会因此卸载该 profile（「最后一扇窗关闭即销毁 profile」），留到计划 4 的冒烟里看；
-    会的话，收回就有了一条可用的路。
+  - **收回的路：关掉它的最后一扇窗。** Cortana 实测：给静默加载着的 Profile 4 开一扇窗、再关掉，5 秒内 profile 即被卸载（`History`
+    解锁），之后一直不再加载。而从没开过窗的 profile 不会被卸载。所以执行结束时，若那个 profile 是 Stream 唤起的（`woken_at` 非空）
+    且此刻只剩 Stream 造的那扇窗，关掉它就等于卸载 profile；若执行里根本没开过窗（纯 HTTP 的执行），就由扩展造一扇不聚焦的窗再关掉，
+    换来卸载。这扇窗不抢焦点，但会在任务栏上闪一下。
+  - 用户在那个 profile 里有自己的窗（扩展报告窗口数 > Stream 造的数目），一律不碰，`woken_at` 清空。
+  - 实测里还看到：profile 第一次开窗时，它里面别的扩展可能弹自己的页面（AdBlock 的 What's new）。这扇窗里有不属于 Stream 的标签，
+    按上一条不碰。
 - 一个节点同一时刻只有一次唤起在飞，并发的执行共用它的结果。
 
 ### D9. 执行前核对
@@ -313,9 +329,15 @@ type Target =
   SW 起来（报告 0 个窗口），页面目标仍只有原来那一张。Windows（Cortana，Chrome 155，从 WSL 经 interop 调起，与用户桌面同在
   session 1）：Chrome 回「正在现有的浏览器会话中打开」，目标 profile 随即被加载（其 `History` 文件被锁），可见的 Chrome 窗口数
   不变。那个 profile 没装扩展，SW 醒没醒没有直接观测；扩展随 profile 加载，按通过处理，计划 4 的冒烟再看一次。
-- **S3 部分完成，需真实登录态。** 匿名探测：B 站 `nav` 直接 GET 回 JSON（未登录 `code:-101`、`isLogin:false`、无 `mid`），
-  三态成立；小红书 `user/me` 不带签名回 406，改走 `page` 形状读 `__INITIAL_STATE__`；东财没有公开的用户接口，账号在交易页 HTML 里，
-  走 `http` + `html`。三家的确切路径要在登着号的 Chrome 上取。D5 已据此改成两种形状。
+- **S3 完成（Cortana，用户自己登着号的 Default profile）。** 经 Cortana 上 Stream 的 `cdp_look` 静默探测标签与本机 cookie 快照验证，
+  回传的只有字段名与打码的 id：
+  - **B 站**：`http` 形状。`https://api.bilibili.com/x/web-interface/nav`，`id: 'data.mid'`，`name: 'data.uname'`，
+    `signedIn: 'data.isLogin'`。用该机 cookie 快照走纯 HTTP 与在页面里直接导航得到同一个账号（7 位 mid）。未登录时 `code:-101`、无 `mid`。
+  - **小红书**：`page` 形状。`user/me` 不带签名回 406；`https://www.xiaohongshu.com/explore` 的 `__INITIAL_STATE__.user` 下有
+    `loggedIn` 与 `userInfo`（`userId` 24 位、`nickname`、`guest`、`redId`），均为 Vue ref。`id: '__INITIAL_STATE__.user.userInfo.userId'`，
+    `name: '__INITIAL_STATE__.user.userInfo.nickname'`，`signedIn: '__INITIAL_STATE__.user.loggedIn'`。游客也带 `userInfo`，所以必须有 `signedIn`。
+  - **东财**：会话已过期（`/Trade/Buy` 302 到 `ExitLogin`），没有取到交易页里的账号字段。它的账号本来就是登录 recipe 的
+    `secret_params.zjzh`，改用 `login` 形状，不为它再去页面里找。D5 据此改成三种形状加 `signedIn`。
 - **S4 字段确认，Windows 路径确认，macOS 未验。** `Local State` 的 `profile.info_cache.<dir>` 有 `name`（显示名）、`user_name`
   （Google 邮箱，未登录为空）、`gaia_name`；`profile.last_active_profiles` 列出当前打开着的 profile，可以顺带判断哪些 profile 已加载。
   用户数据目录按 Chrome 的默认位置：Windows `%LOCALAPPDATA%\Google\Chrome\User Data`，macOS `~/Library/Application Support/Google/Chrome`。
