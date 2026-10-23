@@ -108,6 +108,8 @@ export interface PackagesService {
   networkForFacility: (facility: string) => PackageNetwork | undefined
   /** 全部 facility（每个一份，同 `networkForFacility` 的索引）：面板列「账号在哪台设备上」。 */
   facilities: () => PackageNetwork[]
+  /** facility → 它的包声明的 `whoami`（browser-identity D5）。同 `networkForFacility` 的层选与先到先得。 */
+  whoamiForFacility: (facility: string) => import('../../manifest/types.ts').WhoamiSpec | undefined
   /** 「所有带 backend 的包」的唯一合并名单（内置 + 用户装的第三方）。 */
   backendDirectory: BackendDirectory
   /** 容器取址走哪个档（host loopback / compose 容器 DNS / 没有容器）。 */
@@ -462,10 +464,15 @@ export const packagesPlugin = {
     const keptLayers = applyLayerPick(picked.pick, packages, userPackages)
     const networkIndex = new Map<string, PackageNetwork>()
     const facilityIndex = new Map<string, PackageNetwork>()
+    const whoamiIndex = new Map<string, import('../../manifest/types.ts').WhoamiSpec>()
     for (const p of [...keptLayers.builtin, ...keptLayers.user]) {
       const n = packageNetwork(p)
       networkIndex.set(n.packageId, n)
-      if (!facilityIndex.has(n.facility)) facilityIndex.set(n.facility, n)
+      if (!facilityIndex.has(n.facility)) {
+        facilityIndex.set(n.facility, n)
+        // 与执行位置同一个「谁代表这个 facility」：主机与 whoami 出自同一个包，越界校验才对得上。
+        if (p.whoami) whoamiIndex.set(n.facility, p.whoami)
+      }
     }
     const activatedResult = await activatePackages(
       [...picked.builtin.filter(isPluginEnabled), ...userCodePackages],
@@ -675,6 +682,7 @@ export const packagesPlugin = {
       networkFor: (id) => networkIndex.get(id),
       networkForFacility: (f) => facilityIndex.get(f),
       facilities: () => [...facilityIndex.values()],
+      whoamiForFacility: (f) => whoamiIndex.get(f),
       backendDirectory,
       netMode,
       isPluginEnabled,

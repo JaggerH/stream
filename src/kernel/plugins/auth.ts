@@ -83,6 +83,11 @@ export interface AuthService {
    * 把三件事拼对是本域的职责，不该复制到每个调用点去。
    */
   syncAuthBanner: () => void
+  /**
+   * `ctx.login(facility)` 成功之后叫一声，带上这次登录用的那条扩展绑定（执行内钉住的那个节点）。
+   * 身份表据此在那个节点上重新认人（browser-identity 计划 3）。听众的错不影响登录本身。
+   */
+  onFacilityLogin: (fn: (facility: string, bindingId: string) => void) => void
 }
 
 export interface AuthConfig {
@@ -242,11 +247,12 @@ export const authPlugin = {
      *
      * **位置有讲究**：必须排在 `cookiePuller` 之后——登完要靠它去浏览器把新 cookie 取回来。
      */
+    const loginListeners: Array<(facility: string, bindingId: string) => void> = []
     ctx.packages.setFacilityLogin(async (facility) => {
       // 先定下这次执行用哪个 Chrome（远程设备上没有在线的扩展绑定就在这里失败，一张标签都不开）。
       // 登录 recipe 与之后的取 cookie 都落在这同一个 Chrome 里——「PC 登录、NAS 下单」不会发生。
       pickBrowser(extRelays)
-      return loginToFacility(
+      await loginToFacility(
         {
           // 都现取：recipe 表会因为热重载/装卸包变化，执行器与 cookieProvider 也可能被
           // reconfigure 换掉（见 AGENTS.md「装配期取的值 = 冻住的答案」）。
@@ -263,6 +269,12 @@ export const authPlugin = {
         },
         facility,
       )
+      // 登上了：告诉身份表是在哪个节点上登的。再问一次 pickBrowser——本机一开始没有在线节点时
+      // （Chrome 是登录 recipe 唤起的），到这里才钉住。失败（抛）的登录走不到这一行。
+      const bindingId = pickBrowser(extRelays)
+      for (const fn of loginListeners) {
+        try { fn(facility, bindingId) } catch { /* 听众的问题不是登录的问题 */ }
+      }
     })
 
     // 时机 ①：一条绑定连上（含重连）。Chrome 刚起来，快照是全场最旧的那一刻。
@@ -365,6 +377,7 @@ export const authPlugin = {
       startLogin,
       cookiePuller,
       syncAuthBanner,
+      onFacilityLogin: (fn) => { loginListeners.push(fn) },
     } satisfies AuthService)
   },
 }

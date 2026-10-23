@@ -38,6 +38,7 @@ import type { AppConfig, StreamItem } from './types.ts'
 import type { SourceType } from './manifest/types.ts'
 import { writeTags } from './audio/tag-writer.ts'
 import { makeFacilityPlacement } from './devices/placement.ts'
+import { identityPlugin } from './kernel/plugins/identity.ts'
 
 export type Logger = (...args: unknown[]) => void
 
@@ -70,6 +71,8 @@ export interface BootOptions {
   extBindings?: import('./kernel/plugins/harvest.ts').HarvestConfig['extBindings']
   /** 浏览器节点表（browser-identity D1）。缺席（stream.db 打不开）= 本机多节点照常，没有默认节点与节点记录。 */
   nodes?: import('./devices/node-store.ts').NodeStore
+  /** 身份表（browser-identity D6，同一个 stream.db）。缺席（打不开）= 站点身份这一域不挂，其余照常。 */
+  identities?: import('./identity/identity-store.ts').SiteIdentityStore
   /** fired (in addition to the item-store write) for each newly-persisted item */
   onItem?: (item: StreamItem, type: SourceType) => void
   /** push a debug entry (download queue diagnostics) to the frontend DebugBox over the WS */
@@ -565,6 +568,11 @@ export async function bootstrap(
     )].sort(),
   })
   const auth = kernel.auth
+  // 站点身份（browser-identity 计划 3）：节点上各 facility 登着谁。建在 harvest / auth / packages / sources 之上，
+  // 所以排在 auth 后面。表打不开就不挂——它不决定任何执行，只是少一张表。
+  if (opts.identities) {
+    await kernel.plugin(identityPlugin, { store: opts.identities, ...(opts.nodes && { nodes: opts.nodes }), log })
+  }
 
   // adapter 装配整域进内核：四个宿主 adapter（builtin/rsshub/browser/replay）手织 + 带 code
   // 槽位的包自己交出来的那些汇进同一张 Map。**建在 harvest 域的产物上**，所以在它之后。

@@ -45,6 +45,8 @@ import { FacilityDeviceStore } from './devices/facility-devices.ts'
 import { NodeStore } from './devices/node-store.ts'
 import { ProfileClaims, agentFrom } from './devices/profile-claim.ts'
 import { mountNodeRoutes } from './http/node-routes.ts'
+import { SiteIdentityStore } from './identity/identity-store.ts'
+import { mountIdentityRoutes } from './http/identity-routes.ts'
 import { assertDeviceReady, resolvePlacement, unavailableBindings, type FacilityBindings } from './devices/placement.ts'
 import { installFetchFor, makeFetchFor } from './devices/fetch.ts'
 import { installGlobalFetchTrap } from './devices/global-fetch-trap.ts'
@@ -307,6 +309,13 @@ try {
 } catch (e) {
   console.error(`[stream] browser nodes UNAVAILABLE — open failed: ${errText(e)}; profiles still connect, without defaults`)
 }
+// 站点身份表（browser-identity D6），同一个 stream.db。打不开就没有：不影响执行，只是答不出「哪个号」。
+let siteIdentities: SiteIdentityStore | undefined
+try {
+  siteIdentities = new SiteIdentityStore(join(dirname(config.item_db), 'stream.db'))
+} catch (e) {
+  console.error(`[stream] site identities UNAVAILABLE — open failed: ${errText(e)}`)
+}
 // `/api/*` 与 `/ws` 的访问令牌。**默认就有**（用户没配 api_token 时自动生成一份持久的）——
 // 后端绑 0.0.0.0 是有意的（用户要从手机访问），那就必须有一把默认的锁，而不是默认没有。
 // 本机 loopback 请求免密，所以自己机器上用完全无感（判据与实测见 http/access-guard.ts）。
@@ -379,6 +388,7 @@ const apiToken = config.api_token || loadOrCreateApiToken(dirname(config.item_db
     facilityDevices: facilityBindings,
     extBindings,
     ...(browserNodes ? { nodes: browserNodes } : {}),
+    ...(siteIdentities ? { identities: siteIdentities } : {}),
     broadcast: (msg) => hub.broadcast(msg),
     track,
     trackSync,
@@ -887,6 +897,7 @@ const apiToken = config.api_token || loadOrCreateApiToken(dirname(config.item_db
       for (const b of extBindings.revokeDevice(id)) harvest.extRelays.kick(b, REVOKED_CLOSE_CODE, 'revoked')
     },
   })
+  mountIdentityRoutes(app, { identities: () => kernel.siteIdentities })
   mountExtBindingRoutes(app, {
     store: extBindings,
     registry: harvest.extRelays,
