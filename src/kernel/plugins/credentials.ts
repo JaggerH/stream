@@ -1,7 +1,6 @@
 import type { Context } from 'cordis'
 import { CookieProvider, type CookieSource } from '../../credentials/cookie-provider.ts'
 import { DeviceCookieStores, type PushedCookieStore, type CookieHealth } from '../../credentials/pushed-cookie-store.ts'
-import { LOCAL_DEVICE } from '../../devices/run-context.ts'
 import { CredentialResolver } from '../../credentials/resolver.ts'
 import { TokenProvider } from '../../credentials/token-provider.ts'
 import type { CredentialProvider } from '../../credentials/types.ts'
@@ -19,9 +18,12 @@ export interface ExtSyncConfig {
 }
 
 export interface CredentialsService {
-  /** 本机（`local` 设备）那份登录态（`data/cookies/local.json`）——本机扩展的 cookie 拉取写它。 */
-  pushedCookies: PushedCookieStore
-  /** 每台设备各一份登录态；设备执行读自己那台的。 */
+  /**
+   * 「这一次该读的那份」登录态：每次调用按 `cookieStores.current()` 解析（browser-identity D10）——执行内是
+   * 这次执行选定的节点，执行外是本机默认节点；没有节点时就是 `data/cookies/local.json`（升级前的那份）。
+   */
+  pushedCookies: Pick<PushedCookieStore, 'fetch' | 'status' | 'replace'>
+  /** 每个槽位（设备或节点）各一份登录态；执行读自己选定的那份。 */
   cookieStores: DeviceCookieStores
   /** 供 cookie 的 provider；`reconfigure` 可热换来源，持它引用的 adapter 无需重新接线。 */
   cookieProvider: CookieProvider
@@ -67,7 +69,13 @@ export const credentialsPlugin = {
     const settings = ctx.settings
 
     const cookieStores = new DeviceCookieStores(config.dataDir, config.log)
-    const pushedCookies = cookieStores.forDevice(LOCAL_DEVICE)
+    // 不再是固定的 local 那份：节点之后，本机的登录态有好几份（每个 profile 一份），读哪份每次现解。
+    // 槽位解析器由 auth 域回填（它要扩展中继，比本域晚建）；回填前就是 local。
+    const pushedCookies: CredentialsService['pushedCookies'] = {
+      fetch: () => cookieStores.current().fetch(),
+      status: () => cookieStores.current().status(),
+      replace: (cookies) => cookieStores.current().replace(cookies),
+    }
     const cookieSource: CookieSource = cookieStores
 
     const providers: CredentialProvider[] = []

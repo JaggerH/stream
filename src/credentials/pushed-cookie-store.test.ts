@@ -121,3 +121,49 @@ describe('接进现有的 provider（消费侧一行都不用改）', () => {
     expect(await provider.availableDomains()).toEqual(['quark.cn'])
   })
 })
+
+// browser-identity D10：一个节点一份，落在设备同名目录下；按设备的那份只留给老扩展。
+describe('per-node snapshots', () => {
+  it('local/node_a → cookies/local/node_a.json，0600；local 仍是 cookies/local.json', () => {
+    const stores = new DeviceCookieStores(dir, () => {})
+    stores.forSlot('local/node_a').replace({ 'quark.cn': [cookie('__pus', 'a')] })
+    stores.forSlot('local').replace({ 'quark.cn': [cookie('__pus', 'legacy')] })
+    const f = join(dir, 'cookies', 'local', 'node_a.json')
+    expect(existsSync(f)).toBe(true)
+    expect(statSync(f).mode & 0o777).toBe(0o600)
+    expect(existsSync(join(dir, 'cookies', 'local.json'))).toBe(true)
+    expect(existsSync(join(dir, 'cookies', 'linux_nas', 'node_n.json'))).toBe(false)
+    stores.forSlot('linux:nas/node_n').replace({})
+    expect(existsSync(join(dir, 'cookies', 'linux_nas', 'node_n.json'))).toBe(true)
+  })
+
+  it('【核心】同一台电脑两个 profile 的快照互不覆盖', async () => {
+    const stores = new DeviceCookieStores(dir, () => {})
+    stores.forSlot('local/node_w').replace({ 'xiaohongshu.com': [cookie('web_session', 'work')] })
+    stores.forSlot('local/node_p').replace({ 'xiaohongshu.com': [cookie('web_session', 'personal')] })
+    const fresh = new DeviceCookieStores(dir, () => {})
+    expect((await fresh.fetch('local/node_w'))['xiaohongshu.com']?.[0]).toMatchObject({ value: 'work' })
+    expect((await fresh.fetch('local/node_p'))['xiaohongshu.com']?.[0]).toMatchObject({ value: 'personal' })
+  })
+
+  it('current() 跟着回填的槽位解析器走', async () => {
+    const stores = new DeviceCookieStores(dir, () => {})
+    stores.forSlot('local/node_w').replace({ 'quark.cn': [cookie('__pus', 'w')] })
+    expect(await stores.current().fetch()).toEqual({})
+    stores.setSlotResolver(() => 'local/node_w')
+    expect((await stores.current().fetch())['quark.cn']).toHaveLength(1)
+  })
+
+  it('CookieProvider 按槽位缓存：解析器换了节点，读到的是另一份', async () => {
+    const stores = new DeviceCookieStores(dir, () => {})
+    stores.forSlot('local/node_w').replace({ 'quark.cn': [cookie('__pus', 'w')] })
+    stores.forSlot('local/node_p').replace({ 'quark.cn': [cookie('__pus', 'p')] })
+    const provider = new CookieProvider(stores)
+    let slot = 'local/node_w'
+    provider.setSlotResolver(() => slot)
+    expect(await provider.cookieString('quark.cn')).toBe('__pus=w')
+    slot = 'local/node_p'
+    expect(await provider.cookieString('quark.cn')).toBe('__pus=p')
+  })
+})
+

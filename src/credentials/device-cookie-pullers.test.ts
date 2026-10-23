@@ -1,18 +1,21 @@
-// 每台设备的登录态经它自己的扩展绑定取、写它自己的快照（design D4、D7）。
+// 每个槽位（节点，或说不出节点时的设备）的登录态经它自己的扩展绑定取、写它自己的快照
+// （device-execution D4/D7、browser-identity D10）。
 import { describe, expect, it, vi } from 'vitest'
 import { makeDeviceCookiePullers } from './device-cookie-pullers.ts'
 import { runOnDevice } from '../devices/run-context.ts'
-import { pickBrowser } from '../devices/placement.ts'
-import { DeviceOffline } from '../devices/errors.ts'
 import type { CookieSnapshot } from './cookie-puller.ts'
 
 const cookie = (name: string) => ({ name, value: name, domain: '.eastmoneysec.com', path: '/' })
 
-function world(online: Record<string, boolean> = { 'ext:a': true, 'ext:b': true }) {
+/**
+ * NAS 上两条老扩展的绑定（ext:a / ext:b，没有节点）、一条记着节点的（ext:n → node_n）；
+ * 本机兼容槽 `local` 与两个本机节点。
+ */
+function world(online: Record<string, boolean> = { 'ext:a': true, 'ext:b': true, 'ext:n': true, local: true, 'local:node_w': true, 'local:node_p': true }) {
   const stores = new Map<string, Record<string, unknown[]>>()
-  const storeFor = (dev: string): CookieSnapshot => ({
-    replace: (c) => { stores.set(dev, c) },
-    status: () => ({ domains: Object.keys(stores.get(dev) ?? {}), updatedAt: stores.has(dev) ? 1 : null }),
+  const storeFor = (slot: string): CookieSnapshot => ({
+    replace: (c) => { stores.set(slot, c) },
+    status: () => ({ domains: Object.keys(stores.get(slot) ?? {}), updatedAt: stores.has(slot) ? 1 : null }),
   })
   const pulled: string[] = []
   const relayFor = (id: string) => ({
@@ -21,66 +24,71 @@ function world(online: Record<string, boolean> = { 'ext:a': true, 'ext:b': true 
       return { cookies: { [domains[0]!]: [cookie(id)] }, refused: [] }
     }),
   })
-  const relays = { 'ext:a': relayFor('ext:a'), 'ext:b': relayFor('ext:b') } as Record<string, ReturnType<typeof relayFor>>
-  let picks = ['ext:a', 'ext:b']
+  const ids = ['ext:a', 'ext:b', 'ext:n', 'local', 'local:node_w', 'local:node_p']
+  const relays = Object.fromEntries(ids.map((id) => [id, relayFor(id)]))
+  const nodeOf: Record<string, string> = { 'ext:n': 'node_n', 'local:node_w': 'node_w', 'local:node_p': 'node_p' }
   const browsers = {
-    pick: (dev: string) => {
-      if (dev !== 'linux:nas') throw new Error('unknown device')
-      const live = picks.filter((b) => online[b])
-      if (!live.length) throw new DeviceOffline(dev)
-      return live[0]!
-    },
-    hasBrowser: (dev: string) => dev === 'linux:nas' && Object.values(online).some(Boolean),
+    bindingsOf: (dev: string) => (dev === 'linux:nas' ? ['ext:a', 'ext:b', 'ext:n'] : dev === 'local' ? ['local', 'local:node_w', 'local:node_p'] : []),
+    nodeOf: (id: string) => nodeOf[id],
+    isOnline: (id: string) => online[id] === true,
     relay: (id: string) => relays[id]!,
   }
-  const local = { connected: true, cookiePull: vi.fn(async () => ({ cookies: { 'eastmoneysec.com': [cookie('local')] }, refused: [] })) }
   const pullerFor = makeDeviceCookiePullers({
-    local,
     browsers,
     storeFor,
     requiredDomainsFor: (dev) => (dev === 'linux:nas' ? ['eastmoneysec.com'] : ['eastmoneysec.com', 'xiaohongshu.com']),
     log: () => {},
   })
-  return { pullerFor, stores, pulled, local, browsers, setPicks: (p: string[]) => { picks = p } }
+  return { pullerFor, stores, pulled, relays }
 }
 
 describe('makeDeviceCookiePullers', () => {
-  it('NAS 的登录态经 NAS 上的绑定取、写 NAS 的快照；本机中继一次都没被问', async () => {
+  it('节点的登录态经那个节点自己的绑定取、写它自己的快照', async () => {
     const w = world()
-    const out = await w.pullerFor('linux:nas').pull('test')
+    const out = await w.pullerFor('linux:nas/node_n').pull('test')
     expect(out.ok).toBe(true)
-    expect(w.pulled).toEqual(['ext:a'])
-    expect(w.stores.get('linux:nas')).toEqual({ 'eastmoneysec.com': [cookie('ext:a')] })
-    expect(w.stores.has('local')).toBe(false)
-    expect(w.local.cookiePull).not.toHaveBeenCalled()
-  })
-
-  it('本机照旧走本机中继', async () => {
-    const w = world()
-    await w.pullerFor('local').pull('test')
-    expect(w.local.cookiePull).toHaveBeenCalledWith(['eastmoneysec.com', 'xiaohongshu.com'])
-    expect(w.pulled).toEqual([])
-  })
-
-  it('在一次执行里取的是这次执行选定的那个 Chrome——登完取回的就是刚登上的那份', async () => {
-    const w = world()
-    await runOnDevice({ deviceId: 'linux:nas', allowHosts: [] }, async () => {
-      expect(pickBrowser(w.browsers)).toBe('ext:a')
-      w.setPicks(['ext:b', 'ext:a'])                 // 中途另一个 Chrome 成了「最合适」的
-      await w.pullerFor('linux:nas').pull('facility-login')
-    })
-    expect(w.pulled).toEqual(['ext:a'])
-  })
-
-  it('设备上没有在线的 Chrome：跳过这一轮，不碰快照', async () => {
-    const w = world({ 'ext:a': false, 'ext:b': false })
-    const out = await w.pullerFor('linux:nas').pull('test')
-    expect(out).toMatchObject({ ok: false, reason: 'relay-down' })
+    expect(w.pulled).toEqual(['ext:n'])
+    expect(w.stores.get('linux:nas/node_n')).toEqual({ 'eastmoneysec.com': [cookie('ext:n')] })
     expect(w.stores.has('linux:nas')).toBe(false)
   })
 
-  it('同一台设备复用同一个 puller（并发去重靠它）', () => {
+  it('【核心】同一台电脑的两个 profile：各拉各的，快照互不覆盖', async () => {
     const w = world()
-    expect(w.pullerFor('linux:nas')).toBe(w.pullerFor('linux:nas'))
+    await w.pullerFor('local/node_w').pull('test')
+    await w.pullerFor('local/node_p').pull('test')
+    expect(w.pulled).toEqual(['local:node_w', 'local:node_p'])
+    expect(w.stores.get('local/node_w')).toEqual({ 'eastmoneysec.com': [cookie('local:node_w')] })
+    expect(w.stores.get('local/node_p')).toEqual({ 'eastmoneysec.com': [cookie('local:node_p')] })
+    expect(w.relays['local:node_w']!.cookiePull).toHaveBeenCalledWith(['eastmoneysec.com', 'xiaohongshu.com'])
+  })
+
+  it('本机设备槽位 = 兼容槽那条中继（老扩展），写 local 那份', async () => {
+    const w = world()
+    await w.pullerFor('local').pull('test')
+    expect(w.pulled).toEqual(['local'])
+    expect(w.stores.has('local')).toBe(true)
+  })
+
+  it('远程设备槽位只经没记过节点的绑定取；执行内取这次执行选定的那条', async () => {
+    const w = world()
+    await w.pullerFor('linux:nas').pull('test')
+    expect(w.pulled).toEqual(['ext:a'])
+    await runOnDevice({ deviceId: 'linux:nas', allowHosts: [], browser: { bindingId: 'ext:b' } }, async () => {
+      await w.pullerFor('linux:nas').pull('facility-login')
+    })
+    expect(w.pulled).toEqual(['ext:a', 'ext:b'])
+  })
+
+  it('节点离线：跳过这一轮，不碰快照', async () => {
+    const w = world({ 'local:node_w': false })
+    const out = await w.pullerFor('local/node_w').pull('test')
+    expect(out).toMatchObject({ ok: false, reason: 'relay-down' })
+    expect(w.stores.has('local/node_w')).toBe(false)
+  })
+
+  it('同一个槽位复用同一个 puller（并发去重靠它）', () => {
+    const w = world()
+    expect(w.pullerFor('local/node_w')).toBe(w.pullerFor('local/node_w'))
+    expect(w.pullerFor('local/node_w')).not.toBe(w.pullerFor('local/node_p'))
   })
 })

@@ -6,8 +6,8 @@ import { currentDeviceId } from '../devices/run-context.ts'
 
 /** Anything that yields cookies-by-domain (the real PushedCookieStore, or a test stub). */
 export interface CookieSource {
-  /** `deviceId` 缺省 = `local`。 */
-  fetch(deviceId?: string): Promise<Record<string, BrowserCookie[]>>
+  /** `slot` 是设备 id 或 `<设备>/<节点>`（`cookie-slot.ts`），缺省 = `local`。 */
+  fetch(slot?: string): Promise<Record<string, BrowserCookie[]>>
 }
 
 /**
@@ -52,8 +52,17 @@ function expandCookieEnv(template: string, cookies: BrowserCookie[], ref: string
  */
 export class CookieProvider implements CredentialProvider {
   readonly id = 'cookie'
-  /** 按设备各一份：执行在哪台设备上，读的就是那台设备的登录态。 */
+  /** 按槽位各一份：执行选定了哪个节点（没有节点就是哪台设备），读的就是那一份登录态。 */
   private readonly cache = new Map<string, { cookies: Record<string, BrowserCookie[]>; fetchedAt: number }>()
+  /**
+   * 这一次读哪个槽位。缺省 = 执行上下文的设备（升级前的行为）；auth 域装配时回填成按节点解析的那个
+   * （browser-identity D10，`currentCookieSlot`）——provider 建得比扩展中继早，只能回填。
+   */
+  private slotOf: () => string = currentDeviceId
+
+  setSlotResolver(fn: () => string): void {
+    this.slotOf = fn
+  }
 
   // Source is swappable at runtime: adapters/resolver hold this provider by reference, so
   // replacing the source here propagates everywhere with no re-wiring. `null` = no source
@@ -73,24 +82,24 @@ export class CookieProvider implements CredentialProvider {
     if (source) await this.refresh()
   }
 
-  /** 缺省刷新当前 placement 的设备。 */
-  async refresh(deviceId: string = currentDeviceId()): Promise<void> {
+  /** 缺省刷新这一次该读的那个槽位。 */
+  async refresh(slot: string = this.slotOf()): Promise<void> {
     if (!this.source) {
-      this.cache.delete(deviceId)
+      this.cache.delete(slot)
       return
     }
-    this.cache.set(deviceId, { cookies: await this.source.fetch(deviceId), fetchedAt: Date.now() })
+    this.cache.set(slot, { cookies: await this.source.fetch(slot), fetchedAt: Date.now() })
   }
 
   /**
-   * 当前执行所在设备的快照（逐设备各一份）。
+   * 当前执行选定节点的快照（逐槽位各一份）。
    * Re-read when the cache is empty or older than ttlMs, so a newly-synced domain surfaces
    * within one TTL without a manual reconfigure. A failure on a WARM cache is swallowed
    * (keep the working cookies, back off a full TTL) — a transient read blip must not strip a
    * live session mid-harvest; only a COLD start surfaces the error.
    */
   private async snapshot(): Promise<Record<string, BrowserCookie[]> | null> {
-    const id = currentDeviceId()
+    const id = this.slotOf()
     const hit = this.cache.get(id)
     if (hit && Date.now() - hit.fetchedAt <= this.ttlMs) return hit.cookies
     try {

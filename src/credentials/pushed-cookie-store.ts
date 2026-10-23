@@ -3,10 +3,19 @@ import { join, dirname } from 'node:path'
 import type { BrowserCookie } from '../types.ts'
 import type { CookieSource } from './cookie-provider.ts'
 import { LOCAL_DEVICE } from '../devices/run-context.ts'
+import { parseCookieSlot } from './cookie-slot.ts'
 
 /** 设备 id → 文件名。冒号换下划线，其余非 [A-Za-z0-9._-] 一律换掉——id 来自配对与 hello，不能让它拼出路径。 */
 export function cookieFileName(deviceId: string): string {
   return `${deviceId.replace(/[^A-Za-z0-9._-]/g, '_').replace(/^\.+/, '_')}.json`
+}
+
+/** 槽位 → 快照文件。节点的在设备同名目录下（`cookies/<设备>/<节点>.json`，browser-identity D10）。 */
+export function cookieFilePath(dataDir: string, slot: string): string {
+  const { deviceId, nodeId } = parseCookieSlot(slot)
+  return nodeId
+    ? join(dataDir, 'cookies', cookieFileName(deviceId).replace(/\.json$/, ''), cookieFileName(nodeId))
+    : join(dataDir, 'cookies', cookieFileName(deviceId))
 }
 
 /**
@@ -46,6 +55,10 @@ export interface CookieHealth {
  *
  * **按设备一份**（`data/cookies/<设备>.json`）：在 NAS 上登录得到的会话只给 NAS 上的执行用，
  * 否则「PC 登录、NAS 下单」的分叉又回来了。见 openspec/changes/device-execution/design.md D4。
+ *
+ * **再细到节点**（`data/cookies/<设备>/<节点>.json`，browser-identity D10）：同一台电脑的工作 profile 与
+ * 个人 profile 各一份，轮流被拉取也不互相覆盖。按设备的那份只留给说不出节点的连接（老扩展）。
+ * 不迁移旧快照：节点第一次连上时本来就会全量拉一次。
  */
 export class PushedCookieStore implements CookieSource {
   private readonly file: string
@@ -55,9 +68,10 @@ export class PushedCookieStore implements CookieSource {
   /** 仅 local 设置：改名失败时 `read()` 回退读它，升级不掉登录。 */
   private readonly legacy?: string
 
-  constructor(dataDir: string, deviceId: string = LOCAL_DEVICE, log: (line: string) => void = console.log) {
-    this.file = join(dataDir, 'cookies', cookieFileName(deviceId))
-    if (deviceId === LOCAL_DEVICE) {
+  /** `slot`：设备 id，或 `<设备>/<节点>`（见 cookie-slot.ts）。 */
+  constructor(dataDir: string, slot: string = LOCAL_DEVICE, log: (line: string) => void = console.log) {
+    this.file = cookieFilePath(dataDir, slot)
+    if (slot === LOCAL_DEVICE) {
       this.legacy = join(dataDir, 'cookies.json')
       migrateLegacy(this.legacy, this.file, log)
     }
@@ -111,21 +125,38 @@ export class PushedCookieStore implements CookieSource {
   }
 }
 
-/** 每台设备一份快照的集合。`fetch(deviceId)` 实现 `CookieSource`，缺省是 local。 */
+/** 每个槽位（设备或节点）一份快照的集合。`fetch(slot)` 实现 `CookieSource`，缺省是 local。 */
 export class DeviceCookieStores implements CookieSource {
   private readonly stores = new Map<string, PushedCookieStore>()
   constructor(private readonly dataDir: string, private readonly log: (line: string) => void = console.log) {}
 
-  forDevice(deviceId: string): PushedCookieStore {
-    let s = this.stores.get(deviceId)
+  forSlot(slot: string): PushedCookieStore {
+    let s = this.stores.get(slot)
     if (!s) {
-      s = new PushedCookieStore(this.dataDir, deviceId, this.log)
-      this.stores.set(deviceId, s)
+      s = new PushedCookieStore(this.dataDir, slot, this.log)
+      this.stores.set(slot, s)
     }
     return s
   }
 
-  async fetch(deviceId: string = LOCAL_DEVICE): Promise<Record<string, BrowserCookie[]>> {
-    return this.forDevice(deviceId).fetch()
+  /** 这一次该读哪个槽位。缺省 local；auth 域装配时回填成按节点解析的那个（`currentCookieSlot`）。 */
+  private slotOf: () => string = () => LOCAL_DEVICE
+
+  setSlotResolver(fn: () => string): void {
+    this.slotOf = fn
+  }
+
+  /** 这一次该读的那份。 */
+  current(): PushedCookieStore {
+    return this.forSlot(this.slotOf())
+  }
+
+  /** 按设备的那份（槽位就是设备 id）。 */
+  forDevice(deviceId: string): PushedCookieStore {
+    return this.forSlot(deviceId)
+  }
+
+  async fetch(slot: string = LOCAL_DEVICE): Promise<Record<string, BrowserCookie[]>> {
+    return this.forSlot(slot).fetch()
   }
 }
