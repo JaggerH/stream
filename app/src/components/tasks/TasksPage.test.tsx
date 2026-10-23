@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
-import { TasksPage, groupTasks, runText } from './TasksPage.tsx'
+import { TasksPage, groupTasks, runText, runWhere } from './TasksPage.tsx'
 import type { TaskListItem } from '../../lib/api.tasks.ts'
 
 // `@testing-library/user-event` 不是本项目依赖（见 NetdiskPicker.test.tsx 里的同一句说明），
@@ -755,5 +755,27 @@ describe('TasksPage 的分组分节', () => {
     fireEvent.click(screen.getByTestId('task-editor-save'))
     await waitFor(() => expect(putBody('macro-1')).toBeTruthy())
     expect(putBody('macro-1')!.group).toBeUndefined()
+  })
+})
+
+/** 运行记录在哪个身份下完成的（browser-identity D12）：设备、profile、环境、账号都是执行那一刻的快照。 */
+describe('runWhere', () => {
+  const names = { devices: new Map([['linux:nas', 'NAS']]), browsers: new Map([['ext:a', 'Chrome']]) }
+  it('本机：不标设备，profile / 环境 / 账号照样说出来', () => {
+    expect(runWhere({ deviceId: 'local', environment: '工作', profileName: 'Profile 1', accountName: '工作号', accountId: 'u1' }, names)).toBe('工作 · Profile 1 · 工作号')
+  })
+  it('只有账号 id 没有显示名时显示 id', () => {
+    expect(runWhere({ deviceId: 'local', profileName: 'Profile 1', accountId: 'u1' }, names)).toBe('Profile 1 · u1')
+  })
+  it('远程设备 + profile：设备名在前，profile 名顶替浏览器名', () => {
+    expect(runWhere({ deviceId: 'linux:nas', bindingId: 'ext:a', profileName: '个人', environment: '个人' }, names)).toBe('NAS · 个人 · 个人')
+  })
+  it('只有设备与浏览器：与以前一样', () => {
+    expect(runWhere({ deviceId: 'linux:nas', bindingId: 'ext:a' }, names)).toBe('NAS · Chrome')
+    expect(runWhere({ deviceId: 'linux:nas' }, names)).toBe('NAS')
+  })
+  it('本机且没有任何节点信息：不标', () => {
+    expect(runWhere({ deviceId: 'local' }, names)).toBeNull()
+    expect(runWhere({}, names)).toBeNull()
   })
 })

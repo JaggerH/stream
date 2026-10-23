@@ -136,11 +136,23 @@ function fmtDuration(ms: number | null): string {
   return ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(1)}s`
 }
 
-/** 运行记录上「在哪跑的」那一格：本机不标；名字查不到（设备 / 浏览器已撤销）就显示 id，不吞掉。 */
-export function runWhere(run: Pick<TaskRunView, 'deviceId' | 'bindingId'>, names: RunNames): string | null {
-  if (!run.deviceId || run.deviceId === 'local') return null
-  const device = names.devices.get(run.deviceId) ?? run.deviceId
-  return run.bindingId ? `${device} · ${names.browsers.get(run.bindingId) ?? run.bindingId}` : device
+/**
+ * 运行记录上「在哪跑的」那一格：设备 · 环境 · profile · 账号（browser-identity D12，都是执行那一刻的快照，
+ * 之后改名不跟着变）。本机不标设备；名字查不到（设备 / 浏览器已撤销）就显示 id，不吞掉。有 profile 名时它顶替
+ * 浏览器名——同一台机器上好几个 profile，说「Chrome」等于没说。什么都没有（本机、没用浏览器）就不标。
+ */
+export function runWhere(
+  run: Pick<TaskRunView, 'deviceId' | 'bindingId' | 'profileName' | 'environment' | 'accountId' | 'accountName'>,
+  names: RunNames,
+): string | null {
+  const parts: string[] = []
+  if (run.deviceId && run.deviceId !== 'local') parts.push(names.devices.get(run.deviceId) ?? run.deviceId)
+  if (run.environment) parts.push(run.environment)
+  if (run.profileName) parts.push(run.profileName)
+  else if (run.bindingId && run.deviceId && run.deviceId !== 'local') parts.push(names.browsers.get(run.bindingId) ?? run.bindingId)
+  const account = run.accountName ?? run.accountId
+  if (account) parts.push(account)
+  return parts.length ? parts.join(' · ') : null
 }
 
 interface RunNames { devices: Map<string, string>; browsers: Map<string, string> }
