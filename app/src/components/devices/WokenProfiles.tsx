@@ -1,5 +1,5 @@
 import type { NodeRow } from '../../lib/api.ts'
-import { nodeTitle } from './NodeRow.tsx'
+import { nodeTitle } from './identities.ts'
 
 /**
  * 「Stream 在后台打开着的 profile」（browser-identity D8）。

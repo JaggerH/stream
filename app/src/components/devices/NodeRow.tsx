@@ -1,15 +1,12 @@
 import { useState, type ReactNode } from 'react'
 import type { NodeRow as Node } from '../../lib/api.ts'
+import { nodeTitle } from './identities.ts'
 
 /** 面板预置的两个环境（browser-identity D4）。环境是自由文本，这两个只是省得手打。 */
 export const ENV_PRESETS = ['工作', '个人'] as const
 
 const CUSTOM = '__custom'
 
-/** 一个节点给人看的名字：用户起的名字 → 认领来的 profile 名 → 绑定名（配对时扩展报的）→ 未识别。 */
-export function nodeTitle(n: Pick<Node, 'label' | 'profileName'>, fallback?: string): string {
-  return n.label ?? n.profileName ?? fallback ?? '未识别的 profile'
-}
 
 /** 环境下拉的选项：预置两项 + 别的节点上已经在用的（去重，预置在前）。 */
 export function environmentOptions(inUse: Iterable<string>): string[] {

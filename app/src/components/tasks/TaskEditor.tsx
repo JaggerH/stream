@@ -28,7 +28,8 @@ import { Button } from '../acrylic/button.tsx'
 import { Input } from '../acrylic/input.tsx'
 import { ScheduleEditor } from './ScheduleEditor.tsx'
 import { SchemaForm } from '../config/SchemaForm.tsx'
-import { api, type Connection, type DeviceRow } from '../../lib/api.ts'
+import { api, type Connection, type DeviceRow, type FacilityDeviceRow, type IdentityRow } from '../../lib/api.ts'
+import { TargetSelect, environmentsInUse, identityChoices, targetOf } from '../devices/TargetSelect.tsx'
 import { deleteTask, putTask, type TaskInput, type TaskListItem } from '../../lib/api.tasks.ts'
 
 /** 新建时的草稿。**默认停用**：一条刚建出来、还没跑过一次的任务，默认就挂上节拍器是没道理的；
@@ -50,6 +51,8 @@ function toDraft(task: TaskListItem): TaskInput {
     // 二选一，**照原样带过来**：把缺席的那个补成空串，保存时就会被判成"两个都给了"。
     ...(typeof task.action === 'string' ? { action: task.action } : { command: task.command ?? '' }),
     ...(task.device !== undefined ? { device: task.device } : {}),
+    ...(task.identity !== undefined ? { identity: task.identity } : {}),
+    ...(task.environment !== undefined ? { environment: task.environment } : {}),
     args: task.args ?? [],
     ...(task.cwd !== undefined ? { cwd: task.cwd } : {}),
     ...(task.env !== undefined ? { env: task.env } : {}),
@@ -238,15 +241,32 @@ export function TaskEditor({
   const [refs, setRefs] = useState<string[]>([])
   const [refsErr, setRefsErr] = useState<string | null>(null)
 
-  // 「执行设备」的可选项。读失败不挡编辑：下拉里只剩「跟随」和「本机」，已存的覆盖照样显示。
+  // 「执行位置」的可选项（browser-identity D7）：设备、动作所属 facility 的身份、节点上标过的环境。
+  // 读失败不挡编辑：下拉里只剩「跟随」和「本机」，已存的覆盖照样显示。
   const [devices, setDevices] = useState<DeviceRow[]>([])
+  const [facilities, setFacilities] = useState<FacilityDeviceRow[]>([])
+  const [identities, setIdentities] = useState<IdentityRow[]>([])
+  const [environments, setEnvironments] = useState<string[]>([])
   useEffect(() => {
     let alive = true
     api.devices.list(conn)
       .then((r) => { if (alive) setDevices(r.devices ?? []) })
       .catch(() => { if (alive) setDevices([]) })
+    api.devices.facilities(conn)
+      .then((r) => { if (alive) setFacilities(r.facilities ?? []) })
+      .catch(() => { if (alive) setFacilities([]) })
+    api.identities.list(conn)
+      .then((r) => { if (alive) setIdentities(r.identities ?? []) })
+      .catch(() => { if (alive) setIdentities([]) })
+    api.nodes.list(conn)
+      .then((r) => { if (alive) setEnvironments(environmentsInUse(r.nodes ?? [])) })
+      .catch(() => { if (alive) setEnvironments([]) })
     return () => { alive = false }
   }, [conn.baseUrl])
+  // 动作 `<包 id>:<动作名>` 所属的 facility：身份下拉只列这个账号体系的账号。包 id 可能带 scope（`@x/y`），
+  // 动作名不带冒号，所以按最后一个冒号切。
+  const actionPkg = typeof draft.action === 'string' ? draft.action.slice(0, draft.action.lastIndexOf(':')) : ''
+  const actionFacility = facilities.find((f) => f.packageId === actionPkg)?.facility
 
   const aliveRef = useRef(true)
   useEffect(() => {
@@ -299,8 +319,10 @@ export function TaskEditor({
           ? { command: draft.command.trim() } : { command: undefined }),
         ...(typeof draft.action === 'string' && draft.action.trim() !== ''
           ? { action: draft.action.trim() } : { action: undefined }),
-        // 空 = 跟随账号的默认设备：键整个不发（发空串后端会当成一个叫 '' 的设备）。
+        // 空 = 跟随账号的默认：键整个不发（发空串后端会当成一个叫 '' 的设备）。三格至多一格有值。
         device: typeof draft.action === 'string' && (draft.device ?? '') !== '' ? draft.device : undefined,
+        identity: typeof draft.action === 'string' && (draft.identity ?? '') !== '' ? draft.identity : undefined,
+        environment: typeof draft.action === 'string' && (draft.environment ?? '') !== '' ? draft.environment : undefined,
         ...(draft.env ? { env: Object.fromEntries(Object.entries(draft.env).filter(([k]) => k.trim() !== '')) } : {}),
       }
       const saved = await putTask(apiBase, clean)
@@ -380,7 +402,7 @@ export function TaskEditor({
             value={isAction ? 'action' : 'command'}
             onChange={(e) => setDraft(e.target.value === 'action'
               ? { ...draft, command: undefined, args: [], cwd: undefined, env: undefined, action: actions[0] ?? '' }
-              : { ...draft, action: undefined, device: undefined, command: '' })}
+              : { ...draft, action: undefined, device: undefined, identity: undefined, environment: undefined, command: '' })}
           >
             <option value="command">外部命令</option>
             <option value="action" disabled={actions.length === 0}>包提供的动作</option>
@@ -398,21 +420,22 @@ export function TaskEditor({
                 {actions.map((a) => <option key={a} value={a}>{a}</option>)}
               </select>
             </Field>
-            <Field label="执行设备" hint="不选 = 跟随这个账号在「管理 → 设备 → 账号在哪台设备上执行」里的设备">
-              <select
+            <Field label="执行位置" hint="不选 = 跟随这个账号在「管理 → 设备 → 账号在哪里执行」里的设定。选了身份或环境，就绝不换别的号顶上">
+              <TargetSelect
                 data-testid="task-field-device"
                 className="h-7 w-full rounded-md border border-input bg-transparent px-2 text-[12px]"
-                value={draft.device ?? ''}
-                onChange={(e) => setDraft({ ...draft, device: e.target.value === '' ? undefined : e.target.value })}
-              >
-                <option value="">跟随账号的默认设备</option>
-                <option value="local">本机</option>
-                {/* 覆盖指向一台已经不在列表里的设备（被撤销了）：照样显示出来，否则下拉会默默落回「跟随」。 */}
-                {draft.device && draft.device !== 'local' && !devices.some((d) => d.deviceId === draft.device) && (
-                  <option value={draft.device}>{draft.device}</option>
-                )}
-                {devices.map((d) => <option key={d.deviceId} value={d.deviceId}>{d.online ? d.name : `${d.name}（离线）`}</option>)}
-              </select>
+                value={targetOf({ device: draft.device, identity: draft.identity, environment: draft.environment })}
+                onChange={(t) => setDraft({
+                  ...draft,
+                  device: t?.kind === 'device' ? t.deviceId : undefined,
+                  identity: t?.kind === 'identity' ? t.accountId : undefined,
+                  environment: t?.kind === 'environment' ? t.environment : undefined,
+                })}
+                devices={devices}
+                identities={identityChoices(identities, actionFacility)}
+                environments={environments}
+                emptyLabel="跟随账号的默认"
+              />
             </Field>
           </>
         ) : (

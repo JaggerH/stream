@@ -243,7 +243,25 @@ describe('TaskEditor —— 执行设备', () => {
   beforeEach(() => {
     const base = vi.mocked(fetch).getMockImplementation()!
     vi.stubGlobal('fetch', vi.fn(async (url: string | URL, init?: RequestInit) => {
-      if (String(url).endsWith('/api/devices')) {
+      const u = String(url)
+      if (u.endsWith('/api/devices/facilities')) {
+        return new Response(JSON.stringify({ facilities: [
+          { facility: 'eastmoney', packageId: 'eastmoney', deviceId: 'local' },
+          { facility: 'xhs', packageId: '@streamapp/xhs', deviceId: 'local' },
+        ] }))
+      }
+      if (u.endsWith('/api/identities')) {
+        return new Response(JSON.stringify({ identities: [
+          { facility: 'eastmoney', nodeId: 'node_a', accountId: 'h_1', displayName: '12****78', state: 'signed-in', verifiedAt: 1, online: true },
+          { facility: 'xhs', nodeId: 'node_a', accountId: 'u_x', displayName: '小红书号', state: 'signed-in', verifiedAt: 1, online: true },
+        ] }))
+      }
+      if (u.endsWith('/api/devices/nodes')) {
+        return new Response(JSON.stringify({ nodes: [
+          { nodeId: 'node_a', deviceId: 'local', bindingId: 'local:node_a', environment: '工作', isDefault: false, firstSeenAt: 0, lastSeenAt: 0, online: true },
+        ], claimable: [] }))
+      }
+      if (u.endsWith('/api/devices')) {
         return new Response(JSON.stringify({ devices: [
           { deviceId: 'linux:nas', name: 'NAS', platform: 'linux', paired: true, online: true },
           { deviceId: 'linux:pc', name: 'PC', platform: 'linux', paired: true, online: false },
@@ -257,7 +275,7 @@ describe('TaskEditor —— 执行设备', () => {
     setup({ task: actionTask() })
     const sel = (await screen.findByTestId('task-field-device')) as HTMLSelectElement
     expect(sel.value).toBe('')
-    await waitFor(() => expect([...sel.options].map((o) => o.textContent)).toEqual(['跟随账号的默认设备', '本机', 'NAS', 'PC（离线）']))
+    await waitFor(() => expect([...sel.options].map((o) => o.textContent)).toEqual(['跟随账号的默认', '本机', 'NAS', 'PC（离线）', '12****78', '环境「工作」']))
     fireEvent.click(screen.getByTestId('task-editor-save'))
     await waitFor(() => expect(putBody('em-repo')).toBeTruthy())
     expect(putBody('em-repo')!).not.toHaveProperty('device')
@@ -266,15 +284,41 @@ describe('TaskEditor —— 执行设备', () => {
   it('选一台设备 ⇒ PUT 带 device；已有的覆盖照原样显示', async () => {
     setup({ task: actionTask({ device: 'linux:pc' }) })
     const sel = (await screen.findByTestId('task-field-device')) as HTMLSelectElement
-    await waitFor(() => expect(sel.value).toBe('linux:pc'))
-    fireEvent.change(sel, { target: { value: 'linux:nas' } })
+    await waitFor(() => expect(sel.value).toBe('d:linux:pc'))
+    fireEvent.change(sel, { target: { value: 'd:linux:nas' } })
     fireEvent.click(screen.getByTestId('task-editor-save'))
     await waitFor(() => expect(putBody('em-repo')).toBeTruthy())
     expect(putBody('em-repo')!.device).toBe('linux:nas')
   })
 
+  it('身份组只列这个动作所属账号体系的账号；选身份 ⇒ 只发 identity', async () => {
+    setup({ task: actionTask({ device: 'linux:pc' }) })
+    const sel = (await screen.findByTestId('task-field-device')) as HTMLSelectElement
+    await waitFor(() => expect([...sel.options].map((o) => o.textContent)).toContain('12****78'))
+    expect([...sel.options].map((o) => o.textContent)).not.toContain('小红书号')
+    fireEvent.change(sel, { target: { value: 'i:h_1' } })
+    fireEvent.click(screen.getByTestId('task-editor-save'))
+    await waitFor(() => expect(putBody('em-repo')).toBeTruthy())
+    expect(putBody('em-repo')!.identity).toBe('h_1')
+    expect(putBody('em-repo')!).not.toHaveProperty('device')
+    expect(putBody('em-repo')!).not.toHaveProperty('environment')
+  })
+
+  it('选环境 ⇒ 只发 environment；已存的身份覆盖照原样显示', async () => {
+    setup({ task: actionTask({ identity: 'h_1' }) })
+    const sel = (await screen.findByTestId('task-field-device')) as HTMLSelectElement
+    await waitFor(() => expect(sel.value).toBe('i:h_1'))
+    await waitFor(() => expect([...sel.options].map((o) => o.textContent)).toContain('环境「工作」'))
+    fireEvent.change(sel, { target: { value: 'e:工作' } })
+    fireEvent.click(screen.getByTestId('task-editor-save'))
+    await waitFor(() => expect(putBody('em-repo')).toBeTruthy())
+    expect(putBody('em-repo')!.environment).toBe('工作')
+    expect(putBody('em-repo')!).not.toHaveProperty('identity')
+    expect(putBody('em-repo')!).not.toHaveProperty('device')
+  })
+
   it('命令任务没有这一格；从动作切回命令时覆盖一并清掉', async () => {
-    setup({ task: actionTask({ device: 'linux:nas' }) })
+    setup({ task: actionTask({ identity: 'h_1' }) })
     await screen.findByTestId('task-field-device')
     fireEvent.change(screen.getByTestId('task-field-kind'), { target: { value: 'command' } })
     expect(screen.queryByTestId('task-field-device')).toBeNull()
@@ -282,5 +326,6 @@ describe('TaskEditor —— 执行设备', () => {
     fireEvent.click(screen.getByTestId('task-editor-save'))
     await waitFor(() => expect(putBody('em-repo')).toBeTruthy())
     expect(putBody('em-repo')!).not.toHaveProperty('device')
+    expect(putBody('em-repo')!).not.toHaveProperty('identity')
   })
 })

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
-import { IdentitiesSettings, ago, groupIdentities } from './IdentitiesSettings.tsx'
+import { IdentitiesSettings } from './IdentitiesSettings.tsx'
+import { ago, groupIdentities } from './identities.ts'
 import type { IdentityRow } from '../../lib/api.ts'
 
 const conn = { baseUrl: 'http://127.0.0.1:8900' } as never
