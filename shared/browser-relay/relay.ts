@@ -526,6 +526,23 @@ export class ExtRelay {
     )
   }
 
+  /**
+   * 按住这个 profile（browser-identity D8）：Stream 唤起它来执行，执行中途关最后一张标签时扩展不关窗——关了窗
+   * Chrome 就卸载 profile，执行后半程无处可跑。老扩展不认这个 op 会抛，调用方当 best-effort。
+   */
+  holdProfile(): Promise<void> {
+    return this.send('holdProfile', { op: 'holdProfile' }).then(() => undefined)
+  }
+
+  /**
+   * 执行完了，放掉这个 profile：扩展关掉 Stream 自己的标签与只装着它们的窗；一扇窗都没有就造一扇不聚焦的再关
+   * （从没开过窗的 profile 不会卸载）。`userWindows` > 0 = 用户自己在用这个 profile；`unloading` = Chrome 会在
+   * 几秒内卸载它。
+   */
+  releaseProfile(): Promise<{ closedTabs: number; userWindows: number; unloading: boolean }> {
+    return this.send('releaseProfile', { op: 'releaseProfile' }) as Promise<{ closedTabs: number; userWindows: number; unloading: boolean }>
+  }
+
   subscribe(tabId: number, domains: string[]): Promise<number> {
     return this.send('subscribe', { op: 'subscribe', tabId, domains }).then(
       (r) => (r as { subscriptionId: number }).subscriptionId,

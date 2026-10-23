@@ -44,6 +44,10 @@ export type Inbound =
   // 在哪，跑完 `activateTab` 切回。还回去带一道礼貌闸门——见下面 dispatch 里的说明。
   | { id: number; op: 'activeTab' }
   | { id: number; op: 'activateTab'; tabId: number }
+  // 被 Stream 静默唤起的 profile（browser-identity D8）：执行期间按住它（关最后一张标签不关窗——关了窗
+  // Chrome 就卸载这个 profile，执行还没完），执行完放掉（关自己的标签与窗，换来卸载）。见 releaseProfile。
+  | { id: number; op: 'holdProfile' }
+  | { id: number; op: 'releaseProfile' }
 
 const OWNED_KEY = 'ownedTabs'
 const GROUP_KEY = 'tabGroup'
@@ -653,6 +657,58 @@ async function closeWindowIfEmpty(windowId: number | undefined): Promise<void> {
   } catch {
     /* 窗已经没了 */
   }
+}
+
+// ── 唤起的 profile：按住与放掉（browser-identity D8）──
+// Chrome 实测（spike S2 之后的 Cortana 复核）：`--no-startup-window` 静默加载的 profile 不会自己卸载；给它开一扇窗、
+// 再关掉最后一扇窗，5 秒内就卸载。所以「收回去」= 让它的最后一扇窗关掉；而执行**中途**关最后一扇窗（一张探测
+// 标签用完就关）同样会卸载它，节点随之断开，后半程无处可跑。按住期间，关最后一扇窗里最后一张自建标签时把它
+// 换成 about:blank 留着；放掉时一并关。按绑定记：一个 profile 里两个 Stream 实例各按各的。
+/** 按住着的绑定。只在内存里：SW 在执行中途重启的代价是这一次可能提前卸载，下一次执行会再唤起。 */
+const holding = new Set<string>()
+
+/** 关掉这张标签会不会关掉这个 profile 的最后一扇窗。 */
+async function isLastTabOfProfile(tabId: number): Promise<boolean> {
+  const wins = await chrome.windows.getAll({ populate: true, windowTypes: ['normal', 'popup'] })
+  return wins.length === 1 && wins[0]!.tabs?.length === 1 && wins[0]!.tabs[0]!.id === tabId
+}
+
+/**
+ * 执行完了，把 Stream 在这个 profile 里留下的东西收干净，并让 Chrome 卸载它（如果它只装着我们的东西）。
+ *
+ * - 会话组里出身 created / probe 的标签关掉；adopted（用户拖进组的）一根毛都不碰——拖进来是他的授权，
+ *   收尾不替他撤销，它所在的窗自然也算用户窗口。
+ * - 一扇窗里全是我们的标签 → 它随最后一张关掉（就是为这次执行造的那扇，D13）。
+ * - 窗里有任何不属于 Stream 的标签（用户自己的、别的扩展弹出来的 What's new）→ 那扇窗不碰，计为用户窗口；
+ *   后端据此清掉 `woken_at`：用户在用这个 profile，它不再是「Stream 在后台开着的」。
+ * - 一扇窗都没有（纯 HTTP 的执行从没开过窗）→ 造一扇不聚焦的空窗再关掉。从没开过窗的 profile 不会卸载，
+ *   这是唯一能让它卸载的办法；代价是任务栏上闪一下。
+ *
+ * `unloading` = 不剩用户窗口，Chrome 会在几秒内卸载这个 profile（扩展也随之断开）。
+ */
+export async function releaseProfile(rt: BindingRuntime = runtime()): Promise<{ closedTabs: number; userWindows: number; unloading: boolean }> {
+  holding.delete(rt.id)
+  const members = new Map((await groupMembers(rt)).map((m) => [m.tabId, m.origin]))
+  const ours = (id: number | undefined) => id != null && members.has(id) && mayRemove(members.get(id)!)
+  const wins = await chrome.windows.getAll({ populate: true, windowTypes: ['normal', 'popup'] })
+  let closedTabs = 0
+  let userWindows = 0
+  for (const w of wins) {
+    const tabs = w.tabs ?? []
+    if (!(tabs.length > 0 && tabs.every((t) => ours(t.id)))) userWindows++
+    for (const t of tabs) {
+      if (!ours(t.id)) continue
+      await releaseTab(t.id!, members.get(t.id!)!, rt)
+      closedTabs++
+    }
+    // 只装着我们的标签的那扇：Chrome 多半已随最后一张关了，兜底。用户的窗里还有他的标签，空不了。
+    await closeWindowIfEmpty(w.id)
+  }
+  if (wins.length === 0) {
+    const w = await chrome.windows.create({ focused: false, url: 'about:blank' }).catch(() => undefined)
+    if (w?.id != null) await chrome.windows.remove(w.id).catch(() => {})
+  }
+  return { closedTabs, userWindows, unloading: userWindows === 0 }
 }
 
 /** 当前会话组 id（未建组时 null）。 */
@@ -1633,6 +1689,13 @@ async function dispatchInner(msg: Inbound, marks: HopMarks = {}, rt: BindingRunt
           // 组内才可关（组外拒）；关法按出身分流——自建才 remove，用户拖入的只 detach+移出组。
           const origin = await tabOrigin(msg.tabId, rt)
           if (!origin) throw new Error(`refuse to close tab ${msg.tabId}: not in the session tab group`)
+          // 按住着的 profile（见 releaseProfile 上面那段）：这是它最后一扇窗里的最后一张，关了 profile 就卸载了。
+          // 换成空白页留着，放掉时再关。后端那边它已经关了（lane 照常结束）。
+          if (holding.has(rt.id) && mayRemove(origin) && (await isLastTabOfProfile(msg.tabId))) {
+            await detachTab(msg.tabId)
+            await chrome.tabs.update(msg.tabId, { url: 'about:blank' }).catch(() => undefined)
+            return { id: msg.id, result: { kept: true } }
+          }
           await releaseTab(msg.tabId, origin, rt)
           return { id: msg.id, result: {} }
         }
@@ -1675,6 +1738,13 @@ async function dispatchInner(msg: Inbound, marks: HopMarks = {}, rt: BindingRunt
             }
           }
           return { id: msg.id, result: { tabs } }
+        }
+        case 'holdProfile': {
+          holding.add(rt.id)
+          return { id: msg.id, result: {} }
+        }
+        case 'releaseProfile': {
+          return { id: msg.id, result: await releaseProfile(rt) }
         }
         case 'activeTab': {
           // 前台采集动手**之前**问一次：用户这会儿在看哪个标签。没有窗口时 tabId=null 而不是

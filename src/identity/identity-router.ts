@@ -10,6 +10,12 @@
  * `--no-startup-window` 静默加载那个 profile（spike S2：Linux 与 Windows 上都不开窗），至多等 30 秒让节点连上。
  * 同一个节点同一时刻只有一次唤起在飞，并发的执行共用它的结果。定时执行也唤起——不抢屏（S2 通过）。
  *
+ * 唤起的 profile 用完要收回去（D8「收回的路：关掉它的最后一扇窗」）：`woken_at` 非空的节点在执行开始时按住
+ * （扩展不让中途关掉最后一扇窗），同一节点上并发的执行全部结束后放掉——扩展关掉 Stream 自己的标签与窗，
+ * profile 随最后一扇窗卸载；用户在那个 profile 里有自己的窗就只关我们的标签。两种情况 `woken_at` 都清空：
+ * 前者 profile 没了，后者它是用户在用的 profile，不再是「Stream 在后台开着的」。放不掉（扩展断了、老扩展）
+ * 就留着 `woken_at`，面板照样列出它。
+ *
  * **没有回落分支。** 候选为空、都离线且唤不起——这里只会抛 `IdentityOffline`。不读设备默认、不回 `local`、不换成
  * 同一节点上别的账号。读这个文件的人如果想加一个「实在不行就……」，那正是这套设计要防的事。
  */
@@ -54,6 +60,9 @@ export interface IdentityRouterDeps {
   waitOnline?(bindingId: string, ms: number): Promise<boolean>
   /** 记下 / 清掉「这个 profile 是 Stream 唤起的」（`NodeStore.setWokenAt`）。 */
   setWokenAt?(nodeId: string, at: number | null): void
+  /** 按住 / 放掉一个唤起的 profile（扩展的 `holdProfile` / `releaseProfile`，经该节点的绑定）。 */
+  holdProfile?(bindingId: string): Promise<void>
+  releaseProfile?(bindingId: string): Promise<{ userWindows: number; unloading: boolean }>
   /** 等节点连上的上限。 */
   wakeWaitMs?: number
   now?: () => number
@@ -140,6 +149,39 @@ export function makeIdentityRouter(deps: IdentityRouterDeps): IdentityRouter & {
     return p
   }
 
+  /** 节点 → 此刻有几次执行按着它。 */
+  const holds = new Map<string, number>()
+
+  const putBack = async (node: RouterNode): Promise<void> => {
+    try {
+      const r = await deps.releaseProfile!(node.bindingId)
+      log(`[identity] 收回 ${nodeWhere(node)}：${r.userWindows > 0 ? `用户开着 ${r.userWindows} 扇窗，只关了 Stream 的标签` : '最后一扇窗已关，profile 将被卸载'}`)
+      deps.setWokenAt?.(node.nodeId, null)
+    } catch (e) {
+      log(`[identity] 收回 ${nodeWhere(node)} 失败（它仍在后台开着）：${e instanceof Error ? e.message : String(e)}`)
+    }
+  }
+
+  /**
+   * 这次执行按住这个节点；回一个只生效一次的放手。不是 Stream 唤起的节点（用户自己开着的 profile）什么都不做：
+   * 那不是我们的，收尾不该关它的窗。
+   */
+  const hold = async (node: RouterNode): Promise<() => Promise<void>> => {
+    if (node.wokenAt === undefined || !deps.releaseProfile) return async () => {}
+    const n = holds.get(node.nodeId) ?? 0
+    holds.set(node.nodeId, n + 1)
+    if (n === 0) await deps.holdProfile?.(node.bindingId).catch(() => {})
+    let done = false
+    return async () => {
+      if (done) return
+      done = true
+      const left = (holds.get(node.nodeId) ?? 1) - 1
+      if (left > 0) { holds.set(node.nodeId, left); return }
+      holds.delete(node.nodeId)
+      await putBack(node)
+    }
+  }
+
   /** 候选都离线：唤起其中最近核对过、唤得起的那一个。只试一个——每个都等 30 秒，一次执行就能拖上几分钟。 */
   const wakeOne = async (all: Candidate[]): Promise<Candidate | undefined> => {
     for (const c of all) {
@@ -173,15 +215,18 @@ export function makeIdentityRouter(deps: IdentityRouterDeps): IdentityRouter & {
     if (!all.length) throw new IdentityOffline(facility, label, '身份表里没有哪个浏览器 profile 登着它')
     const pick = all.find((c) => c.online) ?? await wakeOne(all)
     if (!pick) throw new IdentityOffline(facility, label, '登着它的 profile 都不在线，也唤不起')
+    // 现读：唤起刚记下的 `woken_at`、或之前哪次执行唤起后没收回去的，都在节点表里。
+    const node = deps.node(pick.node.nodeId) ?? pick.node
+    const release = await hold(node)
     return {
-      node: pick.node,
+      node,
       identity: {
         facility,
         accountId: pick.row.accountId,
         ...(pick.row.displayName ? { accountName: pick.row.displayName } : {}),
-        nodeId: pick.node.nodeId,
+        nodeId: node.nodeId,
       },
-      release: async () => {},
+      release,
     }
   }
 

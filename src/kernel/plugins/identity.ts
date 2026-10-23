@@ -172,6 +172,9 @@ export const identityPlugin = {
         return { ...(exe ? { exe } : {}), ...(process ? { process } : {}) }
       },
       setWokenAt: (nodeId, at) => config.nodes?.setWokenAt?.(nodeId, at),
+      // 收尾（D8）：经那个节点自己的绑定让扩展按住 / 放掉它所在的 profile。
+      holdProfile: (bindingId) => extRelays.relay(bindingId).holdProfile(),
+      releaseProfile: (bindingId) => extRelays.relay(bindingId).releaseProfile(),
       log: (line) => config.log(line),
     })
     ctx.provide('identityRouter', router)

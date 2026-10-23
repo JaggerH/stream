@@ -134,3 +134,65 @@ describe('IdentityRouter：按需唤起（D8）', () => {
     expect(waited).toBe(false)
   })
 })
+
+describe('IdentityRouter：唤起的 profile 收回去（D8）', () => {
+  function holdWorld(opts: { wokenAt?: number; release?: () => Promise<{ userWindows: number; unloading: boolean }> } = {}) {
+    const nodes: Record<string, RouterNode> = { node_work: { ...NODES.node_work!, ...(opts.wokenAt !== undefined ? { wokenAt: opts.wokenAt } : {}) } }
+    const calls: string[] = []
+    const r = world([row('node_work', 'B', 10)], ['local:node_work'], {
+      node: (id) => nodes[id],
+      setWokenAt: (id, t) => {
+        calls.push(`woken:${t}`)
+        const n = nodes[id]!
+        if (t === null) delete n.wokenAt
+        else n.wokenAt = t
+      },
+      holdProfile: async (b) => void calls.push(`hold:${b}`),
+      releaseProfile: async (b) => {
+        calls.push(`release:${b}`)
+        return opts.release ? opts.release() : { userWindows: 0, unloading: true }
+      },
+    })
+    return { r, calls, nodes }
+  }
+  const req = { target: { kind: 'identity', accountId: 'B' } as const, facility: 'xhs', purpose: 'action' as const }
+
+  it('woken_at 非空：开始时按住，结束时放掉并清 woken_at；release 只生效一次', async () => {
+    const { r, calls, nodes } = holdWorld({ wokenAt: 5 })
+    const got = await r.resolve(req)
+    expect(calls).toEqual(['hold:local:node_work'])
+    await got.release()
+    await got.release()
+    expect(calls).toEqual(['hold:local:node_work', 'release:local:node_work', 'woken:null'])
+    expect(nodes.node_work!.wokenAt).toBeUndefined()
+  })
+
+  it('同一节点并发两次：只按一次，最后一次结束才放', async () => {
+    const { r, calls } = holdWorld({ wokenAt: 5 })
+    const a = await r.resolve(req)
+    const b = await r.resolve(req)
+    expect(calls.filter((c) => c.startsWith('hold'))).toHaveLength(1)
+    await a.release()
+    expect(calls.some((c) => c.startsWith('release'))).toBe(false)
+    await b.release()
+    expect(calls.filter((c) => c.startsWith('release'))).toHaveLength(1)
+  })
+
+  it('用户自己开着那个 profile 的窗：只关我们的标签，woken_at 也清掉', async () => {
+    const { r, nodes } = holdWorld({ wokenAt: 5, release: async () => ({ userWindows: 1, unloading: false }) })
+    await (await r.resolve(req)).release()
+    expect(nodes.node_work!.wokenAt).toBeUndefined()
+  })
+
+  it('放不掉（扩展断了 / 老扩展）→ woken_at 留着，面板照样看得见', async () => {
+    const { r, nodes } = holdWorld({ wokenAt: 5, release: async () => { throw new Error('unknown op') } })
+    await (await r.resolve(req)).release()
+    expect(nodes.node_work!.wokenAt).toBe(5)
+  })
+
+  it('不是 Stream 唤起的节点（用户自己开着的）：不按、不放', async () => {
+    const { r, calls } = holdWorld()
+    await (await r.resolve(req)).release()
+    expect(calls).toEqual([])
+  })
+})
