@@ -95,6 +95,13 @@ pub struct ElementsRead {
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AppMatch {
+    /// 窗口 id（`windows` 报出来的那个）。**给了就只认它**，process/title 一概不看。
+    ///
+    /// 标题消歧有到不了的地方：两个 Chrome profile 各开一扇「扩展程序 - Google Chrome」，标题
+    /// 一字不差，进程也一样——title 再怎么写都是 ambiguous-window（2026-10-23 Windows 冒烟撞到）。
+    /// 先 `windows` 列一遍、再按 id 指名，是这种情况下唯一的出路。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub process: Option<String>,
     #[serde(default, rename = "windowClass", skip_serializing_if = "Option::is_none")]
@@ -123,6 +130,10 @@ pub struct WindowInfo {
     /// CFBundleShortVersionString）。读不到就缺席——**不给空串**，缺席与"版本是空"要分得开。
     #[serde(default, skip_serializing_if = "Option::is_none", rename = "appVersion")]
     pub app_version: Option<String>,
+    /// 窗口所属进程的 pid。同进程名、同标题的两扇窗（两个 Chrome profile）靠它和 `id` 才认得出
+    /// 谁是谁。读不到就缺席（老 agent 一律缺席）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pid: Option<u32>,
 }
 
 /// 这个 agent 跑在哪个平台上。编译期常量——agent 的二进制只为一个平台构建。
@@ -407,10 +418,18 @@ fn i(v: &Value, key: &str) -> Result<i64, String> {
 
 /// 按 `AppMatch` 解析出唯一目标窗口。**歧义不擅自决定**——两个窗口都像的时候任选一个，
 /// 等于把"点错了"变成一个安静的 50% 概率事件。
+///
+/// 给了 `id` 就只按 id 找（全等），process/title 不参与：调用方已经从 `windows` 里认出了
+/// 那一扇，再拿标题过滤只会在标题刚变的时候把它滤掉。
 fn resolve_window<D: Desktop>(d: &mut D, m: &AppMatch) -> Result<WindowInfo, String> {
+    let wins = d.windows()?;
+    if let Some(id) = m.id.as_deref() {
+        return wins.into_iter().find(|w| w.id == id).ok_or_else(|| {
+            format!("no-window-match: 没有 id 为 {id} 的窗口（关掉了？）——先 windows 列一遍拿新的 id")
+        });
+    }
     let lower = |s: &str| s.to_lowercase();
-    let hits: Vec<WindowInfo> = d
-        .windows()?
+    let hits: Vec<WindowInfo> = wins
         .into_iter()
         .filter(|w| m.process.as_ref().is_none_or(|p| lower(&w.process) == lower(p)))
         .filter(|w| m.title.as_ref().is_none_or(|t| w.title.contains(t.as_str())))
@@ -418,12 +437,20 @@ fn resolve_window<D: Desktop>(d: &mut D, m: &AppMatch) -> Result<WindowInfo, Str
     match hits.len() {
         0 => Err(format!("no-window-match: 没有窗口匹配 {m:?}")),
         1 => Ok(hits.into_iter().next().expect("len==1")),
+        // 候选带上 id：标题一模一样的两扇窗（两个 Chrome profile）只有 id 分得开，
+        // 叫调用方"用 title 指名"在那种时候是一条死路。
         _ => Err(format!(
-            "ambiguous-window: {} 个窗口都匹配，请用 title 指名一个；候选：{}",
+            "ambiguous-window: {} 个窗口都匹配，用 id 指名其中一个（target 写 window:<id>）；候选：{}",
             hits.len(),
-            hits.iter().map(|w| format!("「{}」", w.title)).collect::<Vec<_>>().join("、")
+            hits.iter().map(describe_candidate).collect::<Vec<_>>().join("、")
         )),
     }
+}
+
+/// 歧义报错里的一个候选：`id=… 「标题」 进程 pid=…`。
+fn describe_candidate(w: &WindowInfo) -> String {
+    let pid = w.pid.map(|p| format!(" pid={p}")).unwrap_or_default();
+    format!("id={} 「{}」 {}{pid}", w.id, w.title, w.process)
 }
 
 /// 前台被谁占着——**只用来解释失败，不当闸门**。
@@ -877,7 +904,7 @@ mod tests {
 
     #[test]
     fn a_window_without_platform_or_version_omits_both_keys() {
-        let w = WindowInfo { id: "w0".into(), process: "chrome.exe".into(), title: "标签页".into(), foreground: true, platform: String::new(), app_version: None };
+        let w = WindowInfo { id: "w0".into(), process: "chrome.exe".into(), title: "标签页".into(), foreground: true, platform: String::new(), app_version: None, pid: None };
         let j = serde_json::to_value(&w).unwrap();
         // 缺席就是"键不在"，不是空串、也不是 null——消费方只需要认一种缺席。
         assert!(j.get("platform").is_none(), "空 platform 不该出现在 wire 上: {j}");
@@ -887,7 +914,7 @@ mod tests {
 
     #[test]
     fn platform_and_version_go_out_under_their_wire_names() {
-        let w = WindowInfo { id: "w0".into(), process: "WeChat".into(), title: "微信".into(), foreground: true, platform: "win32".into(), app_version: Some("4.0.6".into()) };
+        let w = WindowInfo { id: "w0".into(), process: "WeChat".into(), title: "微信".into(), foreground: true, platform: "win32".into(), app_version: Some("4.0.6".into()), pid: None };
         let j = serde_json::to_value(&w).unwrap();
         assert_eq!(j["platform"], "win32");
         // **camelCase**：TS 那侧读的是 `appVersion`，不是 `app_version`。
@@ -985,6 +1012,7 @@ mod tests {
                         foreground: i == 0,
                         platform: "win32".into(),
                         app_version: None,
+                        pid: Some(100 + i as u32),
                     })
                     .collect(),
                 find_hits: true,
@@ -1350,6 +1378,7 @@ mod tests {
             foreground: true,
             platform: "win32".into(),
             app_version: None,
+            pid: None,
         }];
         d.pending_after = 3; // 建进程是毫秒级的，画窗口不是——不等就必然空手而归
         let out = dispatch(&mut d, "ensureApp", &json!({ "process": "chrome.exe" })).unwrap();
@@ -1377,6 +1406,7 @@ mod tests {
                 foreground: false,
                 platform: "win32".into(),
                 app_version: None,
+                pid: None,
             });
         }
         d.pending_after = 1;
@@ -1432,6 +1462,52 @@ mod tests {
         // 候选必须报出来——不然调用方连"该补什么标题"都不知道
         assert!(err.contains("扩展程序") && err.contains("新标签页"), "{err}");
         assert_eq!(d.focused, None, "歧义时绝不能任选一个去 focus");
+    }
+
+    #[test]
+    fn ambiguous_candidates_carry_their_ids() {
+        // 两个 Chrome profile 各开一扇「扩展程序」：标题、进程都一样，只有 id 分得开
+        let mut d = Fake::with_windows(&[("chrome.exe", "扩展程序 - Google Chrome"), ("chrome.exe", "扩展程序 - Google Chrome")]);
+        let err = dispatch(&mut d, "scopeWindow", &json!({ "match": { "process": "chrome.exe", "title": "扩展程序" } })).unwrap_err();
+        assert!(err.starts_with("ambiguous-window:"), "{err}");
+        assert!(err.contains("id=w0") && err.contains("id=w1"), "候选必须带 id：{err}");
+        assert!(err.contains("pid=100") && err.contains("pid=101"), "{err}");
+        assert!(err.contains("window:<id>"), "要告诉调用方怎么用 id 指名：{err}");
+        assert!(d.calls.is_empty(), "歧义时不能 scope 任何一扇");
+    }
+
+    #[test]
+    fn an_id_picks_one_of_two_identically_titled_windows() {
+        let mut d = Fake::with_windows(&[("chrome.exe", "扩展程序 - Google Chrome"), ("chrome.exe", "扩展程序 - Google Chrome")]);
+        let out = dispatch(&mut d, "focusApp", &json!({ "match": { "id": "w1" } })).unwrap();
+        assert_eq!(out["window"]["id"], "w1");
+        assert_eq!(d.focused.as_deref(), Some("w1"));
+        dispatch(&mut d, "scopeWindow", &json!({ "match": { "id": "w0" } })).unwrap();
+        assert_eq!(d.scoped.as_deref(), Some("w0"));
+    }
+
+    #[test]
+    fn an_id_wins_over_process_and_title() {
+        // 标题刚变（或调用方顺手带了旧标题）不该把已经认准的那一扇滤掉
+        let mut d = Fake::with_windows(&[("chrome.exe", "新标签页"), ("Telegram.exe", "Telegram")]);
+        let out = dispatch(&mut d, "scopeWindow", &json!({ "match": { "id": "w1", "process": "chrome.exe", "title": "旧标题" } })).unwrap();
+        assert_eq!(out["window"]["id"], "w1");
+    }
+
+    #[test]
+    fn an_unknown_id_is_a_no_match_not_a_fallback_to_title() {
+        let mut d = Fake::with_windows(&[("chrome.exe", "扩展程序")]);
+        let err = dispatch(&mut d, "focusApp", &json!({ "match": { "id": "w9", "process": "chrome.exe" } })).unwrap_err();
+        assert!(err.starts_with("no-window-match:") && err.contains("w9"), "{err}");
+        assert_eq!(d.focused, None);
+    }
+
+    #[test]
+    fn windows_op_reports_pid() {
+        let mut d = Fake::with_windows(&[("chrome.exe", "扩展程序")]);
+        let out = dispatch(&mut d, "windows", &Value::Null).unwrap();
+        assert_eq!(out[0]["id"], "w0");
+        assert_eq!(out[0]["pid"], 100);
     }
 
     #[test]

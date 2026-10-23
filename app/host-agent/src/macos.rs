@@ -336,6 +336,18 @@ fn same_element(a: &AXElem, b: &AXElem) -> bool {
     unsafe { core_foundation::base::CFEqual(a.as_ref() as CFTypeRef, b.as_ref() as CFTypeRef) != 0 }
 }
 
+/// 窗口元素背后的 CGWindowID。`_AXUIElementGetWindow` 是私有 API，但 yabai / Hammerspoon /
+/// AltTab 都靠它把 AX 窗口和 WindowServer 的窗口对上，十几个系统版本没变过。问不出来回 `None`。
+fn cg_window_id(el: &AXElem) -> Option<u32> {
+    #[link(name = "ApplicationServices", kind = "framework")]
+    extern "C" {
+        fn _AXUIElementGetWindow(element: AXUIElementRef, wid: *mut u32) -> AXError;
+    }
+    let mut wid: u32 = 0;
+    let err = unsafe { _AXUIElementGetWindow(el.as_ref(), &mut wid) };
+    (err == kAXErrorSuccess && wid != 0).then_some(wid)
+}
+
 /// 一个窗口元素属于哪个进程。
 fn pid_of(el: &AXElem) -> Option<i32> {
     let mut pid: i32 = 0;
@@ -519,12 +531,23 @@ impl MacDesktop {
     /// 这个窗口元素的 id：见过就还它原来那个，没见过就发一个新的。
     ///
     /// 「见过」按 `CFEqual` 判（`same_element`），不按下标——下标会随 z 序变。
+    ///
+    /// 新发的 id 优先用窗口的 **CGWindowID**（十进制）：它由 WindowServer 发、窗口活着就不变，
+    /// agent 重启也不变，和 Windows 的 HWND 同一个性质。问不出来（极少数没有后备窗口的 AX 窗口）
+    /// 才退回会话内编号 `win-N`。
     fn id_for(&mut self, el: &AXElem) -> String {
         if let Some((id, _)) = self.windows_seen.iter().find(|(_, e)| same_element(e, el)) {
             return id.clone();
         }
-        let id = format!("win-{}", self.next_window);
-        self.next_window += 1;
+        let id = match cg_window_id(el) {
+            Some(wid) => wid.to_string(),
+            None => {
+                self.next_window += 1;
+                format!("win-{}", self.next_window - 1)
+            }
+        };
+        // 同一个 CGWindowID 换了个元素身份（应用重建了 AX 对象）：旧条目作废，免得 id 查到旧元素
+        self.windows_seen.retain(|(k, _)| k != &id);
         self.windows_seen.push((id.clone(), el.clone()));
         // 长命 agent 上这张表只增不减；关掉的窗口留在表里只是一个再也匹配不上的条目，
         // 不影响正确性。给一个上限纯粹是防它无界增长（一趟 recipe 顶多碰几个窗口）。
@@ -659,6 +682,7 @@ impl Desktop for MacDesktop {
                     foreground: frontmost && is_main,
                     platform: crate::protocol::PLATFORM_NAME.into(),
                     app_version: ver.clone(),
+                    pid: u32::try_from(pid).ok(),
                 });
             }
         }

@@ -952,6 +952,7 @@ impl Desktop for WindowsDesktop {
                 foreground: hwnd == fg,
                 platform: protocol::PLATFORM_NAME.into(),
                 app_version: version_of(hwnd),
+                pid: Some(win32::pid_of(hwnd)),
             });
         }
         // **前台那个窗口必须在表里**，哪怕上面三道滤把它筛掉了。锁屏界面（LockApp.exe）就是
@@ -968,6 +969,7 @@ impl Desktop for WindowsDesktop {
                 foreground: true,
                 platform: protocol::PLATFORM_NAME.into(),
                 app_version: version_of(fg),
+                pid: Some(win32::pid_of(fg)),
             });
         }
         Ok(out)
