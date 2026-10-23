@@ -12,6 +12,10 @@ import { defineConfig } from 'vitest/config'
 // 不漂的原因。desktop 那批不需要真的 stream-desktop 二进制（有二进制那几条自己会跳过），
 // 所以也在这里。每个测试文件都显式 `import { describe, it, expect } from 'vitest'`
 // （不吃 `globals: true`），这是能在这儿收编它们的前提。
+//
+// 时区钉成 CI 那个（`.github/workflows/test.yml` 的 `TZ`）：排期与丢班判定的用例按本地时区算整点，
+// 在 UTC 的机器上跑会挂 7 条。worker 进程继承这里的环境。
+process.env.TZ = 'Asia/Shanghai'
 export default defineConfig({
   test: {
     exclude: [
