@@ -9,7 +9,24 @@
 - [x] 1.1 `src/engine/index.ts`：`createStream({dataDir, config, log, runtime})` 包住现有 `bootstrap()`，`close()` 走 `quiesceKernel`
 - [x] 1.2 数据目录文件锁：同一目录第二次启动抛错
 - [ ] 1.3 环境变量收进 config：库入口可达模块不读 `process.env`，守卫测试 + 白名单
+  - 已做：`loadConfig()` 移到 `src/config-env.ts`（进程入口专用）；`bootstrap.ts` 只剩 `readConfig(path, env)`；新增
+    `AppConfig.deployment`（`deploymentFromEnv()` 翻译），credentials / runtime-config / agent / conversions 四个域插件改为显式收。
+    守卫 `src/engine/no-process-env.guard.test.ts`（只减不增的名单）。
+  - 剩下（名单上 19 个文件）：实例开关 `STREAM_PLUGIN_NETWORK`、`STREAM_DESKTOP_SEE_TRACE`、`desktopStatusEnabled`、
+    `RECIPE_PROBE`、`STREAM_NPM_REGISTRY`、`MINERU_URL` / `VOICEPRINT_URL` 的客户端回落、两个包（`DOUYIN_API_URL`、`PANSOU_URL`）；
+    进程级的（Docker endpoint、RSSHub、Chrome 发现、子进程继承 env、gateway 口）等任务 2.1 收进 runtime。
 - [ ] 1.4 `serve.ts` 改用 `createStream`；把非 HTTP 的装配按块搬进入口（每块一个提交，每块后跑全量测试 + 真启动）
+  - 已搬：实例装配本体 + 关停（`stream.close()`）、设备 / 节点 / 身份表（`stream.devices`，顺带关库）、能力包宿主 + 浏览器
+    cookie 服务 + 可选能力包（`stream.capabilities`）、两把令牌（`stream.secrets`）。顺带修了 sidequest 抢 SIGTERM 的竞速
+    （`gracefulShutdown: false`）。
+  - 剩下：
+    - 内核仍由 serve 建、经 `kernel` 过渡口递入——进程兜底网（`installProcessGuards`）要在装配期就能发通知；runtime（2.1）
+      收走进程兜底网后去掉这个口。
+    - 调度中心（`TaskStore` / `RunLedger` / 包动作 / `compileOpts` / `taskDeps` / `startTaskCenter`）与 `scheduler.start()`：
+      跟 D5 的重写（3.1）一起搬，开关改读 `config.deployment.scheduler` / `recipe_update_check`（今天 serve 还读两个环境变量）。
+      要带上 standby 接线（`taskDeps.standbyManager`，它读 `STREAM_PLUGIN_NETWORK`）。
+    - research watchers、`markInterruptedAtBoot`、`installFetchFor`（模块级 `impl`，见 3.3）。
+    - `DebugLog` 失败落盘、`LiveStreamService` / `SourceHealthIndex` / `ProfileClaims` 这些只被路由用的实例对象：随 `routes(app)` 一起定。
 
 ## 2. 进程级共享资源
 
