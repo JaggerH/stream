@@ -249,6 +249,39 @@ describe('IdentityRouter：执行前核对（D9）', () => {
     expect(got.identity.accountName).toBe('号B')
   })
 
+  it('换号通知：identity.mismatch，标题指名 profile 与环境、说出现在登的是谁；按节点去重', async () => {
+    const events: Array<Record<string, unknown>> = []
+    const { r } = verifyWorld(0, { state: 'signed-in', accountId: 'A', name: '个人号A' }, {
+      notify: (e) => void events.push(e as never),
+      facilityLabel: () => '小红书',
+      node: (id) => (id === 'node_work' ? { ...NODES.node_work!, environment: '公司' } : NODES[id]),
+    })
+    await r.resolve(req('action')).catch(() => {})
+    expect(events).toEqual([expect.objectContaining({
+      type: 'identity.mismatch', severity: 'warn',
+      title: '「工作」（环境：公司）里的小红书现在登的是 个人号A',
+      ref: { kind: 'facility', id: 'xhs' },
+      dedupeKey: 'identity-mismatch:xhs:node_work',
+    })])
+    expect(String(events[0]!.body)).toContain('号B')
+  })
+
+  it('登出通知：走「需要登录」那一类事件（auth.needed），指名 profile', async () => {
+    const events: Array<Record<string, unknown>> = []
+    const { r } = verifyWorld(0, { state: 'signed-out' }, { notify: (e) => void events.push(e as never) })
+    await r.resolve(req('action')).catch(() => {})
+    expect(events).toEqual([expect.objectContaining({ type: 'auth.needed', title: 'xhs 在「工作」里登录失效', dedupeKey: 'auth:xhs:node_work' })])
+  })
+
+  it('一致 / 问不出来不发通知；通知自己抛也不遮住拦下', async () => {
+    const events: unknown[] = []
+    await verifyWorld(0, { state: 'signed-in', accountId: 'B' }, { notify: (e) => void events.push(e) }).r.resolve(req('action'))
+    await verifyWorld(0, { state: 'unknown', reason: 'x' }, { notify: (e) => void events.push(e) }).r.resolve(req('action')).catch(() => {})
+    expect(events).toEqual([])
+    const boom = verifyWorld(0, { state: 'signed-out' }, { notify: () => { throw new Error('events down') } })
+    await expect(boom.r.resolve(req('action'))).rejects.toBeInstanceOf(IdentitySignedOut)
+  })
+
   it('核对失败时按住的 profile 照样放掉', async () => {
     const released: string[] = []
     const { r } = verifyWorld(0, { state: 'signed-out' }, {

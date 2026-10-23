@@ -35,22 +35,28 @@ export interface TaskRun {
   nodeId?: string
   profileName?: string
   environment?: string
+  /** 按身份 / 环境执行时，执行那一刻的账号 id 与显示名（D12；之后改名不跟着变）。 */
+  accountId?: string
+  accountName?: string
 }
 
 /** 失败行的设备只在错误文本里：`user-tasks.ts` 的 `nameDevice` 给它加了这个前缀。 */
 const DEVICE_PREFIX = /^\[设备 ([^\]\s]+)\] /
 
-function placementOf(detail: unknown, errors: unknown): Pick<TaskRun, 'deviceId' | 'bindingId' | 'nodeId' | 'profileName' | 'environment'> {
+function placementOf(detail: unknown, errors: unknown): Pick<TaskRun, 'deviceId' | 'bindingId' | 'nodeId' | 'profileName' | 'environment' | 'accountId' | 'accountName'> {
   const d = detail !== null && typeof detail === 'object' ? (detail as Record<string, unknown>) : {}
   if (typeof d.device === 'string') {
     const str = (k: string) => (typeof d[k] === 'string' ? (d[k] as string) : undefined)
     const bindingId = str('browser'), nodeId = str('node'), profileName = str('profileName'), environment = str('environment')
+    const accountId = str('accountId'), accountName = str('accountName')
     return {
       deviceId: d.device,
       ...(bindingId ? { bindingId } : {}),
       ...(nodeId ? { nodeId } : {}),
       ...(profileName ? { profileName } : {}),
       ...(environment ? { environment } : {}),
+      ...(accountId ? { accountId } : {}),
+      ...(accountName ? { accountName } : {}),
     }
   }
   const first = Array.isArray(errors) ? errors[0] : errors

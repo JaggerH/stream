@@ -88,6 +88,11 @@ describe('RunLedger', () => {
     expect(without).not.toHaveProperty('profileName')
   })
 
+  it('账号：按身份执行的行读 detail.accountId / accountName（browser-identity D12）', () => {
+    const p = seed([{ inserted_at: 1, result: '{"summary":"ok","detail":{"device":"local","browser":"local:node_w","node":"node_w","accountId":"u1","accountName":"工作号B"}}' }])
+    expect(new RunLedger(p).runs('t1')[0]).toMatchObject({ nodeId: 'node_w', accountId: 'u1', accountName: '工作号B' })
+  })
+
   it('lastRun 给最近一条', () => {
     const p = seed([{ inserted_at: 1, result: '{"summary":"老"}' }, { inserted_at: 9, result: '{"summary":"新"}' }])
     expect(new RunLedger(p).lastRun('t1')?.summary).toBe('新')

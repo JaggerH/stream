@@ -4,7 +4,7 @@ import type { UserTaskRow } from './task-store.ts'
 import type { PackageAction } from './package-actions.ts'
 import { currentDeviceId } from '../devices/run-context.ts'
 import { pickBrowser } from '../devices/placement.ts'
-import { DeviceIncapable, DeviceLost, DeviceOffline, failureDisposition } from '../devices/errors.ts'
+import { DeviceIncapable, DeviceLost, DeviceOffline, IdentityMismatch, failureDisposition } from '../devices/errors.ts'
 import { makeFetchFor } from '../devices/fetch.ts'
 
 const row: UserTaskRow = {
@@ -201,6 +201,54 @@ describe('action tasks run on their placement', () => {
       nodeOf,
     })
     expect(await local.run({} as never)).toEqual({ summary: 'ok', detail: { device: 'local', browser: 'local:node_w', node: 'node_w', detail: { n: 1 } } })
+  })
+
+  it('按身份执行：沿用解析时预填的节点（不重选）、带上账号；收尾在动作之后（browser-identity D7、D12）', async () => {
+    const order: string[] = []
+    const nodeOf = (b: string) => (b === 'local:node_w' ? { nodeId: 'node_w', profileName: '工作' } : undefined)
+    const t = compileUserTask(emRow, {
+      actions: () => async () => {
+        // pick 若被叫到就会选到别的节点——预填过的记号不该再问它
+        order.push(`act:${pickBrowser({ pick: () => 'local:node_other', isOnline: () => true })}`)
+        return { summary: 'ok' }
+      },
+      placement: async () => ({
+        deviceId: 'local', allowHosts: [], facility: 'eastmoney',
+        browser: { bindingId: 'local:node_w' },
+        identity: { facility: 'eastmoney', accountId: 'acc1', accountName: '12****78', nodeId: 'node_w' },
+        release: async () => void order.push('release'),
+      }),
+      ready: () => {},
+      nodeOf,
+    })
+    expect(await t.run({} as never)).toEqual({
+      summary: 'ok',
+      detail: { device: 'local', browser: 'local:node_w', node: 'node_w', profileName: '工作', accountId: 'acc1', accountName: '12****78', detail: undefined },
+    })
+    expect(order).toEqual(['act:local:node_w', 'release'])
+  })
+
+  it('按身份执行在远程设备上：记录同样带账号', async () => {
+    const t = compileUserTask(emRow, {
+      actions: () => async () => ({ summary: 'ok' }),
+      placement: async () => ({
+        deviceId: 'linux:lap', allowHosts: [], browser: { bindingId: 'ext:lap' },
+        identity: { facility: 'eastmoney', accountId: 'acc1', nodeId: 'node_lap' },
+      }),
+      ready: () => {},
+      nodeOf: () => ({ nodeId: 'node_lap' }),
+    })
+    expect((await t.run({} as never) as { detail: unknown }).detail).toEqual({ device: 'linux:lap', browser: 'ext:lap', node: 'node_lap', accountId: 'acc1', detail: undefined })
+  })
+
+  it('解析目标时就失败（identity-*）：动作一次都不调', async () => {
+    const fn = vi.fn()
+    const t = compileUserTask(emRow, {
+      actions: () => fn,
+      placement: async () => { throw new IdentityMismatch('eastmoney', '身份 eastmoney:acc1', 'node_w', '别的号', '「工作」') },
+    })
+    await expect(t.run({} as never)).rejects.toBeInstanceOf(IdentityMismatch)
+    expect(fn).not.toHaveBeenCalled()
   })
 
   it('本机落在兼容槽（老扩展）上：结果原样', async () => {

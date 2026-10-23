@@ -41,7 +41,7 @@ const CONNECT_SETTLE_MS = 5_000
  */
 export const identityPlugin = {
   name: 'identity',
-  inject: ['settings', 'sources', 'credentials', 'harvest', 'packages', 'auth'],
+  inject: ['settings', 'sources', 'credentials', 'harvest', 'packages', 'auth', 'streamEvents'],
   apply(ctx: Context, config: IdentityConfig): void {
     const extRelays = ctx.harvest.extRelays
     const { registry, liveRecipes } = ctx.sources
@@ -174,6 +174,9 @@ export const identityPlugin = {
       setWokenAt: (nodeId, at) => config.nodes?.setWokenAt?.(nodeId, at),
       // 执行前核对（D9）：同一个探测器、同一张表——核对的结果也是一次正常的探测。
       verify: (facility, node) => svc.verify(facility, { nodeId: node.nodeId, deviceId: node.deviceId, bindingId: node.bindingId }),
+      // 换号 / 登出的通知（D9）：登出与「需要登录」同一类事件。
+      notify: (e) => { ctx.streamEvents.emit(e) },
+      facilityLabel: (facility) => registry.all().find((m) => m.facility?.key === facility)?.facility?.label,
       // 收尾（D8）：经那个节点自己的绑定让扩展按住 / 放掉它所在的 profile。
       holdProfile: (bindingId) => extRelays.relay(bindingId).holdProfile(),
       releaseProfile: (bindingId) => extRelays.relay(bindingId).releaseProfile(),

@@ -28,6 +28,7 @@ import type { RunIdentity } from '../devices/run-context.ts'
 import { describeTarget, type Target } from '../devices/target.ts'
 import type { SiteIdentity } from './identity-store.ts'
 import type { ProbeResult } from './whoami.ts'
+import type { EventInput } from '../events/store.ts'
 
 /** 执行的用途：决定执行前核对的新鲜度窗口（D9）。采集 10 分钟，任务中心的动作 60 秒。 */
 export type RunPurpose = 'harvest' | 'action'
@@ -73,6 +74,13 @@ export interface IdentityRouterDeps {
    * 这个 facility 不核对（没有 whoami、`login` 形状）。缺席 = 一律不核对。
    */
   verify?(facility: string, node: RouterNode): Promise<ProbeResult | undefined>
+  /**
+   * 发通知（`streamEvents.emit`）。换号发 `identity.mismatch`；登出发 `auth.needed`——与「需要登录」同一类事件，
+   * 只是指名是哪个 profile（D9）。缺席 = 不发（错误本身照抛）。
+   */
+  notify?(e: EventInput): void
+  /** facility 给人看的名字（包的 `facility.label`）。缺席 = facility 键。 */
+  facilityLabel?(facility: string): string | undefined
   /** 按住 / 放掉一个唤起的 profile（扩展的 `holdProfile` / `releaseProfile`，经该节点的绑定）。 */
   holdProfile?(bindingId: string): Promise<void>
   releaseProfile?(bindingId: string): Promise<{ userWindows: number; unloading: boolean }>
@@ -172,13 +180,42 @@ export function makeIdentityRouter(deps: IdentityRouterDeps): IdentityRouter & {
   ): string | undefined => {
     if (r === undefined) return undefined // 这个 facility 不核对
     const where = nodeWhere(ctx.node)
+    const site = deps.facilityLabel?.(ctx.facility) ?? ctx.facility
+    const expected = ctx.row.displayName ?? ctx.row.accountId
     if (r.state === 'signed-in') {
       if (r.accountId === ctx.row.accountId) return r.name
-      throw new IdentityMismatch(ctx.facility, ctx.label, ctx.node.nodeId, r.name ?? r.accountId, where)
+      const found = r.name ?? r.accountId
+      const e = new IdentityMismatch(ctx.facility, ctx.label, ctx.node.nodeId, found, where)
+      emit({
+        type: 'identity.mismatch', severity: 'warn',
+        title: `${where}里的${site}现在登的是 ${found}`,
+        body: `这次要用的是 ${expected}，执行已拦下，没有发出任何动作。在那个 profile 里换回 ${expected}，或把任务的身份改成 ${found}。`,
+        detail: `facility=${ctx.facility}\nnode=${ctx.node.nodeId}\nexpected=${ctx.row.accountId}\nfound=${r.accountId}\ntarget=${ctx.label}`,
+        ref: { kind: 'facility', id: ctx.facility },
+        // 按（facility，节点）去重：同一个 profile 换了号，每一轮定时执行都撞一次，通知只要一条。
+        dedupeKey: `identity-mismatch:${ctx.facility}:${ctx.node.nodeId}`,
+      })
+      throw e
     }
-    if (r.state === 'signed-out') throw new IdentitySignedOut(ctx.facility, ctx.label, ctx.node.nodeId, where)
+    if (r.state === 'signed-out') {
+      const e = new IdentitySignedOut(ctx.facility, ctx.label, ctx.node.nodeId, where)
+      emit({
+        type: 'auth.needed', severity: 'warn',
+        title: `${site} 在${where}里登录失效`,
+        body: `${expected} 在${where}里已登出，按这个身份的执行已拦下。在那个 profile 里重新登录 ${site}。`,
+        ref: { kind: 'facility', id: ctx.facility },
+        // 与「需要登录」同一类事件；按节点去重——同一个号在两个 profile 里各自登出是两件要做的事。
+        dedupeKey: `auth:${ctx.facility}:${ctx.node.nodeId}`,
+      })
+      throw e
+    }
     // 问不出来不是答案（D5）：不当成登出、也不当成没换号——按离线处理，可重试。
     throw new IdentityOffline(ctx.facility, ctx.label, `在${where}核对身份没有结果：${r.reason}`)
+  }
+
+  /** 通知失败不遮住拦下这件事本身。 */
+  const emit = (e: EventInput): void => {
+    try { deps.notify?.(e) } catch { /* 同上 */ }
   }
 
   /** 节点 → 此刻有几次执行按着它。 */
