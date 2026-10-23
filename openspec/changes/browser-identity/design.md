@@ -163,7 +163,7 @@ whoami?:
 - 结果三态，与 `sessionPrecheck` 一个脾气：
   - `signed-in { accountId, name? }`：取到了非空的 id。
   - `signed-out`：响应是 JSON，但 id 路径为空；或（`http`）该节点的快照取过这个域、里面一个 cookie 都没有——不发请求也知道没登。
-    取没取过看上一轮成功取数要过它、且扩展没拒（`CookiePuller.covers`）：被拒的域、远程设备不取的域空着说明不了什么，仍是 `unknown`。
+    取没取过看上一轮成功取数要过它、且扩展没拒也没报没权限（`CookiePuller.covers`）：被拒的域、没给站点权限的域（D14 `noAccess`）、远程设备不取的域空着说明不了什么，仍是 `unknown`。
   - `unknown`：打不开、不是 JSON、节点断了。**绝不当成任何一边**，身份表维持原状。
 - 没有 `whoami` 的 facility：身份退化为「这个节点上的账号」，`accountId = node:<nodeId>`，显示为「<profile 名> 上的账号」。
   它照样能按节点路由，只是同一账号登在两个 profile 里会被当成两个身份。
@@ -334,6 +334,32 @@ type Target =
 - 删掉 `WINDOW_GROUP_TITLE`、`windowGroups` 与 `reconcileWindowGroups`。升级后第一次醒来做一次收编：浏览器里叫「Stream 独立窗」的组，
   `probe` 标签关掉；`created` 标签挪进主组；`adopted` 标签只解组、不关（红线不变：用户拖进来的东西绝不 remove）；
   因此空出来的窗关掉。同名的多个「Stream」主组（历史残留）合并进第一个。
+
+### D14. 冒烟后续：只为装了扩展的 profile 开窗；按 profile 说出读不到的登录态
+
+2026-10-23 Windows 冒烟发现两件事。
+
+**认领为每个 profile 开窗。** 没装扩展的 profile 也开一扇打不开的窗，20 秒后落成 `missing`。`browser.profiles` 多读每个
+profile 的 `Secure Preferences`（Windows / macOS 把扩展记在这里，Cortana 实测），没有这一项再读 `Preferences`（Linux），
+看 `extensions.settings.<STREAM_EXTENSION_ID>`：有且没停用（`disable_reasons` 非空或非零、或老式 `state: 0` 算停用）→
+`hasExtension: true`；两份都读得到但没有 → `false`；都读不到 → 缺席。后端在 `args.extensionId` 里告诉 agent 看哪个扩展。
+面板「识别 profile」改成两步：先 `GET /api/devices/:id/profiles` 列出来（只读、不开窗），默认勾上「装了扩展（或说不清）且
+没认领」的，没装的不勾、提示先去装；再 `POST …/claim {dirs}`。
+
+**新 profile 读不到登录态。** Cortana 上两个 profile 的 `Secure Preferences` 都是 `granted_permissions.explicit_host:
+["<all_urls>"]`、`withholding_permissions: false`——站点权限在默认情况下是有的。真正按 profile 记、新 profile 里是空的，是扩展的
+同步范围（`config.domains` ∪ 缓存的 `requiredDomains`，在 profile 自己的 `chrome.storage.local`）。缓存只在连上时的 `runSync`
+里写，而后端在连上那一刻就来取，新 profile 的第一轮全被拒，快照是空的，身份认不出来。站点权限仍可能被用户收成「点击时」，
+那时 `getAll` 静默回空、扩展也不报拒，空快照会被读成「没登录」。
+两样都做到看得见、一键能修，用最小的改动：
+
+- 扩展 `cookiePull`：本机绑定遇到缓存里没有的域，先重读一次本机 `sync-config` 再判（范围仍只来自本机 Stream 的申报）；
+  在范围内的域再查 `chrome.permissions.contains`，没权限的不读、回 `noAccess`。`refused` / `noAccess` 记进 `cookieGaps`。
+- 后端：`CookiePuller` 记下每个槽位最近一轮的 `refused` / `noAccess`，`GET /api/devices/nodes` 的节点带上 `cookieGaps`。
+  不加新消息：缺口本来就在取数的回包里。
+- 面板节点行：「读不到 X 的登录态——在这个 profile 里打开 Stream 扩展的弹窗，点「允许」」。
+- 弹窗：一个「允许」。`permissions.request` 只认用户手势，必须是点击后的第一个调用；给了再把本机拒掉的域并进同步域、清掉
+  记录、叫后台同步一轮（Stream 随即来取）。配对绑定拒掉的域不在这里——远处的 Stream 要什么不自动给，仍在 Streams 页签逐个批准。
 
 ## Risks / Trade-offs
 

@@ -104,12 +104,21 @@ query 里带上 `nodeId`，认领过之后再带 `profileDir` / `profileName`。
 `--profile-directory=<dir>` 打开扩展自己的认领页 `chrome-extension://<id>/claim.html#n=<一次性码>`。哪个 profile 里的扩展
 打开了它，就把码经自己**所有**已连上的绑定交回（`{type:'claim', nonce}`，回 `claim-result`）；签码的 Stream 校验交回的
 绑定与执行认领的是同一台设备，把 profile 记进节点，扩展也记进 `node` 存储，之后每次握手都带上。认领页显示
-「已识别：<名字>（<目录>）」。20 秒没交回的 profile 在面板上标「扩展未安装或未连上」。认领会每个 profile 开一扇窗，
-只在用户点的时候做。没装 Stream Desktop 的机器认领不了：节点照样能用，名字在面板上手填。
+「已识别：<名字>（<目录>）」。20 秒没交回的 profile 在面板上标「扩展未安装或未连上」。认领会为每个选中的 profile 开一扇窗，
+只在用户点的时候做：面板先列出全部 profile（Stream Desktop 读各 profile 的 `Secure Preferences` / `Preferences`，说出哪些装着
+并启用了本扩展），默认勾上装了扩展、还没认领的，没装的列出来、不勾，提示先去装。没装 Stream Desktop 的机器认领不了：节点照样能用，名字在面板上手填。
 
 **弹窗顶部**显示「<环境> · <profile 名>」：profile 名读自己的 `node` 存储，环境问本机 Stream 的
 `GET /api/devices/nodes` 里自己那一行（用户在面板上标的，预置「工作」「个人」）。没认领过显示「未识别的 profile」
 和一行去哪里识别。
+
+**每个 profile 自己的同步范围与站点权限。** 同步范围（用户填的域 ∪ 缓存的 `requiredDomains`）存在各 profile 自己的
+`chrome.storage.local` 里；站点访问权限也按 profile 记（用户可以在 `chrome://extensions` 里把它收成「点击时」）。两样缺了
+都和「没登录」一模一样，所以 `cookiePull` 的回包除了 `refused`（不在范围内）还带 `noAccess`（在范围内、但这个 profile 没给
+站点权限，不读），并把两者记进 `cookieGaps`。本机绑定遇到缓存里没有的域，先向本机 Stream 重读一次 `sync-config` 再判——新
+profile 第一次连上时，后端那一轮取数常常先于连上时的同步到。面板的节点行据后端记下的同一份结果说「读不到 X 的登录态」；
+那个 profile 的弹窗里出一个「允许」：先 `permissions.request` 缺的站点权限（只能在这次点击里要），再把本机拒掉的域并进
+同步域，然后叫 Stream 来取。配对绑定拒掉的域仍在 Streams 页签里逐个批准。
 
 ## Develop
 

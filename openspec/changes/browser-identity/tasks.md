@@ -64,3 +64,13 @@
     身份目标选对 profile（xhs 107 条）；环境里没登录的号 → 立即 `identity-offline`、不换人；
     关着的 profile 静默唤起、跑完卸载（B 站 → 环境「个人」，20 条，10 秒；收回时扩展先断开 → `4403e07` 修成算收回）
   - 未测：换号被拦（要第二个账号）
+
+## 冒烟后续（D14）
+
+- [x] 1. host agent：`browser.profiles` 按 profile 报 `hasExtension`（`Secure Preferences` → `Preferences` 的 `extensions.settings.<id>`，停用算没装）；`cargo test`（Cortana WSL）
+- [x] 2. 后端：discover 带 `hasExtension`，告诉 agent 看哪个扩展（`args.extensionId`）
+- [x] 3. 面板：「识别 profile」先列出、勾选（预选装了扩展且没认领的，没装的提示先装），只为勾中的开认领页
+- [x] 4. 扩展：`cookiePull` 缺域先重读一次本机 `sync-config`；回 `noAccess`（`chrome.permissions.contains`）；缺口记进 `cookieGaps`
+- [x] 5. 后端：`CookiePuller` 记每个槽位最近一轮的缺口，`GET /api/devices/nodes` 带 `cookieGaps`
+- [x] 6. 面板节点行说出读不到的登录态；弹窗「允许」（`permissions.request` + 并进同步域 + 同步一轮）
+- [ ] 7. Windows 真机复核：新 profile 认领后身份直接认出（不再 `signed-out`）；「识别 profile」不再给没装扩展的 profile 开窗
