@@ -30,6 +30,9 @@ const appRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../.
 /** 跑一次真的面板构建（主入口），把编译出来的 panel.css 读回来。 */
 async function buildPanelCss(): Promise<string> {
   const outDir = await mkdtemp(path.join(os.tmpdir(), 'panel-css-guard-'))
+  const nodeEnvBefore = process.env.NODE_ENV
+  // 面板配置只接受生产构建（vitest 里是 `test`，见 vite.panel.config.ts）。
+  process.env.NODE_ENV = 'production'
   try {
     await build({
       configFile: path.join(appRoot, 'vite.panel.config.ts'),
@@ -39,6 +42,8 @@ async function buildPanelCss(): Promise<string> {
     })
     return await readFile(path.join(outDir, 'panel.css'), 'utf8')
   } finally {
+    if (nodeEnvBefore === undefined) delete process.env.NODE_ENV
+    else process.env.NODE_ENV = nodeEnvBefore
     await rm(outDir, { recursive: true, force: true })
   }
 }

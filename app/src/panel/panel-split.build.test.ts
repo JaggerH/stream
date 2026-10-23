@@ -40,17 +40,22 @@ const RESEARCH_MARK = '← 返回列表'
  *  播放器那 1.65MB 一旦被重新内联回来（比如有人把 `movieBundle.load` 换成 `React.lazy`，
  *  或者从主树里直接 import 了 `MovieChannel`）会当场撞线。
  *
- *  **抬过一次（1_600_000 → 1_650_000）**：定时任务的编辑器开始渲染配置 row 的通用表单
- *  （`SchemaForm` + schemastery）之后主 bundle 到了 1,608,191。抬之前按这条注释要求量过
- *  「长的是不是影视那一坨」：把那一处 JSX 去掉是 1,603,640，连 import 一起去掉就回到线下——
- *  也就是长的确实是新加的那个表单，约 8KB，不是影视。这道闸防的是几百 KB 到 MB 级的回灌，
- *  不该用来卡 8KB；但**继续按这个节奏抬就等于没有闸**，下次撞线仍要先量再抬。 */
-const MAIN_BYTES_MAX = 1_650_000
+ *  **量的必须是出货那份**：这里曾经在 vitest 的 `NODE_ENV=test` 下构建，产物是开发态 JSX
+ *  （每个元素一次 `jsxDEV` + 一串绝对路径），同一份源码量出 1,682,498，而出货的是 1,293,360；
+ *  更糟的是那个数跟仓库所在路径长短一起漂（worktree 红、CI 绿）。之前两次「撞线 → 抬线」
+ *  （1_600_000 → 1_650_000 那次量的是 1,608,191）量的都是这份虚胖的产物。现在 `buildEntry`
+ *  显式设 `NODE_ENV=production`（配置那头不是 production 会直接炸），线也按真实体积收回来：
+ *  1,293,360 上面留约 100KB 给正常长功能，几百 KB 到 MB 级的回灌照样当场撞线。
+ *  **继续按"撞线就抬"的节奏走就等于没有闸**，下次撞线仍要先量（长的是谁）再决定拆还是抬。 */
+const MAIN_BYTES_MAX = 1_400_000
 
 async function buildEntry(entryName: string, outFile: string): Promise<{ dir: string; js: string }> {
   const outDir = await mkdtemp(path.join(os.tmpdir(), `panel-split-${entryName}-`))
   const before = process.env.PANEL_ENTRY
+  const nodeEnvBefore = process.env.NODE_ENV
   process.env.PANEL_ENTRY = entryName
+  // vitest 里是 `test`：不改的话量到的是开发态 JSX 的产物，不是出货那份（见 MAIN_BYTES_MAX 注释）。
+  process.env.NODE_ENV = 'production'
   try {
     await build({
       configFile: path.join(appRoot, 'vite.panel.config.ts'),
@@ -61,6 +66,8 @@ async function buildEntry(entryName: string, outFile: string): Promise<{ dir: st
   } finally {
     if (before === undefined) delete process.env.PANEL_ENTRY
     else process.env.PANEL_ENTRY = before
+    if (nodeEnvBefore === undefined) delete process.env.NODE_ENV
+    else process.env.NODE_ENV = nodeEnvBefore
   }
   return { dir: outDir, js: path.join(outDir, outFile) }
 }

@@ -37,6 +37,17 @@ if (!(entryName in ENTRIES)) {
 }
 const entry = ENTRIES[entryName as keyof typeof ENTRIES]!
 
+// **面板只有生产构建一种**。Vite 只在 `NODE_ENV` 没设时才替你设成 production；已经设了
+// 别的值（vitest 里是 `test`，有人 shell 里常驻 `development`）就原样沿用，于是
+// `@vitejs/plugin-react` 改走开发态 JSX：每个元素一次 `jsxDEV(...)`，外加一串**绝对路径**
+// 的 `fileName`。实测主 bundle 1,293,360 → 1,682,498 字节，且体积随仓库所在路径长短漂移
+// （worktree 里比 CI 里大）——体积闸门量的就不是出货的那份了。出货那份更糟：下面那条
+// `define` 把 React 钉在生产分支，而生产版 `react/jsx-dev-runtime` 的 `jsxDEV` 是
+// `undefined`，面板一挂就炸。所以这里不替调用方兜底改环境，当场炸，让调用方自己设对。
+if (process.env.NODE_ENV !== 'production') {
+  throw new Error(`面板构建要求 NODE_ENV=production，现在是 ${process.env.NODE_ENV}（开发态 JSX 会混进产物）`)
+}
+
 export default defineConfig({
   plugins: [react(), tailwindcss()],
   // 面板走后端 `/panel/:file` 单层挂载（见 src/http/panel-mount.ts），那条路由永远够不到

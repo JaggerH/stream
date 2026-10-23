@@ -32,7 +32,8 @@ for (const name of targets) {
   const r = spawnSync('npx', ['vite', 'build', '--config', 'vite.panel.config.ts'], {
     cwd: appDir,
     stdio: 'inherit',
-    env: { ...process.env, PANEL_ENTRY: name },
+    // NODE_ENV 显式钉死：shell 里常驻的 development 会让产物混进开发态 JSX（见 vite.panel.config.ts）。
+    env: { ...process.env, NODE_ENV: 'production', PANEL_ENTRY: name },
   })
   // 一份失败就停：接着建下去只会让人以为整轮成功了，而缺的那一份照旧是运行时才炸。
   if (r.status !== 0) process.exit(r.status ?? 1)
