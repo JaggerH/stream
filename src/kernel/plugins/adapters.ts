@@ -16,6 +16,7 @@ import { forwardingRepairRunner, LoggingRepairRunner } from '../../replay/repair
 import type { InterventionService } from './intervention.ts'
 import type { RuntimeConfigResolver } from './runtime-config.ts'
 import { assertDeviceReady, makeFacilityPlacement, type FacilityBindings } from '../../devices/placement.ts'
+import type { IdentityRouter } from '../../identity/identity-router.ts'
 
 declare module 'cordis' {
   interface Context {
@@ -56,6 +57,11 @@ export interface AdaptersConfig {
   /** facility → 默认执行设备。serve 在 bootstrap 之前建好传入（只依赖 stream.db 路径，不存在后到问题）；
    *  缺席 = 全部本机，ReplayAdapter 不带 placementFor 走原路径。表打不开时 serve 传 `unavailableBindings()`（查就抛）。 */
   facilityDevices?: FacilityBindings
+  /**
+   * 身份 / 环境目标的解析器（browser-identity D7，住 identity 域）。bootstrap 递 `() => kernel.identityRouter`，
+   * 理由同 `intervention`：经 config 现取、不 inject。缺席 → 这类目标一律 identity-offline（不回落）。
+   */
+  identityRouter?: () => IdentityRouter | undefined
 }
 
 /**
@@ -167,6 +173,7 @@ export const adaptersPlugin = {
           placementFor: makeFacilityPlacement({
             bindings: config.facilityDevices,
             network: (f) => ctx.packages.networkForFacility(f),
+            router: () => config.identityRouter?.(),
           }),
           ready: (p: import('../../devices/run-context.ts').RunPlacement, need: string) => assertDeviceReady(p, ctx.harvest.hostRelays, need),
           browsers: ctx.harvest.extRelays,

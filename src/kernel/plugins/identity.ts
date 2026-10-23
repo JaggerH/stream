@@ -7,19 +7,23 @@ import { findLoginRecipe } from '../../credentials/facility-login.ts'
 import { makeIdentityProber, makeNodeProbeIO, type ProbeNode } from '../../identity/prober.ts'
 import { makeIdentityService, type IdentityFacility, type IdentityService } from '../../identity/identity-service.ts'
 import type { SiteIdentityStore } from '../../identity/identity-store.ts'
+import { makeIdentityRouter, type IdentityRouter } from '../../identity/identity-router.ts'
+import type { BrowserNode } from '../../devices/node-store.ts'
 
 declare module 'cordis' {
   interface Context {
     /** 站点身份（`src/kernel/plugins/identity.ts`，browser-identity 计划 3）：每个节点上各 facility 登着谁。
      *  身份表打不开时这一域不挂（ctx key 带域前缀，见 kernel/context.ts）——读它的地方要判空。 */
     siteIdentities?: IdentityService
+    /** 按身份 / 环境选节点（browser-identity D7–D9）。与 `siteIdentities` 同生同灭。 */
+    identityRouter?: IdentityRouter
   }
 }
 
 export interface IdentityConfig {
   store: SiteIdentityStore
-  /** 节点表：profile 名（「工作 上的账号」）。缺席 = 用节点 id 顶上。 */
-  nodes?: { get(nodeId: string): { profileName?: string; label?: string } | undefined }
+  /** 节点表：profile 名（「工作 上的账号」）、路由要的设备 / 绑定 / 环境。缺席 = 用节点 id 顶上，路由一个候选都没有。 */
+  nodes?: { get(nodeId: string): BrowserNode | undefined }
   log: (...args: unknown[]) => void
 }
 
@@ -150,5 +154,14 @@ export const identityPlugin = {
       svc.dispose()
     })
     ctx.provide('siteIdentities', svc)
+
+    // 按身份 / 环境选节点（D7）。没有节点表就一个候选都没有——身份目标照样 identity-offline，不回落。
+    const router = makeIdentityRouter({
+      identities: (facility) => config.store.list({ facility }),
+      node: (nodeId) => config.nodes?.get(nodeId),
+      isOnline: (bindingId) => extRelays.isOnline(bindingId),
+      log: (line) => config.log(line),
+    })
+    ctx.provide('identityRouter', router)
   },
 }

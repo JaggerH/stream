@@ -18,6 +18,7 @@ import type { HealthInfo } from '../../http/app.ts'
 import type { TrackFn, TrackSyncFn } from '../../op-track.ts'
 import type { DebugEntry } from '../../debug.ts'
 import { assertDeviceReady, makeFacilityPlacement, type FacilityBindings } from '../../devices/placement.ts'
+import type { IdentityRouter } from '../../identity/identity-router.ts'
 
 declare module 'cordis' {
   interface Context {
@@ -57,6 +58,8 @@ export interface SchedulingConfig {
   runtimeConfigFor: RuntimeConfigResolver
   /** facility → 默认执行设备（与 adapters 域同一份）。缺席 = 全部本机；表打不开时是 `unavailableBindings()`。 */
   facilityDevices?: FacilityBindings
+  /** 身份 / 环境目标的解析器（与 adapters 域同一个，经 config 现取）。缺席 → 这类目标一律 identity-offline。 */
+  identityRouter?: () => IdentityRouter | undefined
   /** 每条新落库的 item 额外播一份（WS 推前端）。 */
   onItem?: (item: StreamItem, type: SourceType) => void
   track?: TrackFn
@@ -113,6 +116,7 @@ export const schedulingPlugin = {
         placementFor: makeFacilityPlacement({
           bindings: config.facilityDevices,
           network: (f) => ctx.packages.networkForFacility(f),
+          router: () => config.identityRouter?.(),
         }),
         ready: (p: import('../../devices/run-context.ts').RunPlacement, need: string) => assertDeviceReady(p, ctx.harvest.hostRelays, need),
       } : {}),

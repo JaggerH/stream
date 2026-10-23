@@ -1,7 +1,12 @@
-/** 一次执行在哪台设备上：任务覆盖 → facility 默认设备 → local。执行开始时解析一次，之后不变。 */
-import { DeviceIncapable, DeviceOffline } from './errors.ts'
-import { LOCAL_DEVICE, currentPlacement, type RunPlacement } from './run-context.ts'
-import type { Target } from './target.ts'
+/**
+ * 一次执行落在哪里：任务覆盖 → facility 默认目标 → local。执行开始时解析一次，之后不变。
+ * 目标有设备 / 身份 / 环境三种（browser-identity D7）：设备目标就地同步解；身份 / 环境目标交给
+ * `IdentityRouter`（选节点、唤起、核对），它决定设备与扩展绑定。
+ */
+import { DeviceIncapable, DeviceOffline, IdentityOffline } from './errors.ts'
+import { LOCAL_DEVICE, activePlacement, currentPlacement, type RunPlacement } from './run-context.ts'
+import { LOCAL_TARGET, describeTarget, type Target } from './target.ts'
+import type { IdentityRouter, RunPurpose } from '../identity/identity-router.ts'
 
 /** 包的执行位置相关声明：它的 facility 与允许访问的主机（`stream.network.hosts` ?? `stream.credentials`）。 */
 export interface PackageNetwork {
@@ -45,10 +50,38 @@ export function unavailableBindings(): FacilityBindings {
 }
 
 /**
- * 源 facility → placement。ReplayAdapter 与调度器共用**同一个**解析器（各写一份迟早会分叉：
+ * 源 facility → placement。ReplayAdapter、调度器、任务中心共用**同一个**解析器（各写一份迟早会分叉：
  * 一边按 facility 派到 NAS、另一边仍在本机）。包的主机声明调用时才取——热装卸会变。
+ *
+ * 异步：身份 / 环境目标要选节点、可能唤起 profile、可能去站点核对。同一次执行里再为同一个 facility 问
+ * （调度器之下的 ReplayAdapter、动作里读这个 facility 的源）就复用外层那份，不再选一遍。
  */
 export function makeFacilityPlacement(deps: {
+  bindings: FacilityBindings
+  network: (facility: string) => PackageNetwork | undefined
+  /** 身份 / 环境目标的解析器（现取：身份表打不开时没有它，这类目标一律 identity-offline）。 */
+  router?: () => IdentityRouter | undefined
+}): (facility: string | undefined, purpose?: RunPurpose) => Promise<RunPlacement> {
+  return async (facility, purpose = 'harvest') => {
+    const cur = activePlacement()
+    if (facility !== undefined && cur?.facility === facility) return cur
+    const target = facility !== undefined ? facilityTarget(deps.bindings, facility) ?? LOCAL_TARGET : LOCAL_TARGET
+    return placeRun({
+      target,
+      ...(facility !== undefined ? { facility } : {}),
+      hosts: facility ? deps.network(facility)?.hosts ?? [] : [],
+      router: deps.router?.(),
+      purpose,
+    })
+  }
+}
+
+/**
+ * 同步、只认设备目标的版本：给只拿 placement 判「能不能在这里跑」、不进执行上下文的调用点（MCP 的
+ * `run_action_recipe`）。facility 目标是身份 / 环境时抛 `identity-offline`——它没法把执行钉到那个节点上，
+ * 就不能在默认节点上替那个身份做事。
+ */
+export function makeDevicePlacement(deps: {
   bindings: FacilityBindings
   network: (facility: string) => PackageNetwork | undefined
 }): (facility: string | undefined) => RunPlacement {
@@ -59,14 +92,50 @@ export function makeFacilityPlacement(deps: {
   })
 }
 
+/** facility 的默认目标：有 `target` 读它，老实现只有设备（`get`）。没绑 = undefined。 */
+export function facilityTarget(bindings: FacilityBindings, facility: string): Target | undefined {
+  if (bindings.target) return bindings.target(facility)
+  const deviceId = bindings.get(facility)
+  return deviceId !== undefined ? { kind: 'device', deviceId } : undefined
+}
+
+/**
+ * 目标 → placement。设备目标与升级前一样；身份 / 环境目标由路由器选出节点，节点的设备与绑定预先填进
+ * placement（`pickBrowser` 之后不再重选），另带 `identity` 与收尾的 `release`。
+ *
+ * **没有回落分支**：没有 facility、没有路由器、路由器选不出——都是 `identity-offline`。
+ */
+export async function placeRun(input: {
+  target: Target
+  facility?: string
+  hosts: readonly string[]
+  router?: IdentityRouter
+  purpose: RunPurpose
+}): Promise<RunPlacement> {
+  const { target, facility } = input
+  const base = { allowHosts: input.hosts, ...(facility !== undefined ? { facility } : {}) }
+  if (target.kind === 'device') return { deviceId: target.deviceId, ...base }
+  const label = describeTarget(target, facility)
+  if (facility === undefined) throw new IdentityOffline('?', label, '动作所属的包没有声明 facility，身份无从说起')
+  if (!input.router) throw new IdentityOffline(facility, label, '身份表不可用')
+  const r = await input.router.resolve({ target, facility, purpose: input.purpose })
+  return {
+    deviceId: r.node.deviceId,
+    ...base,
+    browser: { bindingId: r.node.bindingId },
+    identity: r.identity,
+    release: r.release,
+  }
+}
+
 /**
  * facility 的默认设备。目标是身份 / 环境时**抛**，不回 undefined：回 undefined 就是「没绑 = 本机」，
  * 而身份目标绝不退回本机（browser-identity D7）。
  */
 export function deviceTargetOf(bindings: FacilityBindings, facility: string): string | undefined {
-  const t = bindings.target ? bindings.target(facility) : undefined
-  if (t && t.kind !== 'device') throw new Error(`${facility} 的执行目标是身份 / 环境，这条路径还不会按身份路由——拒绝执行，不换身份顶上`)
-  return t ? t.deviceId : bindings.get(facility)
+  const t = facilityTarget(bindings, facility)
+  if (t && t.kind !== 'device') throw new IdentityOffline(facility, describeTarget(t, facility), '这条路径不按身份路由——拒绝执行，不在默认浏览器里替这个身份做事')
+  return t?.deviceId
 }
 
 /** 派发前就把「去不了」说出来，不发任何帧。`local` 是后端本机，永远就绪。 */

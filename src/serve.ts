@@ -47,7 +47,8 @@ import { ProfileClaims, agentFrom } from './devices/profile-claim.ts'
 import { mountNodeRoutes } from './http/node-routes.ts'
 import { SiteIdentityStore } from './identity/identity-store.ts'
 import { mountIdentityRoutes } from './http/identity-routes.ts'
-import { assertDeviceReady, deviceTargetOf, resolvePlacement, unavailableBindings, type FacilityBindings } from './devices/placement.ts'
+import { assertDeviceReady, facilityTarget, placeRun, unavailableBindings, type FacilityBindings } from './devices/placement.ts'
+import { LOCAL_TARGET, taskTarget } from './devices/target.ts'
 import { installFetchFor, makeFetchFor } from './devices/fetch.ts'
 import { installGlobalFetchTrap } from './devices/global-fetch-trap.ts'
 import { type RunPlacement } from './devices/run-context.ts'
@@ -868,11 +869,19 @@ const apiToken = config.api_token || loadOrCreateApiToken(dirname(config.item_db
     ...(taskLogDir ? { logDir: taskLogDir } : {}),
     actions: (name: string) => packageActions.get(name),
     paramsFor: (ref: string) => settingsStore.runtimeConfig(ref),
-    // 执行位置：行的 device → 包 facility 的默认设备 → local，开跑时解一次。
+    // 执行位置：行的身份 → 环境 → 设备 → 包 facility 的默认目标 → local，开跑时解一次（browser-identity D7）。
+    // 身份 / 环境目标在这里选节点、唤起、核对（动作的新鲜度窗口 60 秒）；失败都在动作被调用之前。
     placement: (row: UserTaskRow) => {
       const pkgId = row.action?.split(':')[0]
       const net = pkgId ? pkgs.networkFor(pkgId) : undefined
-      return resolvePlacement({ taskDevice: row.device, facility: net?.facility, binding: (f) => deviceTargetOf(facilityBindings, f), hosts: net?.hosts ?? [] })
+      const target = taskTarget(row) ?? (net?.facility ? facilityTarget(facilityBindings, net.facility) : undefined) ?? LOCAL_TARGET
+      return placeRun({
+        target,
+        ...(net?.facility ? { facility: net.facility } : {}),
+        hosts: net?.hosts ?? [],
+        router: kernel.identityRouter,
+        purpose: 'action',
+      })
     },
     ready: (p: RunPlacement) => assertDeviceReady(p, harvest.hostRelays, 'http.fetch'),
     // 运行记录带节点（browser-identity D12）：执行那一刻节点表里的 profile 名与环境。

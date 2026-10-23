@@ -211,7 +211,7 @@ export interface ReplayAdapterDeps {
   onDebug?: (entry: DebugEntry) => void
   /** facility → 它绑定的设备（见 device-execution D3）。整趟采集在这个 placement 里跑，recipe 的
    *  出站请求因此跟着设备走。缺席（或返回 local）= 后端本机，与以前完全一致。 */
-  placementFor?: (facility: string | undefined) => RunPlacement
+  placementFor?: (facility: string | undefined) => RunPlacement | Promise<RunPlacement>
   /** 非 local 设备上、第一次出站（或确保浏览器传输）之前的就绪检查：离线抛 `DeviceOffline`，
    *  缺能力抛 `DeviceIncapable`。缺席 = 不检查（只有注入了 placementFor 的装配才会配它）。 */
   ready?: (p: RunPlacement, need: string) => void
@@ -466,7 +466,7 @@ export class ReplayAdapter implements Adapter {
     // 整趟采集（含 session recipe 的早退路径）都包在 facility 所绑设备的 placement 里，
     // 这样 http/html 的 fetchFor 与 cookie 都跟着设备走，没有哪一跳能漏到本机。
     const [facility] = facilityOf(manifest)
-    const p = this.deps.placementFor?.(facility) ?? { deviceId: LOCAL_DEVICE, allowHosts: [] }
+    const p = (await this.deps.placementFor?.(facility)) ?? { deviceId: LOCAL_DEVICE, allowHosts: [] }
     return runOnDevice(p, () => this.harvest(recipe, params, manifest, context, p))
   }
 

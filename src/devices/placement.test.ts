@@ -1,7 +1,9 @@
 import { describe, it, expect } from 'vitest'
-import { assertDeviceReady, assertRecipeRunnable, makeFacilityPlacement, pickBrowser, resolvePlacement, unavailableBindings } from './placement.ts'
-import { DeviceIncapable, DeviceOffline } from './errors.ts'
-import { runOnDevice } from './run-context.ts'
+import { assertDeviceReady, assertRecipeRunnable, makeDevicePlacement, makeFacilityPlacement, pickBrowser, placeRun, resolvePlacement, unavailableBindings } from './placement.ts'
+import { DeviceIncapable, DeviceOffline, IdentityOffline } from './errors.ts'
+import { activePlacement, runOnDevice } from './run-context.ts'
+import type { Target } from './target.ts'
+import type { IdentityRouter } from '../identity/identity-router.ts'
 
 const bindings: Record<string, string> = { eastmoney: 'linux:nas' }
 const binding = (f: string) => bindings[f]
@@ -101,11 +103,64 @@ describe('assertRecipeRunnable', () => {
 describe('makeFacilityPlacement（采集与调度器共用的同一个解析器）', () => {
   const network = (f: string) => (f === 'eastmoney' ? { packageId: 'em', facility: 'eastmoney', hosts } : undefined)
   const resolve = makeFacilityPlacement({ bindings: { get: binding }, network })
-  it('facility 绑到设备：设备 + 包声明的主机', () => {
-    expect(resolve('eastmoney')).toEqual({ deviceId: 'linux:nas', allowHosts: hosts })
+  it('facility 绑到设备：设备 + 包声明的主机', async () => {
+    expect(await resolve('eastmoney')).toEqual({ deviceId: 'linux:nas', allowHosts: hosts, facility: 'eastmoney' })
   })
-  it('没有 facility：local，不查绑定', () => {
-    expect(resolve(undefined)).toEqual({ deviceId: 'local', allowHosts: [] })
+  it('没有 facility：local，不查绑定', async () => {
+    expect(await resolve(undefined)).toEqual({ deviceId: 'local', allowHosts: [] })
+  })
+  it('同一次执行里再为同一个 facility 问：复用外层那份（不再选一遍）', async () => {
+    const outer = await resolve('eastmoney')
+    await runOnDevice(outer, async () => {
+      const inner = await resolve('eastmoney')
+      expect(inner).toBe(activePlacement())
+      // 别的 facility 照常另解
+      expect(await resolve('bilibili')).not.toBe(activePlacement())
+    })
+  })
+})
+
+describe('身份 / 环境目标（browser-identity D7）', () => {
+  const targets: Record<string, Target> = { xhs: { kind: 'identity', accountId: 'B' }, bilibili: { kind: 'environment', environment: '个人' } }
+  const fb = { get: () => undefined, target: (f: string) => targets[f] }
+  const network = (f: string) => ({ packageId: f, facility: f, hosts: [`${f}.com`] })
+  const router = (calls: unknown[]): IdentityRouter => ({
+    resolve: async (req) => {
+      calls.push(req)
+      return {
+        node: { nodeId: 'node_work', deviceId: 'local', bindingId: 'local:node_work' },
+        identity: { facility: req.facility, accountId: 'B', nodeId: 'node_work' },
+        release: async () => {},
+      }
+    },
+  })
+
+  it('选出的节点决定设备与绑定，并带上身份与收尾', async () => {
+    const calls: unknown[] = []
+    const p = await makeFacilityPlacement({ bindings: fb, network, router: () => router(calls) })('xhs', 'action')
+    expect(calls).toEqual([{ target: { kind: 'identity', accountId: 'B' }, facility: 'xhs', purpose: 'action' }])
+    expect(p).toMatchObject({ deviceId: 'local', allowHosts: ['xhs.com'], facility: 'xhs', browser: { bindingId: 'local:node_work' }, identity: { accountId: 'B', nodeId: 'node_work' } })
+    expect(typeof p.release).toBe('function')
+  })
+
+  it('采集默认用途是 harvest', async () => {
+    const calls: Array<{ purpose: string }> = []
+    await makeFacilityPlacement({ bindings: fb, network, router: () => router(calls) })('bilibili')
+    expect(calls[0]!.purpose).toBe('harvest')
+  })
+
+  it('没有路由器（身份表打不开）→ identity-offline，不回 local', async () => {
+    await expect(makeFacilityPlacement({ bindings: fb, network })('xhs')).rejects.toBeInstanceOf(IdentityOffline)
+  })
+
+  it('没有 facility 的身份目标 → identity-offline', async () => {
+    await expect(placeRun({ target: { kind: 'identity', accountId: 'B' }, hosts: [], purpose: 'action', router: router([]) })).rejects.toBeInstanceOf(IdentityOffline)
+  })
+
+  it('只认设备目标的同步版本：身份 / 环境目标抛 identity-offline，不当成「没绑 = 本机」', () => {
+    const sync = makeDevicePlacement({ bindings: fb, network })
+    expect(() => sync('xhs')).toThrow(IdentityOffline)
+    expect(sync('douyin').deviceId).toBe('local')
   })
 })
 

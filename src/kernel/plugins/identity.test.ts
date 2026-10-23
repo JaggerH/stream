@@ -81,7 +81,11 @@ describe('identityPlugin', () => {
     expect(svc.list()).toEqual([])
     store.record('xhs', 'node_a', { state: 'signed-in', accountId: 'A' })
     expect(svc.list()).toMatchObject([{ facility: 'xhs', nodeId: 'node_a', online: false }])
+    // 路由器同域挂出：没有节点表 = 一个候选都没有，身份目标照样 identity-offline（不回落）
+    await expect(kernel.identityRouter!.resolve({ target: { kind: 'identity', accountId: 'A' }, facility: 'xhs', purpose: 'action' }))
+      .rejects.toMatchObject({ code: 'identity-offline' })
     await quiesceKernel(kernel)
     expect(kernel.siteIdentities).toBeUndefined()
+    expect(kernel.identityRouter).toBeUndefined()
   })
 })

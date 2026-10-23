@@ -9,8 +9,12 @@ import { LOCAL_DEVICE, runOnDevice, type DispatchMarker, type RunPlacement } fro
 import { DeviceError, DeviceLost } from '../devices/errors.ts'
 
 export interface CompileOptions {
-  /** 这条任务在哪台设备上执行（任务覆盖 → facility 默认 → local）。缺席 = local。见 src/devices/placement.ts。 */
-  placement?: (row: UserTaskRow) => RunPlacement
+  /**
+   * 这条任务在哪里执行（任务覆盖 → facility 默认目标 → local）。缺席 = local。见 src/devices/placement.ts。
+   * 身份 / 环境目标要选节点、可能唤起、要核对（browser-identity D7–D9），所以可以是异步的；它抛的
+   * `identity-*` 错误都发生在动作被调用之前。
+   */
+  placement?: (row: UserTaskRow) => RunPlacement | Promise<RunPlacement>
   /** 派发前检查设备就绪（在线、有 http.fetch）；不就绪就抛，动作一次都不调。 */
   ready?: (p: RunPlacement) => void
   logDir?: string
@@ -47,6 +51,12 @@ function nodeDetail(n: RunNode | undefined): Record<string, string> {
   }
 }
 
+/** 按身份执行的那一刻是哪个账号（D12）：快照，之后改名不跟着变。 */
+function accountDetail(p: RunPlacement): Record<string, string> {
+  if (!p.identity) return {}
+  return { accountId: p.identity.accountId, ...(p.identity.accountName ? { accountName: p.identity.accountName } : {}) }
+}
+
 export function compileUserTask(row: UserTaskRow, opts: CompileOptions = {}): ScheduledTask {
   return {
     id: row.id,
@@ -81,25 +91,26 @@ function runAction(row: UserTaskRow, opts: CompileOptions): ScheduledTask['run']
     // 没绑配置格 = 空参数袋。动作自己决定这算不算错（缺账号该由动作说"没有登录态"，
     // 而不是由这里替它判——它比调度器清楚自己要什么）。
     const params = row.configRef !== undefined ? (opts.paramsFor?.(row.configRef) ?? {}) : {}
-    const resolved = opts.placement?.(row) ?? { deviceId: LOCAL_DEVICE, allowHosts: [] }
+    const resolved = (await opts.placement?.(row)) ?? { deviceId: LOCAL_DEVICE, allowHosts: [] }
     if (resolved.deviceId === LOCAL_DEVICE) {
       opts.ready?.(resolved)
       // 本机也可能落在某个 profile 的节点上（browser-identity D2）：用过浏览器、且选中的是一个节点，
       // 运行记录才说是哪个；兼容槽 / 没用浏览器的照旧原样返回，存量任务的明细形状不变。
-      const browser: NonNullable<RunPlacement['browser']> = {}
+      // 身份目标解析时已经预填了节点（D7）——沿用那份记号，不另建一个空的让 pickBrowser 重选。
+      const browser: NonNullable<RunPlacement['browser']> = resolved.browser ?? {}
       const out = await runOnDevice({ ...resolved, browser }, () => fn(params))
       const node = browser.bindingId ? opts.nodeOf?.(browser.bindingId) : undefined
-      if (!node) return out
+      if (!node && !resolved.identity) return out
       return {
         ...(out ?? { summary: '' }),
-        detail: { device: LOCAL_DEVICE, browser: browser.bindingId, ...nodeDetail(node), detail: out?.detail },
+        detail: { device: LOCAL_DEVICE, ...(browser.bindingId ? { browser: browser.bindingId } : {}), ...nodeDetail(node), ...accountDetail(resolved), detail: out?.detail },
       }
     }
     // 每次执行一个新标记：同一条任务的上一轮发没发过，和这一轮无关。
     const marker: DispatchMarker = { dispatched: false }
     // browser 记号由这里建好再交给 runOnDevice：它没有时 runOnDevice 会另建一份，那份在这里读不到，
-    // 运行记录就说不出这次用的是哪个 Chrome。
-    const browser: NonNullable<RunPlacement['browser']> = {}
+    // 运行记录就说不出这次用的是哪个 Chrome。身份目标预填过的原样沿用。
+    const browser: NonNullable<RunPlacement['browser']> = resolved.browser ?? {}
     const p: RunPlacement = { ...resolved, dispatch: marker, browser }
     // 派发前的就绪检查原样抛（只加设备前缀）：此刻什么都没发，DeviceOffline 按 maxAttempts 重试是安全的。
     try {
@@ -119,6 +130,7 @@ function runAction(row: UserTaskRow, opts: CompileOptions): ScheduledTask['run']
       detail: {
         device: p.deviceId,
         ...(browser.bindingId ? { browser: browser.bindingId, ...nodeDetail(opts.nodeOf?.(browser.bindingId)) } : {}),
+        ...accountDetail(p),
         detail: out?.detail,
       },
     }

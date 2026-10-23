@@ -110,7 +110,7 @@ export interface SchedulerOpts {
    * 见 `src/devices/placement.ts` 的 `makeFacilityPlacement`）。每次真采集开始时解一次，整次
    * `adapter.fetch` 在这个上下文里跑——code 包的 `ctx.fetch` 才会派到那台设备。缺席 = 全部本机。
    */
-  placementFor?: (facility: string | undefined) => RunPlacement
+  placementFor?: (facility: string | undefined) => RunPlacement | Promise<RunPlacement>
   /** 派发前检查设备就绪（在线、有那个 op）；不就绪就抛，adapter 一次都不调。 */
   ready?: (p: RunPlacement, need: string) => void
   /** collection 分片替换的"近乎全空"防线状态（armed 位，per stream+source）。生产注入 stream.db
@@ -495,7 +495,7 @@ export class Scheduler {
         ranFetch = true
         // 执行位置在 try 里解：设备离线（DeviceOffline，声明了「环境没就绪」）走下面那条
         // 本轮跳过；绑定表不可用等解析错误照普通失败记。
-        const p = this.opts.placementFor?.(manifest.facility?.key) ?? { deviceId: LOCAL_DEVICE, allowHosts: [] }
+        const p = (await this.opts.placementFor?.(manifest.facility?.key)) ?? { deviceId: LOCAL_DEVICE, allowHosts: [] }
         // 自己判位置的 adapter（replay 按 recipe kind 判）不在这里替它问 http.fetch——
         // 浏览器类 recipe 根本不走 HTTP，问了只会报出一条错误的原因。
         if (p.deviceId !== LOCAL_DEVICE && !adapter.checksPlacement) this.opts.ready?.(p, 'http.fetch')

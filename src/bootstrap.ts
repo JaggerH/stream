@@ -37,7 +37,7 @@ import { makeResolveDownload } from './audio/resolve-download.ts'
 import type { AppConfig, StreamItem } from './types.ts'
 import type { SourceType } from './manifest/types.ts'
 import { writeTags } from './audio/tag-writer.ts'
-import { makeFacilityPlacement } from './devices/placement.ts'
+import { makeDevicePlacement } from './devices/placement.ts'
 import { identityPlugin } from './kernel/plugins/identity.ts'
 
 export type Logger = (...args: unknown[]) => void
@@ -579,7 +579,7 @@ export async function bootstrap(
   // bootstrap 自己一格都不解：下游域经 inject 从 `ctx.adapters` 自取（进程内实现的注册面
   // `register()` 在 Provider 域里，采集调度域吃这张 Map）。
   // `intervention` 同 harvest 那处：经 config 递 thunk，从根 kernel 现取，不在插件里读 `ctx.intervention`。
-  await kernel.plugin(adaptersPlugin, { dataDir, log, runtimeConfigFor, onDebug: opts.onDebug, intervention: () => kernel.intervention, facilityDevices: opts.facilityDevices })
+  await kernel.plugin(adaptersPlugin, { dataDir, log, runtimeConfigFor, onDebug: opts.onDebug, intervention: () => kernel.intervention, facilityDevices: opts.facilityDevices, identityRouter: () => kernel.identityRouter })
 
   // ── Provider 执行面整域进内核 ──────────────────────────────────────────────
   // 解析面（resolveEngine / intentResolver / radarMatcher）+ 进程内成员的注册 + 读模型 /
@@ -630,6 +630,7 @@ export async function bootstrap(
   // `shutdown()` 与 `gracefulShutdown` 里那行 `scheduler.stop()` 一起归零。
   await kernel.plugin(schedulingPlugin, {
     facilityDevices: opts.facilityDevices,
+    identityRouter: () => kernel.identityRouter,
     adFilter: config.ad_filter,
     vaultRoot: config.vault_root,
     vaultEnabled: config.vault_enabled,
@@ -714,7 +715,9 @@ export async function bootstrap(
     intervention: () => kernel.intervention,
     // 动作 recipe 的执行位置：与 adapters / scheduling 两域同一个解析器、同一份绑定表。
     ...(opts.facilityDevices ? {
-      placementForFacility: makeFacilityPlacement({
+      // MCP 的动作 recipe 只拿 placement 判「能不能在这里跑」、不进执行上下文，钉不住节点——只认设备目标，
+      // 身份 / 环境目标 fail closed（`makeDevicePlacement` 头注）。
+      placementForFacility: makeDevicePlacement({
         bindings: opts.facilityDevices,
         network: (f) => kernel.packages.networkForFacility(f),
       }),
