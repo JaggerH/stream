@@ -50,6 +50,11 @@ real-user response to fixtures.
 
 ## Pull requests
 
+Before your first pull request can be merged you need to sign the
+[Contributor License Agreement](CLA.md): a bot comments on the pull request,
+and you reply with the sentence it asks for. You sign once; it covers all of
+your future contributions. You keep the copyright in your work.
+
 Keep each pull request focused and explain the user-visible behavior, the
 verification you ran, and any platform or credential assumptions. Add or
 update tests for behavior changes. Do not commit `data/`, `.env`,
