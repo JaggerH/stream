@@ -47,7 +47,7 @@ import { ProfileClaims, agentFrom } from './devices/profile-claim.ts'
 import { mountNodeRoutes } from './http/node-routes.ts'
 import { SiteIdentityStore } from './identity/identity-store.ts'
 import { mountIdentityRoutes } from './http/identity-routes.ts'
-import { assertDeviceReady, resolvePlacement, unavailableBindings, type FacilityBindings } from './devices/placement.ts'
+import { assertDeviceReady, deviceTargetOf, resolvePlacement, unavailableBindings, type FacilityBindings } from './devices/placement.ts'
 import { installFetchFor, makeFetchFor } from './devices/fetch.ts'
 import { installGlobalFetchTrap } from './devices/global-fetch-trap.ts'
 import { type RunPlacement } from './devices/run-context.ts'
@@ -872,7 +872,7 @@ const apiToken = config.api_token || loadOrCreateApiToken(dirname(config.item_db
     placement: (row: UserTaskRow) => {
       const pkgId = row.action?.split(':')[0]
       const net = pkgId ? pkgs.networkFor(pkgId) : undefined
-      return resolvePlacement({ taskDevice: row.device, facility: net?.facility, binding: (f) => facilityBindings.get(f), hosts: net?.hosts ?? [] })
+      return resolvePlacement({ taskDevice: row.device, facility: net?.facility, binding: (f) => deviceTargetOf(facilityBindings, f), hosts: net?.hosts ?? [] })
     },
     ready: (p: RunPlacement) => assertDeviceReady(p, harvest.hostRelays, 'http.fetch'),
     // 运行记录带节点（browser-identity D12）：执行那一刻节点表里的 profile 名与环境。
@@ -892,6 +892,9 @@ const apiToken = config.api_token || loadOrCreateApiToken(dirname(config.item_db
     // 只收有包认领的 facility；调用时才问（包热装卸会变）。
     knownFacility: (f) => pkgs.networkForFacility(f) !== undefined,
     facilities: () => pkgs.facilities(),
+    // 身份 / 环境目标（browser-identity D7）：只收身份表里见过的账号、节点上标过的环境。表打不开 = 一律拒。
+    ...(siteIdentities ? { knownIdentity: (f: string, a: string) => siteIdentities!.list({ facility: f }).some((i) => i.accountId === a) } : {}),
+    ...(browserNodes ? { knownEnvironment: (e: string) => browserNodes!.list().some((n) => n.environment === e) } : {}),
     // 设备没了，挂在它上面的 Chrome 也就没有执行位置可言——一并撤销并断开。
     onRevoked: (id) => {
       for (const b of extBindings.revokeDevice(id)) harvest.extRelays.kick(b, REVOKED_CLOSE_CODE, 'revoked')

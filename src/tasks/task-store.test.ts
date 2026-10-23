@@ -257,6 +257,20 @@ describe('TaskStore', () => {
     expect(s.upsert(base).device).toBeUndefined()
   })
 
+  it('identity / environment 列可存可清；老库补列', () => {
+    const path = join(mkdtempSync(join(tmpdir(), 'ts-target-')), 'stream.db')
+    new TaskStore(path).close()
+    const db = new Database(path)
+    db.exec('ALTER TABLE scheduled_tasks DROP COLUMN identity')
+    db.exec('ALTER TABLE scheduled_tasks DROP COLUMN environment')
+    db.close()
+    const s = new TaskStore(path)
+    const base = { id: 'xhs', label: 'x', schedule: '0 45 9 * * *', action: 'xhs:post', args: [], serial: true, maxAttempts: 1, enabled: true }
+    expect(s.upsert({ ...base, identity: 'u1' }).identity).toBe('u1')
+    expect(s.upsert({ ...base, environment: '工作' })).toMatchObject({ environment: '工作' })
+    expect(s.get('xhs')!.identity).toBeUndefined()
+  })
+
   it('重开同一个库文件读得到之前写的（建表是 IF NOT EXISTS）', () => {
     const dir = mkdtempSync(join(tmpdir(), 'task-store-'))
     const path = join(dir, 'stream.db')

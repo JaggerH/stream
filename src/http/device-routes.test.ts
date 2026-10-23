@@ -26,6 +26,8 @@ beforeEach(() => {
     facilities: () => [{ facility: 'eastmoney', packageId: '@streamapp/eastmoney' }, { facility: 'bilibili', packageId: '@streamapp/bilibili' }],
     isLocal: () => local,
     backendUrls: () => ['http://10.9.8.21:8900', 'http://100.70.0.5:8900'],
+    knownIdentity: (f, a) => f === 'bilibili' && a === '123',
+    knownEnvironment: (e) => e === '个人',
   })
 })
 
@@ -69,6 +71,30 @@ describe('device routes', () => {
     expect(await (await app.request('/api/devices/facilities')).json()).toEqual({ facilities: [
       { facility: 'bilibili', packageId: '@streamapp/bilibili', deviceId: 'local' },
       { facility: 'eastmoney', packageId: '@streamapp/eastmoney', deviceId },
+    ] })
+  })
+
+  it('facility 目标：身份 / 环境（browser-identity D7）；只收见过的身份与标过的环境；恰好一个', async () => {
+    const put = (f: string, body: unknown) =>
+      app.request(`/api/devices/bindings/${f}`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
+    const id = await put('bilibili', { accountId: '123' })
+    expect(id.status).toBe(200)
+    expect(await id.json()).toEqual({ facility: 'bilibili', accountId: '123' })
+    expect((await put('bilibili', { accountId: '999' })).status).toBe(400)
+    expect((await put('eastmoney', { environment: '工作' })).status).toBe(400)
+    expect((await put('eastmoney', { environment: '个人' })).status).toBe(200)
+    const two = await put('eastmoney', { environment: '个人', accountId: '123' })
+    expect(two.status).toBe(400)
+    expect((await two.json()).error).toContain('只能给一个')
+    expect((await put('eastmoney', {})).status).toBe(400)
+    expect(await (await app.request('/api/devices/bindings')).json()).toEqual({ bindings: [
+      { facility: 'bilibili', accountId: '123' },
+      { facility: 'eastmoney', environment: '个人' },
+    ] })
+    // 身份 / 环境目标不带 deviceId——带个 local 就是在说它在本机跑
+    expect(await (await app.request('/api/devices/facilities')).json()).toEqual({ facilities: [
+      { facility: 'bilibili', packageId: '@streamapp/bilibili', accountId: '123' },
+      { facility: 'eastmoney', packageId: '@streamapp/eastmoney', environment: '个人' },
     ] })
   })
 

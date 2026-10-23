@@ -71,6 +71,13 @@ export interface UserTaskRow {
    * 见 openspec/changes/device-execution/design.md D2。
    */
   device?: string
+  /**
+   * 这条任务用哪个身份执行（该动作所属包的 facility 下的账号 id，browser-identity D7）。与 `device` / `environment`
+   * 三选一（路由层拒绝同时给两个）；解析顺序是身份 → 环境 → 设备。指定了就绝不换成别的身份执行。
+   */
+  identity?: string
+  /** 这条任务在哪个环境里执行（节点上标的「工作」「个人」）。见 `identity`。 */
+  environment?: string
   enabled: boolean
   createdAt: number
   updatedAt: number
@@ -84,6 +91,7 @@ interface RawRow {
   timeout_ms: number | null; serial: number; max_attempts: number
   exclusive_on: string | null; when_busy: string | null
   config_ref: string | null; group_name: string | null; device: string | null
+  identity: string | null; environment: string | null
   enabled: number; created_at: number; updated_at: number
 }
 
@@ -110,6 +118,8 @@ function hydrate(r: RawRow): UserTaskRow {
     // 这里再兜一层，免得手改过库的行在页面上顶出一个名字是空串的分组标题。
     ...(r.group_name === null || r.group_name === '' ? {} : { group: r.group_name }),
     ...(r.device === null || r.device === '' ? {} : { device: r.device }),
+    ...(r.identity === null || r.identity === '' ? {} : { identity: r.identity }),
+    ...(r.environment === null || r.environment === '' ? {} : { environment: r.environment }),
     enabled: r.enabled === 1,
     createdAt: r.created_at, updatedAt: r.updated_at,
   }
@@ -139,6 +149,8 @@ export class TaskStore {
         config_ref TEXT,
         group_name TEXT,
         device TEXT,
+        identity TEXT,
+        environment TEXT,
         enabled INTEGER NOT NULL DEFAULT 1,
         created_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL
@@ -150,6 +162,14 @@ export class TaskStore {
     this.addGroupColumn()
     this.addExclusivityColumns()
     this.addDeviceColumn()
+    this.addTargetColumns()
+  }
+
+  /** `identity` / `environment` 是后加的两列（按身份 / 环境执行，browser-identity D7）。加可空列，同 `device`。 */
+  private addTargetColumns(): void {
+    const cols = this.db.prepare('PRAGMA table_info(scheduled_tasks)').all() as { name: string }[]
+    if (!cols.some((c) => c.name === 'identity')) this.db.exec('ALTER TABLE scheduled_tasks ADD COLUMN identity TEXT')
+    if (!cols.some((c) => c.name === 'environment')) this.db.exec('ALTER TABLE scheduled_tasks ADD COLUMN environment TEXT')
   }
 
   /** `device` 是后加的一列（执行位置覆盖）。加可空列，同 `config_ref`。 */
@@ -276,14 +296,15 @@ export class TaskStore {
     // createdAt 用 excluded 之外的旧值保住——UI 上"这条建于何时"不该被一次改排期抹掉。
     this.db.prepare(`
       INSERT INTO scheduled_tasks
-        (id, label, schedule, timezone, command, action, args, cwd, env, timeout_ms, serial, max_attempts, exclusive_on, when_busy, config_ref, group_name, device, enabled, created_at, updated_at)
-      VALUES (@id, @label, @schedule, @timezone, @command, @action, @args, @cwd, @env, @timeout_ms, @serial, @max_attempts, @exclusive_on, @when_busy, @config_ref, @group_name, @device, @enabled, @now, @now)
+        (id, label, schedule, timezone, command, action, args, cwd, env, timeout_ms, serial, max_attempts, exclusive_on, when_busy, config_ref, group_name, device, identity, environment, enabled, created_at, updated_at)
+      VALUES (@id, @label, @schedule, @timezone, @command, @action, @args, @cwd, @env, @timeout_ms, @serial, @max_attempts, @exclusive_on, @when_busy, @config_ref, @group_name, @device, @identity, @environment, @enabled, @now, @now)
       ON CONFLICT(id) DO UPDATE SET
         label=excluded.label, schedule=excluded.schedule, timezone=excluded.timezone,
         command=excluded.command, action=excluded.action, args=excluded.args, cwd=excluded.cwd, env=excluded.env,
         timeout_ms=excluded.timeout_ms, serial=excluded.serial, max_attempts=excluded.max_attempts,
         exclusive_on=excluded.exclusive_on, when_busy=excluded.when_busy,
         config_ref=excluded.config_ref, group_name=excluded.group_name, device=excluded.device,
+        identity=excluded.identity, environment=excluded.environment,
         enabled=excluded.enabled, updated_at=excluded.updated_at
     `).run({
       id: input.id, label: input.label, schedule: input.schedule,
@@ -300,6 +321,8 @@ export class TaskStore {
       config_ref: input.configRef ?? null,
       group_name: input.group ?? null,
       device: input.device ?? null,
+      identity: input.identity ?? null,
+      environment: input.environment ?? null,
       enabled: input.enabled ? 1 : 0,
       now: t,
     })

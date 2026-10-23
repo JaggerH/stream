@@ -389,6 +389,34 @@ describe('动作型任务行', () => {
     expect('device' in deps.store.get('em-repo')!).toBe(false)
   })
 
+  it('command 类任务不能设身份或环境（browser-identity D7）', async () => {
+    const { app, deps } = mk()
+    for (const extra of [{ identity: 'u1' }, { environment: '工作' }]) {
+      const res = await app.request('/api/tasks', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ id: 'c', label: 'c', schedule: '0 0 3 * * *', command: 'echo', args: [], maxAttempts: 1, ...extra }),
+      })
+      expect(res.status).toBe(400)
+      expect((await res.json()).error).toContain('本地命令只能在主实例上执行')
+    }
+    expect(deps.store.get('c')).toBeUndefined()
+  })
+
+  it('action 任务的身份 / 环境落库；设备、身份、环境给两个以上 400', async () => {
+    const { app, deps } = mk()
+    const send = (extra: Record<string, string>) => app.request('/api/tasks', {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ...actionRow, ...extra }),
+    })
+    expect((await send({ identity: 'u1' })).status).toBe(200)
+    expect(deps.store.get('em-repo')!.identity).toBe('u1')
+    expect((await send({ environment: ' 工作 ', identity: '' })).status).toBe(200)
+    expect(deps.store.get('em-repo')!.environment).toBe('工作')
+    expect('identity' in deps.store.get('em-repo')!).toBe(false)
+    const bad = await send({ identity: 'u1', device: 'linux:nas' })
+    expect(bad.status).toBe(400)
+    expect((await bad.json()).error).toContain('只能给一个')
+  })
+
   // 编辑器要拿它画「执行什么」那个下拉。单开一条端点只是多一次往返。
   it('清单顺带回可选动作名', async () => {
     const { app } = mk()

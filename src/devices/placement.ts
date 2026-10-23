@@ -1,6 +1,7 @@
 /** 一次执行在哪台设备上：任务覆盖 → facility 默认设备 → local。执行开始时解析一次，之后不变。 */
 import { DeviceIncapable, DeviceOffline } from './errors.ts'
 import { LOCAL_DEVICE, currentPlacement, type RunPlacement } from './run-context.ts'
+import type { Target } from './target.ts'
 
 /** 包的执行位置相关声明：它的 facility 与允许访问的主机（`stream.network.hosts` ?? `stream.credentials`）。 */
 export interface PackageNetwork {
@@ -24,6 +25,8 @@ export function resolvePlacement(input: {
 /** facility → 默认设备的读口（`FacilityDeviceStore` 满足它；表打不开时换成 `unavailableBindings`）。 */
 export interface FacilityBindings {
   get(facility: string): string | undefined
+  /** 完整的目标（设备 / 身份 / 环境，browser-identity D7）。没有它的实现只有设备目标。 */
+  target?(facility: string): Target | undefined
   /** 全部绑定——远程设备的 cookie 域靠它反查（哪些 facility 绑到了这台）。表打不开时没有它。 */
   list?(): Array<{ facility: string; deviceId: string }>
 }
@@ -51,9 +54,19 @@ export function makeFacilityPlacement(deps: {
 }): (facility: string | undefined) => RunPlacement {
   return (facility) => resolvePlacement({
     facility,
-    binding: (f) => deps.bindings.get(f),
+    binding: (f) => deviceTargetOf(deps.bindings, f),
     hosts: facility ? deps.network(facility)?.hosts ?? [] : [],
   })
+}
+
+/**
+ * facility 的默认设备。目标是身份 / 环境时**抛**，不回 undefined：回 undefined 就是「没绑 = 本机」，
+ * 而身份目标绝不退回本机（browser-identity D7）。
+ */
+export function deviceTargetOf(bindings: FacilityBindings, facility: string): string | undefined {
+  const t = bindings.target ? bindings.target(facility) : undefined
+  if (t && t.kind !== 'device') throw new Error(`${facility} 的执行目标是身份 / 环境，这条路径还不会按身份路由——拒绝执行，不换身份顶上`)
+  return t ? t.deviceId : bindings.get(facility)
 }
 
 /** 派发前就把「去不了」说出来，不发任何帧。`local` 是后端本机，永远就绪。 */

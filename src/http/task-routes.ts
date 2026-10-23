@@ -69,8 +69,18 @@ function validate(
     return { ok: false, why: 'whenBusy 只能是 queue（排着）或 skip（这一班不跑）' }
   }
   const device = typeof b.device === 'string' ? b.device.trim() : ''
-  // 本地命令是在主实例上起进程——派不到设备上。存下来的后果是一条看着绑了 NAS、实际在本机跑的任务。
-  if (device !== '' && hasCommand) return { ok: false, why: 'command 类任务不能设 device：本地命令只能在主实例上执行' }
+  const identity = typeof b.identity === 'string' ? b.identity.trim() : ''
+  const environment = typeof b.environment === 'string' ? b.environment.trim() : ''
+  // 本地命令是在主实例上起进程——派不到设备上，也谈不上用哪个身份。存下来的后果是一条看着绑了 NAS / 工作号、
+  // 实际在本机跑的任务。
+  if (hasCommand && (device !== '' || identity !== '' || environment !== '')) {
+    return { ok: false, why: 'command 类任务不能设 device / identity / environment：本地命令只能在主实例上执行' }
+  }
+  // 三选一（browser-identity D7）。两个都给时解析器有个先后（身份 → 环境 → 设备），但存下来就没人说得清
+  // 用户到底要哪个——当场拒。
+  if ([device, identity, environment].filter((x) => x !== '').length > 1) {
+    return { ok: false, why: 'device、identity、environment 只能给一个' }
+  }
   return {
     ok: true,
     value: {
@@ -95,6 +105,8 @@ function validate(
       // 不归一化的话库里会存下一个空字符串分组，页面上就顶出一个没有名字的分组小标题。
       ...(typeof b.group === 'string' && b.group.trim() !== '' ? { group: b.group.trim() } : {}),
       ...(device !== '' ? { device } : {}),
+      ...(identity !== '' ? { identity } : {}),
+      ...(environment !== '' ? { environment } : {}),
       enabled: b.enabled !== false,
     },
   }

@@ -10,6 +10,7 @@ import type { Context, Hono } from 'hono'
 import { PAIRED_PLATFORMS, type DeviceStore, type PairedPlatform } from '../devices/device-store.ts'
 import type { FacilityDeviceStore } from '../devices/facility-devices.ts'
 import { LOCAL_DEVICE } from '../devices/run-context.ts'
+import { targetFields, targetFrom, type Target } from '../devices/target.ts'
 import type { HostRelayRegistry } from './host-registry.ts'
 
 export const TOKEN_EXEMPT_ROUTES: ReadonlyArray<{ method: string; path: string }> = [
@@ -35,6 +36,13 @@ export interface DeviceRoutesDeps {
   backendUrls: (c: Context) => string[]
   /** 设备撤销之后：挂在它上面的扩展绑定一并撤销、断开（design D7）。 */
   onRevoked?: (deviceId: string) => void
+  /**
+   * 身份目标只收身份表里出现过的（browser-identity D7、D12）：打错一位的账号 id 存进去，表现是这个 facility
+   * 的每一次执行都 `identity-offline`。没注入 = 身份目标一律拒（fail closed）。
+   */
+  knownIdentity?: (facility: string, accountId: string) => boolean
+  /** 环境目标只收某个节点上标过的环境。没注入 = 环境目标一律拒。 */
+  knownEnvironment?: (environment: string) => boolean
 }
 
 export function mountDeviceRoutes(app: Hono, deps: DeviceRoutesDeps): void {
@@ -124,29 +132,47 @@ export function mountDeviceRoutes(app: Hono, deps: DeviceRoutesDeps): void {
   const known = (id: string) =>
     id === LOCAL_DEVICE || deps.store.list().some((d) => d.deviceId === id) || deps.registry.devices().some((d) => d.hello.deviceId === id)
 
-  app.get('/api/devices/bindings', (c) => c.json({ bindings: bindings.list() }))
+  // 设备目标的行形状与升级前一样（`{facility, deviceId}`）；身份 / 环境目标带 `accountId` / `environment`。
+  app.get('/api/devices/bindings', (c) => c.json({ bindings: bindings.targets().map((b) => ({ facility: b.facility, ...targetFields(b.target) })) }))
 
   // 没绑的也列出来（设备 = local）：面板要给每个账号一个下拉，只列绑过的就没法绑第一次。
+  // 身份 / 环境目标**不带** `deviceId`：带个 `local` 就是在说「它在本机跑」，而它恰恰不会退回本机。
   app.get('/api/devices/facilities', (c) => {
-    const bound = new Map(bindings.list().map((b) => [b.facility, b.deviceId]))
+    const bound = new Map(bindings.targets().map((b) => [b.facility, b.target]))
     const facilities = (deps.facilities?.() ?? [])
-      .map((f) => ({ facility: f.facility, packageId: f.packageId, deviceId: bound.get(f.facility) ?? LOCAL_DEVICE }))
+      .map((f) => ({ facility: f.facility, packageId: f.packageId, ...targetFields(bound.get(f.facility) ?? { kind: 'device', deviceId: LOCAL_DEVICE }) }))
       .sort((a, b) => a.facility.localeCompare(b.facility))
     return c.json({ facilities })
   })
 
+  /** body 里的三格 → 目标（恰好一格），或者一句为什么不行。 */
+  const parseTarget = (body: unknown, facility: string): Target | string => {
+    const b = (body ?? {}) as Record<string, unknown>
+    const str = (k: string) => (typeof b[k] === 'string' ? (b[k] as string) : undefined)
+    let t: Target | undefined
+    try {
+      t = targetFrom({ deviceId: str('deviceId'), accountId: str('accountId'), environment: str('environment') })
+    } catch (e) {
+      return e instanceof Error ? e.message : String(e)
+    }
+    if (!t) return 'deviceId、accountId、environment 必填一个'
+    // 绑到一台不认识的设备，表现是这个账号的每一次执行都 device-offline——当场拒比几小时后红一片好。
+    if (t.kind === 'device' && !known(t.deviceId)) return `没有这台设备：${t.deviceId}`
+    if (t.kind === 'identity' && !deps.knownIdentity?.(facility, t.accountId)) return `身份表里没有 ${facility} 的账号 ${t.accountId}`
+    if (t.kind === 'environment' && !deps.knownEnvironment?.(t.environment)) return `没有哪个浏览器 profile 标了环境「${t.environment}」`
+    return t
+  }
+
   app.put('/api/devices/bindings/:facility', async (c) => {
     let body: unknown
     try { body = await c.req.json() } catch { return c.json({ error: 'body 不是合法 JSON' }, 400) }
-    const deviceId = (body as { deviceId?: unknown } | null)?.deviceId
-    if (typeof deviceId !== 'string' || deviceId.trim() === '') return c.json({ error: 'deviceId 必填' }, 400)
-    // 绑到一台不认识的设备，表现是这个账号的每一次执行都 device-offline——当场拒比几小时后红一片好。
-    if (!known(deviceId.trim())) return c.json({ error: `没有这台设备：${deviceId}` }, 400)
     const facility = c.req.param('facility').trim()
+    const t = parseTarget(body, facility)
+    if (typeof t === 'string') return c.json({ error: t }, 400)
     // 没注入判据 = 一个都不认（fail closed）：宁可绑不上，也不存一个永远不会被查到的名字。
     if (!deps.knownFacility?.(facility)) return c.json({ error: `没有这个账号（facility）：${facility}` }, 400)
-    bindings.set(facility, deviceId.trim())
-    return c.json({ facility, deviceId: bindings.get(facility) ?? LOCAL_DEVICE })
+    bindings.setTarget(facility, t)
+    return c.json({ facility, ...targetFields(bindings.target(facility) ?? { kind: 'device', deviceId: LOCAL_DEVICE }) })
   })
 
   app.delete('/api/devices/bindings/:facility', (c) => {
