@@ -70,7 +70,7 @@ export async function runSync(bindingId: string = LOCAL_BINDING): Promise<SyncRe
  */
 async function runPairedSync(bindingId: string): Promise<SyncResult> {
   const b = await getBinding(bindingId)
-  if (!b || b.revoked) return { reason: 'relay_down', counts: {} }
+  if (!b || b.revoked || b.foreignNode) return { reason: 'relay_down', counts: {} }
   const domains = allowedDomains(b)
   if (!domains.length) return { reason: 'no_domains', counts: {} }
   const counts: Record<string, number> = {}

@@ -1843,6 +1843,13 @@ export function forceReconnect(id: string = LOCAL_BINDING): 'connected' | 'recon
 /** 实例撤销了这条绑定（与设备撤销同一个关闭码）。收到它就别再重连——那把 token 已经作废了。 */
 export const REVOKED_CLOSE_CODE = 4003
 
+/**
+ * 这条配对绑定属于另一个 profile（browser-identity D1）：实例记着它第一次连上时的节点，这个 profile 的
+ * `nodeId` 对不上——token 是从别的 profile 拷过来的（复制了用户数据目录之类）。重连只会一直被拒，停下来，
+ * popup 里说清楚；要在这个 profile 里用，就在这里重新配对。
+ */
+export const FOREIGN_NODE_CLOSE_CODE = 4004
+
 async function connect(wsUrl: string, baseUrl: string, rt: BindingRuntime = runtime(), binding?: Binding): Promise<void> {
   // 每次（重）连都重走这两步，不缓存：token 从 native host 现取（后端轮换 secret 后自愈），
   // 身份现验（上一次验过不代表这一次连的还是同一个进程——后端重启、端口易主都在这中间）。
@@ -1897,6 +1904,11 @@ async function connect(wsUrl: string, baseUrl: string, rt: BindingRuntime = runt
     if (rt.id !== LOCAL_BINDING && (ev as CloseEvent | undefined)?.code === REVOKED_CLOSE_CODE) {
       debugLog('binding-revoked', '这条扩展绑定被它的 Stream 撤销了，不再重连', { binding: rt.id })
       void setBinding(rt.id, { revoked: true })
+      return
+    }
+    if (rt.id !== LOCAL_BINDING && (ev as CloseEvent | undefined)?.code === FOREIGN_NODE_CLOSE_CODE) {
+      debugLog('binding-foreign-node', '这条扩展绑定属于另一个 profile，不再重连', { binding: rt.id })
+      void setBinding(rt.id, { foreignNode: true })
       return
     }
     scheduleRetry(() => void connect(wsUrl, baseUrl, rt, binding), rt)
@@ -2030,7 +2042,7 @@ async function start(): Promise<void> {
 }
 
 async function startPairedBindings(): Promise<void> {
-  for (const b of await getBindings()) if (b.kind === 'paired' && !b.revoked) await startBinding(b.id)
+  for (const b of await getBindings()) if (b.kind === 'paired' && !b.revoked && !b.foreignNode) await startBinding(b.id)
 }
 
 /**
@@ -2040,7 +2052,7 @@ async function startPairedBindings(): Promise<void> {
  */
 export async function startBinding(id: string): Promise<void> {
   const b = await getBinding(id)
-  if (!b || b.kind !== 'paired' || b.revoked) return
+  if (!b || b.kind !== 'paired' || b.revoked || b.foreignNode) return
   const rt = runtime(id, b.label)
   if (rt.started) return
   rt.started = true

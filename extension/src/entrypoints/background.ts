@@ -77,7 +77,7 @@ export default defineBackground(() => {
   const pairedTimers = new Map<string, ReturnType<typeof setTimeout>>()
   async function nudgePairedBindings(cookieDomain: string): Promise<void> {
     for (const b of await getBindings()) {
-      if (b.kind !== 'paired' || b.revoked || !b.autoSync) continue
+      if (b.kind !== 'paired' || b.revoked || b.foreignNode || !b.autoSync) continue
       if (!matchesSyncedDomain(cookieDomain, allowedDomains(b))) continue
       clearTimeout(pairedTimers.get(b.id))
       pairedTimers.set(b.id, setTimeout(() => void runSync(b.id).catch(console.error), 5000))

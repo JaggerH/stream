@@ -99,6 +99,8 @@ export interface Binding {
   autoSync: boolean
   /** 实例撤销了这条绑定（关闭码 4003）：不再重连，等用户在 popup 里移除。 */
   revoked?: boolean
+  /** 这条绑定属于另一个 profile（关闭码 4004，browser-identity D1）：不再重连，popup 里说明，等用户移除或重新配对。 */
+  foreignNode?: boolean
   lastSync?: number
 }
 

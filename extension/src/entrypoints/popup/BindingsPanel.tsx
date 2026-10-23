@@ -76,6 +76,8 @@ export function BindingsPanel() {
               {b.kind === 'local' ? 'This computer’s Stream' : b.label}
               {b.revoked ? (
                 <Badge variant="outline" size="sm">revoked</Badge>
+              ) : b.foreignNode ? (
+                <Badge variant="outline" size="sm">other profile</Badge>
               ) : (
                 <Badge variant="secondary" size="sm">{b.connected ? 'connected' : 'offline'}</Badge>
               )}
@@ -86,7 +88,12 @@ export function BindingsPanel() {
                 That Stream revoked this browser. Remove it here; pair again if you still need it.
               </p>
             )}
-            {b.pending.length > 0 && !b.revoked && (
+            {b.foreignNode && !b.revoked && (
+              <p className="text-[11px] text-[var(--acr-orange)]">
+                这条绑定属于另一个 profile。在这里移除它，再给这个 profile 单独配对。
+              </p>
+            )}
+            {b.pending.length > 0 && !b.revoked && !b.foreignNode && (
               <div className="mt-1 flex flex-col gap-1">
                 <span className="text-[11px] text-muted-foreground">Wants cookies for:</span>
                 {b.pending.map((d) => (
@@ -102,7 +109,7 @@ export function BindingsPanel() {
           </ItemContent>
           {b.kind === 'paired' && (
             <ItemActions>
-              {!b.revoked && !b.connected && (
+              {!b.revoked && !b.foreignNode && !b.connected && (
                 <Button icon size="mini" variant="ghost" aria-label="Reconnect" onClick={() => void reconnect(b.id)}>
                   <RefreshCw />
                 </Button>
