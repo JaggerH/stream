@@ -15,15 +15,17 @@ import type { AppConfig } from '../types.ts'
 import { lockDataDir } from './data-dir-lock.ts'
 import { createRuntime, type StreamRuntime } from './runtime.ts'
 import { openDevices, type StreamDevices } from './devices.ts'
+import { createCapabilities, loadOptional, provideBrowserCookies, type StreamCapabilities } from './capabilities.ts'
 
 export type { StreamRuntime } from './runtime.ts'
 export { createRuntime } from './runtime.ts'
 export type { StreamDevices } from './devices.ts'
+export type { StreamCapabilities } from './capabilities.ts'
 
 /** 宿主层递进来的回调：实例往外推东西（ws 广播、调试总线、归因）只经这几个口，自己不持有任何连接。 */
 export type StreamHostHooks = Pick<
   BootOptions,
-  'onItem' | 'onDebug' | 'broadcast' | 'track' | 'trackSync' | 'mcpEndpoint' | 'extraCookieDomains'
+  'onItem' | 'onDebug' | 'broadcast' | 'track' | 'trackSync' | 'mcpEndpoint'
 >
 
 export interface CreateStreamOptions {
@@ -48,6 +50,8 @@ export interface Stream {
   readonly runtime: StreamRuntime
   /** 设备 / 节点 / 身份表（执行位置的真相源）。 */
   readonly devices: StreamDevices
+  /** 能力包宿主与已装载的可选包。 */
+  readonly capabilities: StreamCapabilities
   /** 撤掉内核上的全部 effect（库句柄、定时器、子进程、采集标签的归还），放掉数据目录锁。幂等。 */
   close(): Promise<void>
 }
@@ -65,17 +69,25 @@ export async function createStream(opts: CreateStreamOptions): Promise<Stream> {
   const runtime = opts.runtime ?? createRuntime()
   const kernel = opts.kernel ?? createKernel()
   const log = opts.log ?? console.error
+  const line = (l: string) => log(l)
   let devices: StreamDevices
+  let capabilities: StreamCapabilities
   try {
     devices = openDevices(stateDir, kernel, log)
+    capabilities = createCapabilities(stateDir, kernel, line)
     await bootstrap(config, log, {
       ...opts.hooks,
       kernel,
+      // 「该同步哪些 cookie 域」的第三个来源：已挂能力包自己申报的那些。**现取**——可选包在 bootstrap 之后才装载，
+      // 取快照等于永远只认内置那半，而漏一个域的表现是那个包每次都拿到空 cookie，和"用户没登录"一字不差。
+      extraCookieDomains: () => capabilities.host.credentialDomains(),
       facilityDevices: devices.facilityBindings,
       extBindings: devices.extBindings,
       ...(devices.nodes ? { nodes: devices.nodes } : {}),
       ...(devices.identities ? { identities: devices.identities } : {}),
     })
+    provideBrowserCookies(capabilities, kernel, line)
+    await loadOptional(capabilities, stateDir, config, line)
   } catch (e) {
     // 装到一半失败：已经挂上的那部分照样要撤，锁照样要放——否则同一个目录再也起不来。
     await quiesceKernel(kernel).catch(() => {})
@@ -90,6 +102,7 @@ export async function createStream(opts: CreateStreamOptions): Promise<Stream> {
     stateDir,
     runtime,
     devices,
+    capabilities,
     close: () => closing ??= (async () => {
       try {
         await quiesceKernel(kernel)

@@ -58,15 +58,11 @@ import { attachAuthLoginCommands } from './http/auth-login.ts'
 // 真相源在 src/ext-id.ts（扩展 id 的唯一定义处；access-guard 与 ext relay 都从那里读）。
 import { STREAM_EXTENSION_ID as EXT_ID } from './ext-id.ts'
 import { DESKTOP_CAPABILITY_NAME, hostAgentSkipReason, mountHostAgent } from './host-agent/mount.ts'
-import { createCapabilityHost } from './capabilities/host.ts'
-import { loadOptionalCapabilities, type LoadedCapability } from './capabilities/load.ts'
-import { BROWSER_COOKIE_SERVICE } from '../capabilities/desktop/src/cookies.ts'
 import { DebugLog } from './http/debug-log.ts'
 import { createFailureSink } from './http/debug-sink.ts'
 import { startLoopLagMonitor } from './loop-lag.ts'
 import { OpTracker, type TrackFn, type TrackSyncFn } from './op-track.ts'
 import { mountMcp } from './http/mcp-mount.ts'
-import { backendToolNames } from './mcp/server.ts'
 import { ACTION_RUN_DOMAIN, projectActionRun } from './mcp/action-run.ts'
 import type { RunStatus } from './agent/search/types.ts'
 import { withCapabilityTools } from './mcp/capability-tools.ts'
@@ -122,10 +118,6 @@ import { bindModuleHook, reportUnboundHooks } from './kernel/plugins/module-hook
  *  compose 自托管旁支里后端仍躲在 Caddy 后面，那条路显式传 `STREAM_PORT=4555`（见
  *  `plugins/compose.ts`）——**显式的那一侧是特例，默认的这一侧是主路**。 */
 const PORT = Number(process.env.STREAM_PORT ?? 8900)
-/** 能力包取登录态前，快照旧过这个数就先去浏览器取一次。**不是缓存 TTL**：`ensureFresh`
- *  自己带并发去重，这个数只决定"多旧算旧"。取小了每次都发一轮 `cookiePull`（几个
- *  `chrome.cookies.getAll`，便宜但没必要）；取大了就退化成读快照，白设这道闸。 */
-const COOKIE_FRESH_MS = 60_000
 // /tmp isn't guaranteed to exist or be writable on every platform the released
 // package targets. STREAM_DATA_DIR (the app-data dir `stream` is launched with) is
 // the natural home for this; os.tmpdir() covers dev and any other caller that
@@ -323,24 +315,6 @@ const apiToken = config.api_token || loadOrCreateApiToken(dirname(config.item_db
     profile: process.env.STREAM_LOOP_PROFILE === '1',
     activeOps: (windowStartMs) => opTracker.overlapping(windowStartMs),
   })
-  // 能力包的宿主（spec 2026-09-06）：**后端是唯一的聚合者**。内置的 Stream Desktop（下面
-  // `mountHostAgent` 那一格）与用户 `stream add` 装进来的可选包走同一个 `host.mount()`，
-  // 工具从同一个 `/api/mcp` 出去。
-  //
-  // **建在 bootstrap 之前**，因为 bootstrap 要拿它当「该同步哪些 cookie 域」的第三个来源
-  // （能力包是一等的登录态消费者）。建它本身没有副作用——真正的装载在下面，两个入参都是
-  // 调用时才求值的 thunk（`scheduling` / `agentDomain` 在下面才声明，闭包里引用没问题）。
-  const capabilityHost = createCapabilityHost({
-    dataDir: resolveDataDir(config),
-    log: (line) => console.log(line),
-    // 后端自己的动词。**thunk**：工具面按域的可用性现算，装配那一刻取一次会把「此刻还没醒的
-    // 那些工具」永久算成不存在，于是一个第三方包可以拿走它们的名字。
-    reservedToolNames: () => backendToolNames(scheduling.service, agentDomain.mcpExtras),
-  })
-  kernel.effect(() => async () => { await capabilityHost.dispose() })
-  /** 已装载的可选能力包。**可变数组不是随手写的**：装载发生在下面（内置能力之后），而读它的
-   *  两处都是 thunk，指着同一个数组就永远读到最新的一份。 */
-  const loadedCapabilities: LoadedCapability[] = []
   // `boot` span: the monitor above deliberately predates bootstrap to catch boot-time stalls —
   // without this span those stalls all reported "卡顿来自未埋点的门", reading like an unknown
   // hole when it was the (known, expected) registry build / provider seeding.
@@ -352,10 +326,6 @@ const apiToken = config.api_token || loadOrCreateApiToken(dirname(config.item_db
     log: console.log,
     kernel,
     hooks: {
-      // 「该同步哪些 cookie 域」的第三个来源：已挂能力包自己申报的那些。**现取**——可选包在
-      // bootstrap 之后才装载，取快照等于永远只认内置那半，而漏一个域的表现是那个包每次都拿到
-      // 空 cookie，和"用户没登录"一字不差。
-      extraCookieDomains: () => capabilityHost.credentialDomains(),
       // agent 修复会话给 agent 的那条 MCP 线：**口和 token 只有这儿知道**（口就是本进程绑的那个，
       // 两个数一分家，agent 就会去敲一个没人应答的地址）。
       mcpEndpoint: () => ({ url: `http://127.0.0.1:${PORT}/api/mcp`, token: apiToken }),
@@ -368,6 +338,9 @@ const apiToken = config.api_token || loadOrCreateApiToken(dirname(config.item_db
   }))
   const boot = stream
   // 设备 / 节点 / 身份表随实例建（`src/engine/devices.ts`）；下面的设备路由、中继、任务的执行位置都读这几格。
+  // 能力包宿主随实例建、可选包也在 createStream 里装好了（`src/engine/capabilities.ts`）；内置的 Stream Desktop
+  // 仍在下面 `mountHostAgent` 挂（它要养本机进程、要知道本进程的口）。
+  const { host: capabilityHost, loaded: loadedCapabilities } = stream.capabilities
   const { deviceStore, extBindings, facilityDevices, facilityBindings, nodes: browserNodes, identities: siteIdentities } = stream.devices
   // 落盘状态住内核的存储域（`ctx.stores`）——下面的 HttpDeps 组装从这里取，键一个没变。
   // 设置覆盖层（`settings.json`）：TMDb/OMDb 凭证与 Source 运行时配置两组读写口直接吃它，
@@ -471,34 +444,6 @@ const apiToken = config.api_token || loadOrCreateApiToken(dirname(config.item_db
       dataDir: resolveDataDir(config),
       resolvePkg: (spec) => dirname(createRequire(import.meta.url).resolve(`${spec}/package.json`)),
     })
-
-  // 唯一一格由宿主主动提供的服务：网盘那个包 `require('streamBrowserCookies')` 取用户浏览器里
-  // 的登录态。后端自己就有那条接缝（`cookieString` / `cookiesFor`，同一把作用域尺子），所以
-  // 这里只是把它翻译成包认识的形状——**不是**再开一条取 cookie 的路。
-  //
-  // **每次都先催一次新鲜度再读**：`cookieProvider` 读的是落盘快照，而"本地查得到"不等于
-  // "这份还有效"——包在这一刻要 cookie，通常正是因为它刚吃了一个 401。`ensureFresh` 自己
-  // 带并发去重和"够新就不动"的短路，所以这不是给热路径加一次网络往返（`cookieString` 那条
-  // 热路径仍然一个字都没改，见 cookie-puller.ts 头注的禁令）。中继没连不报错，照旧读快照。
-  const freshCookies = async (verb: string) => {
-    try {
-      await kernel.auth.cookiePuller.ensureFresh(COOKIE_FRESH_MS, `capability:${verb}`)
-    } catch (err) {
-      // 取数失败不该让"读一份可能还好用的旧快照"也跟着失败——但必须留一行，否则
-      // 「一直在用旧 cookie」和「刚取过一份新的」在日志上分不出来。
-      console.log(`[stream-capabilities] WARN 取登录态前的刷新失败（${verb}）：${err instanceof Error ? err.message : String(err)}`)
-    }
-  }
-  capabilityHost.provide(BROWSER_COOKIE_SERVICE, {
-    cookieFor: async (domain: string) => {
-      await freshCookies('cookieFor')
-      return (await kernel.credentials.cookieProvider.cookieString(domain)) ?? undefined
-    },
-    cookiesFor: async (domain: string) => {
-      await freshCookies('cookiesFor')
-      return kernel.credentials.cookieProvider.cookiesFor(domain)
-    },
-  })
 
   // 动作 run 的读口（`runAction` 回 running 之后调用方等结果用）。读的是 MCP `get_agent_run`
   // 同一本库、同一份投影——只认 `domain:'action'` 那些行，别的 run 在这条路上是 404。
@@ -1109,30 +1054,6 @@ const apiToken = config.api_token || loadOrCreateApiToken(dirname(config.item_db
   // 这个后端（spec 2026-09-05）。
   mountStandalonePage(app)
 
-  // 可选能力包：扫 `<dataDir>/recipes/` 里填了 capability 槽位的包，逐个装、逐个兜错。
-  //
-  // **必须在 listen 之前**：`stream mcp` 探到 health 一通就整面转发，宿主随即把那一刻的
-  // `tools/list` 缓起来。装在 listen 之后就有一个窗口期，窗口里装好的包一件工具都不在表上，
-  // 而没有任何一处会喊——用户看到的是"装了没用"。
-  //
-  // 计划里「内置先、可选后」的动机是 provide/require 的先到先得（内置的服务名不该被第三方包
-  // 抢走）。今天两者不冲突：内置 Stream Desktop **一格 provide 都没有**（它只 registerTools），
-  // cookie 服务由后端自己 provide 且早在这之前就装好了。所以可选包提前到 listen 之前无碍，
-  // 而 `mountHostAgent` 仍留在 relay attach 之后（agent 起来就会连 /api/host，门得先开）。
-  // 真有一天内置能力开始 provide，就得把那一格也提前，而不是把这一块推回去。
-  {
-    const loaded = await loadOptionalCapabilities({
-      recipesDir: join(resolveDataDir(config), 'recipes'),
-      host: capabilityHost,
-      log: (line) => console.log(line),
-      config: config.capabilities,
-    })
-    loadedCapabilities.push(...loaded)
-    if (loaded.length) {
-      console.log(`[stream] ${loaded.length} 个可选能力包已装载：${loaded.map((c) => c.name).join(', ')}`)
-    }
-  }
-
   const server = serve({ fetch: app.fetch, port: PORT, hostname: '0.0.0.0' }, (info) =>
     console.log(`[stream] HTTP+WS on http://0.0.0.0:${info.port} (ws: /ws)`)
   )
@@ -1191,7 +1112,7 @@ const apiToken = config.api_token || loadOrCreateApiToken(dirname(config.item_db
   // （`EVENT_SOURCE_TASK_MAP` 现为空 → 每个事件都 mapToTask=null，drain 直接 ack；Spec 2 加
   // `{ xianyu: '<发货任务>' }`）；`hello` 帧按子进程声明的域名，把后端已有的 cookie 快照喂回去。
   // 喂 cookie 走**只读**接缝：直接读 `cookieProvider.cookiesFor`，不催新鲜度、不拉浏览器
-  //（那条带 ensureFresh 的路是能力包热路径专用，见上面 BROWSER_COOKIE_SERVICE 那格头注）。
+  //（那条带 ensureFresh 的路是能力包热路径专用，见 src/engine/capabilities.ts 的 provideBrowserCookies 头注）。
   // 不变量（追到另一端）：outbox 是「至少一次」投递——崩溃前未 ack 的事件会在重连后被重推，
   // 且真 runTaskNow(id) 无条件 enqueue、drain 的防重只按 taskId 不按事件 id，都不足以防双发。
   // 所以这张表映射到的任务【必须按事件 id 幂等】（闲鱼＝按 order_id）。往表里加映射前先读这条。
