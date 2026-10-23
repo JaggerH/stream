@@ -280,6 +280,16 @@ pub trait Desktop {
     fn ensure_app(&mut self, spec: &crate::launch::LaunchSpec) -> Result<crate::launch::EnsureOutcome, String> {
         crate::launch::ensure_running(spec, &mut crate::launch::RealWorld)
     }
+    /// 读这台机器上 Chrome 的 profile 列表（`Local State`）。只读，不碰任何窗口。默认实现平台无关
+    /// （真实环境变量 + 真实文件），每个 OS 后端都不用重写；单测的假后端覆盖它，不去读真文件。
+    fn browser_profiles(&mut self, spec: &crate::browser::ProfilesSpec) -> Result<crate::browser::Profiles, String> {
+        crate::browser::profiles(spec, std::env::consts::OS, &|k| std::env::var(k).ok(), &mut |p| std::fs::read_to_string(p))
+    }
+    /// 用某个 profile 打开扩展的认领页（browser-identity D3）。**会开一扇窗**——只由用户在面板上点
+    /// 「识别 profile」发起，他在场。默认实现同 `ensure_app`（sysinfo 之外的那两件：定位 + spawn）。
+    fn browser_claim(&mut self, spec: &crate::browser::ClaimSpec) -> Result<crate::browser::ClaimOutcome, String> {
+        crate::browser::claim(spec, &mut crate::launch::RealWorld)
+    }
     fn find(&mut self, q: &A11yQuery) -> Result<Vec<A11yElement>, String>;
     fn invoke(&mut self, el_ref: &str) -> Result<(), String>;
     /// 把一段文字**写进某个元素**（UIA ValuePattern 一类），不经键盘。
@@ -625,6 +635,7 @@ pub const OP_NAMES: &[&str] = &[
     "windows", "scopeWindow", "focusApp", "ensureApp", "find", "invoke", "setValue",
     "click", "moveMouse", "scroll", "type", "press", "readSubtree", "screenshot", "findImage",
     "readText", "readElements", "url", "sleep", "nudge", "status", "clearInput",
+    "browser.profiles", "browser.claim",
 ];
 
 /// `status` op 的参数：`{ text }`，`null` = 清掉。收件人是指示条不是桌面，所以它在
@@ -834,6 +845,16 @@ pub fn dispatch<D: Desktop>(d: &mut D, op: &str, args: &Value) -> Result<Value, 
                 "window": r.window,
                 "scale": r.scale,
             }))
+        }
+        // profile 认领（browser-identity D3）。两个 op 的 args 整个就是 spec；`browser.profiles` 无 args =
+        // 默认的 Chrome 用户数据目录。
+        "browser.profiles" => {
+            let spec: crate::browser::ProfilesSpec = if args.is_null() { Default::default() } else { parse(args)? };
+            serde_json::to_value(d.browser_profiles(&spec)?).map_err(|e| e.to_string())
+        }
+        "browser.claim" => {
+            let spec: crate::browser::ClaimSpec = parse(args)?;
+            serde_json::to_value(d.browser_claim(&spec)?).map_err(|e| e.to_string())
         }
         "url" => Ok(json!(d.url()?)),
         "sleep" => {
@@ -1109,6 +1130,16 @@ mod tests {
             self.dwells += 1;
             Ok(())
         }
+        /// 同 `ensure_app`：单测不读真文件、不 spawn。解析与命令行在 `browser.rs` 里单测。
+        fn browser_profiles(&mut self, spec: &crate::browser::ProfilesSpec) -> Result<crate::browser::Profiles, String> {
+            self.calls.push(format!("profiles:{:?}", spec.user_data_dir));
+            crate::browser::parse_local_state("/u", r#"{"profile":{"info_cache":{"Default":{"name":"工作"}},"last_active_profiles":["Default"]}}"#)
+        }
+        fn browser_claim(&mut self, spec: &crate::browser::ClaimSpec) -> Result<crate::browser::ClaimOutcome, String> {
+            crate::browser::claim_args(spec)?;
+            self.calls.push(format!("claim:{}", spec.profile_directory));
+            Ok(crate::browser::ClaimOutcome { launched: true })
+        }
         /// 覆盖默认实现——单测**绝不能真的去 spawn 一个浏览器**。启动逻辑本身在
         /// `launch.rs` 里对着假世界单测；这里只验 dispatch 的解参和回包形状。
         fn ensure_app(
@@ -1260,6 +1291,26 @@ mod tests {
         assert!(A11yQuery { name: Some("确定".into()), ..Default::default() }.validate().is_ok());
         assert!(A11yQuery { name_contains: Some("确".into()), ..Default::default() }.validate().is_ok());
         assert!(A11yQuery::default().validate().is_ok());
+    }
+
+    #[test]
+    fn browser_ops_route_and_shape_replies() {
+        let mut d = Fake::default();
+        let p = dispatch(&mut d, "browser.profiles", &Value::Null).unwrap();
+        assert_eq!(p["userDataDir"], "/u");
+        assert_eq!(p["profiles"][0]["dir"], "Default");
+        assert_eq!(p["profiles"][0]["name"], "工作");
+        assert_eq!(p["lastActive"], json!(["Default"]));
+        dispatch(&mut d, "browser.profiles", &json!({ "userDataDir": "/x" })).unwrap();
+        let url = "chrome-extension://dmhlfkdjljnilhnfajjpaobehenbokij/claim.html#n=abc";
+        let c = dispatch(&mut d, "browser.claim", &json!({ "profileDirectory": "Profile 1", "url": url })).unwrap();
+        assert_eq!(c, json!({ "launched": true }));
+        assert_eq!(d.calls, vec!["profiles:None", "profiles:Some(\"/x\")", "claim:Profile 1"]);
+        // 缺参 / 坏参如实报错，不打开任何东西
+        assert!(dispatch(&mut d, "browser.claim", &Value::Null).is_err());
+        assert!(dispatch(&mut d, "browser.claim", &json!({ "profileDirectory": "Default", "url": "https://x/" })).is_err());
+        assert_eq!(d.calls.len(), 3);
+        assert!(OP_NAMES.contains(&"browser.profiles") && OP_NAMES.contains(&"browser.claim"));
     }
 
     #[test]

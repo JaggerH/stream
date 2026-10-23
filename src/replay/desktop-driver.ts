@@ -366,6 +366,7 @@ export const DESKTOP_OPS: ReadonlySet<string> = new Set([
   'windows', 'scopeWindow', 'focusApp', 'ensureApp', 'find', 'invoke', 'setValue',
   'click', 'moveMouse', 'scroll', 'type', 'press', 'readSubtree', 'screenshot', 'findImage',
   'readText', 'readElements', 'url', 'sleep', 'nudge', 'status', 'clearInput',
+  'browser.profiles', 'browser.claim',
 ])
 
 /** The device did not declare this op. Raised before anything is sent. */

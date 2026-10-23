@@ -18,10 +18,12 @@ pub const LIGHTS_UP: &[&str] = &["focusApp", "click", "moveMouse", "scroll", "ty
 /// `status` 也归这一列：它只是往条子上**写一句话**（"现在在做第几步"），不动键鼠。后端每一步
 /// 开头都发它，若它能点亮，条子就会在一趟全走 invoke 的 recipe 里亮一整轮——那正是上面那句
 /// 判据要禁的。它写的文字由 `OverlayPolicy` 记着，条子真亮起来时才带出去。
+/// `browser.profiles` / `browser.claim` 也归这一列：前者只读一个文件；后者确实会开一扇 Chrome 窗口，但它
+/// 只由用户在面板上点「识别 profile」发起——他就坐在机器前、刚点完，不存在"别碰鼠标"要提醒谁。
 pub const QUIET: &[&str] = &[
     "windows", "scopeWindow", "ensureApp", "find", "invoke", "setValue",
     "readSubtree", "screenshot", "findImage", "readText", "readElements", "url", "sleep", "nudge",
-    "status",
+    "status", "browser.profiles", "browser.claim",
 ];
 
 /// 这个 op 算不算"正在接管电脑"。逐个枚举、不按模式放行——认不出的 op 一律当不接管，

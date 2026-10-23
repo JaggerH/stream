@@ -255,7 +255,7 @@ describe('makeDesktopDriver: readText / readElements / findImage / captureWindow
   })
   it('with no op set given, the full Stream Desktop set is assumed', () => {
     expect(DESKTOP_OPS.has('readText')).toBe(true)
-    expect(DESKTOP_OPS.size).toBe(22)
+    expect(DESKTOP_OPS.size).toBe(24)
   })
   it('硬失败照抛，不当成"没找到"（runner 的 HARD_SEE_ERRORS 靠它够得着那句人话）', async () => {
     const r: HostRelay = { async send() { throw new Error('bad-region: region … 和窗口画面没有交集') } }

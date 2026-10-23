@@ -16,6 +16,7 @@
 //!                      从 data 目录自己读（见 `datadir.rs`）。
 //!   STREAM_DATA_DIR    Stream 的 data 目录；不给就靠 config.yaml / 可执行文件位置推。
 
+mod browser;
 mod datadir;
 #[cfg(target_os = "linux")]
 mod device;
