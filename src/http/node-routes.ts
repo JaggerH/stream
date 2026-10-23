@@ -4,7 +4,7 @@
  * - `GET  /api/devices/:id/profiles`                 列出那台机器上 Chrome 的 profile（只读，不开窗）
  * - `POST /api/devices/:id/profiles/claim`           开一次认领（逐个 profile 开认领页）
  * - `GET  /api/devices/:id/profiles/claim/:claimId`  轮询认领结果
- * - `GET  /api/devices/nodes`                        全部节点（带 `online`）与此刻能识别 profile 的设备（`claimable`）
+ * - `GET  /api/devices/nodes`                        全部节点（带 `online`、`cookieGaps`）与此刻能识别 profile 的设备（`claimable`）
  * - `PATCH /api/devices/nodes/:nodeId`               `{ label?, environment? }`，`null` 清空
  *
  * `:id` 是 host agent 的设备 id（`desktop:<host>`、配对设备的 id），`local` 指后端这台机器上的桌面 agent。
@@ -17,6 +17,7 @@ import type { Context, Hono } from 'hono'
 import { DeviceIncapable, DeviceOffline } from '../devices/errors.ts'
 import type { ClaimOpts, DiscoverOpts, ProfileClaims } from '../devices/profile-claim.ts'
 import type { BrowserNode } from '../devices/node-store.ts'
+import type { CookieGaps } from '../credentials/cookie-puller.ts'
 
 export interface NodeRoutesDeps {
   claims: Pick<ProfileClaims, 'discover' | 'start' | 'get'>
@@ -32,6 +33,11 @@ export interface NodeRoutesDeps {
    * `browser.claim`。面板只在这里有的设备上画按钮——点了必然 404 / 409 的键不画。
    */
   claimable?: () => string[]
+  /**
+   * 这个节点最近一轮取登录态时扩展没给的域（不在同步范围 / 没给站点权限）。面板在节点行上说出来，
+   * 修法是那个 profile 的扩展弹窗里点「允许」。没注入 = 不带。
+   */
+  cookieGaps?: (node: BrowserNode) => CookieGaps | undefined
 }
 
 /** 环境与名字都是给人看的短文本；太长多半是贴错了东西。 */
@@ -107,7 +113,10 @@ export function mountNodeRoutes(app: Hono, deps: NodeRoutesDeps): void {
   // 面板的设备页（browser-identity D12）与扩展 popup（自己是哪个环境）读它。只是设置，不开窗、不带邮箱，
   // 所以不像上面三条那样只认本机。`woken_at` 也在行上：面板据此列「Stream 在后台打开着的 profile」（D8）。
   app.get('/api/devices/nodes', (c) => c.json({
-    nodes: deps.nodes.list().map((n) => ({ ...n, online: deps.online?.(n.bindingId) ?? false })),
+    nodes: deps.nodes.list().map((n) => {
+      const gaps = deps.cookieGaps?.(n)
+      return { ...n, online: deps.online?.(n.bindingId) ?? false, ...(gaps ? { cookieGaps: gaps } : {}) }
+    }),
     claimable: deps.claimable?.() ?? [],
   }))
 

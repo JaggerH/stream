@@ -153,6 +153,19 @@ describe('GET /api/devices/nodes', () => {
     expect(body.nodes[1].wokenAt).toBe(1234)
   })
 
+  it('节点带上扩展最近没给的登录态域（cookieGaps），没有缺口的不带这一格', async () => {
+    nodes.seen({ nodeId: 'node_a', deviceId: 'local', bindingId: 'local:node_a' })
+    nodes.seen({ nodeId: 'node_b', deviceId: 'local', bindingId: 'local:node_b' })
+    const a = new Hono()
+    mountNodeRoutes(a, {
+      claims, nodes, isLocal: () => false,
+      cookieGaps: (n) => (n.nodeId === 'node_b' ? { refused: ['bilibili.com'], noAccess: [], at: 5 } : undefined),
+    })
+    const body = await (await a.request('/api/devices/nodes')).json() as { nodes: Array<Record<string, unknown>> }
+    expect(body.nodes[0]).not.toHaveProperty('cookieGaps')
+    expect(body.nodes[1].cookieGaps).toEqual({ refused: ['bilibili.com'], noAccess: [], at: 5 })
+  })
+
   it('没注入判据：都不在线、谁也不能识别', async () => {
     nodes.seen({ nodeId: 'node_a', deviceId: 'local', bindingId: 'local:node_a' })
     const body = await (await app.request('/api/devices/nodes')).json() as { nodes: Array<{ online: boolean }>; claimable: string[] }

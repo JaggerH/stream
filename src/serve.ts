@@ -45,6 +45,7 @@ import { FacilityDeviceStore } from './devices/facility-devices.ts'
 import { NodeStore } from './devices/node-store.ts'
 import { ProfileClaims, agentFrom } from './devices/profile-claim.ts'
 import { mountNodeRoutes } from './http/node-routes.ts'
+import { cookieSlot } from './credentials/cookie-slot.ts'
 import { SiteIdentityStore } from './identity/identity-store.ts'
 import { mountIdentityRoutes } from './http/identity-routes.ts'
 import { assertDeviceReady, facilityTarget, placeRun, unavailableBindings, type FacilityBindings } from './devices/placement.ts'
@@ -937,6 +938,8 @@ const apiToken = config.api_token || loadOrCreateApiToken(dirname(config.item_db
     mountNodeRoutes(app, {
       claims, nodes: browserNodes, isLocal: (c) => isLoopbackAddress(peerAddress(c)),
       online: (b) => harvest.extRelays.isOnline(b),
+      // 节点行上的「扩展没给的登录态域」：读那个节点槽位最近一轮 cookiePull 的结果。
+      cookieGaps: (n) => auth.cookieGaps(cookieSlot(n.deviceId, n.nodeId)),
       // 能识别 profile 的扩展设备：本机（桌面 agent）与每台在线的配对设备，agent 声明了 browser.claim 才算。
       claimable: () => ['local', ...harvest.hostRelays.devices().filter((d) => PAIRED_PLATFORMS.has(d.hello.platform)).map((d) => d.hello.deviceId)]
         .filter((id) => claimAgent(id)?.ops.has('browser.claim')),

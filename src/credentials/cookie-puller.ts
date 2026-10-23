@@ -4,7 +4,19 @@ import type { DebugEntry } from '../debug.ts'
 /** 中继上这条能力的最小面（结构类型，单测塞个假的就行）。 */
 export interface CookiePullTransport {
   readonly connected: boolean
-  cookiePull(domains: string[]): Promise<{ cookies: Record<string, unknown[]>; refused: string[] }>
+  cookiePull(domains: string[]): Promise<{ cookies: Record<string, unknown[]>; refused: string[]; noAccess?: string[] }>
+}
+
+/**
+ * 最近一轮扩展没给的域（browser-identity 冒烟后续）。两种都和「没登录」长得一模一样，所以按节点记下来给面板看：
+ * - `refused`：不在那个 profile 的扩展申报的同步范围里（同步范围存在 profile 自己的扩展存储里）；
+ * - `noAccess`：在范围里，但那个 profile 没给扩展这个站点的权限（Chrome 的站点权限按 profile 记）。
+ * 修法都在那个 profile 的扩展弹窗里点一下。
+ */
+export interface CookieGaps {
+  refused: string[]
+  noAccess: string[]
+  at: number
 }
 
 /** 快照的写入口。**只有整份替换**——按域合并会造出永不过期的僵尸登录态。 */
@@ -58,7 +70,15 @@ export class CookiePuller {
   /** 上一轮**成功**取数时要的域与被拒的域（归一后）：快照里一个域空着，靠它分「没登」与「没去取」。 */
   private coverage: { requested: string[]; refused: string[] } | null = null
 
+  /** 最近一轮扩展没给的域（面板节点行）。 */
+  private lastGaps: CookieGaps | undefined
+
   constructor(private readonly deps: CookiePullerDeps) {}
+
+  /** 最近一轮扩展没给的域；给齐了 / 还没拉成过 = undefined。拉失败不动它（不知道 ≠ 给齐了）。 */
+  gaps(): CookieGaps | undefined {
+    return this.lastGaps
+  }
 
   private now(): number {
     return this.deps.now?.() ?? Date.now()
@@ -137,22 +157,30 @@ export class CookiePuller {
       return { ok: false, reason: 'relay-down', domains, refused: [] }
     }
     try {
-      const { cookies, refused } = await this.deps.relay.cookiePull(domains)
+      const { cookies, refused, noAccess } = await this.deps.relay.cookiePull(domains)
+      this.lastGaps = refused?.length || noAccess?.length
+        ? { refused: refused ?? [], noAccess: noAccess ?? [], at: this.deps.now?.() ?? Date.now() }
+        : undefined
       const normalized: Record<string, BrowserCookie[]> = {}
       for (const [domain, list] of Object.entries(cookies ?? {})) {
         if (Array.isArray(list) && list.length) normalized[domain] = list as BrowserCookie[]
       }
       this.deps.store.replace(normalized)
-      this.coverage = { requested: domains.map(normDomain), refused: (refused ?? []).map(normDomain) }
+      // 没给站点权限的域扩展没读（noAccess），和被拒一样算没取过。
+      this.coverage = { requested: domains.map(normDomain), refused: [...(refused ?? []), ...(noAccess ?? [])].map(normDomain) }
       const got = Object.keys(normalized)
       log(`[cookie-pull] ${reason}: 取回 ${got.length}/${domains.length} 个域`)
       // 被拒 = 后端要的域不在扩展申报的同步范围里。**必须喊**：它的表现和"用户没登录"
       // 一模一样（两者都是取不到 cookie），不喊就会被当成登录问题查上半天。
       if (refused?.length) log(`[cookie-pull] 扩展拒了这些域（不在它申报的同步范围内）：${refused.join(', ')}`)
-      this.report(reason, !refused?.length, `取回 ${got.length}/${domains.length} 个域`, [
+      if (noAccess?.length) log(`[cookie-pull] 这个 profile 没给扩展这些站点的权限：${noAccess.join(', ')}`)
+      this.report(reason, !refused?.length && !noAccess?.length, `取回 ${got.length}/${domains.length} 个域`, [
         { label: '取回', value: got.join(', ') || '(空)', tone: got.length ? 'ok' : 'warn' },
         ...(refused?.length
           ? [{ label: '被扩展拒了', value: refused.join(', '), tone: 'bad' as const }]
+          : []),
+        ...(noAccess?.length
+          ? [{ label: '没有站点权限', value: noAccess.join(', '), tone: 'bad' as const }]
           : []),
       ])
       return { ok: true, domains: got, refused: refused ?? [] }

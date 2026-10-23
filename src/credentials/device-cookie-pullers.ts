@@ -8,7 +8,7 @@
  * 与登录 recipe 跑在同一个 Chrome 里，登完取回的才是刚登上的那份。设备槽位 = 本机兼容槽；远程设备上
  * 没记过节点的绑定里，执行内取这次执行选定的那条，执行外取任意一条在线的。
  */
-import { CookiePuller, type CookiePullTransport, type CookieSnapshot } from './cookie-puller.ts'
+import { CookiePuller, type CookieGaps, type CookiePullTransport, type CookieSnapshot } from './cookie-puller.ts'
 import { parseCookieSlot } from './cookie-slot.ts'
 import { LOCAL_BINDING, LOCAL_DEVICE, currentPlacement } from '../devices/run-context.ts'
 import type { DebugEntry } from '../debug.ts'
@@ -30,7 +30,13 @@ export interface DeviceCookiePullerDeps {
   report?: (entry: DebugEntry) => void
 }
 
-export function makeDeviceCookiePullers(deps: DeviceCookiePullerDeps): (slot: string) => CookiePuller {
+export interface DeviceCookiePullers {
+  (slot: string): CookiePuller
+  /** 这个槽位最近一轮的缺口（`CookiePuller.gaps`）。没拉过的槽位不新建 puller。 */
+  gapsOf(slot: string): CookieGaps | undefined
+}
+
+export function makeDeviceCookiePullers(deps: DeviceCookiePullerDeps): DeviceCookiePullers {
   const pullers = new Map<string, CookiePuller>()
   const { browsers } = deps
   /** 这个槽位此刻经哪条绑定取；没有可用的 = undefined（这一轮跳过，不碰快照）。 */
@@ -42,7 +48,7 @@ export function makeDeviceCookiePullers(deps: DeviceCookiePullerDeps): (slot: st
     const pinned = p.deviceId === deviceId ? p.browser?.bindingId : undefined
     return pinned && legacy.includes(pinned) ? pinned : legacy[0]
   }
-  return (slot) => {
+  const pullerFor = (slot: string): CookiePuller => {
     let p = pullers.get(slot)
     if (p) return p
     const { deviceId, nodeId } = parseCookieSlot(slot)
@@ -67,4 +73,5 @@ export function makeDeviceCookiePullers(deps: DeviceCookiePullerDeps): (slot: st
     pullers.set(slot, p)
     return p
   }
+  return Object.assign(pullerFor, { gapsOf: (slot: string) => pullers.get(slot)?.gaps() })
 }

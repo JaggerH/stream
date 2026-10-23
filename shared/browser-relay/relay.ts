@@ -503,11 +503,13 @@ export class ExtRelay {
    *
    * **范围不由这边说了算**：扩展只应答它自己申报过的同步域，范围外的原样退回 `refused`。
    * 拿到 `refused` 非空要当成配置问题喊出来，别当成"用户没登录"——那正是静默失真。
+   * `noAccess`（新扩展才报）：在范围里、但那个 profile 没给扩展这个站点的权限，同样取不到。
    */
-  cookiePull(domains: string[]): Promise<{ cookies: Record<string, unknown[]>; refused: string[] }> {
+  cookiePull(domains: string[]): Promise<{ cookies: Record<string, unknown[]>; refused: string[]; noAccess?: string[] }> {
     return this.send('cookiePull', { op: 'cookiePull', domains }) as Promise<{
       cookies: Record<string, unknown[]>
       refused: string[]
+      noAccess?: string[]
     }>
   }
 

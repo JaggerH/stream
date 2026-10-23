@@ -21,7 +21,7 @@ function world(online: Record<string, boolean> = { 'ext:a': true, 'ext:b': true,
   const relayFor = (id: string) => ({
     cookiePull: vi.fn(async (domains: string[]) => {
       pulled.push(id)
-      return { cookies: { [domains[0]!]: [cookie(id)] }, refused: [] }
+      return { cookies: { [domains[0]!]: [cookie(id)] }, refused: [] as string[] }
     }),
   })
   const ids = ['ext:a', 'ext:b', 'ext:n', 'local', 'local:node_w', 'local:node_p']
@@ -84,6 +84,15 @@ describe('makeDeviceCookiePullers', () => {
     const out = await w.pullerFor('local/node_w').pull('test')
     expect(out).toMatchObject({ ok: false, reason: 'relay-down' })
     expect(w.stores.has('local/node_w')).toBe(false)
+  })
+
+  it('gapsOf：按槽位读最近一轮的缺口；没拉过的槽位不新建 puller', async () => {
+    const w = world()
+    w.relays['local:node_p']!.cookiePull.mockResolvedValueOnce({ cookies: {}, refused: ['bilibili.com'] })
+    expect(w.pullerFor.gapsOf('local/node_p')).toBeUndefined()
+    await w.pullerFor('local/node_p').pull('test')
+    expect(w.pullerFor.gapsOf('local/node_p')).toMatchObject({ refused: ['bilibili.com'], noAccess: [] })
+    expect(w.pullerFor.gapsOf('local/node_w')).toBeUndefined()
   })
 
   it('同一个槽位复用同一个 puller（并发去重靠它）', () => {

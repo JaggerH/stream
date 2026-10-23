@@ -21,7 +21,7 @@ function makeStore(initial: Record<string, BrowserCookie[]> = {}, updatedAt: num
 }
 
 function makeRelay(
-  impl: (domains: string[]) => Promise<{ cookies: Record<string, unknown[]>; refused: string[] }>,
+  impl: (domains: string[]) => Promise<{ cookies: Record<string, unknown[]>; refused: string[]; noAccess?: string[] }>,
   connected = true,
 ) {
   const cookiePull = vi.fn(impl)
@@ -29,6 +29,37 @@ function makeRelay(
 }
 
 const REQUIRED = ['quark.cn', 'xiaohongshu.com']
+
+describe('CookiePuller.gaps', () => {
+  // 被拒 / 没站点权限都长得和「没登录」一样，面板要按节点说出来（browser-identity 冒烟后续）。
+  it('记下最近一轮扩展没给的域：不在同步范围的、profile 没给站点权限的；下一轮给齐了就清掉', async () => {
+    let reply = { cookies: {}, refused: ['bilibili.com'], noAccess: ['quark.cn'] }
+    const { store } = makeStore()
+    const { relay } = makeRelay(async () => reply)
+    const p = new CookiePuller({ relay, store, requiredDomains: () => REQUIRED, log: () => {}, now: () => 42 })
+    expect(p.gaps()).toBeUndefined()
+    await p.pull('t')
+    expect(p.gaps()).toEqual({ refused: ['bilibili.com'], noAccess: ['quark.cn'], at: 42 })
+    reply = { cookies: {}, refused: [], noAccess: [] }
+    await p.pull('t')
+    expect(p.gaps()).toBeUndefined()
+  })
+
+  it('老扩展不报 noAccess；拉失败不动上一轮的记录', async () => {
+    let fail = false
+    const { store } = makeStore()
+    const { relay } = makeRelay(async () => {
+      if (fail) throw new Error('boom')
+      return { cookies: {}, refused: ['bilibili.com'] }
+    })
+    const p = new CookiePuller({ relay, store, requiredDomains: () => REQUIRED, log: () => {}, now: () => 7 })
+    await p.pull('t')
+    expect(p.gaps()).toEqual({ refused: ['bilibili.com'], noAccess: [], at: 7 })
+    fail = true
+    await p.pull('t')
+    expect(p.gaps()).toEqual({ refused: ['bilibili.com'], noAccess: [], at: 7 })
+  })
+})
 
 describe('CookiePuller.pull', () => {
   it('取回来整份替换写进快照', async () => {
@@ -237,6 +268,16 @@ describe('CookiePuller.covers', () => {
     expect(p.covers('pan.quark.cn')).toBe(true)
     expect(p.covers('xiaohongshu.com')).toBe(false) // 被拒
     expect(p.covers('bilibili.com')).toBe(false) // 没要过
+  })
+
+  // 没给站点权限的域扩展根本没读（noAccess），空着同样说明不了「没登」。
+  it('profile 没给站点权限的域不算取过', async () => {
+    const { store } = makeStore()
+    const { relay } = makeRelay(async () => ({ cookies: {}, refused: [], noAccess: ['xiaohongshu.com'] }))
+    const p = new CookiePuller({ relay, store, requiredDomains: () => REQUIRED, log: () => {} })
+    await p.pull('t')
+    expect(p.covers('quark.cn')).toBe(true)
+    expect(p.covers('xiaohongshu.com')).toBe(false)
   })
 
   it('Chrome 没连 / 取失败的那一轮不算取过', async () => {

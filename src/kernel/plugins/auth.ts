@@ -1,7 +1,7 @@
 import type { Context } from 'cordis'
 import { join } from 'node:path'
 import type { DebugEntry } from '../../debug.ts'
-import type { CookiePuller } from '../../credentials/cookie-puller.ts'
+import type { CookieGaps, CookiePuller } from '../../credentials/cookie-puller.ts'
 import { makeFileRecipeStore, makeRecipePackageStore } from '../../replay/recipe-store.ts'
 import { acquireFacilityLock } from '../../replay/author/facility-lock.ts'
 import { isSessionAuth } from '../../manifest/types.ts'
@@ -75,6 +75,8 @@ export interface AuthService {
   /** 登录态的取数方（后端去用户的 Chrome 里取）。调度侧在 beforeTick 上调它的 ensureFresh。
    *  每次调用按槽位解析到此刻该读的那一份（browser-identity D10）。 */
   cookiePuller: Pick<CookiePuller, 'pull' | 'ensureFresh' | 'pullRecent' | 'covers'>
+  /** 这个槽位（`cookieSlot(deviceId, nodeId)`）最近一轮扩展没给的域，给面板的节点行。 */
+  cookieGaps: (slot: string) => CookieGaps | undefined
   /**
    * 把「现在谁挂着登录墙」重新算一遍并推出去。
    *
@@ -381,6 +383,7 @@ export const authPlugin = {
       reconcileAuthNow,
       startLogin,
       cookiePuller,
+      cookieGaps: (slot) => cookiePullerFor.gapsOf(slot),
       syncAuthBanner,
       onFacilityLogin: (fn) => { loginListeners.push(fn) },
     } satisfies AuthService)
