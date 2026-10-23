@@ -15,7 +15,7 @@ const LIST = {
   lastActive: ['Default'],
 }
 
-function rig(opts: { ops?: string[]; claimFails?: string } = {}) {
+function rig(opts: { ops?: string[]; claimFails?: string; list?: unknown } = {}) {
   let t = 1_000
   const nodes = new NodeStore(join(mkdtempSync(join(tmpdir(), 'claim-')), 'stream.db'), { now: () => t })
   const sent: Array<{ op: string; args?: Record<string, unknown> }> = []
@@ -25,7 +25,7 @@ function rig(opts: { ops?: string[]; claimFails?: string } = {}) {
     ops: new Set(opts.ops ?? ['browser.profiles', 'browser.claim']),
     async send(op) {
       sent.push(op)
-      if (op.op === 'browser.profiles') return LIST
+      if (op.op === 'browser.profiles') return opts.list ?? LIST
       if (opts.claimFails && op.args?.profileDirectory === opts.claimFails) throw new Error('spawn failed')
       return { launched: true }
     },
@@ -64,6 +64,18 @@ describe('ProfileClaims', () => {
     })
     expect(r.nodes.get('node_a')?.profileName).toBe('工作')
     expect(r.claimUrls()).toEqual([])
+  })
+
+  it('discover：带上每个 profile 装没装扩展（agent 说得出时），并告诉 agent 看哪个扩展', async () => {
+    const r = rig({ list: { ...LIST, profiles: [
+      { dir: 'Default', name: '工作', hasExtension: true },
+      { dir: 'Profile 1', name: '个人', hasExtension: false },
+      { dir: 'Profile 2', name: '老 agent', hasExtension: 'yes' },
+    ] } })
+    const d = await r.claims.discover('desktop:pc')
+    expect(d.profiles.map((p) => [p.dir, p.hasExtension])).toEqual([['Default', true], ['Profile 1', false], ['Profile 2', undefined]])
+    expect('hasExtension' in d.profiles[2]).toBe(false)
+    expect(r.sent[0]).toEqual({ op: 'browser.profiles', args: { extensionId: EXT } })
   })
 
   it('不在线 / 没声明 op 的设备说清楚', async () => {

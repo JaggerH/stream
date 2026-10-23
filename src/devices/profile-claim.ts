@@ -102,6 +102,11 @@ export interface DiscoveredProfile {
   active: boolean
   /** 已认领过、记着这个目录的节点。 */
   nodeId?: string
+  /**
+   * 这个 profile 里装着并启用了 Stream 扩展（agent 读 profile 的偏好文件）。缺席 = 不知道（老 agent、文件读不到）。
+   * 面板据此预选要认领的 profile：没装的开出认领页也只是一扇打不开的窗。
+   */
+  hasExtension?: boolean
 }
 
 export interface Discovery {
@@ -162,7 +167,7 @@ const CLAIM_OP = 'browser.claim'
 
 interface RawProfiles {
   userDataDir: string
-  profiles: Array<{ dir: string; name: string; gaiaEmail?: string; gaiaName?: string }>
+  profiles: Array<{ dir: string; name: string; gaiaEmail?: string; gaiaName?: string; hasExtension?: boolean }>
   lastActive: string[]
 }
 
@@ -175,7 +180,9 @@ function parseProfiles(deviceId: string, raw: unknown): RawProfiles {
   if (!r || typeof r !== 'object' || !isStr(r.userDataDir) || !Array.isArray(r.profiles)) throw bad()
   const profiles = r.profiles.map((p) => {
     if (!p || !isStr(p.dir) || !isStr(p.name)) throw bad()
-    return { dir: p.dir, name: p.name, ...(isStr(p.gaiaEmail) ? { gaiaEmail: p.gaiaEmail } : {}), ...(isStr(p.gaiaName) ? { gaiaName: p.gaiaName } : {}) }
+    return { dir: p.dir, name: p.name, ...(isStr(p.gaiaEmail) ? { gaiaEmail: p.gaiaEmail } : {}), ...(isStr(p.gaiaName) ? { gaiaName: p.gaiaName } : {}),
+      ...(typeof p.hasExtension === 'boolean' ? { hasExtension: p.hasExtension } : {}),
+    }
   })
   return { userDataDir: r.userDataDir, profiles, lastActive: Array.isArray(r.lastActive) ? r.lastActive.filter(isStr) : [] }
 }
@@ -200,11 +207,13 @@ export class ProfileClaims {
   }
 
   private async listProfiles(a: ClaimAgent, opts: DiscoverOpts): Promise<RawProfiles> {
+    // 告诉 agent 看哪个扩展装没装（老 agent 不认这一格，照旧只列 profile）。
     const args: Record<string, unknown> = {
+      extensionId: this.deps.extId,
       ...(opts.exe ? { exe: opts.exe } : {}),
       ...(opts.userDataDir ? { userDataDir: opts.userDataDir } : {}),
     }
-    const list = parseProfiles(a.deviceId, await a.send({ op: PROFILES_OP, ...(Object.keys(args).length ? { args } : {}) }))
+    const list = parseProfiles(a.deviceId, await a.send({ op: PROFILES_OP, args }))
     // 显示名可能被用户在 Chrome 里改了：每次列都按目录刷新（目录才是不变的键）。
     for (const p of list.profiles) this.deps.nodes.renameProfile(a.extDeviceId, p.dir, p.name)
     return list

@@ -130,22 +130,33 @@ describe('DevicesSettings — browser nodes', () => {
       'http://127.0.0.1:8900/api/ext/bindings/ext%3Aa', expect.objectContaining({ method: 'DELETE' })))
   })
 
-  it('识别 profile：只在能识别的设备上出现；开始 → 轮询到结束 → 每个 profile 一行结果，重读节点', async () => {
+  it('识别 profile：先列出 profile 让人挑（预选装了扩展且没认领的），只为挑中的开认领页 → 轮询到结束，重读节点', async () => {
     let polls = 0
+    const posted: unknown[] = []
     const w = backend({
       nodes: [node({})], claimable: ['local'], patches: [],
       extra: (u, init) => {
+        if (u.endsWith('/api/devices/local/profiles') && !init?.method) {
+          return json({ deviceId: 'desktop:pc', userDataDir: 'C:\\U', profiles: [
+            { dir: 'Default', name: 'Jagger', active: true, hasExtension: true },
+            { dir: 'Profile 1', name: '小号', active: false, hasExtension: true },
+            { dir: 'Profile 2', name: '老号', active: false, hasExtension: true, nodeId: 'node_old' },
+            { dir: 'Profile 3', name: '空的', active: false, hasExtension: false },
+            { dir: 'Profile 4', name: '说不清', active: false },
+          ] })
+        }
         if (u.endsWith('/api/devices/local/profiles/claim') && init?.method === 'POST') {
+          posted.push(JSON.parse(String(init.body)))
           return json({ claimId: 'c1', deviceId: 'local', startedAt: 1, expiresAt: 2, done: false, profiles: [
             { dir: 'Default', name: 'Jagger', state: 'pending' },
-            { dir: 'Profile 1', name: '小号', state: 'pending' },
+            { dir: 'Profile 4', name: '说不清', state: 'pending' },
           ] })
         }
         if (u.endsWith('/api/devices/local/profiles/claim/c1')) {
           polls++
           return json({ claimId: 'c1', deviceId: 'local', startedAt: 1, expiresAt: 2, done: true, profiles: [
             { dir: 'Default', name: 'Jagger', state: 'claimed', nodeId: 'node_a' },
-            { dir: 'Profile 1', name: '小号', state: 'missing', reason: '扩展未安装或未连上' },
+            { dir: 'Profile 4', name: '说不清', state: 'missing', reason: '扩展未安装或未连上' },
           ] })
         }
         return undefined
@@ -158,7 +169,21 @@ describe('DevicesSettings — browser nodes', () => {
       await screen.findByText('NAS')
       expect(screen.queryByRole('button', { name: 'NAS 识别 profile' })).toBeNull()
       fireEvent.click(await screen.findByRole('button', { name: '本机 识别 profile' }))
+      const box = (name: string) => screen.getByRole('checkbox', { name }) as HTMLInputElement
+      await screen.findByRole('checkbox', { name: 'Jagger（Default）' })
+      // 只列不开窗
+      expect(posted).toEqual([])
+      expect(box('Jagger（Default）').checked).toBe(true)
+      expect(box('小号（Profile 1）').checked).toBe(true)
+      expect(box('老号（Profile 2）').checked).toBe(false)
+      expect(box('空的（Profile 3）').checked).toBe(false)
+      expect(box('说不清（Profile 4）').checked).toBe(true)
+      expect(screen.getByText('已识别过')).toBeTruthy()
+      expect(screen.getByText(/没装 Stream 扩展——先在这个 profile 里装上/)).toBeTruthy()
+      fireEvent.click(box('小号（Profile 1）'))
+      fireEvent.click(screen.getByRole('button', { name: '为 2 个 profile 打开认领页' }))
       expect(await screen.findAllByText('等待中…')).toHaveLength(2)
+      expect(posted).toEqual([{ dirs: ['Default', 'Profile 4'] }])
       const nodeReads = () => fetchMock.mock.calls.filter(([u]) => String(u).endsWith('/api/devices/nodes')).length
       const before = nodeReads()
       w.nodes = [node({ profileDir: 'Default', profileName: 'Jagger' })]
@@ -174,10 +199,26 @@ describe('DevicesSettings — browser nodes', () => {
     }
   })
 
+  it('识别 profile：一个都没挑时不能开；取消回到按钮', async () => {
+    backend({
+      nodes: [], claimable: ['local'], patches: [],
+      extra: (u, init) => (u.endsWith('/api/devices/local/profiles') && !init?.method
+        ? json({ deviceId: 'desktop:pc', userDataDir: 'C:\\U', profiles: [{ dir: 'Default', name: 'Jagger', active: true, hasExtension: false }] })
+        : undefined),
+    })
+    render(<DevicesSettings conn={conn} />)
+    fireEvent.click(await screen.findByRole('button', { name: '本机 识别 profile' }))
+    await screen.findByRole('checkbox', { name: 'Jagger（Default）' })
+    expect((screen.getByRole('button', { name: '为 0 个 profile 打开认领页' }) as HTMLButtonElement).disabled).toBe(true)
+    fireEvent.click(screen.getByRole('button', { name: '取消' }))
+    expect(screen.queryByRole('checkbox')).toBeNull()
+    expect(screen.getByRole('button', { name: '本机 识别 profile' })).toBeTruthy()
+  })
+
   it('识别被后端拒（远处打开面板）：原话显示', async () => {
     backend({
       nodes: [], claimable: ['local'], patches: [],
-      extra: (u, init) => (u.endsWith('/profiles/claim') && init?.method === 'POST'
+      extra: (u) => (u.endsWith('/api/devices/local/profiles')
         ? json({ error: '只能在运行 Stream 的那台机器上识别 profile' }, 403) : undefined),
     })
     render(<DevicesSettings conn={conn} />)

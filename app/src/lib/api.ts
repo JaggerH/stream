@@ -163,6 +163,25 @@ export interface NodeRow {
   online: boolean
 }
 
+/** One Chrome profile on a machine (`GET /api/devices/:id/profiles`, read-only, opens nothing). */
+export interface DiscoveredProfile {
+  dir: string
+  name: string
+  gaiaEmail?: string
+  gaiaName?: string
+  active: boolean
+  /** Already claimed: the node that recorded this profile directory. */
+  nodeId?: string
+  /** Stream extension installed and enabled there (agent reads the profile's preferences). Absent = unknown. */
+  hasExtension?: boolean
+}
+
+export interface Discovery {
+  deviceId: string
+  userDataDir: string
+  profiles: DiscoveredProfile[]
+}
+
 /** One profile in a claim session (`GET /api/devices/:id/profiles/claim/:claimId`). */
 export interface ClaimProfileRow {
   dir: string
@@ -1009,8 +1028,11 @@ export const api = {
     list: (c: Connection) => get<{ nodes: NodeRow[]; claimable: string[] }>(c, '/api/devices/nodes'),
     update: (c: Connection, nodeId: string, p: { label?: string | null; environment?: string | null }) =>
       patch<NodeRow>(c, `/api/devices/nodes/${encodeURIComponent(nodeId)}`, p),
-    startClaim: (c: Connection, deviceId: string) =>
-      post<ClaimSnapshot>(c, `/api/devices/${encodeURIComponent(deviceId)}/profiles/claim`, {}),
+    profiles: (c: Connection, deviceId: string) =>
+      get<Discovery>(c, `/api/devices/${encodeURIComponent(deviceId)}/profiles`),
+    /** `dirs` = only these profiles (by directory); omitted = every profile. */
+    startClaim: (c: Connection, deviceId: string, dirs?: string[]) =>
+      post<ClaimSnapshot>(c, `/api/devices/${encodeURIComponent(deviceId)}/profiles/claim`, dirs ? { dirs } : {}),
     claim: (c: Connection, deviceId: string, claimId: string) =>
       get<ClaimSnapshot>(c, `/api/devices/${encodeURIComponent(deviceId)}/profiles/claim/${encodeURIComponent(claimId)}`),
   },
