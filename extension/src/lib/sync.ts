@@ -65,6 +65,24 @@ export async function runSync(bindingId: string = LOCAL_BINDING): Promise<SyncRe
 }
 
 /**
+ * 只重读一次本机 Stream 的同步范围（`requiredDomains`），不叫它来取。`cookiePull` 在缓存里找不到后端要的域时
+ * 用：新 profile 第一次连上，后端那一轮取数可能先于连上时的 `runSync` 到——缓存还是空的，全被拒，身份探测就
+ * 读成「没登录」。范围仍是本机 Stream 自己申报的那份，和 `runSync` 写进去的是同一个东西。成功写入 = true。
+ */
+export async function refreshRequiredDomains(): Promise<boolean> {
+  const cfg = await getConfig()
+  if (!cfg.baseUrl) return false
+  try {
+    const sc = await getSyncConfig(cfg)
+    if (!sc.configured) return false
+    await setConfig({ requiredDomains: sc.requiredDomains ?? [] })
+    return true
+  } catch {
+    return false
+  }
+}
+
+/**
  * 配对绑定的一轮：只在**它批准过的范围**里数一数、叫它一声。不问 sync-config——远处那个实例的
  * 这一口要 API token（扩展没有）；它要哪些域，由它发来的 cookiePull 自己说（driver.ts noteRequested）。
  */

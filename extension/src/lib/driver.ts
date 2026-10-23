@@ -5,7 +5,8 @@ import {
 import { serializeCookie } from './cookie-shape.ts'
 import { setNotifySocket } from './relay-notify.ts'
 // sync.ts 只依赖 config / stream-api / relay-notify，不依赖本文件——加这条不会成环。
-import { runSync } from './sync.ts'
+import { runSync, refreshRequiredDomains } from './sync.ts'
+import { hasSiteAccess, noteGaps } from './cookie-gaps.ts'
 import { nativeHostToken } from './native-host.ts'
 import { verifyBackend } from './backend-identity.ts'
 import { getNode, nodeQuery } from './node.ts'
@@ -1796,15 +1797,25 @@ async function dispatchInner(msg: Inbound, marks: HopMarks = {}, rt: BindingRunt
           // 配对绑定的范围还要过用户批准那一道（见 config.ts allowedDomains）。
           const wanted = [...new Set(msg.domains ?? [])]
           if (rt.id !== LOCAL_BINDING) await noteRequested(rt.id, wanted)
-          const allowed = await scopeOf(rt)
-          const granted = wanted.filter((d) => matchesSyncedDomain(d, allowed))
-          const refused = wanted.filter((d) => !granted.includes(d))
+          let allowed = await scopeOf(rt)
+          // 本机：缓存里缺后端要的域，先重读一次本机 Stream 的同步范围再判（新 profile 第一次连上时，这一轮常常
+          // 先于 runSync 到，缓存还是空的）。范围仍只来自本机 Stream 自己的申报，见 sync.ts refreshRequiredDomains。
+          if (rt.id === LOCAL_BINDING && wanted.some((d) => !matchesSyncedDomain(d, allowed)) && (await refreshRequiredDomains()))
+            allowed = await scopeOf(rt)
+          const inScope = wanted.filter((d) => matchesSyncedDomain(d, allowed))
+          const refused = wanted.filter((d) => !inScope.includes(d))
+          // 站点权限按 profile 记：没给时 getAll 静默回空，后端会读成「没登录」。单独报出来（`noAccess`），
+          // 弹窗里一键去要（cookie-gaps.ts）。
+          const noAccess: string[] = []
+          for (const d of inScope) if (!(await hasSiteAccess(d))) noAccess.push(d)
           const cookies: Record<string, Array<Record<string, unknown>>> = {}
-          for (const domain of granted) {
+          for (const domain of inScope) {
+            if (noAccess.includes(domain)) continue
             const all = await chrome.cookies.getAll({ domain })
             if (all.length) cookies[domain] = all.map(serializeCookie)
           }
-          return { id: msg.id, result: { cookies, refused } }
+          await noteGaps(rt.id, refused, noAccess).catch(() => {})
+          return { id: msg.id, result: { cookies, refused, noAccess } }
         }
         case 'subscribe': {
           if (!(await inGroup(msg.tabId, rt)))

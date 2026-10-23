@@ -15,6 +15,7 @@ import { nativeHostToken, nativeHostStatus } from '../../lib/native-host.ts'
 import { verifyBackend } from '../../lib/backend-identity.ts'
 import { CookiePanel } from './CookiePanel.tsx'
 import { BindingsPanel } from './BindingsPanel.tsx'
+import { CookieGapBanner } from './CookieGapBanner.tsx'
 import { readProfileLine, type ProfileLine } from '../../lib/profile-line.ts'
 import { Backdrop } from '@/components/acrylic/backdrop.tsx'
 import { Card } from '@/components/acrylic/card.tsx'
@@ -362,6 +363,9 @@ export default function App() {
         {cfg.baseUrl && relayUp !== null && health.kind !== 'ready' && (
           <StatusBanner health={health} busy={reconnecting} onReconnect={() => void reconnect()} />
         )}
+
+        {/* 这个 profile 没给 Stream 的登录态域（同步范围 / 站点权限），一键补上。没缺口不画。 */}
+        {cfg.baseUrl && <CookieGapBanner onFixed={() => void syncNow()} />}
 
         {cfg.baseUrl && (
           <>
