@@ -1,10 +1,20 @@
-## 计划 0：spike（Windows 真机 Chrome，先于一切实现）
+## 计划 0：spike
 
-- [ ] 1. S1：`--profile-directory=X chrome-extension://<id>/claim.html#…` 交给运行中的 Chrome，是否在 X 里打开扩展页；是否需要 `web_accessible_resources`
-- [ ] 2. S2：目标 profile 未加载时，`--profile-directory=X --no-startup-window` 能否只唤醒扩展 SW 不开窗口
-- [ ] 3. S3：bilibili / xhs / eastmoney 的「当前用户」接口，直接导航能否带上会话拿到账号 id
-- [ ] 4. S4：Windows 与 macOS 上 `Local State` 的位置与 `profile.info_cache` 字段
-- [ ] 5. 结论回写 design.md 的 Open Questions，必要时改 D3 / D5 / D8
+- [x] 1. S1：认领页按 profile 打开、由该 profile 的节点交回，不需要 `web_accessible_resources`（javis CfT 156）
+- [x] 2. S2（Linux）：`--no-startup-window` 唤起 profile，SW 起来、不开窗口
+- [ ] 3. S2（Windows 真机）复核
+- [ ] 4. S3：在登着号的 Chrome 上取 bilibili（`http` / JSON）、xhs（`page` / `__INITIAL_STATE__`）、eastmoney（`http` / HTML）的确切路径
+- [x] 5. S4：`Local State` 的 `info_cache` 字段与 `last_active_profiles`
+- [ ] 6. S4：Windows 真机上 `Local State` 的位置复核
+- [x] 7. 结论回写 design.md（D3 新 profile 补发、D5 两种形状、D8 静默唤起、D13 标签组）
+
+## 计划 0.5：一个 profile 一个 Stream 标签组（可独立先做）
+
+- [ ] 1. `adoptOpenedTab`：别的普通窗里的新标签挪进主组那扇窗并入主组，随它新开的空窗关掉；popup 照旧
+- [ ] 2. 删掉 `WINDOW_GROUP_TITLE` / `windowGroups` / `reconcileWindowGroups`
+- [ ] 3. 升级收编：独立窗组里 probe 关、created 挪进主组、adopted 只解组；同名主组合并
+- [ ] 4. driver 测试：新窗被并回、popup 不动、收编 47 个旧组只剩一个且 adopted 标签仍在
+- [ ] 5. Windows 真机冒烟：站点 `window.open` 后浏览器里仍只有一个 Stream 组
 
 ## 计划 1：节点（browser-node 的后端与扩展部分）
 

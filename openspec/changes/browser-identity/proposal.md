@@ -33,6 +33,9 @@ device-execution 的 Non-Goals 明确留下了这道题（「不做同一站点�
   **任何情况下都不换身份顶上**：找不到 = `identity-offline`，核对不符 = `identity-mismatch`。
 - **登录态按节点。** cookie 快照从按设备改为按节点：`data/cookies/<deviceId>/<nodeId>.json`。一次执行的 `cookieFor`
   读的是这次执行选定的那个节点的快照。
+- **一个 profile 一个 Stream 标签组，撤掉「Stream 独立窗」。** 今天 AI 驱动的标签在别的窗口里开出新标签时，扩展会在那扇窗里
+  另建一个「Stream 独立窗」组，窗和组只增不减（用户实测攒了近 50 个）。改为：每条绑定在浏览器里至多一个组；别的普通窗里冒出来的
+  标签挪进主组那扇窗；升级时收编旧的独立窗组。
 - **留痕。** 运行记录加节点、profile、环境、账号；面板与扩展 popup 都显示「这是哪个 profile / 哪个环境」。
 
 ## Capabilities

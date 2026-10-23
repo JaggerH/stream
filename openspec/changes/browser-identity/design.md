@@ -93,6 +93,10 @@ browser.claim     args: { profileDirectory, url, exe? }
 5. 扩展把 profile 记进 `chrome.storage.local.node`，之后每次握手都带上；认领页显示「已识别：工作（Profile 1）」。
 6. 某个 profile 20 秒内没有认领回来，就标为「扩展未安装或未连上」。
 
+- **新 profile 的竞态**（spike S1）：profile 第一次被拉起时，认领页会先于扩展注册打开，页面加载失败（标签停在 URL 上）。
+  所以第 6 步的超时之前，若该设备上新连上了一个尚未认领的节点，就对那个 profile 再发一次 `browser.claim`，只重发一次。
+  扩展没装时页面同样打不开，两种情况在 20 秒后合并为同一个提示。
+
 - profile 显示名可能被用户改掉：每次「识别 profile」都按 `profile_dir` 刷新名字。`profile_dir` 是不变的键。
 - 没有 host agent 的设备（只有扩展的机器）不能认领：节点照样能用，名字由用户在面板上手填，不能被唤起（D8）。
 
@@ -106,19 +110,30 @@ browser.claim     args: { profileDirectory, url, exe? }
 
 ### D5. `whoami`：问站点「我是谁」
 
-包在会话声明里可选地加一段：
+包在会话声明里可选地加一段，两种形状二选一（spike S3：各站差别大，一种形状覆盖不了）：
 
 ```ts
 // src/manifest/types.ts，三种 session 登录都可带
-whoami?: {
-  url: string          // 返回当前账号的 GET 接口，必须落在包的 network.hosts 内
-  id: string           // 账号 id 在响应 JSON 里的点路径，如 'data.mid'
-  name?: string        // 昵称的点路径，如 'data.uname'
-}
+whoami?:
+  | { kind: 'http'              // 带该节点的 cookie 发一个 GET，不开标签
+      url: string               // 必须落在包的 network.hosts 内
+      id: string                // JSON：点路径，如 'data.mid'；HTML：带一个捕获组的正则
+      name?: string
+      format?: 'json' | 'html'  // 缺省 json
+    }
+  | { kind: 'page'              // 在节点的后台标签里打开站点页面，读页面上的全局状态
+      url: string
+      id: string                // window 上的点路径，如 '__INITIAL_STATE__.user.userInfo._value.userId'
+      name?: string
+    }
 ```
 
-- 执行：在目标节点上开一个后台标签（该绑定自己的会话标签组，与 recipe 同一套），直接导航到 `url`，读 `document.body.innerText`
-  解析成 JSON，按路径取值，关闭标签。顶层 GET 导航会带上 SameSite=Lax 的 cookie，与用户自己打开这个地址等价。
+- `http`：经 `fetchFor` 发出，cookie 取自**该节点**的快照（D10），远程设备上由设备代发。和采集用的是同一条出站路，不开标签，
+  代价最低。适用于有现成「当前用户」接口的站点（B 站 `x/web-interface/nav`），以及本来就走纯 HTTP 的包（东财，账号在交易页的
+  HTML 里）。
+- `page`：在该绑定自己的会话标签组里开一个后台标签，等页面加载完，读 `id` / `name` 路径，关闭标签。读法与 recipe 的
+  `statePath` 观察器是同一套。适用于接口要签名、但页面会把当前用户写进全局状态的站点（小红书：`user/me` 不带签名回 406，
+  而首屏 SSR 的 `__INITIAL_STATE__` 里有用户信息）。
 - 结果三态，与 `sessionPrecheck` 一个脾气：
   - `signed-in { accountId, name? }`：取到了非空的 id。
   - `signed-out`：响应是 JSON，但 id 路径为空。
@@ -126,8 +141,8 @@ whoami?: {
 - 没有 `whoami` 的 facility：身份退化为「这个节点上的账号」，`accountId = node:<nodeId>`，显示为「<profile 名> 上的账号」。
   它照样能按节点路由，只是同一账号登在两个 profile 里会被当成两个身份。
 
-**为什么不复用 `loginCheck`**：`loginCheck` 是页面选择器，回答「登没登」；`whoami` 要的是一个稳定的账号 id。大多数站点都有
-一个现成的「当前用户」接口（B 站 `nav`、小红书 `user/me`），取 JSON 比解析页面稳定得多。
+**为什么不复用 `loginCheck`**：`loginCheck` 是页面选择器，回答「登没登」；`whoami` 要的是一个稳定的账号 id。能走 `http`
+的站点优先走 `http`：不开标签，也不受页面改版影响。
 
 ### D6. 身份表
 
@@ -182,8 +197,10 @@ type Target =
 - 候选节点全部离线，但其中某个节点有 `profile_dir`、所在设备的 host agent 在线：调 `ensureApp { profileDirectory, force: true }`
   唤起那个 profile，等节点连上（上限 30 秒），再进入 D9。
 - `force: true` 绕开「有 Chrome 进程就不动手」的判断（Context 6）：节点离线这件事本身已经证明目标 profile 没加载。
-- 唤起会不会开窗口取决于 Chrome（见 Open Questions S2）。如果一定会开，就只在**用户在场时触发的执行**里唤起；定时任务唤不起
-  就按 `identity-offline` 失败，不在用户不在场时弹窗。
+- 唤起时带 `--no-startup-window`。spike S2（Linux）：交给运行中的 Chrome 后，目标 profile 被加载、扩展 SW 起来（报告 0 个窗口），
+  没有开任何窗口。所以定时任务也可以唤起，不抢屏。Windows 真机复核前，这一条按「通过」设计；复核不过就退回「只在用户在场时
+  触发的执行里唤起，定时任务按 `identity-offline` 失败」。
+- 唤起后的 profile 没有窗口，第一次需要开标签时由 D13 的规则造一扇不聚焦的窗。
 - 一个节点同一时刻只有一次唤起在飞，并发的执行共用它的结果。
 
 ### D9. 执行前核对
@@ -229,12 +246,34 @@ type Target =
 - facility 默认目标与任务覆盖的选择器：设备 / 身份 / 环境三选一，身份下拉只列身份表里出现过的。
 - 扩展 popup 顶部显示「工作 · Profile 1」，没认领过显示「未识别的 profile」与一行如何识别的说明。
 
+### D13. 一个 profile 一个 Stream 标签组，撤掉「Stream 独立窗」
+
+今天的 driver（`extension/src/lib/driver.ts`）有两处会在主组之外另起炉灶：
+
+- `adoptOpenedTab`：AI 驱动的标签在**另一扇普通窗**里开出新标签时（站点 `window.open` 开了新窗口、或 Chrome 把它放进了别的窗），
+  在那扇窗里另建一组「Stream 独立窗」，记进 `windowGroups`。标签组不能跨窗，所以每来一扇新窗就多一个组；这类标签继承开启者
+  的出身，交互标签是 `created`，SW 醒来不回收——窗和组只增不减。用户实测攒了近 50 个。
+- `createUnfocusedFullscreenWindow`：一扇窗都没有时（`--no-startup-window` 唤起的常态）造一扇不聚焦的窗放标签。这一处是必要的，保留。
+
+改为一条不变式：**每个 profile、每条绑定，浏览器里至多一个 Stream 组。** 一个 profile 通常只绑一个 Stream 实例，就是一个组；
+绑了两个实例才会有两个组（D7 的绑定隔离要求它们分开）。
+
+- 新标签出现在主组所在窗口之外的**普通窗**里：`chrome.tabs.move` 把它挪进主组那扇窗，再入主组。`window.opener` 关系不受标签
+  在窗口间移动的影响。挪完若那扇窗空了，且窗是随这个标签新开出来的，关掉它。
+- 新标签在 **popup 窗**里（OAuth 弹窗之类）：不挪、不建组，照旧记进 `popups`。popup 的标签挪不进普通窗，站点也依赖它是弹窗。
+- 主组所在的窗被用户关了：主组随之消失，下一次需要标签时在当前窗里重建主组（今天 `addTabToGroup` 的陈旧 id 重建分支已经这么做）。
+- 删掉 `WINDOW_GROUP_TITLE`、`windowGroups` 与 `reconcileWindowGroups`。升级后第一次醒来做一次收编：浏览器里叫「Stream 独立窗」的组，
+  `probe` 标签关掉；`created` 标签挪进主组；`adopted` 标签只解组、不关（红线不变：用户拖进来的东西绝不 remove）；
+  因此空出来的窗关掉。同名的多个「Stream」主组（历史残留）合并进第一个。
+
 ## Risks / Trade-offs
 
 - **门面藏住了选择。** `registry.local` 变成按调用解析的门面后，一次执行里如果有一处绕过执行上下文直接拿 relay，就可能落到
   默认节点上。缓解：门面只经 `pickBrowser` 解析；加一个测试，断言一次以身份为目标的执行里，所有 relay 调用都落在同一个节点上。
-- **`whoami` 开标签有代价。** 一次核对一个后台标签、一次导航。动作前 60 秒的新鲜度窗口是安全与开销的折中；
-  高频动作（例如一分钟几次）会被核对拖慢，那时再考虑在节点侧缓存。
+- **`page` 形状的 `whoami` 开标签有代价。** 一次核对一个后台标签、一次页面加载。`http` 形状没有这个代价，能用就用。
+  动作前 60 秒的新鲜度窗口是安全与开销的折中；高频动作会被 `page` 核对拖慢，那时再考虑在节点侧缓存。
+- **挪标签会改变用户的窗口。** 站点开新窗、标签被挪回主组的窗，用户可能正看着那扇新窗。只挪 AI 驱动的标签开出来的标签
+  （开启者在组内），用户自己开的窗不碰。
 - **`whoami` 接口会变。** 站点改了「当前用户」接口，结果会落到 `unknown`（不是 `signed-out`），表现为该身份的执行被当作离线
   而失败，不会误判成换号。修 `whoami` 和修 recipe 是同一条路。
 - **认领要开窗口。** 每个 profile 开一个窗口，只在用户点「识别 profile」时做。
@@ -250,13 +289,21 @@ type Target =
 3. 用户在面板上点「识别 profile」，给节点标环境；身份表随节点连上逐步填满。
 4. 用户把 facility 或任务的目标改成身份 / 环境。没改的照旧按设备执行。
 
-## Open Questions（先做 spike，在 Windows 真机 Chrome 上验）
+## Spike 结果与待复核项
 
-- **S1**：`chrome --profile-directory=X chrome-extension://<id>/claim.html#…` 交给已在运行的 Chrome 时，是否在 profile X 里打开
-  扩展页？扩展页是否需要列进 `web_accessible_resources`？
-- **S2**：目标 profile 未加载时，`--profile-directory=X --no-startup-window` 能否只加载 profile、唤醒扩展 SW 而不开窗口？
-  不能的话，D8 按「只在用户在场时唤起」执行。
-- **S3**：`whoami` 直接导航到 JSON 接口，在 B 站、小红书、东财上是否都能带上会话 cookie 拿到账号？哪家需要先落在站点页面上
-  再从页面里 `fetch`？
-- **S4**：`Local State` 在 macOS 与 Windows 上的位置与 `info_cache` 字段名是否一致（用户数据目录的探测与 `launch.rs` 的
-  `chrome_candidates` 对齐）。
+2026-10-23 在 javis 上用 Chrome for Testing 156（`--ozone-platform=headless`，完整浏览器、不出画面，进程单例照常工作）
+和一个与 Stream 扩展同 key（同 id）的最小扩展验证：SW 生成 `nodeId` 并向本机一个记日志的 HTTP 端点报到，认领页把 `nonce`
+经 SW 交回。spike 代码不入库。
+
+- **S1 通过。** 对运行中的 Chrome 再调用 `--profile-directory=X chrome-extension://<id>/claim.html#n=…`，Chrome 输出
+  「Opening in existing browser session」，认领页在 X 里打开，交回 `nonce` 的是 X 的节点（Default → `node_c1ea2200`，
+  Profile 1 → `node_cf939548`，与各自 SW 报到的 id 一致）。**不需要** `web_accessible_resources`。
+  新建 profile 第一次拉起时页面先于扩展注册，加载失败，补发一次即成功（已写进 D3）。
+- **S2 Linux 通过，Windows 待复核。** 只开 Default 时调用 `--profile-directory="Profile 1" --no-startup-window`：Profile 1 的扩展
+  SW 起来（报告 0 个窗口），页面目标仍只有原来那一张。Windows 的进程单例是另一套实现，需在真机复核。
+- **S3 部分完成，需真实登录态。** 匿名探测：B 站 `nav` 直接 GET 回 JSON（未登录 `code:-101`、`isLogin:false`、无 `mid`），
+  三态成立；小红书 `user/me` 不带签名回 406，改走 `page` 形状读 `__INITIAL_STATE__`；东财没有公开的用户接口，账号在交易页 HTML 里，
+  走 `http` + `html`。三家的确切路径要在登着号的 Chrome 上取。D5 已据此改成两种形状。
+- **S4 字段确认，Windows / macOS 路径待复核。** `Local State` 的 `profile.info_cache.<dir>` 有 `name`（显示名）、`user_name`
+  （Google 邮箱，未登录为空）、`gaia_name`；`profile.last_active_profiles` 列出当前打开着的 profile，可以顺带判断哪些 profile 已加载。
+  用户数据目录按 Chrome 的默认位置：Windows `%LOCALAPPDATA%\Google\Chrome\User Data`，macOS `~/Library/Application Support/Google/Chrome`。

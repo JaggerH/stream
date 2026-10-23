@@ -2,12 +2,17 @@
 
 ### Requirement: 包可声明 whoami
 
-包的会话声明 SHALL 可选地包含 `whoami`：一个返回当前账号的 GET 接口地址、账号 id 在响应 JSON 中的点路径、可选的昵称路径。
+包的会话声明 SHALL 可选地包含 `whoami`，形状为以下二者之一：`http`（一个 GET 地址，响应为 JSON 时取点路径、为 HTML 时取正则捕获组，
+得到账号 id 与可选的昵称），或 `page`（一个站点页面地址，加载后从页面全局对象上按点路径取账号 id 与可选的昵称）。
 `whoami.url` 的主机 SHALL 落在包声明的允许主机内，否则安装校验 SHALL 拒绝该包。
 
-#### Scenario: B 站声明 whoami
-- **WHEN** bilibili 包声明 `whoami: { url: 'https://api.bilibili.com/x/web-interface/nav', id: 'data.mid', name: 'data.uname' }`
+#### Scenario: B 站声明 http 形状的 whoami
+- **WHEN** bilibili 包声明 `whoami: { kind: 'http', url: 'https://api.bilibili.com/x/web-interface/nav', id: 'data.mid', name: 'data.uname' }`
 - **THEN** 包照常安装，系统可在任一节点上问出 B 站当前登录的账号
+
+#### Scenario: 小红书声明 page 形状的 whoami
+- **WHEN** xhs 包声明 `whoami: { kind: 'page', url: 'https://www.xiaohongshu.com/explore', id: '<__INITIAL_STATE__ 中用户 id 的路径>' }`
+- **THEN** 包照常安装，系统在节点上打开该页面读出当前登录的账号
 
 #### Scenario: whoami 指向未声明的主机
 - **WHEN** 一个包的 `whoami.url` 指向不在其允许主机内的地址
@@ -15,7 +20,8 @@
 
 ### Requirement: 在节点上探测身份
 
-系统 SHALL 在指定节点上、经该节点自己的会话标签组打开一个后台标签导航到 `whoami.url`，解析响应并关闭标签。结果 SHALL 是三态之一：
+对 `http` 形状，系统 SHALL 经本次执行的出站入口发出请求，cookie SHALL 取自该节点的登录态快照，SHALL NOT 打开标签；对 `page` 形状，
+系统 SHALL 在指定节点上、经该节点自己的会话标签组打开一个后台标签，页面加载后读取路径并关闭标签。结果 SHALL 是三态之一：
 取到非空 id 为 `signed-in`；响应为 JSON 但 id 为空为 `signed-out`；其余情况（打不开、不是 JSON、节点断开）为 `unknown`。
 `unknown` SHALL NOT 被当作登录或登出。同一节点上的探测 SHALL 串行进行。
 
