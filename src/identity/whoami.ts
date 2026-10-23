@@ -187,7 +187,7 @@ export function allowedHostsOf(pkg: { credentials?: string[]; network?: { hosts:
   return pkg.network?.hosts ?? pkg.credentials ?? []
 }
 
-/** `url` 主机命中的那一条允许主机——cookie 快照按注册域存（`.bilibili.com`），拿 `api.bilibili.com` 去取会落空。 */
+/** `url` 主机命中的那一条允许主机——cookie 快照按注册域存（`.example.com`），拿 `api.example.com` 去取会落空。 */
 export function cookieDomainFor(url: string, hosts: readonly string[]): string | undefined {
   let host: string
   try {
