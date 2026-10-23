@@ -363,6 +363,10 @@ export async function startTaskCenter(
       runner: 'inline',
       backend: { driver: '@sidequest/sqlite-backend', config: opts.dbPath },
       logger: { level: 'warn' },
+      // 进程信号归宿主。缺省 true 时 sidequest 在 SIGINT/SIGTERM 上挂「关引擎 → process.exit(0)」，与 serve.ts 的
+      // `shutdownThen` 竞速：它先退，宿主的 quiesceKernel（关库、还采集标签、放数据目录锁）就跑不完——活体实测
+      // SIGTERM 后 `engine.lock` 留在盘上。（它的 `close()` 仍会 `removeAllListeners` 两个信号，那时宿主已在关停里。）
+      gracefulShutdown: false,
       manualJobResolution: true,
       jobsFilePath: resolveJobsFile(dirname(fileURLToPath(import.meta.url))),
       // 静态只声明这两个。互斥组的队列（`x:<组名>`）是用户在界面上现敲出来的，只能在装配

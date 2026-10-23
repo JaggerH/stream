@@ -36,6 +36,14 @@ describe('startTaskCenter', () => {
   // 不摘掉的话它带着真定时器活到下一条用例里（`destroyAllCrons` 头注说的正是这件事）。
   afterEach(async () => { await stopTaskCenter() })
 
+  // sidequest 缺省会在 SIGINT/SIGTERM 上挂自己的「关引擎 → process.exit(0)」，跟宿主的优雅关竞速：
+  // 它先退，宿主那条 quiesceKernel（关库、还标签、放数据目录锁）就没跑完。信号归宿主，sidequest 不许挂。
+  it('不让 sidequest 自己挂进程信号（gracefulShutdown: false）', async () => {
+    const { facade } = fakeSidequest()
+    await startTaskCenter([mkTask({})], { dbPath: '/tmp/x.sqlite', log: () => {}, sidequest: facade as never })
+    expect(facade.start).toHaveBeenCalledWith(expect.objectContaining({ gracefulShutdown: false }))
+  })
+
   it('starts engine with inline no-fork sqlite and schedules each task', async () => {
     const { facade, builder, calls } = fakeSidequest()
     const r = await startTaskCenter([mkTask({}), mkTask({ id: 't2', serial: true })], {
