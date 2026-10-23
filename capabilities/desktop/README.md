@@ -37,7 +37,7 @@ token，而且不报错）。
 | 中继、扩展物化、`cdp_*` 的注册、`/api/ext/verify`、归属让位、relay token | 后端主路：`attachExtRelay` + `src/mcp/cdp-router.ts` + `src/browser/extension-dir.ts` + `src/http/ext-verify.ts`；`--register` 由 agent mount 自己做 | **不在这里**——这些只有一份，在后端 |
 | DSH 那张脸（`cordis.patch.yml`、`package.json` 的 `dsh` 字段、`@deepseek-ai/dsh-tools`） | 无：DSH 经 `/api/mcp` 用 Stream 的工具面，不装能力包 | **不在这里** |
 
-桌面那一半**不交出动词**：`target:'desktop'` / `'app:<进程>'` 那几档来自后端的 `cdp_*`，
+桌面那一半**不交出动词**：`target:'desktop'` / `'app:<进程>'` / `'window:<id>'` 那几档来自后端的 `cdp_*`，
 养着 agent 是为了让它们有东西可驱动。二进制按平台走 npm 可选子包
 `@streamapp/desktop-<os>-<cpu>`（源码 `platforms/`）：`win32-x64`、`darwin-x64`、
 `darwin-arm64`，别的平台解不到就记一行日志。
@@ -47,7 +47,7 @@ token，而且不报错）。
 | | 判据 | 今天是谁 | 没有它会怎样 |
 |---|---|---|---|
 | **配对**（native messaging + `--register` 写浏览器根与 `~/.stream/datadir` 指针 + 递 relay token） | `HOST_AGENT_PACKAGES`（有没有二进制） | win32-x64 / darwin-x64 / darwin-arm64 | 扩展永远 `never-seen`，要登录态的源全是游客态——不报错，只是采得少采得浅 |
-| **桌面控制**（控件树 / 坐标输入 / 窗口枚举 / 截图 / 读屏 / 找图） | `DESKTOP_CONTROL_PLATFORMS` | win32（UIA + PrintWindow）/ darwin（AX + CGWindowList） | `cdp_*` 的 `desktop` / `app:<进程>` 两档不可用 |
+| **桌面控制**（控件树 / 坐标输入 / 窗口枚举 / 截图 / 读屏 / 找图） | `DESKTOP_CONTROL_PLATFORMS` | win32（UIA + PrintWindow）/ darwin（AX + CGWindowList） | `cdp_*` 的 `desktop` / `app:<进程>` / `window:<id>` 几档不可用 |
 
 mac 上 `Desktop` trait 的每个动词都有实现（`app/host-agent/src/macos.rs`）；落在 trait 默认实现上、
 mac 没有对应物的只有 `postInput`（`PostMessage` 投消息，recipe 的 `input:"message"`）、`nudgeInput`

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { desktopAct, desktopLook, desktopOpen } from './desktop-surface.ts'
+import { desktopAct, desktopLook, desktopMatch, desktopOpen, desktopShot } from './desktop-surface.ts'
 import { DesktopUnavailable } from '../replay/desktop-failure.ts'
 import type { A11yElement, ActOutcome, DesktopDriver } from '../replay/desktop-driver.ts'
 import type { ActionSpec } from '../replay/interactive-gate.ts'
@@ -285,5 +285,46 @@ describe('desktopLook — 空结果要能自证是哪一种空', () => {
     const out = (await desktopLook(d, match, '{"role":"Button"}')) as { value: unknown; unbuilt?: string }
     expect(out.value).toEqual([])
     expect(out).not.toHaveProperty('unbuilt')
+  })
+})
+
+describe('按 window id 指名', () => {
+  it('window:<id> 变成只带 id 的 match，不带 process/title', () => {
+    expect(desktopMatch('window', '396088')).toEqual({ id: '396088' })
+  })
+
+  it('desktop（前台那扇）按 id 限定范围——同标题的另一扇窗不能把它变成歧义', async () => {
+    const scoped: unknown[] = []
+    const { d } = fakeDriver({
+      async windows() {
+        return [
+          { id: '11', process: 'chrome.exe', title: '扩展程序 - Google Chrome', foreground: false },
+          { id: '22', process: 'chrome.exe', title: '扩展程序 - Google Chrome', foreground: true },
+        ]
+      },
+      async scopeWindow(m) {
+        scoped.push(m)
+        return { id: '22', process: 'chrome.exe', title: '扩展程序 - Google Chrome', foreground: true }
+      },
+    })
+    await desktopShot(d, null)
+    expect(scoped).toEqual([expect.objectContaining({ id: '22' })])
+  })
+
+  it('id 一路传给 scopeWindow / focusApp', async () => {
+    const seen: unknown[] = []
+    const { d } = fakeDriver({
+      async scopeWindow(m) {
+        seen.push(['scope', m])
+        return { id: '22', process: 'chrome.exe', title: 't', foreground: false }
+      },
+      async focusApp(m) {
+        seen.push(['focus', m])
+        return true
+      },
+    })
+    await desktopAct(d, { id: '22' }, { kind: 'type', domain: '', text: 'hi' })
+    await desktopLook(d, { id: '22' }, '{"role":"Button"}')
+    expect(seen).toEqual([['focus', { id: '22' }], ['scope', { id: '22' }]])
   })
 })

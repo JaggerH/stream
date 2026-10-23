@@ -35,7 +35,7 @@ description: 想「看一眼此刻活着的界面、必要时动它一下」时�
 | **任意一个 URL**（在你自己登录着的 Chrome 里随手打开） | `'chrome'` + `url`（`cdp_look`）或 `'chrome'` + `kind:'open'`（`cdp_act`，只开不读，见下）；其余动词只认已存在的 tab | 一次性侦察、量设计稿、"这站登录了吗 / 这个选择器在不在"。随手开、随手关，**和采集完全无关**、也不绑定任何 facility。 |
 | **一个已经开着的 Chrome tab** | `'chrome:<tabId>'`（先用 `cdp_pages({target:'chrome'})` 认出 tabId） | 继续对一个刚才 `interactive:true` 开出来、或早就存在的 tab 动手/再看一眼。 |
 | **某个 facility 正在采集的那一页** | `'facility:<name>'` | 调**正在跑的采集**：账本和 DOM 为什么对不齐、`__INITIAL_STATE__` 里首屏那批到底长什么样、locate 看到的卡片是哪些。 |
-| **一个原生窗口**（不是网页） | `'desktop'`（当前最前面那个）或 `'app:<进程>[/<标题>]'` | 浏览器够不到的界面：`chrome://*` 这类特权页、桌面客户端（Telegram/夸克）、系统设置。走 Stream Desktop + a11y 树，不是 CDP。 |
+| **一个原生窗口**（不是网页） | `'desktop'`（当前最前面那个）、`'app:<进程>[/<标题>]'` 或 `'window:<id>'`（id 来自 `cdp_pages({target:'desktop'})`） | 浏览器够不到的界面：`chrome://*` 这类特权页、桌面客户端（Telegram/夸克）、系统设置。走 Stream Desktop + a11y 树，不是 CDP。 |
 
 > `facility:<name>` 一度写作 `cloak:<name>`（那时 facility 的采集 tab 开在 Stream 自带的 CloakBrowser 里）。那个浏览器已经退役，**这个别名也一并摘掉了**——现在写 `cloak:` 会以 `unknown target scheme 'cloak'` 报错。见到旧写法就改。
 
@@ -125,7 +125,7 @@ cdp_act({ target:'chrome:42', kind:'click', domain:'mp.weixin.qq.com', frame:'ga
 
 Chrome 窗口被盖住 / 最小化 / 锁屏时合成器不出帧，页面截图（`Page.captureScreenshot`）拿不到图。这时
 `cdp_shot({target:'chrome:<tabId>'})` 会**自动改走原生窗口档**截那扇 Chrome 窗（被盖住照样截得到），回执
-`{shot, via:'window', target:'app:chrome.exe/<窗口标题>', note}`。
+`{shot, via:'window', target:'window:<id>', note}`。
 
 - 那是**整扇窗**（标签栏 + 地址栏，物理像素），不是页面视口——**别拿图上的坐标去点页面**。
 - 只在这张标签是它那扇窗的**当前标签**时才回落（窗口截图只照得到当前标签；截到别的标签比截不到糟）；
@@ -221,7 +221,7 @@ shell 只知道"进程退了"，起没起来、起出了哪个窗口、是不是
 
 唤起那条 = `ensureApp`：**在跑就什么都不做**，不在跑才拉起来，而 `running`/`started` 是回读出来的
 事实（不是"我发过启动命令"）。`window` 只在**恰好能归因到一个新窗口**时才有——零个或多个都不带，
-指错一个比不给更坏；有它就直接拼 `app:<进程>/<标题>`，不用猜标题。
+指错一个比不给更坏；有它就直接用 `window:<它的 id>`，不用猜标题。
 
 ```
 cdp_act({ target:'app:Telegram.exe', kind:'open', domain:'desktop',
@@ -388,7 +388,7 @@ Measuring YouTube's card typography for a design task (title 16/500/lh22 #f1f1f1
 
 ---
 
-## `target:'desktop'` / `'app:<进程>[/<标题>]'`——一个原生窗口
+## `target:'desktop'` / `'app:<进程>[/<标题>]'` / `'window:<id>'`——一个原生窗口
 
 浏览器够不到的东西走这里：`chrome://extensions` 这类特权页（`chrome.debugger` 不能 attach
 `chrome://`）、桌面客户端、系统设置。底层是 **Stream Desktop** 的本机进程（源码
@@ -445,7 +445,7 @@ agent 同时连着 relay 抢活。
 
 | 动词 | 干什么 |
 |---|---|
-| `cdp_pages({target:'desktop'})` | 列窗口 `{id, process, title, foreground}`。**先认出目标再动手**——返回的字段就是为了让你直接拼出 `app:` 地址 |
+| `cdp_pages({target:'desktop'})` | 列窗口 `{id, process, title, pid, foreground}`。**先认出目标再动手**——拼 `app:<进程>/<标题>`；同进程同标题的窗不止一扇（两个 Chrome profile 各开一扇「扩展程序 - Google Chrome」）时标题怎么写都分不开，直接用 `window:<id>`。id = Windows 的 HWND / mac 的 CGWindowID，活到窗口关掉为止，**别写进 recipe** |
 | `cdp_look` | 读 a11y 树。`js` 在这一档是**一段 JSON 的 a11y query**（`{"role":"Button"}`），不是 JavaScript——原生窗口里没有 DOM 也没有 JS。回 `{window, value:[全部命中], unbuilt?}`，第三个字段见下 |
 | `cdp_shot` | 截图。**截的是那个窗口本身，不是屏幕**——被遮、在后台、锁屏都照样截回窗口真容（PrintWindow 命令窗口把内容画进离屏位图）。只有这条路失败才落回抓屏 |
 | `cdp_act` | 真点击/打字/滚动。`selector` 和 `expect` 同样是 JSON a11y query |
@@ -690,7 +690,7 @@ recipe 里 `nameContains` 同样吃 `{param}` 占位（「按名打开某个频�
 | `agent-disconnected` | Stream Desktop 没连——**整档不可用**，不是这次动作失败 | 起它 |
 | `desktop-locked` | 取不到前台，而前台归锁屏界面 | 解锁；**读和原生 invoke 都不受影响**，只有坐标输入受阻 |
 | `no-window-match` | 没有窗口匹配 | `cdp_pages` 看看到底有什么 |
-| `ambiguous-window` | 多个窗口都像，**不擅自选** | 报错里带候选标题，挑一个补进 `app:<进程>/<标题>` |
+| `ambiguous-window` | 多个窗口都像，**不擅自选** | 报错里每个候选带 `id=… 「标题」 进程 pid=…`：标题不同就补进 `app:<进程>/<标题>`，标题也一样就用 `window:<id>` |
 | `no-foreground-target` | 还没确立目标就要发输入 | 先 `cdp_act` 的定位那步 |
 | `foreground-lost` | 抢前台失败，**输入一个都没发出** | 别的窗口压着（UAC/置顶窗口）；提示用户手动切过去。可以直接重试 |
 | `foreground-lost-midway` | **打字打到一半**前台被抢走——后半截可能打进了别人的窗口 | **别直接重发**（会发两遍）。先去看目标应用的实际状态，再决定补发还是重来。常见抢屏者是刚被 `ensureApp` 拉起、几秒后才夺焦的 Chrome |

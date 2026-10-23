@@ -132,6 +132,10 @@ export interface ReadSpec {
 
 /** Which app/window to focus (the desktop analogue of the browser Engine's `goto`). */
 export interface AppMatch {
+  /** 窗口 id（`windows()` 报出来的那个）。**给了就只认它**，process/title 一概不看——同进程、
+   *  同标题的两扇窗（两个 Chrome profile 各开一扇「扩展程序」）只有它分得开。只活到窗口关掉，
+   *  所以只给即时操作用，别写进 recipe。 */
+  id?: string
   process?: string
   windowClass?: string
   /** 窗口标题，**包含**匹配（不是全等——真实标题带动态前后缀，全等在活体上几乎必然落空）。
@@ -139,7 +143,7 @@ export interface AppMatch {
   title?: string
 }
 
-/** 一个可寻址的原生窗口。字段选得足以直接拼出 `app:<process>/<title>` 地址——
+/** 一个可寻址的原生窗口。字段选得足以直接拼出 `app:<process>/<title>` 或 `window:<id>` 地址——
  *  枚举的用途就是"认出目标再动手"，一份认不出目标的清单等于没有。 */
 export interface WindowInfo {
   id: string
@@ -150,6 +154,8 @@ export interface WindowInfo {
   platform?: 'win32' | 'darwin'
   /** 这个窗口所属应用的版本；读不到就缺席（老 agent 一律缺席）。 */
   appVersion?: string
+  /** 窗口所属进程的 pid；老 agent 不报。 */
+  pid?: number
 }
 
 /** 动作**之后**的回读判据（a11y 词汇下的 `expect`，对应浏览器侧 `cdp_act` 的选择器）。 */

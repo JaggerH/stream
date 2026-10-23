@@ -170,6 +170,26 @@ describe('makeCdpRouter', () => {
   })
 })
 
+describe('window:<id> 走原生窗口档', () => {
+  it('look / shot / act 都按 id 指名，不带 process/title', async () => {
+    const seen: unknown[] = []
+    const driver = {
+      windows: vi.fn(async () => []),
+      scopeWindow: vi.fn(async (m: unknown) => { seen.push(['scope', m]); return { id: '396088', process: 'chrome.exe', title: 't', foreground: false } }),
+      focusApp: vi.fn(async (m: unknown) => { seen.push(['focus', m]); return true }),
+      find: vi.fn(async () => ({ elements: [] })),
+      screenshot: vi.fn(async () => null),
+      type: vi.fn(async () => ({ via: 'coords' })),
+      withSession: async <T>(fn: () => Promise<T>) => fn(),
+    }
+    const r = makeCdpRouter({ ...deps(), desktop: () => driver as never })
+    await r.look({ target: 'window:396088', js: '{"role":"Button"}' })
+    await r.shot({ target: 'window:396088' })
+    await r.act({ target: 'window:396088', kind: 'type', domain: 'desktop', text: 'x' })
+    expect(seen).toEqual([['scope', { id: '396088' }], ['scope', { id: '396088' }], ['focus', { id: '396088' }]])
+  })
+})
+
 describe('cdp_shot chrome 档截不到帧 → 原生窗口截图', () => {
   const NO_FRAME = 'Page.captureScreenshot 在 1500ms 内没有回执：这个标签没有产出帧（Chrome 窗口没有真的显示在屏幕上——被盖住/最小化/锁屏都算）'
   function setup(tab: { active?: boolean; title?: string } = {}, windows = [
@@ -188,12 +208,13 @@ describe('cdp_shot chrome 档截不到帧 → 原生窗口截图', () => {
     return { d, driver, scoped }
   }
 
-  it('标签是那扇窗的当前标签 → 自动截那扇 Chrome 窗，回执说清是整窗、用的哪个 app: 地址', async () => {
+  it('标签是那扇窗的当前标签 → 自动截那扇 Chrome 窗，回执说清是整窗、用的哪个 window: 地址', async () => {
     const { d, driver, scoped } = setup()
     const r = makeCdpRouter({ ...d, desktop: () => driver as never })
     const out = await r.shot({ target: 'chrome:5' })
-    expect(out).toMatchObject({ shot: Buffer.from('WIN').toString('base64'), via: 'window', target: 'app:chrome.exe/游戏设置 - Google Chrome' })
-    expect(scoped).toEqual([{ process: 'chrome.exe', title: '游戏设置 - Google Chrome' }]) // 按整个窗口标题认，不是子串
+    expect(out).toMatchObject({ shot: Buffer.from('WIN').toString('base64'), via: 'window', target: 'window:w1' })
+    // 认窗按整个窗口标题（不是子串）；认准之后按 id 截——不再拿标题回头匹配一遍
+    expect(scoped).toEqual([{ id: 'w1' }])
   })
 
   it('标签不是当前标签 → 不回落（会截到别的标签），报错说先切过去', async () => {
@@ -215,7 +236,7 @@ describe('cdp_shot chrome 档截不到帧 → 原生窗口截图', () => {
       { id: 'w3', process: 'chrome.exe', title: '游戏设置 - Google Chrome', foreground: false },
     ])
     const r = makeCdpRouter({ ...d, desktop: () => driver as never })
-    await expect(r.shot({ target: 'chrome:5' })).rejects.toThrow(/不擅自挑/)
+    await expect(r.shot({ target: 'chrome:5' })).rejects.toThrow(/不擅自挑[\s\S]*window:w1[\s\S]*window:w3/)
   })
 
   it('别的截图失败原样冒出去，不去碰原生档', async () => {

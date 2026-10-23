@@ -184,7 +184,7 @@ export interface McpExtras {
     revokeAdjudication?: (runId: string) => Promise<unknown>
   }
   /** Unified CDP facade — one set of verbs over N transports; the operation carries its
-   *  `target` (chrome[:tabId] / facility:<name> / desktop / app:<process>[/<title>])。
+   *  `target` (chrome[:tabId] / facility:<name> / desktop / app:<process>[/<title>] / window:<id>)。
    *  见 cdp-router.ts。 */
   cdpLook?: (a: import('./cdp-router.ts').LookArgs) => Promise<unknown>
   cdpShot?: (a: { target: string }) => Promise<{ shot: string | null; via?: 'window'; target?: string; note?: string }>

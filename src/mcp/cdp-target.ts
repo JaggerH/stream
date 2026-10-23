@@ -1,5 +1,5 @@
 export interface CdpTarget {
-  scheme: 'chrome' | 'facility' | 'desktop' | 'app'
+  scheme: 'chrome' | 'facility' | 'desktop' | 'app' | 'window'
   address?: string
 }
 
@@ -15,7 +15,7 @@ export function parseAppAddress(address: string): { process: string; title?: str
   return title ? { process, title } : { process }
 }
 
-/** Parse a target URI: `chrome` | `chrome:<tabId>` | `facility:<name>` | `desktop` | `app:<process>`.
+/** Parse a target URI: `chrome` | `chrome:<tabId>` | `facility:<name>` | `desktop` | `app:<process>[/<title>]` | `window:<id>`.
  *  scheme = the terminal (which page), the part after `:` is the terminal-local address.
  *  Throws on an unknown scheme, a missing required address, or a forbidden address.
  *
@@ -37,12 +37,18 @@ export function parseCdpTarget(target: string): CdpTarget {
       return { scheme, address }
     case 'desktop':
       // 「现在屏幕上最前面那个窗口」。不接地址——要指名窗口就用 app:。
-      if (address) throw new Error(`target 'desktop' takes no address; name a window with app:<process>[/<title>]`)
+      if (address) throw new Error(`target 'desktop' takes no address; name a window with app:<process>[/<title>] or window:<id>`)
       return { scheme }
     case 'app':
       if (!address) throw new Error(`target 'app' needs a process, e.g. app:chrome.exe or app:chrome.exe/\u6269\u5c55\u7a0b\u5e8f`)
       return { scheme, address }
+    case 'window':
+      // 按 `cdp_pages({target:'desktop'})` 报出来的 id 指名一扇窗（Windows 是 HWND、mac 是
+      // CGWindowID）。同进程、同标题的两扇窗（两个 Chrome profile 各开一扇「扩展程序」）
+      // app: 怎么写都是歧义，只有 id 分得开。id 活到窗口关掉为止，**别写进 recipe**。
+      if (!address) throw new Error(`target 'window' needs a window id from cdp_pages({target:'desktop'}), e.g. window:396088`)
+      return { scheme, address }
     default:
-      throw new Error(`unknown target scheme '${scheme}'; known: chrome, facility, desktop, app`)
+      throw new Error(`unknown target scheme '${scheme}'; known: chrome, facility, desktop, app, window`)
   }
 }

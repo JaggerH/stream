@@ -255,7 +255,18 @@ API oracle).
 - Follow-ups: `ValuePattern` read + `from`-query in `readSubtree`, DPI/scaling calibration.
 
 **Driving it ad hoc** (no recipe): `cdp_look` / `cdp_shot` / `cdp_act` / `cdp_pages` with
-`target: 'desktop'` or `'app:<process>[/<title>]'`. See the `drive-live-ui` skill — including the
+`target: 'desktop'`, `'app:<process>[/<title>]'` or `'window:<id>'`. See the `drive-live-ui` skill — including the
 one trap that costs the most time: **UIA reading an element is not evidence that clicking it will
 land** (background tabs keep a live a11y tree; a locked desktop refuses input while reads keep
 working).
+
+**Picking a window: list, then target by id.** `cdp_pages({target:'desktop'})` (the `windows` op)
+returns `[{id, process, title, pid, foreground}]`. `id` is the OS window handle — the HWND in
+decimal on Windows, the CGWindowID on macOS (falling back to a session-local `win-N` when AX can't
+map the window) — and stays valid until that window closes. `app:<process>/<title>` matches by
+process name and title substring; when it matches more than one window the op fails with
+`ambiguous-window:` and lists every candidate as `id=… 「title」 process pid=…`. Two Chrome profiles
+each showing `扩展程序 - Google Chrome` share process *and* title, so no title can split them —
+address the one you want as `window:<id>`. On the wire that is `match: {id}`; an `id` wins over
+`process`/`title`, and an unknown id is `no-window-match` (it never falls back to title matching).
+Ids don't survive the window, so they belong in interactive calls, not in recipes.

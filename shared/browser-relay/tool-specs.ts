@@ -17,7 +17,7 @@
  * DSH 的参数格式都行。
  */
 
-/** 一档"面"。`desktop` 一档同时覆盖 `desktop` 与 `app:<process>` 两种写法（同一个 Stream Desktop）。 */
+/** 一档"面"。`desktop` 一档同时覆盖 `desktop` / `app:<process>` / `window:<id>` 三种写法（同一个 Stream Desktop）。 */
 export type CdpTier = 'chrome' | 'facility' | 'desktop'
 
 /** Stream 后端三档齐全。插件只传 `['chrome']`。 */
@@ -43,7 +43,7 @@ const COUNT_WORD = ['no', 'one', 'two', 'three', 'four'] as const
 const TARGET_FORM: Record<CdpTier, string> = {
   chrome: 'chrome:<tabId>',
   facility: 'facility:<name>',
-  desktop: 'desktop / app:<process>[/<title>]',
+  desktop: 'desktop / app:<process>[/<title>] / window:<id>',
 }
 
 /** 把若干句子接成一段：空串（= 这一档不在）直接掉出去，不留双空格。 */
@@ -57,7 +57,7 @@ const LOOK_BULLET: Record<CdpTier, string> = {
   facility:
     '• `facility:<name>` — the harvest tab Stream is driving for that facility (e.g. facility:xhs). {value:null, live:false} if it has no live tab.',
   desktop:
-    '• `desktop` / `app:<process>[/<title>]` — a NATIVE window (not a web page). `js` is then a JSON a11y query like {"role":"Button"}, NOT JavaScript — there is no DOM and no JS to run. Returns every match, so a name collision is visible (chrome://extensions has TWO buttons named 重新加载: the browser toolbar\'s and the extension card\'s). Reading only SCOPES to the window; it never steals focus. AN EMPTY RESULT IS NOT PROOF THE ELEMENT IS ABSENT: Chromium/Electron apps (QQ, VS Code, Discord…) build their a11y tree LAZILY — a window that isn\'t in the foreground answers every query with an empty array and no error. When that is the case the reply carries an extra `unbuilt` field explaining it; treat that read as NOT DONE (foreground the window and re-read — do not go rewrite the query), and treat an empty result WITHOUT `unbuilt` as a genuine absence. Qt/Win32 apps (Telegram, explorer) keep a full tree in the background, which is what makes unattended desktop harvest possible at all. Title match is a SUBSTRING and only needed to disambiguate — with several windows of one process, an unqualified app:<process> refuses and lists candidates rather than picking one.',
+    '• `desktop` / `app:<process>[/<title>]` / `window:<id>` — a NATIVE window (not a web page). `js` is then a JSON a11y query like {"role":"Button"}, NOT JavaScript — there is no DOM and no JS to run. Returns every match, so a name collision is visible (chrome://extensions has TWO buttons named 重新加载: the browser toolbar\'s and the extension card\'s). Reading only SCOPES to the window; it never steals focus. AN EMPTY RESULT IS NOT PROOF THE ELEMENT IS ABSENT: Chromium/Electron apps (QQ, VS Code, Discord…) build their a11y tree LAZILY — a window that isn\'t in the foreground answers every query with an empty array and no error. When that is the case the reply carries an extra `unbuilt` field explaining it; treat that read as NOT DONE (foreground the window and re-read — do not go rewrite the query), and treat an empty result WITHOUT `unbuilt` as a genuine absence. Qt/Win32 apps (Telegram, explorer) keep a full tree in the background, which is what makes unattended desktop harvest possible at all. Title match is a SUBSTRING and only needed to disambiguate — when an app: target matches several windows it refuses with `ambiguous-window` listing every candidate\'s id rather than picking one. Two windows can share process AND title (two Chrome profiles each showing 扩展程序 - Google Chrome), and then no title tells them apart: list with cdp_pages({target:\'desktop\'}) and address the one you want as `window:<id>` (the id wins over any process/title). An id lives as long as its window — use it for this session\'s calls, never write it into a recipe.',
 }
 
 /** 列条目的顺序：原生窗口那条极长，放在最后。`target` 一栏的枚举则按 `ALL_CDP_TIERS`
@@ -90,7 +90,7 @@ function shotDescription(has: (t: CdpTier) => boolean, tiers: readonly CdpTier[]
     `\`target\`: ${targets}${has('desktop') ? ' (native windows too)' : ''}.`,
     'Returns {shot} or {shot:null} if no frame came back.',
     has('desktop')
-      ? "A chrome tab whose window is covered/minimized/locked produces no page frame; then, if that tab is the one showing in its window, the shot falls back to the NATIVE window capture automatically and returns {shot, via:'window', target:'app:<process>/<window title>', note} — the WHOLE Chrome window (tab strip + address bar, physical pixels), so don't click by its coordinates. When it can't fall back the error says what to call instead."
+      ? "A chrome tab whose window is covered/minimized/locked produces no page frame; then, if that tab is the one showing in its window, the shot falls back to the NATIVE window capture automatically and returns {shot, via:'window', target:'window:<id>', note} — the WHOLE Chrome window (tab strip + address bar, physical pixels), so don't click by its coordinates. When it can't fall back the error says what to call instead."
       : 'A chrome tab whose window is covered/minimized/locked produces no frame and errors out — bring the window on screen and retry.',
   ])
 }
@@ -99,11 +99,11 @@ function shotDescription(has: (t: CdpTier) => boolean, tiers: readonly CdpTier[]
 /** 原生窗口那一整段。它讲的全是 a11y 树、前台、锁屏——没有 desktop 档时一句都不成立。 */
 const ACT_NATIVE_BLOCK =
   "ON A NATIVE WINDOW: `selector`/`expect` are JSON a11y queries, not CSS. Foreground is per-PATH, not blanket — check `via` in the result: a click that resolves to a native handle runs as `via:'invoke'` (no foreground needed, never steals the screen, works while locked); only the coordinate path (`via:'coords'` — handleless click, type, scroll) focuses the window first and is REFUSED (nothing dispatched) if the foreground can't be taken, because coordinate input is addressed to the screen and lands on whoever is on top. Locked desktop: reads and invoke work on ALREADY-materialized content, but a page never rendered this session has NO a11y subtree at all (find just comes back empty — not a gate; when the target window isn't in the foreground the not-found error appends an `a11y-unbuilt:` note saying so, otherwise a window screenshot showing a blank content area is the evidence). " +
-  'SELF-DRAWN APPS WITH NO A11Y TREE (WeChat 4.x exposes one Pane and nothing else): pass `x`+`y` (absolute screen pixels) with kind:\'click\' instead of a `selector` — a pure coordinate click that always takes the foreground first. `x`/`y` are LOGICAL pixels (SendInput space). Do NOT copy numbers straight off `cdp_shot`: on a HiDPI screen the `app:` screenshot is the physical-pixel top-left quarter of the window (200% scaling → divide shot coordinates by 2), so calibrate with one trial click. `expect` can\'t see anything in such an app, so confirm with another `cdp_shot`, using evidence that lands inside the captured quarter.'
+  'SELF-DRAWN APPS WITH NO A11Y TREE (WeChat 4.x exposes one Pane and nothing else): pass `x`+`y` (absolute screen pixels) with kind:\'click\' instead of a `selector` — a pure coordinate click that always takes the foreground first. `x`/`y` are LOGICAL pixels (SendInput space). Do NOT copy numbers straight off `cdp_shot`: on a HiDPI screen the `app:`/`window:` screenshot is the physical-pixel top-left quarter of the window (200% scaling → divide shot coordinates by 2), so calibrate with one trial click. `expect` can\'t see anything in such an app, so confirm with another `cdp_shot`, using evidence that lands inside the captured quarter.'
 
 /** 「起一个应用」那一整段——同样只属于原生窗口档。 */
 const ACT_LAUNCH_BLOCK =
-  "LAUNCH AN APP: the same kind:'open' on a NATIVE target (`app:<process>`, e.g. app:Telegram.exe — never bare `desktop`, since the process you are opening has no window yet by definition) runs ensureApp: already-running is a no-op, otherwise it is spawned and the outcome is READ BACK — {status:'done', result:{running,started,pid,process,window?}} where `window` is present only when exactly one new window could be attributed to it (feed it straight into an `app:<process>/<title>` address; absent means don't guess). Pass `exe` (full path, or a bare filename to go through PATH) for ANYTHING BUT CHROME — with `exe` omitted the agent hunts for Chrome in the usual install locations, so you would launch a browser instead — and pass `args:[]` too, since the default args are Chrome's own `--no-startup-window`. It does NOT steal the screen (z-order/focus/minimized state untouched) and does NOT pass the high-risk gate, same as opening a tab. Use this instead of starting the exe from a shell: a shell start has no receipt — whether it launched, whether an existing instance was reused, and which window appeared are all unknowable."
+  "LAUNCH AN APP: the same kind:'open' on a NATIVE target (`app:<process>`, e.g. app:Telegram.exe — never bare `desktop`, since the process you are opening has no window yet by definition) runs ensureApp: already-running is a no-op, otherwise it is spawned and the outcome is READ BACK — {status:'done', result:{running,started,pid,process,window?}} where `window` is present only when exactly one new window could be attributed to it (address it as `window:<id>` with its `id`; absent means don't guess). Pass `exe` (full path, or a bare filename to go through PATH) for ANYTHING BUT CHROME — with `exe` omitted the agent hunts for Chrome in the usual install locations, so you would launch a browser instead — and pass `args:[]` too, since the default args are Chrome's own `--no-startup-window`. It does NOT steal the screen (z-order/focus/minimized state untouched) and does NOT pass the high-risk gate, same as opening a tab. Use this instead of starting the exe from a shell: a shell start has no receipt — whether it launched, whether an existing instance was reused, and which window appeared are all unknowable."
 
 function actDescription(has: (t: CdpTier) => boolean, tiers: readonly CdpTier[]): string {
   const actable = tiers.map((t) => TARGET_FORM[t]).join(' / ')
@@ -144,7 +144,7 @@ function pagesDescription(has: (t: CdpTier) => boolean): string {
     'Enumerate (and for chrome, close) the addressable pages of a target.',
     '`target:"chrome"` lists the session-group tabs [{tabId,url,title,origin,active,openerTabId?,popup?}] — including tabs that a Stream-opened tab opened itself (`openerTabId` says which); pass `close:<tabId>` to close one (returns {closed}).',
     has('desktop') &&
-      '`target:"desktop"` lists NATIVE windows [{id,process,title,foreground}] — enough to build an `app:<process>/<title>` address, which is the point: identify the target before acting.',
+      '`target:"desktop"` lists NATIVE windows [{id,process,title,pid,foreground}] — identify the target before acting, then address it as `app:<process>/<title>` or, when that is ambiguous (same process and title twice), as `window:<id>` with the listed `id` (Windows: the HWND; macOS: the CGWindowID).',
     singlePage.length > 0 &&
       `${singlePage.join(' / ')} return${singlePage.length === 1 ? 's' : ''} their single managed page.`,
   ])

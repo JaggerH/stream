@@ -51,6 +51,14 @@ describe('desktop / app 两档', () => {
   })
 
   it('未知 scheme 的提示里列出全部六档，别让人猜', () => {
-    expect(() => parseCdpTarget('cloak:xhs')).toThrow(/desktop, app/)
+    expect(() => parseCdpTarget('cloak:xhs')).toThrow(/desktop, app, window/)
+  })
+
+  // 两个 Chrome profile 各开一扇「扩展程序 - Google Chrome」：进程、标题一字不差，
+  // app: 怎么写都是歧义——只有 windows 报出来的 id 分得开（2026-10-23 Windows 冒烟）。
+  it('window:<id> 按 id 指名一扇窗，id 必填', () => {
+    expect(parseCdpTarget('window:396088')).toEqual({ scheme: 'window', address: '396088' })
+    expect(parseCdpTarget('window:win-3')).toEqual({ scheme: 'window', address: 'win-3' })
+    expect(() => parseCdpTarget('window')).toThrow(/needs a window id/)
   })
 })

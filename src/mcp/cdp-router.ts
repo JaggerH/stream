@@ -38,7 +38,8 @@ export interface CdpRouter {
   pages(a: { target: string; close?: number }): Promise<unknown>
 }
 
-const isDesktop = (scheme: string): scheme is 'desktop' | 'app' => scheme === 'desktop' || scheme === 'app'
+const isDesktop = (scheme: string): scheme is 'desktop' | 'app' | 'window' =>
+  scheme === 'desktop' || scheme === 'app' || scheme === 'window'
 
 /** 扩展那句「Page.captureScreenshot 在 …ms 内没有回执：这个标签没有产出帧」——窗口不显示在屏幕上。 */
 const isNoFrame = (e: unknown): boolean => e instanceof Error && /captureScreenshot[\s\S]*没有产出帧/.test(e.message)
@@ -100,7 +101,7 @@ export function makeCdpRouter(deps: CdpRouterDeps): CdpRouter {
    * 比截不到糟得多。
    *
    * 回落的图是**整扇窗**（含标签栏、地址栏，物理像素），不是页面视口——回执带 `via:'window'` 与
-   * 用到的 `app:` 地址，调用方别拿图上的坐标去点页面。
+   * 用到的 `window:<id>` 地址，调用方别拿图上的坐标去点页面。
    *
    * 住在路由这层而不是共享库：原生窗口那一档只有 Stream 后端有，共享库那份（插件宿主）没有可回落的地方。
    */
@@ -123,11 +124,12 @@ export function makeCdpRouter(deps: CdpRouterDeps): CdpRouter {
         throw why(
           wins.length === 0
             ? `没找到标题是「${tab.title}」的 Chrome 窗口（窗口可能被最小化后改名，或标题刚变）——cdp_pages({target:'desktop'}) 看一眼再 ${hint}。`
-            : `有 ${wins.length} 扇 Chrome 窗标题都像「${tab.title}」，不擅自挑——cdp_pages({target:'desktop'}) 认出那一扇再截。`,
+            : `有 ${wins.length} 扇 Chrome 窗标题都像「${tab.title}」，不擅自挑——认出那一扇再按 id 截：${wins.map((w) => `cdp_shot({target:'window:${w.id}'})${w.pid ? `（pid ${w.pid}）` : ''}`).join('、')}。`,
         )
       }
       const w = wins[0]!
-      return { target: `app:${w.process}/${w.title}`, shot: await desktopShot(d, { process: w.process, title: w.title }) }
+      // 认准之后按 id 截：再拿标题回头匹配一遍，碰上别的 profile 开着同名窗就成了歧义
+      return { target: `window:${w.id}`, shot: await desktopShot(d, { id: w.id }) }
     })
     return {
       shot: shot.shot,

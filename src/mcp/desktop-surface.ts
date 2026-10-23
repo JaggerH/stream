@@ -6,18 +6,24 @@ import type { ActionSpec } from '../replay/interactive-gate.ts'
 /** 原生窗口这一档的四个动词。浏览器那三档各有各的现成实现，桌面这档集中在这里，
  *  免得 `cdp-router` 变成一个四档 × 四动词的大 switch。 */
 
-/** `desktop` = 当前前台窗口（不指名）；`app:<process>[/<title>]` = 指名一个。 */
-export function desktopMatch(scheme: 'desktop' | 'app', address?: string): AppMatch | null {
+/** `desktop` = 当前前台窗口（不指名）；`app:<process>[/<title>]` = 按进程/标题指名；
+ *  `window:<id>` = 按 id 指名（agent 那边 id 一给就只认 id）。 */
+export function desktopMatch(scheme: 'desktop' | 'app' | 'window', address?: string): AppMatch | null {
   if (scheme === 'desktop') return null // 不指名 → 用前台那个
+  if (scheme === 'window') return { id: address ?? '' }
   const { process, title } = parseAppAddress(address ?? '')
   return { process, ...(title ? { title } : {}) }
 }
 
-/** 前台窗口对应的 AppMatch——`desktop` 档要先问"现在最前面是谁"，才能把范围限定过去。 */
+/** 前台窗口对应的 AppMatch——`desktop` 档要先问"现在最前面是谁"，才能把范围限定过去。
+ *
+ *  **按 id 指名**：拿 process+title 回头再匹配，碰上另一扇同标题的窗（两个 Chrome profile）
+ *  就变成 ambiguous-window——明明已经知道是哪一扇。process/title 也带着，只为老 agent（不认 id
+ *  的那版会忽略这一格，退回按标题匹配）。 */
 async function foregroundMatch(d: DesktopDriver): Promise<AppMatch> {
   const fg = (await d.windows()).find((w) => w.foreground)
   if (!fg) throw new DesktopUnavailable('no-window-match', 'no-window-match: 当前没有前台窗口')
-  return { process: fg.process, title: fg.title }
+  return { id: fg.id, process: fg.process, title: fg.title }
 }
 
 const resolveMatch = async (d: DesktopDriver, m: AppMatch | null) => m ?? (await foregroundMatch(d))
