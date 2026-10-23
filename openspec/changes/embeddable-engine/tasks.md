@@ -1,8 +1,8 @@
 ## 0. 调研
 
-- [ ] 0.1 清点 `serve.ts` 的装配块：哪些属于实例、哪些属于 HTTP、哪些属于进程；列出全部 `process.env` 读取点与归属
-- [ ] 0.2 spike：sidequest 能否实例化（多个引擎 / 多个账本同进程）；不能则评估在 `SidequestFacade` 后换进程内实现的工作量（定 D5 走 A 还是 B）
-- [ ] 0.3 复核 design Context 4 的模块级状态清单，补上闭包里与第三方库的单例
+- [x] 0.1 清点 `serve.ts` 的装配块：哪些属于实例、哪些属于 HTTP、哪些属于进程；列出全部 `process.env` 读取点与归属
+- [x] 0.2 spike：sidequest 能否实例化（多个引擎 / 多个账本同进程）；不能则评估在 `SidequestFacade` 后换进程内实现的工作量（定 D5 走 A 还是 B）
+- [x] 0.3 复核 design Context 4 的模块级状态清单，补上闭包里与第三方库的单例
 
 ## 1. 库入口骨架
 

@@ -7,7 +7,7 @@
    面板资源、ws 推送等，并且读了 9 处环境变量。
 3. **持久状态已经按数据目录走。** 约 25 个 store 各自 `new Database(dbPath)`，路径都从 `resolveDataDir(config)` 推出；
    settings、cookie 快照、缓存也在数据目录下。换一个数据目录就是换一套状态——不需要给每张表加租户列。
-4. **模块级状态清单**（`grep -E '^(export )?(let|var) '` 与模块级 `new Map/Set`，排除常量表）：
+4. **模块级状态清单**（补遗见附录 B；`grep -E '^(export )?(let|var) '` 与模块级 `new Map/Set`，排除常量表）：
 
    | 类别 | 文件 | 处置 |
    |---|---|---|
@@ -103,6 +103,31 @@ createRuntime({ log }) → { rsshub, sandbox, chrome, signals, close() }
 倾向 **B**，前提是 spike 确认可行（任务 0.2）：实例的状态应该完整地待在实例的数据目录里，否则备份、迁移、删除一个实例都要
 多处收拾。spike 不通再退到 A，并把账本路径写进 D2 的例外。
 
+**结论（0.2，sidequest 1.16.2）：走 B，但不必自己重写引擎——绕开静态门面，按实例组装 sidequest 已导出的下层零件。**
+
+- 静态门面确实不能实例化。`Sidequest.engine` 是一个静态 `Engine`，而 `Engine` 本身也不是实例隔离的：配置与 backend 存在
+  `@sidequest/engine` 的**模块级** `dependencyRegistry` 里；`Engine.configure()` 见到已有配置就直接返回（"already configured"）；
+  `Engine.close()` 调 `ScheduledJobRegistry.stopAll()`（静态表，摘掉进程里**所有** cron）、`dependencyRegistry.clear()`、
+  `clearGracefulShutdown()`（`process.removeAllListeners('SIGINT' / 'SIGTERM')`，连宿主自己的信号处理也一起摘）。
+  实测：两个 `new Engine()` 各配一个账本，第二个**静默沿用第一个的账本**（两条 job 都落进 a.sqlite，b.sqlite 根本没建）；
+  关掉第一个之后第二个 `build()` 抛 `Engine not configured`。
+- 下层零件是实例化的：`LazyBackend(config.backend)`、`WorkerRuntime(backend, config)`（派发器 + 执行器 + 两个维护 cron，全挂在
+  实例上）、`new JobBuilder(backend, JobClass, defaults, manualJobResolution)`，都从 `sidequest` 包导出，构造时显式收 backend，
+  不碰 `dependencyRegistry`。inline runner 在宿主进程里跑 job 时不重注配置（`runner.js` 的 `inline` 分支）。
+  实测：A、B 各自一套零件 + 各自账本，同名任务 `unique({withArgs:true})` 互不去重（各落各的账本）；关 A 之后 B 的 cron 照常触发。
+- job → 实例的路由：job 类由 jobs 文件按类名解析、无参构造，拿不到实例。用 `JobBuilder.with(instanceKey)` 把实例键写进
+  `constructor_args`（落账），job 运行时按键查进程级路由表取那个实例的注册表与 deps。`args` 仍是 `[taskId]`，所以
+  `orphan-sweep.ts` / `run-history.ts` / watchdog 的账本查询一字不改；旧账本里 `constructor_args = []` 的行路由到唯一实例
+  （单实例时与今天等价）。
+- 要自己接手的：建库迁移（`backend.migrate()`）、静态队列 `grantQueueConfig`、关停顺序（我们的 cron 句柄 → `WorkerRuntime.shutdown()`
+  → `backend.close()`），**绝不调 `Engine.close()`**。`ScheduledJobRegistry` 的静态表仍会登记 `b.schedule()` 建的 cron——我们自己
+  `destroy()`，表里只剩已停句柄的引用（泄漏引用，不触发）；`whenBusy: 'skip'` 那档本来就自持 node-cron，不受影响。
+  日志（`configureLogger`）是进程级的，留给 runtime。dashboard（8678）是 HTTP，归调用方。
+- 工作量：`center.ts` 的模块级状态整体收进一个 `TaskCenter` 类（每实例一个），`realFacade` 换成上面那套组装，
+  `StreamTaskJob` 加一个构造参数。uniqueness / 补跑 / 代际语义都还是 sidequest backend 与现有代码在做，不重写。
+- 顺带发现（今天的单实例就有）：`startTaskCenter` 没传 `gracefulShutdown: false`，sidequest 自己在 SIGINT/SIGTERM 上挂了
+  「关引擎 → `process.exit(0)`」，与 `serve.ts` 的 `shutdownThen` 竞速；换成组装式之后这条自然消失。
+
 ### D6. 模块级状态归实例的方式
 
 - **能从内核取的就从内核取**：钩子类状态（`setXxxSource(fn)` 形状）改成域服务上的方法，调用点从 `ctx` 拿。
@@ -129,3 +154,78 @@ createRuntime({ log }) → { rsshub, sandbox, chrome, signals, close() }
 
 - 无数据迁移。`stream serve` 的命令行、环境变量、端口、数据目录布局不变。
 - 搬迁期间 `serve.ts` 与 `createStream` 并存一段，按块迁，每块一个提交，main 始终可发布。
+
+## 附录 A：`serve.ts` 装配块清点（任务 0.1）
+
+归属：**实例** = 进 `createStream`；**HTTP** = 留在调用方（`serve.ts` / `routes(app)`）；**进程** = 进 `StreamRuntime` 或留在进程入口。
+
+| 块（`main()` 里的先后） | 归属 | 备注 |
+|---|---|---|
+| `acquireLock` / `releaseLock`（`stream-serve.pid`） | 进程 | serve 的防双开；实例另有数据目录锁（D2） |
+| `createKernel` | 实例 | |
+| `installProcessGuards` | 进程 | 通知经 lazy thunk 取实例的事件层 |
+| `loadConfig()` | 进程 | env → config 的翻译点 |
+| ext token / api token（`loadOrCreate*Token`） | 实例 | 落数据目录；消费方是 HTTP 访问守卫与三条中继 |
+| `DeviceStore` / `ExtBindingStore` / `FacilityDeviceStore` / `NodeStore` / `SiteIdentityStore` | 实例 | D1 的 `devices`；前三个今天不关库 |
+| `WsHub` | HTTP | 实例经 `broadcast` / `onItem` 回调往外推 |
+| `DebugLog` + 失败落盘 | 实例 | 推 ws 那半是 HTTP |
+| `OpTracker` / `startLoopLagMonitor` | 进程 | 实例收 `track` / `trackSync` |
+| `createCapabilityHost` + `BROWSER_COOKIE_SERVICE` + `loadOptionalCapabilities` | 实例 | |
+| `bootstrap()` | 实例 | |
+| `installFetchFor` | 实例 | 今天写模块级 `impl`（附录 B） |
+| `installGlobalFetchTrap` | 进程 | 改写 `globalThis.fetch` |
+| 下载队列 / 库存变更 → ws 广播、enrich / 登录两条 ws 命令 | HTTP | |
+| `actionRun`、扩展物化 / 代装 / 卸载 / 重载 | 实例 | 只有 HTTP 在调；随 D3 的工具接口再定 |
+| `restart`（`classifyLauncher(process.env)`） | 进程 | |
+| `createHttpApp` + 各 `mount*`（MCP、config rows、live、research、local recipes、生图、skills、设备、身份、扩展绑定、节点、任务、源健康、介入、面板、任务面板、插件网关、独立页） | HTTP | 其中 `LiveStreamService`、`SourceHealthIndex`、`ProfileClaims` 的构造是实例对象，只被路由用 |
+| `TaskStore` / `RunLedger` / 包动作名录 / `compileOpts` | 实例 | |
+| `markInterruptedAtBoot`（介入） | 实例 | |
+| research watchers | 实例 | 推 ws 那半是 HTTP |
+| standby 接线（`wireStandby`，模块级 hook） | 实例 | 读 `STREAM_PLUGIN_NETWORK` |
+| `serve()` 监听 + `attachWs` + 三条中继 attach | HTTP | 中继的注册表是实例的 |
+| `mountHostAgent`（养 Stream Desktop 本机进程） | 进程 | 要 `baseUrl`；一台机器一个 |
+| `scheduler.start()`（`maybeStartScheduler`） | 实例 | 开关今天是 `STREAM_NO_SCHEDULER` |
+| 调度中心（`taskDeps` + `startTaskCenter`） | 实例 | 见 D5 |
+| `reportUnboundHooks` | 实例 | |
+| `shutdownThen` 与信号 | 进程 | 关停本体（停任务中心、standby、`quiesceKernel`）是实例的 `close()` |
+
+### `process.env` 读取点（从 `bootstrap.ts` + `serve.ts` 静态可达）
+
+| 位置 | 变量 | 归属 |
+|---|---|---|
+| `serve.ts` | `STREAM_PORT`、`STREAM_DATA_DIR`（pid 锁）、`STREAM_OP_RING`、`STREAM_LOOP_PROFILE`、`STREAM_TRUSTED_ORIGINS`、`classifyLauncher(env)`、`VITEST` | 进程 / HTTP，留在 serve |
+| `serve.ts` | `STREAM_NO_SCHEDULER`、`STREAM_RECIPE_UPDATE_CHECK` | 实例开关 → config |
+| `bootstrap.ts` `loadConfig` | `STREAM_CONFIG`、`STREAM_DATA_DIR`、`STREAM_MANAGE_CONTAINERS`、`AUDIO_ARCHIVE_ROOT` | env → config 翻译，移出库入口可达范围 |
+| `bootstrap.ts` | `STREAM_DESKTOP_SEE_MODEL` | 实例开关 → config |
+| `kernel/plugins/agent.ts` | `STREAM_SEARCH_TEXT_FOLD`、`STREAM_SEARCH_SEMANTIC_FOLD` | 实例开关 → config |
+| `kernel/plugins/conversions.ts` | `VOICEPRINT_URL` | 实例 → config |
+| `kernel/plugins/credentials.ts`、`credentials/token-provider.ts`、`kernel/plugins/runtime-config.ts` | 整个 env（BYOK 回落表） | 实例：部署环境显式传入 |
+| `plugins/plugin-target.ts`、`plugins/standby/wire.ts`、`plugins/gateway.ts` | `STREAM_PLUGIN_NETWORK`、`STREAM_GATEWAY_PORT` | 实例 → config（gateway 是 HTTP） |
+| `docparse/client.ts`、`voiceprint/engine-client.ts` | `MINERU_URL`、`VOICEPRINT_URL` | 实例；客户端深处的回落，改成调用方传 |
+| `packages/container-ops.ts`、`plugins/deprovision.ts`、`plugins/provision-wire.ts` | `DOCKER_HOST` 等（`resolveDockerEndpoint`） | 进程 |
+| `rsshub-client.ts`、`rsshub-worker-log.ts` | `RSSHUB_PKG`、`CACHE_TYPE`、子进程 env、`RSSHUB_WORKER_LOG_PATH` | 进程（RSSHub worker，D4） |
+| `browser/discover-chrome.ts` | `PATH` | 进程（Chrome 发现，D4） |
+| `media/ffmpeg-bin.ts`、`intervention/acp-client.ts`、`tasks/exec-runner.ts`、`restart/policy.ts`、`capabilities/desktop` | 子进程继承 env | 进程 |
+| `replay/desktop-driver.ts`、`replay/desktop-see.ts` | `STREAM_DESKTOP_SEE_TRACE` | 实例开关 → config |
+| `replay/desktop-runner.ts` | `desktopStatusEnabled(env)` | 实例开关 → config |
+| `replay/recipe-probe.ts` | `RECIPE_PROBE` | 实例开关 → config |
+| `replay/recipe-registry.ts` | `STREAM_NPM_REGISTRY` | 实例 → config |
+| `host-agent/mount.ts` | `hostAgentSkipReason(env)` | 进程 |
+| `packages/Douyin_TikTok_Download_API`、`packages/pansou` | `DOUYIN_API_URL`、`PANSOU_URL` | 包代码；应改走 `ctx.backendUrl` / runtime config |
+
+剩余的由 `src/engine/no-process-env.guard.test.ts` 的白名单逐条钉住（只减不增）。
+
+## 附录 B：模块级状态复核（任务 0.3）
+
+Context 4 那张表之外补上的：
+
+| 类别 | 位置 | 处置 |
+|---|---|---|
+| 调度中心 | `tasks/center.ts` 的 `idQueues`（每 taskId 串行链） | 归实例（随 `TaskCenter` 类） |
+| 来源钩子 | `providers/identities.ts` 的 `callsiteDefaults`、`plugins/plugin-target.ts` 的 `missReporter` | 归实例 |
+| 媒体缓存 | `video/dash.ts` `seenSegHosts`（分片主机白名单 + 头，90 分钟） | 归实例：一个实例放行的主机不该让另一个实例的代理也放行 |
+| 只读可共享 | `media/ffmpeg-bin.ts` `resolved`（ffmpeg 可执行文件解析结果） | 进 runtime / 保留 |
+| 进程全局改写 | `devices/global-fetch-trap.ts`（改 `globalThis.fetch`）、`http/owned-outbound.ts`（快照原始 fetch）、`process-guard.ts`、`load-env.ts`（往 `process.env` 灌 `.env`） | 进程：留在入口，库入口不做 |
+| 每次调用的上下文 | `devices/run-context.ts`、`http/host-relay.ts` 的 `AsyncLocalStorage` | 可共享：值按调用走，不按实例 |
+| 第三方单例：sidequest | `dependencyRegistry`（配置 + backend）、`ScheduledJobRegistry`（静态 cron 表）、`gracefulShutdown`（SIGINT/SIGTERM 监听，`close` 时 `removeAllListeners`）、`configureLogger` | 见 D5：绕开 `Engine`，只用实例化零件；日志归 runtime |
+| 第三方单例：RSSHub | 内嵌 RSSHub 的 request-rewriter 改写全局 `fetch` / `node:http` | 进程（D4 的 RSSHub worker） |
