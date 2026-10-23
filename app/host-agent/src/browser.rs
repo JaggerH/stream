@@ -23,7 +23,13 @@ pub struct ProfilesSpec {
     /// 显式指定用户数据目录。给了就不推断——用户用 `--user-data-dir` 起过另一份 Chrome 时用得上。
     #[serde(default, rename = "userDataDir")]
     pub user_data_dir: Option<String>,
+    /// 看哪个扩展装没装。缺省 = Stream 扩展（`STREAM_EXTENSION_ID`）。
+    #[serde(default, rename = "extensionId")]
+    pub extension_id: Option<String>,
 }
+
+/// Stream 扩展的固定 id（扩展清单里的 `key` 派生，unpacked 装载也不变）。
+pub const STREAM_EXTENSION_ID: &str = "dmhlfkdjljnilhnfajjpaobehenbokij";
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -37,6 +43,10 @@ pub struct ProfileInfo {
     pub gaia_email: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub gaia_name: Option<String>,
+    /// 这个 profile 里装着并启用了 Stream 扩展。两份偏好文件都读不出来时缺席（不知道，不是没装）。
+    /// 面板据此只给装了的 profile 开认领页——没装的开出来只是一扇打不开的窗。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub has_extension: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -140,6 +150,7 @@ pub fn parse_local_state(user_data_dir: &str, text: &str) -> Result<Profiles, St
             name: non_empty(info.get("name")).unwrap_or_else(|| dir.clone()),
             gaia_email: non_empty(info.get("user_name")),
             gaia_name: non_empty(info.get("gaia_name")),
+            has_extension: None,
         })
         .collect();
     profiles.sort_by_key(|p| sort_key(&p.dir));
@@ -151,8 +162,52 @@ pub fn parse_local_state(user_data_dir: &str, text: &str) -> Result<Profiles, St
     Ok(Profiles { user_data_dir: user_data_dir.to_string(), profiles, last_active })
 }
 
-/// `browser.profiles`：定位用户数据目录、读 `Local State`、解析。只读，Chrome 开着也能读
-/// （Chrome 写它是先写临时文件再改名，读不到半份）。
+/// 一份偏好文件里 `extensions.settings.<id>` 怎么说：`Ok(None)` = 没有这一项，`Ok(Some(启用))`，
+/// `Err` = 不是 JSON（当作读不到）。
+///
+/// 停用的判法（新旧 Chrome 都写过）：`disable_reasons` 是非空数组或非零位掩码，或老式的 `state: 0`。
+/// unpacked 装载是 `location: 4` 带 `path`，商店装的是别的 `location`——都算装了，不看来源。
+pub fn extension_entry(text: &str, id: &str) -> Result<Option<bool>, ()> {
+    let v: Value = serde_json::from_str(text).map_err(|_| ())?;
+    let Some(e) = v.get("extensions").and_then(|x| x.get("settings")).and_then(|x| x.get(id)) else {
+        return Ok(None);
+    };
+    let disabled_by_reasons = match e.get("disable_reasons") {
+        Some(Value::Array(a)) => !a.is_empty(),
+        Some(Value::Number(n)) => n.as_u64() != Some(0),
+        _ => false,
+    };
+    let disabled_by_state = e.get("state").and_then(|s| s.as_u64()) == Some(0);
+    Ok(Some(!(disabled_by_reasons || disabled_by_state)))
+}
+
+/// 这个 profile 里装没装扩展。先读 `Secure Preferences`（Windows / macOS 把扩展记在这里，2026-10-23
+/// Cortana 实测），没有这一项再读 `Preferences`（Linux 记在这里）。两份都读得到、都没有这一项 = 没装；
+/// 两份都读不到 = 不知道。profile 目录名带分隔符就不读：拼出来的路径会出用户数据目录。
+fn profile_has_extension(
+    dir: &str,
+    profile: &str,
+    sep: char,
+    id: &str,
+    read: &mut dyn FnMut(&Path) -> std::io::Result<String>,
+) -> Option<bool> {
+    if profile.is_empty() || profile.contains(['/', '\\', '\0']) || profile == "." || profile == ".." {
+        return None;
+    }
+    let mut readable = false;
+    for file in ["Secure Preferences", "Preferences"] {
+        let path = PathBuf::from(format!("{dir}{sep}{profile}{sep}{file}"));
+        match read(&path).ok().map(|t| extension_entry(&t, id)) {
+            Some(Ok(Some(enabled))) => return Some(enabled),
+            Some(Ok(None)) => readable = true,
+            _ => {}
+        }
+    }
+    readable.then_some(false)
+}
+
+/// `browser.profiles`：定位用户数据目录、读 `Local State`、解析，再逐个 profile 看扩展装没装。只读，Chrome
+/// 开着也能读（Chrome 写这些文件是先写临时文件再改名，读不到半份）。
 pub fn profiles(
     spec: &ProfilesSpec,
     os: &str,
@@ -164,7 +219,8 @@ pub fn profiles(
         None => default_user_data_dir(os, flavour_of(spec.exe.as_deref()), env)?,
     };
     let sep = if os == "windows" { '\\' } else { '/' };
-    let file = PathBuf::from(format!("{}{sep}Local State", dir.trim_end_matches(['/', '\\'])));
+    let root = dir.trim_end_matches(['/', '\\']).to_string();
+    let file = PathBuf::from(format!("{root}{sep}Local State"));
     let text = read(&file).map_err(|e| {
         if e.kind() == std::io::ErrorKind::NotFound {
             format!("local-state-missing: {} 不存在——Chrome 没装在默认位置？传 `userDataDir` 指明", file.display())
@@ -172,7 +228,12 @@ pub fn profiles(
             format!("local-state-unreadable: 读 {} 失败（{e}）", file.display())
         }
     })?;
-    parse_local_state(&dir, &text)
+    let mut list = parse_local_state(&dir, &text)?;
+    let id = spec.extension_id.as_deref().filter(|i| !i.is_empty()).unwrap_or(STREAM_EXTENSION_ID);
+    for p in &mut list.profiles {
+        p.has_extension = profile_has_extension(&root, &p.dir, sep, id, read);
+    }
+    Ok(list)
 }
 
 /// `browser.claim` 的入参。
@@ -278,7 +339,7 @@ mod tests {
         let p = parse_local_state("/u", LOCAL_STATE).unwrap();
         let dirs: Vec<&str> = p.profiles.iter().map(|x| x.dir.as_str()).collect();
         assert_eq!(dirs, vec!["Default", "Profile 2", "Profile 10", "Guest Profile"]);
-        assert_eq!(p.profiles[0], ProfileInfo { dir: "Default".into(), name: "工作".into(), gaia_email: Some("w@example.com".into()), gaia_name: Some("Work".into()) });
+        assert_eq!(p.profiles[0], ProfileInfo { dir: "Default".into(), name: "工作".into(), gaia_email: Some("w@example.com".into()), gaia_name: Some("Work".into()), has_extension: None });
         // 空串 = 没登录 Chrome，不带这两格
         assert_eq!(p.profiles[2].gaia_email, None);
         assert_eq!(p.profiles[2].gaia_name, None);
@@ -320,7 +381,7 @@ mod tests {
             Ok(LOCAL_STATE.to_string())
         })
         .unwrap();
-        assert_eq!(seen, vec![r"C:\L\Google\Chrome\User Data\Local State"]);
+        assert_eq!(seen[0], r"C:\L\Google\Chrome\User Data\Local State");
         assert_eq!(p.user_data_dir, r"C:\L\Google\Chrome\User Data");
         assert_eq!(p.profiles.len(), 4);
     }
@@ -329,7 +390,7 @@ mod tests {
     fn an_explicit_user_data_dir_wins() {
         let mut seen = Vec::new();
         profiles(
-            &ProfilesSpec { user_data_dir: Some("/opt/u/".into()), exe: Some("/usr/bin/chromium".into()) },
+            &ProfilesSpec { user_data_dir: Some("/opt/u/".into()), exe: Some("/usr/bin/chromium".into()), ..Default::default() },
             "linux",
             &env_of(&[]),
             &mut |path| {
@@ -338,7 +399,7 @@ mod tests {
             },
         )
         .unwrap();
-        assert_eq!(seen, vec!["/opt/u/Local State"]);
+        assert_eq!(seen[0], "/opt/u/Local State");
     }
 
     #[test]
@@ -348,6 +409,102 @@ mod tests {
         })
         .unwrap_err();
         assert!(e.starts_with("local-state-missing:") && e.contains("userDataDir"), "{e}");
+    }
+
+    const EXT: &str = "dmhlfkdjljnilhnfajjpaobehenbokij";
+
+    /// Windows 真机（2026-10-23 Cortana）`Secure Preferences` 里的那一项，删到只剩判定用得上的几格。
+    fn prefs_with(entry: &str) -> String {
+        format!(r#"{{"extensions":{{"settings":{{"aaaabbbbccccddddeeeeffffgggghhhh":{{"state":1}},"{EXT}":{entry}}}}}}}"#)
+    }
+
+    #[test]
+    fn an_unpacked_install_counts_as_installed() {
+        let e = r#"{"location":4,"path":"\\\\wsl.localhost\\Ubuntu\\x\\data\\extension","creation_flags":38,"from_webstore":false,
+            "granted_permissions":{"explicit_host":["<all_urls>"]},"active_permissions":{"explicit_host":["<all_urls>"]}}"#;
+        assert_eq!(extension_entry(&prefs_with(e), EXT), Ok(Some(true)));
+        // 新版 Chrome 写空的 disable_reasons 数组：照样是启用
+        assert_eq!(extension_entry(&prefs_with(r#"{"location":4,"path":"x","disable_reasons":[]}"#), EXT), Ok(Some(true)));
+        assert_eq!(extension_entry(&prefs_with(r#"{"location":1,"state":1}"#), EXT), Ok(Some(true)));
+    }
+
+    #[test]
+    fn a_disabled_install_counts_as_not_installed() {
+        for e in [r#"{"location":4,"path":"x","disable_reasons":[1]}"#, r#"{"location":4,"path":"x","disable_reasons":1}"#, r#"{"location":4,"path":"x","state":0}"#] {
+            assert_eq!(extension_entry(&prefs_with(e), EXT), Ok(Some(false)), "{e}");
+        }
+    }
+
+    #[test]
+    fn no_entry_is_absent_and_bad_json_is_unreadable() {
+        assert_eq!(extension_entry(r#"{"extensions":{"settings":{}}}"#, EXT), Ok(None));
+        assert_eq!(extension_entry(r#"{"profile":{}}"#, EXT), Ok(None));
+        assert!(extension_entry("not json", EXT).is_err());
+    }
+
+    /// 每个 profile 先读 `Secure Preferences`（Windows / macOS 把扩展记在这里），没有这一项再读 `Preferences`（Linux）。
+    #[test]
+    fn profiles_report_the_extension_per_profile() {
+        let files: HashMap<String, String> = [
+            ("/u/Local State", LOCAL_STATE.to_string()),
+            ("/u/Default/Secure Preferences", prefs_with(r#"{"location":4,"path":"x"}"#)),
+            ("/u/Profile 2/Secure Preferences", r#"{"extensions":{"settings":{}}}"#.to_string()),
+            ("/u/Profile 2/Preferences", prefs_with(r#"{"location":4,"path":"x","disable_reasons":[1]}"#)),
+            ("/u/Profile 10/Preferences", r#"{"extensions":{"settings":{}}}"#.to_string()),
+            // Guest Profile：两份都读不到 → 不知道
+        ]
+        .into_iter()
+        .map(|(k, v)| (k.to_string(), v))
+        .collect();
+        let p = profiles(&ProfilesSpec { user_data_dir: Some("/u".into()), ..Default::default() }, "linux", &env_of(&[]), &mut |path| {
+            files.get(&path.to_string_lossy().into_owned()).cloned().ok_or_else(|| std::io::Error::from(std::io::ErrorKind::NotFound))
+        })
+        .unwrap();
+        let got: Vec<(&str, Option<bool>)> = p.profiles.iter().map(|x| (x.dir.as_str(), x.has_extension)).collect();
+        assert_eq!(got, vec![("Default", Some(true)), ("Profile 2", Some(false)), ("Profile 10", Some(false)), ("Guest Profile", None)]);
+        let j = serde_json::to_value(&p).unwrap();
+        assert_eq!(j["profiles"][0]["hasExtension"], true);
+        assert!(j["profiles"][3].get("hasExtension").is_none(), "{j}");
+    }
+
+    #[test]
+    fn profiles_check_the_extension_id_they_are_given_and_use_windows_separators() {
+        let mut seen = Vec::new();
+        let p = profiles(
+            &ProfilesSpec { user_data_dir: Some(r"C:\U".into()), extension_id: Some("otherid".into()), ..Default::default() },
+            "windows",
+            &env_of(&[]),
+            &mut |path| {
+                let k = path.to_string_lossy().into_owned();
+                seen.push(k.clone());
+                if k.ends_with("Local State") {
+                    Ok(r#"{"profile":{"info_cache":{"Default":{"name":"A"}}}}"#.to_string())
+                } else {
+                    Ok(prefs_with(r#"{"location":4,"path":"x"}"#))
+                }
+            },
+        )
+        .unwrap();
+        assert_eq!(seen, vec![r"C:\U\Local State", r"C:\U\Default\Secure Preferences", r"C:\U\Default\Preferences"]);
+        assert_eq!(p.profiles[0].has_extension, Some(false), "装的是我们的扩展，不是 otherid");
+    }
+
+    /// `Local State` 里的键带分隔符就不拼路径去读——那会读到用户数据目录之外。
+    #[test]
+    fn a_profile_key_with_a_separator_is_not_read() {
+        let mut seen = Vec::new();
+        let p = profiles(&ProfilesSpec { user_data_dir: Some("/u".into()), ..Default::default() }, "linux", &env_of(&[]), &mut |path| {
+            let k = path.to_string_lossy().into_owned();
+            seen.push(k.clone());
+            if k.ends_with("Local State") {
+                Ok(r#"{"profile":{"info_cache":{"../x":{"name":"A"}}}}"#.to_string())
+            } else {
+                Ok(String::new())
+            }
+        })
+        .unwrap();
+        assert_eq!(seen, vec!["/u/Local State"]);
+        assert_eq!(p.profiles[0].has_extension, None);
     }
 
     fn spec(dir: &str, url: &str) -> ClaimSpec {
