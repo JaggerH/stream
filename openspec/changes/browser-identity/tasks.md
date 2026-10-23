@@ -59,11 +59,11 @@
 - [x] 4. 运行记录显示 profile、环境、账号
 - [x] 5. 扩展 popup：当前 profile 与环境；未识别时的说明
 - [x] 6a. 文档（ARCHITECTURE 执行位置一节、PACKAGE 的 `whoami`、扩展 README）
-- [ ] 6b. Windows 真机冒烟：两个 profile 同时在线、认领、指定身份执行、换号被拦
+- [x] 6b. Windows 真机冒烟：两个 profile 同时在线、认领、指定身份执行、换号被拦
   - 2026-10-23 Cortana 已过：两个节点同时在线；只认领点名的 profile（3 秒）；whoami 三态（http / page 形状，游客认成已登出）；
     身份目标选对 profile（xhs 107 条）；环境里没登录的号 → 立即 `identity-offline`、不换人；
     关着的 profile 静默唤起、跑完卸载（B 站 → 环境「个人」，20 条，10 秒；收回时扩展先断开 → `4403e07` 修成算收回）
-  - 未测：换号被拦（要第二个账号）
+  - 未测：换号被拦（要第二个账号）——用户决定不测，看用户反馈
 
 ## 冒烟后续（D14）
 
@@ -73,7 +73,7 @@
 - [x] 4. 扩展：`cookiePull` 缺域先重读一次本机 `sync-config`；回 `noAccess`（`chrome.permissions.contains`）；缺口记进 `cookieGaps`
 - [x] 5. 后端：`CookiePuller` 记每个槽位最近一轮的缺口，`GET /api/devices/nodes` 带 `cookieGaps`
 - [x] 6. 面板节点行说出读不到的登录态；弹窗「允许」（`permissions.request` + 并进同步域 + 同步一轮）
-- [ ] 7. Windows 真机复核：新 profile 认领后身份直接认出（不再 `signed-out`）；「识别 profile」不再给没装扩展的 profile 开窗
+- [x] 7. Windows 真机复核：新 profile 认领后身份直接认出（不再 `signed-out`）；「识别 profile」不再给没装扩展的 profile 开窗
   - 2026-10-23 Cortana（`61713d9`）：discover 的 `hasExtension` 对上了（Default、紫卡装了；另三个没装）；
     desktop agent `window:<id>` 读到指定窗、同进程两窗报 `ambiguous-window` 列出 id、未知 id 报 `no-window-match`
-  - 未测：新 profile 认领后直接认出身份；弹窗「允许」（要一个新 profile）
+  - 未测：新 profile 认领后直接认出身份；弹窗「允许」（要一个新 profile）——用户决定不测，看用户反馈
