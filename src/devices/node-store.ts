@@ -171,3 +171,17 @@ export class NodeStore {
 
   close(): void { this.db.close() }
 }
+
+/**
+ * 节点连上了：写节点表，顺带做「设备默认浏览器」的迁移（D1）——这条绑定是升级前的设备默认，就把默认
+ * 搬到它的节点上、清掉绑定表上的旧标记。本机节点不在绑定表里，没有可迁的。
+ */
+export function recordNodeSeen(
+  nodes: Pick<NodeStore, 'seen'>,
+  bindings: { defaultOf(deviceId: string): string | undefined; clearDefault(bindingId: string): unknown } | undefined,
+  n: Omit<NodeSeen, 'legacyDefault'>,
+): void {
+  const legacyDefault = bindings?.defaultOf(n.deviceId) === n.bindingId
+  nodes.seen({ ...n, ...(legacyDefault ? { legacyDefault } : {}) })
+  if (legacyDefault) bindings?.clearDefault(n.bindingId)
+}

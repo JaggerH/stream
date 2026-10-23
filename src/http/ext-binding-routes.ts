@@ -28,9 +28,29 @@ export interface ExtBindingRoutesDeps {
   /** 扩展里该填的地址（同 `/api/devices/pairing-code` 的 `backendUrls`）：面板把它和码一起给用户。 */
   backendUrls?: (c: Context) => string[]
   extId?: string
+  /**
+   * 浏览器节点表（browser-identity D1）：设备的默认浏览器住在节点上。缺席 = 只有绑定表上的旧标记。
+   * 本机节点不在绑定表里，它们的默认只能经这里设（`/api/ext/bindings/local:<nodeId>/default`）。
+   */
+  nodes?: {
+    get(nodeId: string): { nodeId: string; deviceId: string } | undefined
+    setDefault(nodeId: string): boolean
+    clearDefault(nodeId: string): boolean
+    defaultOf(deviceId: string): { nodeId: string } | undefined
+  }
 }
 
 export function mountExtBindingRoutes(app: Hono, deps: ExtBindingRoutesDeps): void {
+  /** 这条绑定落在哪个已知节点上：本机节点从 id 上读，配对绑定看它记下的 `nodeId`。节点表里没有 = 没有。 */
+  const nodeOf = (bindingId: string): { nodeId: string; deviceId: string } | undefined => {
+    const nodeId = bindingId.startsWith(`${LOCAL_DEVICE}:`) ? bindingId.slice(LOCAL_DEVICE.length + 1) : deps.store.get(bindingId)?.nodeId
+    return nodeId ? deps.nodes?.get(nodeId) : undefined
+  }
+  const isDefault = (b: { bindingId: string; deviceId: string; default?: true }): boolean => {
+    const n = nodeOf(b.bindingId)
+    return n ? deps.nodes?.defaultOf(n.deviceId)?.nodeId === n.nodeId : b.default === true
+  }
+
   app.post('/api/devices/:id/ext-pairing-code', (c) => {
     if (!deps.isLocal(c)) return c.json({ error: '配对码只能在运行 Stream 的那台机器上生成' }, 403)
     const id = c.req.param('id')
@@ -51,16 +71,28 @@ export function mountExtBindingRoutes(app: Hono, deps: ExtBindingRoutesDeps): vo
   })
 
   app.get('/api/ext/bindings', (c) =>
-    c.json({ bindings: deps.store.list().map((b) => ({ ...b, default: b.default === true, online: deps.registry.isOnline(b.bindingId) })) }),
+    c.json({ bindings: deps.store.list().map((b) => ({ ...b, default: isDefault(b), online: deps.registry.isOnline(b.bindingId) })) }),
   )
 
   // 设备的默认浏览器：执行选绑定时先看它（离线时退回最近连上的，见 `ExtRelayRegistry.pick`）。
-  app.put('/api/ext/bindings/:id/default', (c) =>
-    deps.store.setDefault(c.req.param('id')) ? c.body(null, 204) : c.json({ error: '没有这条扩展绑定' }, 404),
-  )
-  app.delete('/api/ext/bindings/:id/default', (c) =>
-    deps.store.clearDefault(c.req.param('id')) ? c.body(null, 204) : c.json({ error: '没有这条扩展绑定' }, 404),
-  )
+  // 绑定的节点已知 → 设在节点上（browser-identity D1：用户选的本来就是一个 profile），同设备绑定表上
+  // 的旧标记一并清掉，免得两处各说一个默认；节点还不知道（扩展没升级）→ 照旧记在绑定上，节点连上时迁。
+  app.put('/api/ext/bindings/:id/default', (c) => {
+    const id = c.req.param('id')
+    const n = nodeOf(id)
+    if (n && deps.nodes?.setDefault(n.nodeId)) {
+      const legacy = deps.store.defaultOf(n.deviceId)
+      if (legacy) deps.store.clearDefault(legacy)
+      return c.body(null, 204)
+    }
+    return deps.store.setDefault(id) ? c.body(null, 204) : c.json({ error: '没有这条扩展绑定' }, 404)
+  })
+  app.delete('/api/ext/bindings/:id/default', (c) => {
+    const id = c.req.param('id')
+    const n = nodeOf(id)
+    const cleared = n ? deps.nodes?.clearDefault(n.nodeId) ?? false : false
+    return deps.store.clearDefault(id) || cleared ? c.body(null, 204) : c.json({ error: '没有这条扩展绑定' }, 404)
+  })
 
   app.delete('/api/ext/bindings/:id', (c) => {
     const id = c.req.param('id')

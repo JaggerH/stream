@@ -885,6 +885,7 @@ const apiToken = config.api_token || loadOrCreateApiToken(dirname(config.item_db
     isLocal: (c) => isLoopbackAddress(peerAddress(c)),
     backendUrls: () => lanBaseUrls(String(PORT)),
     extId: EXT_ID,
+    ...(browserNodes ? { nodes: browserNodes } : {}),
   })
   if (taskStore && runLedger) {
     mountTaskRoutes(app, {

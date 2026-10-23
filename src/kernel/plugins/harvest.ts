@@ -12,7 +12,8 @@ import { INTERACTIVE_SESSION_WAIT_MS } from '../../http/host-relay.ts'
 import { HostRelayRegistry } from '../../http/host-registry.ts'
 import { ExtRelayRegistry, isLocalBinding, type LocalExtRelay } from '../../http/ext-relay-registry.ts'
 import { pickBrowser } from '../../devices/placement.ts'
-import { LOCAL_BINDING, LOCAL_DEVICE } from '../../devices/run-context.ts'
+import { LOCAL_BINDING } from '../../devices/run-context.ts'
+import { recordNodeSeen } from '../../devices/node-store.ts'
 import { BrowserCapabilityStore } from '../../browser/capability-store.ts'
 import { discoverChromeCandidates, nodeDiscoverFs } from '../../browser/discover-chrome.ts'
 import { harvestBrowserStatus, type HarvestBrowserStatus } from '../../browser/harvest-browser.ts'
@@ -168,10 +169,7 @@ export interface HarvestConfig {
    * 浏览器节点表（`NodeStore`，browser-identity D1）：节点连上时建行；设备的默认浏览器住在它上面。
    * 缺席（stream.db 打不开）= 本机多节点照常，只是没有默认节点、不留节点记录。
    */
-  nodes?: {
-    seen(n: { nodeId: string; deviceId: string; bindingId: string; profileDir?: string; profileName?: string; legacyDefault?: boolean }): unknown
-    defaultOf(deviceId: string): { bindingId: string } | undefined
-  }
+  nodes?: Pick<import('../../devices/node-store.ts').NodeStore, 'seen' | 'defaultOf'>
 }
 
 /**
@@ -227,13 +225,8 @@ export const harvestPlugin = {
       // 默认浏览器住在节点上；还没迁过去的（那条绑定的扩展没升级）照旧看绑定表上的旧标记。
       defaultOf: (dev) => config.nodes?.defaultOf(dev)?.bindingId ?? config.extBindings?.defaultOf(dev),
       nodeOf: (id) => config.extBindings?.get(id)?.nodeId,
-      onNodeSeen: (n) => {
-        if (!config.nodes) return
-        // 迁移（D1）：这条绑定是升级前的设备默认 → 默认搬到它的节点上，旧标记清掉。
-        const legacyDefault = n.deviceId !== LOCAL_DEVICE && config.extBindings?.defaultOf(n.deviceId) === n.bindingId
-        config.nodes.seen({ ...n, ...(legacyDefault ? { legacyDefault } : {}) })
-        if (legacyDefault) config.extBindings?.clearDefault(n.bindingId)
-      },
+      // 节点表 + 默认浏览器的迁移（D1，见 recordNodeSeen）。
+      onNodeSeen: (n) => { if (config.nodes) recordNodeSeen(config.nodes, config.extBindings, n) },
     })
     // 本机的中继门面：每次调用解析到一个节点（见 `LocalExtRelay` 头注）。采集的 Transport / launcher 都建在
     // 它上面——执行内钉住的节点就是这次执行的全部浏览器操作落点。

@@ -3,7 +3,7 @@ import Database from 'better-sqlite3'
 import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { NodeStore } from './node-store.ts'
+import { NodeStore, recordNodeSeen } from './node-store.ts'
 
 const fresh = () => join(mkdtempSync(join(tmpdir(), 'nodes-')), 'stream.db')
 
@@ -61,5 +61,17 @@ describe('NodeStore', () => {
     expect(new NodeStore(p).defaultOf('local')?.nodeId).toBe('node_a')
     const cols = (new Database(p).prepare('PRAGMA table_info(browser_nodes)').all() as { name: string }[]).map((c) => c.name)
     expect(cols).toEqual(expect.arrayContaining(['woken_at', 'label', 'environment', 'profile_dir', 'profile_name', 'is_default']))
+  })
+
+  it('recordNodeSeen：升级前的默认绑定连上 → 默认迁到它的节点，绑定表上的旧标记清掉', () => {
+    const s = new NodeStore(fresh())
+    let legacy: string | undefined = 'ext:a'
+    const bindings = { defaultOf: () => legacy, clearDefault: (id: string) => { if (legacy === id) legacy = undefined } }
+    recordNodeSeen(s, bindings, { nodeId: 'node_b', deviceId: 'linux:nas', bindingId: 'ext:b' })
+    expect(s.defaultOf('linux:nas')).toBeUndefined()
+    expect(legacy).toBe('ext:a')
+    recordNodeSeen(s, bindings, { nodeId: 'node_a', deviceId: 'linux:nas', bindingId: 'ext:a' })
+    expect(s.defaultOf('linux:nas')?.nodeId).toBe('node_a')
+    expect(legacy).toBeUndefined()
   })
 })

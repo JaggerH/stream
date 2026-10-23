@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { mountExtBindingRoutes } from './ext-binding-routes.ts'
 import { ExtBindingStore } from '../devices/ext-binding-store.ts'
+import { NodeStore } from '../devices/node-store.ts'
 
 const EXT_ID = 'dmhlfkdjljnilhnfajjpaobehenbokij'
 let store: ExtBindingStore
@@ -82,5 +83,37 @@ describe('extension binding routes', () => {
     expect((await list())[0].default).toBe(false)
     expect((await app.request('/api/ext/bindings/ext:nope/default', { method: 'PUT' })).status).toBe(404)
     expect((await app.request('/api/ext/bindings/ext:nope/default', { method: 'DELETE' })).status).toBe(404)
+  })
+
+  it('节点已知的绑定：默认设在节点上，同设备绑定表上的旧标记清掉；本机节点也能设（browser-identity D1）', async () => {
+    const nodes = new NodeStore(join(mkdtempSync(join(tmpdir(), 'extroutes-nodes-')), 'stream.db'))
+    const app2 = new Hono()
+    mountExtBindingRoutes(app2, {
+      store,
+      registry: { isOnline: () => false, kick: () => false },
+      devices: { name: (id) => (id === 'linux:nas' ? 'NAS' : undefined) },
+      isLocal: () => true,
+      extId: EXT_ID,
+      nodes,
+    })
+    const a = store.pair(store.createPairingCode('linux:nas').code, {})
+    const b = store.pair(store.createPairingCode('linux:nas').code, {})
+    if (!a.ok || !b.ok) throw new Error('pair failed')
+    store.setDefault(b.bindingId) // 升级前的旧标记，b 的扩展还没升级
+    store.recordNode(a.bindingId, 'node_a')
+    nodes.seen({ nodeId: 'node_a', deviceId: 'linux:nas', bindingId: a.bindingId })
+    expect((await app2.request(`/api/ext/bindings/${a.bindingId}/default`, { method: 'PUT' })).status).toBe(204)
+    expect(nodes.defaultOf('linux:nas')?.nodeId).toBe('node_a')
+    expect(store.defaultOf('linux:nas')).toBeUndefined()
+    const list = (await (await app2.request('/api/ext/bindings')).json()) as { bindings: Array<{ bindingId: string; default: boolean }> }
+    expect(list.bindings.find((x) => x.bindingId === a.bindingId)?.default).toBe(true)
+    expect(list.bindings.find((x) => x.bindingId === b.bindingId)?.default).toBe(false)
+    expect((await app2.request(`/api/ext/bindings/${a.bindingId}/default`, { method: 'DELETE' })).status).toBe(204)
+    expect(nodes.defaultOf('linux:nas')).toBeUndefined()
+
+    nodes.seen({ nodeId: 'node_l', deviceId: 'local', bindingId: 'local:node_l' })
+    expect((await app2.request('/api/ext/bindings/local:node_l/default', { method: 'PUT' })).status).toBe(204)
+    expect(nodes.defaultOf('local')?.nodeId).toBe('node_l')
+    expect((await app2.request('/api/ext/bindings/local:node_zz/default', { method: 'PUT' })).status).toBe(404)
   })
 })
