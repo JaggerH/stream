@@ -192,3 +192,20 @@ describe('ctx.login 之后', () => {
     expect(store.get('zhuanzhuan', 'node_work')).toMatchObject({ accountId: 'node:node_work', state: 'signed-in' })
   })
 })
+
+describe('执行前核对（verify，D9）', () => {
+  it('只问这一个 facility、在这个节点上，结果落表', async () => {
+    const { svc, store, probe } = setup({ answers: { 'xhs@node_work': { state: 'signed-in', accountId: 'A', name: '个人号A' } } })
+    expect(await svc.verify('xhs', WORK)).toEqual({ state: 'signed-in', accountId: 'A', name: '个人号A' })
+    expect(probe).toHaveBeenCalledTimes(1)
+    expect(store.get('xhs', 'node_work')).toMatchObject({ accountId: 'A' })
+  })
+
+  it('没有 whoami / login 形状 / 不认识的 facility → 不核对', async () => {
+    const { svc, probe } = setup()
+    expect(await svc.verify('zhuanzhuan', WORK)).toBeUndefined()
+    expect(await svc.verify('eastmoney', WORK)).toBeUndefined()
+    expect(await svc.verify('nope', WORK)).toBeUndefined()
+    expect(probe).not.toHaveBeenCalled()
+  })
+})

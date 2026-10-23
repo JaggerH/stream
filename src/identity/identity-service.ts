@@ -236,6 +236,16 @@ export function makeIdentityService(deps: IdentityServiceDeps) {
     return probe(f, node)
   }
 
+  /**
+   * 执行前核对（D9）：在这个节点上问一次这个 facility，结果照常落表。没有 `whoami` 或 `login` 形状 → undefined
+   * （不核对：前者节点就是身份，后者分辨不出 profile 里手动换的号——D5 接受的代价）。
+   */
+  const verify = async (facility: string, node: ProbeNode): Promise<ProbeResult | undefined> => {
+    const f = deps.facilities().find((x) => x.facility === facility)
+    if (!f?.whoami || f.whoami.kind === 'login') return undefined
+    return (await probe(f, node)).result
+  }
+
   /** 表 + 节点信息。`node:` 身份的显示名按此刻的 profile 名现算（认领之后名字才有）。 */
   const list = (filter: { nodeId?: string; facility?: string } = {}): IdentityView[] => {
     const online = new Map(deps.onlineNodes().map((n) => [n.nodeId, n]))
@@ -257,7 +267,7 @@ export function makeIdentityService(deps: IdentityServiceDeps) {
     pending.clear()
   }
 
-  return { nodeConnected, cookiesChanged, refresh, afterLogin, list, dispose }
+  return { nodeConnected, cookiesChanged, refresh, afterLogin, verify, list, dispose }
 }
 
 export type IdentityService = ReturnType<typeof makeIdentityService>

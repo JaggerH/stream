@@ -16,13 +16,18 @@
  * 前者 profile 没了，后者它是用户在用的 profile，不再是「Stream 在后台开着的」。放不掉（扩展断了、老扩展）
  * 就留着 `woken_at`，面板照样列出它。
  *
+ * 派发任何动作前在选定的节点上核对一次身份（D9），除非身份表里那一行够新：采集 10 分钟、任务中心的动作 60 秒
+ * （动作可能对外，宁可多开一个标签）。核对出另一个账号 → `identity-mismatch`；已登出 → `identity-signed-out`；
+ * 问不出来（`unknown`）→ `identity-offline`。没有 `whoami` / `login` 形状的 facility 不核对。
+ *
  * **没有回落分支。** 候选为空、都离线且唤不起——这里只会抛 `IdentityOffline`。不读设备默认、不回 `local`、不换成
  * 同一节点上别的账号。读这个文件的人如果想加一个「实在不行就……」，那正是这套设计要防的事。
  */
-import { IdentityOffline } from '../devices/errors.ts'
+import { IdentityMismatch, IdentityOffline, IdentitySignedOut } from '../devices/errors.ts'
 import type { RunIdentity } from '../devices/run-context.ts'
 import { describeTarget, type Target } from '../devices/target.ts'
 import type { SiteIdentity } from './identity-store.ts'
+import type { ProbeResult } from './whoami.ts'
 
 /** 执行的用途：决定执行前核对的新鲜度窗口（D9）。采集 10 分钟，任务中心的动作 60 秒。 */
 export type RunPurpose = 'harvest' | 'action'
@@ -40,6 +45,9 @@ export interface RouterNode {
   environment?: string
   wokenAt?: number
 }
+
+/** 身份表的记录多新可以免核对（D9）。 */
+export const FRESH_MS: Record<RunPurpose, number> = { harvest: 10 * 60_000, action: 60_000 }
 
 /** 一台设备上的 host agent（`agentFrom` 的结果满足它）。 */
 export interface WakeAgent {
@@ -60,6 +68,11 @@ export interface IdentityRouterDeps {
   waitOnline?(bindingId: string, ms: number): Promise<boolean>
   /** 记下 / 清掉「这个 profile 是 Stream 唤起的」（`NodeStore.setWokenAt`）。 */
   setWokenAt?(nodeId: string, at: number | null): void
+  /**
+   * 执行前核对（`siteIdentities.verify`）：在这个节点上问这个 facility 一次，结果照常落表。回 undefined =
+   * 这个 facility 不核对（没有 whoami、`login` 形状）。缺席 = 一律不核对。
+   */
+  verify?(facility: string, node: RouterNode): Promise<ProbeResult | undefined>
   /** 按住 / 放掉一个唤起的 profile（扩展的 `holdProfile` / `releaseProfile`，经该节点的绑定）。 */
   holdProfile?(bindingId: string): Promise<void>
   releaseProfile?(bindingId: string): Promise<{ userWindows: number; unloading: boolean }>
@@ -149,6 +162,25 @@ export function makeIdentityRouter(deps: IdentityRouterDeps): IdentityRouter & {
     return p
   }
 
+  /**
+   * 核对结果 → 放行（回此刻的显示名）或抛。对照的是选中那一行的账号：身份目标就是用户指定的那个号；环境目标是
+   * 我们以为这个 profile 里登着的那个——换了号同样拦下（D9 不分两种目标），让用户知道环境里变了人。
+   */
+  const verdict = (
+    r: ProbeResult | undefined,
+    ctx: { label: string; node: RouterNode; row: Candidate['row']; facility: string },
+  ): string | undefined => {
+    if (r === undefined) return undefined // 这个 facility 不核对
+    const where = nodeWhere(ctx.node)
+    if (r.state === 'signed-in') {
+      if (r.accountId === ctx.row.accountId) return r.name
+      throw new IdentityMismatch(ctx.facility, ctx.label, ctx.node.nodeId, r.name ?? r.accountId, where)
+    }
+    if (r.state === 'signed-out') throw new IdentitySignedOut(ctx.facility, ctx.label, ctx.node.nodeId, where)
+    // 问不出来不是答案（D5）：不当成登出、也不当成没换号——按离线处理，可重试。
+    throw new IdentityOffline(ctx.facility, ctx.label, `在${where}核对身份没有结果：${r.reason}`)
+  }
+
   /** 节点 → 此刻有几次执行按着它。 */
   const holds = new Map<string, number>()
 
@@ -217,13 +249,24 @@ export function makeIdentityRouter(deps: IdentityRouterDeps): IdentityRouter & {
     if (!pick) throw new IdentityOffline(facility, label, '登着它的 profile 都不在线，也唤不起')
     // 现读：唤起刚记下的 `woken_at`、或之前哪次执行唤起后没收回去的，都在节点表里。
     const node = deps.node(pick.node.nodeId) ?? pick.node
+    // 先按住再核对：`page` 形状的核对在唤起的 profile 里开一张标签、读完就关——那正是它唯一的一扇窗。
     const release = await hold(node)
+    let accountName = pick.row.displayName
+    try {
+      if (deps.verify && now() - pick.row.verifiedAt > FRESH_MS[req.purpose]) {
+        accountName = verdict(await deps.verify(facility, node), { label, node, row: pick.row, facility }) ?? accountName
+      }
+    } catch (e) {
+      // 没执行就收尾：唤起的 profile 照样收回去。
+      await release()
+      throw e
+    }
     return {
       node,
       identity: {
         facility,
         accountId: pick.row.accountId,
-        ...(pick.row.displayName ? { accountName: pick.row.displayName } : {}),
+        ...(accountName ? { accountName } : {}),
         nodeId: node.nodeId,
       },
       release,

@@ -172,6 +172,8 @@ export const identityPlugin = {
         return { ...(exe ? { exe } : {}), ...(process ? { process } : {}) }
       },
       setWokenAt: (nodeId, at) => config.nodes?.setWokenAt?.(nodeId, at),
+      // 执行前核对（D9）：同一个探测器、同一张表——核对的结果也是一次正常的探测。
+      verify: (facility, node) => svc.verify(facility, { nodeId: node.nodeId, deviceId: node.deviceId, bindingId: node.bindingId }),
       // 收尾（D8）：经那个节点自己的绑定让扩展按住 / 放掉它所在的 profile。
       holdProfile: (bindingId) => extRelays.relay(bindingId).holdProfile(),
       releaseProfile: (bindingId) => extRelays.relay(bindingId).releaseProfile(),

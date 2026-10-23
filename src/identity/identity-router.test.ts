@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest'
-import { IdentityOffline } from '../devices/errors.ts'
+import { IdentityMismatch, IdentityOffline, IdentitySignedOut } from '../devices/errors.ts'
 import type { SiteIdentity } from './identity-store.ts'
-import { makeIdentityRouter, type IdentityRouterDeps, type RouterNode } from './identity-router.ts'
+import type { ProbeResult } from './whoami.ts'
+import { makeIdentityRouter, type IdentityRouterDeps, type IdentityTarget, type RouterNode } from './identity-router.ts'
 
 const NODES: Record<string, RouterNode> = {
   node_work: { nodeId: 'node_work', deviceId: 'local', bindingId: 'local:node_work', profileDir: 'Profile 1', profileName: '工作', environment: '工作' },
@@ -194,5 +195,68 @@ describe('IdentityRouter：唤起的 profile 收回去（D8）', () => {
     const { r, calls } = holdWorld()
     await (await r.resolve(req)).release()
     expect(calls).toEqual([])
+  })
+})
+
+describe('IdentityRouter：执行前核对（D9）', () => {
+  const NOW = 1_000_000
+  function verifyWorld(verifiedAt: number, answer: ProbeResult | undefined, extra: Partial<IdentityRouterDeps> = {}) {
+    const asked: string[] = []
+    const r = world([row('node_work', 'B', verifiedAt)], ['local:node_work'], {
+      verify: async (f, n) => { asked.push(`${f}@${n.nodeId}`); return answer },
+      ...extra,
+    })
+    return { r, asked }
+  }
+  const req = (purpose: 'action' | 'harvest', target: IdentityTarget = { kind: 'identity', accountId: 'B' }) => ({ target, facility: 'xhs', purpose })
+
+  it('记录够新不核对：动作 60 秒、采集 10 分钟', async () => {
+    const a = verifyWorld(NOW - 59_000, { state: 'signed-out' })
+    await a.r.resolve(req('action'))
+    expect(a.asked).toEqual([])
+    const h = verifyWorld(NOW - 9 * 60_000, { state: 'signed-out' })
+    await h.r.resolve(req('harvest'))
+    expect(h.asked).toEqual([])
+  })
+
+  it('不够新：在选中的节点上核对；一致就放行，带上此刻的显示名', async () => {
+    const { r, asked } = verifyWorld(NOW - 61_000, { state: 'signed-in', accountId: 'B', name: '工作号B（新昵称）' })
+    const got = await r.resolve(req('action'))
+    expect(asked).toEqual(['xhs@node_work'])
+    expect(got.identity.accountName).toBe('工作号B（新昵称）')
+  })
+
+  it('核对出另一个账号 → identity-mismatch，指名 profile', async () => {
+    const { r } = verifyWorld(0, { state: 'signed-in', accountId: 'A', name: '个人号A' })
+    const e = await r.resolve(req('action')).catch((x) => x)
+    expect(e).toBeInstanceOf(IdentityMismatch)
+    expect(e.message).toContain('「工作」')
+    expect(e.message).toContain('个人号A')
+  })
+
+  it('环境目标：环境里换了号同样拦下', async () => {
+    const { r } = verifyWorld(0, { state: 'signed-in', accountId: 'A' })
+    await expect(r.resolve(req('harvest', { kind: 'environment', environment: '工作' }))).rejects.toBeInstanceOf(IdentityMismatch)
+  })
+
+  it('已登出 → identity-signed-out；问不出来 → identity-offline', async () => {
+    await expect(verifyWorld(0, { state: 'signed-out' }).r.resolve(req('action'))).rejects.toBeInstanceOf(IdentitySignedOut)
+    await expect(verifyWorld(0, { state: 'unknown', reason: '页面打不开' }).r.resolve(req('action'))).rejects.toBeInstanceOf(IdentityOffline)
+  })
+
+  it('这个 facility 不核对（没有 whoami / login 形状）→ 直接放行', async () => {
+    const got = await verifyWorld(0, undefined).r.resolve(req('action'))
+    expect(got.identity.accountName).toBe('号B')
+  })
+
+  it('核对失败时按住的 profile 照样放掉', async () => {
+    const released: string[] = []
+    const { r } = verifyWorld(0, { state: 'signed-out' }, {
+      node: (id) => (id === 'node_work' ? { ...NODES.node_work!, wokenAt: 5 } : NODES[id]),
+      holdProfile: async () => {},
+      releaseProfile: async (b) => { released.push(b); return { userWindows: 0, unloading: true } },
+    })
+    await expect(r.resolve(req('action'))).rejects.toBeInstanceOf(IdentitySignedOut)
+    expect(released).toEqual(['local:node_work'])
   })
 })
