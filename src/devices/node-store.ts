@@ -147,6 +147,42 @@ export class NodeStore {
     return this.rows.find((r) => r.bindingId === bindingId)
   }
 
+  /**
+   * 认领（D3）：把 profile 记进节点。同一台设备上一个 `profile_dir` 至多属于一个节点——同设备别的节点
+   * 上相同的目录一并清掉：那是扩展重装、存储没了之前的旧节点，现在接替它的是这一个。别的设备上同名的
+   * `Default` 与这里无关。
+   */
+  claimProfile(nodeId: string, profileDir: string, profileName: string): BrowserNode | undefined {
+    const hit = this.get(nodeId)
+    if (!hit) return undefined
+    this.db.transaction(() => {
+      this.db.prepare('UPDATE browser_nodes SET profile_dir = NULL, profile_name = NULL WHERE device_id = ? AND profile_dir = ? AND node_id != ?')
+        .run(hit.deviceId, profileDir, nodeId)
+      this.db.prepare('UPDATE browser_nodes SET profile_dir = ?, profile_name = ? WHERE node_id = ?').run(profileDir, profileName, nodeId)
+    })()
+    this.reload()
+    return this.get(nodeId)
+  }
+
+  /** 按 profile 目录刷新显示名（用户在 Chrome 里改了名，再识别一次就跟上）。回改了几行。 */
+  renameProfile(deviceId: string, profileDir: string, profileName: string): number {
+    const n = this.db.prepare('UPDATE browser_nodes SET profile_name = ? WHERE device_id = ? AND profile_dir = ? AND (profile_name IS NULL OR profile_name != ?)')
+      .run(profileName, deviceId, profileDir, profileName).changes
+    if (n) this.reload()
+    return n
+  }
+
+  /** 用户在面板上给节点起的名字与环境（D4）。`null` 清空，缺席不动。没有这个节点回 undefined。 */
+  update(nodeId: string, patch: { label?: string | null; environment?: string | null }): BrowserNode | undefined {
+    if (!this.get(nodeId)) return undefined
+    this.db.transaction(() => {
+      if (patch.label !== undefined) this.db.prepare('UPDATE browser_nodes SET label = ? WHERE node_id = ?').run(patch.label || null, nodeId)
+      if (patch.environment !== undefined) this.db.prepare('UPDATE browser_nodes SET environment = ? WHERE node_id = ?').run(patch.environment || null, nodeId)
+    })()
+    this.reload()
+    return this.get(nodeId)
+  }
+
   /** 设为所在设备的默认：同设备其余节点的标记一并清掉（每台设备至多一个默认）。 */
   setDefault(nodeId: string): boolean {
     const hit = this.get(nodeId)
