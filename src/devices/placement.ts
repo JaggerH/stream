@@ -34,6 +34,23 @@ export interface FacilityBindings {
   target?(facility: string): Target | undefined
   /** 全部绑定——远程设备的 cookie 域靠它反查（哪些 facility 绑到了这台）。表打不开时没有它。 */
   list?(): Array<{ facility: string; deviceId: string }>
+  /** 全部目标（含身份 / 环境）：远程节点要交出哪些域也看它（browser-identity D10）。 */
+  targets?(): Array<{ facility: string; target: Target }>
+}
+
+/**
+ * 远程节点该交出哪些 facility 的登录态（D10）：绑到这台设备的，加上身份 / 环境目标会落到这个节点上的。
+ * 身份目标在每个节点上都要——得先知道各节点上登着谁才选得出节点，`http` 形状的探测就靠这份快照；
+ * 环境目标只在标了那个环境的节点上要。没说是哪个节点（老扩展、兼容槽）只有设备那部分。
+ */
+export function facilitiesForNode(bindings: Pick<FacilityBindings, 'list' | 'targets'> | undefined, deviceId: string, node?: { environment?: string | undefined }): string[] {
+  const out = (bindings?.list?.() ?? []).filter((b) => b.deviceId === deviceId).map((b) => b.facility)
+  if (node) {
+    for (const { facility, target: t } of bindings?.targets?.() ?? []) {
+      if (t.kind === 'identity' || (t.kind === 'environment' && t.environment === node.environment)) out.push(facility)
+    }
+  }
+  return [...new Set(out)].sort()
 }
 
 /**

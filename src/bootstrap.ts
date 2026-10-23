@@ -37,7 +37,7 @@ import { makeResolveDownload } from './audio/resolve-download.ts'
 import type { AppConfig, StreamItem } from './types.ts'
 import type { SourceType } from './manifest/types.ts'
 import { writeTags } from './audio/tag-writer.ts'
-import { makeDevicePlacement } from './devices/placement.ts'
+import { facilitiesForNode, makeDevicePlacement } from './devices/placement.ts'
 import { identityPlugin } from './kernel/plugins/identity.ts'
 
 export type Logger = (...args: unknown[]) => void
@@ -561,10 +561,10 @@ export async function bootstrap(
     ...(opts.nodes && { nodes: opts.nodes }),
     // 远程设备：只取绑到它的 facility 的包声明的主机（`stream.network.hosts` ?? `stream.credentials`）。
     // 都现取：绑定会改、包会热装卸。绑定表打不开（没有 list）= 一个域都不取。
-    requiredCookieDomainsFor: (deviceId) => [...new Set(
-      (opts.facilityDevices?.list?.() ?? [])
-        .filter((b) => b.deviceId === deviceId)
-        .flatMap((b) => kernel.packages.networkForFacility(b.facility)?.hosts ?? []),
+    // 身份 / 环境目标会落到这个节点上的 facility 也取（browser-identity D10，见 `facilitiesForNode`）。
+    requiredCookieDomainsFor: (deviceId, nodeId) => [...new Set(
+      facilitiesForNode(opts.facilityDevices, deviceId, nodeId ? { environment: opts.nodes?.get(nodeId)?.environment } : undefined)
+        .flatMap((f) => kernel.packages.networkForFacility(f)?.hosts ?? []),
     )].sort(),
   })
   const auth = kernel.auth

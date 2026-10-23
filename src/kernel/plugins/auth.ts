@@ -99,8 +99,11 @@ export interface AuthConfig {
   broadcast?: (msg: unknown) => void
   /** 这台 Stream 需要同步哪些 cookie 域。thunk：它从 registry + 已订阅流推出来。 */
   requiredCookieDomains: () => string[]
-  /** 远程设备的扩展该交出哪些域：只取绑到这台设备的 facility 的域（design D4）。缺席 = 一个都不取。 */
-  requiredCookieDomainsFor?: (deviceId: string) => string[]
+  /**
+   * 远程设备的扩展该交出哪些域：只取绑到这台设备的 facility 的域（design D4），再加上身份 / 环境目标会落到
+   * 这个节点上的 facility（browser-identity D10）。缺席 = 一个都不取。
+   */
+  requiredCookieDomainsFor?: (deviceId: string, nodeId?: string) => string[]
   /** 浏览器节点表（browser-identity D10）：设备上的节点都离线时，登录态读默认 / 最近见过的那个节点。 */
   nodes?: SlotNodes
 }
@@ -222,8 +225,8 @@ export const authPlugin = {
       storeFor: (slot) => ctx.credentials.cookieStores.forSlot(slot),
       // 本机 = 今天的全集（行为不变）；远程设备只取绑到它的 facility 的域——NAS 上的 Chrome
       // 不该被要求交出与它无关的站点。
-      requiredDomainsFor: (deviceId) =>
-        deviceId === LOCAL_DEVICE ? config.requiredCookieDomains() : config.requiredCookieDomainsFor?.(deviceId) ?? [],
+      requiredDomainsFor: (deviceId, nodeId) =>
+        deviceId === LOCAL_DEVICE ? config.requiredCookieDomains() : config.requiredCookieDomainsFor?.(deviceId, nodeId) ?? [],
       log,
       // 这条链路的失败全长一个样（取不到 cookie → 采集变游客态），而 log 只在 stdout 上。
       // 发进 debug bus，"上一次取成功没有"就成了一个 curl 能回答的问题。

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { assertDeviceReady, assertRecipeRunnable, makeDevicePlacement, makeFacilityPlacement, pickBrowser, placeRun, resolvePlacement, unavailableBindings } from './placement.ts'
+import { assertDeviceReady, assertRecipeRunnable, facilitiesForNode, makeDevicePlacement, makeFacilityPlacement, pickBrowser, placeRun, resolvePlacement, unavailableBindings } from './placement.ts'
 import { DeviceIncapable, DeviceOffline, IdentityOffline } from './errors.ts'
 import { activePlacement, runOnDevice } from './run-context.ts'
 import type { Target } from './target.ts'
@@ -161,6 +161,26 @@ describe('身份 / 环境目标（browser-identity D7）', () => {
     const sync = makeDevicePlacement({ bindings: fb, network })
     expect(() => sync('xhs')).toThrow(IdentityOffline)
     expect(sync('douyin').deviceId).toBe('local')
+  })
+})
+
+describe('facilitiesForNode（远程节点交出哪些 facility 的登录态，D10）', () => {
+  const b = {
+    list: () => [{ facility: 'eastmoney', deviceId: 'linux:nas' }],
+    targets: () => [
+      { facility: 'eastmoney', target: { kind: 'device', deviceId: 'linux:nas' } as Target },
+      { facility: 'xhs', target: { kind: 'identity', accountId: 'B' } as Target },
+      { facility: 'bilibili', target: { kind: 'environment', environment: '个人' } as Target },
+    ],
+  }
+  it('绑到设备的 + 身份目标的（每个节点）+ 环境目标的（只在那个环境的节点）', () => {
+    expect(facilitiesForNode(b, 'linux:nas', { environment: '个人' })).toEqual(['bilibili', 'eastmoney', 'xhs'])
+    expect(facilitiesForNode(b, 'linux:lap', { environment: '工作' })).toEqual(['xhs'])
+    expect(facilitiesForNode(b, 'linux:lap', {})).toEqual(['xhs'])
+  })
+  it('说不出节点（老扩展）：只有设备那部分；表打不开：一个都没有', () => {
+    expect(facilitiesForNode(b, 'linux:nas')).toEqual(['eastmoney'])
+    expect(facilitiesForNode(undefined, 'linux:nas', {})).toEqual([])
   })
 })
 
