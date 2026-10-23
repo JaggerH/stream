@@ -299,11 +299,13 @@ type Target =
   「Opening in existing browser session」，认领页在 X 里打开，交回 `nonce` 的是 X 的节点（Default → `node_c1ea2200`，
   Profile 1 → `node_cf939548`，与各自 SW 报到的 id 一致）。**不需要** `web_accessible_resources`。
   新建 profile 第一次拉起时页面先于扩展注册，加载失败，补发一次即成功（已写进 D3）。
-- **S2 Linux 通过，Windows 待复核。** 只开 Default 时调用 `--profile-directory="Profile 1" --no-startup-window`：Profile 1 的扩展
-  SW 起来（报告 0 个窗口），页面目标仍只有原来那一张。Windows 的进程单例是另一套实现，需在真机复核。
+- **S2 通过（Linux + Windows）。** Linux：只开 Default 时调用 `--profile-directory="Profile 1" --no-startup-window`，Profile 1 的扩展
+  SW 起来（报告 0 个窗口），页面目标仍只有原来那一张。Windows（Cortana，Chrome 155，从 WSL 经 interop 调起，与用户桌面同在
+  session 1）：Chrome 回「正在现有的浏览器会话中打开」，目标 profile 随即被加载（其 `History` 文件被锁），可见的 Chrome 窗口数
+  不变。那个 profile 没装扩展，SW 醒没醒没有直接观测；扩展随 profile 加载，按通过处理，计划 4 的冒烟再看一次。
 - **S3 部分完成，需真实登录态。** 匿名探测：B 站 `nav` 直接 GET 回 JSON（未登录 `code:-101`、`isLogin:false`、无 `mid`），
   三态成立；小红书 `user/me` 不带签名回 406，改走 `page` 形状读 `__INITIAL_STATE__`；东财没有公开的用户接口，账号在交易页 HTML 里，
   走 `http` + `html`。三家的确切路径要在登着号的 Chrome 上取。D5 已据此改成两种形状。
-- **S4 字段确认，Windows / macOS 路径待复核。** `Local State` 的 `profile.info_cache.<dir>` 有 `name`（显示名）、`user_name`
+- **S4 字段确认，Windows 路径确认，macOS 未验。** `Local State` 的 `profile.info_cache.<dir>` 有 `name`（显示名）、`user_name`
   （Google 邮箱，未登录为空）、`gaia_name`；`profile.last_active_profiles` 列出当前打开着的 profile，可以顺带判断哪些 profile 已加载。
   用户数据目录按 Chrome 的默认位置：Windows `%LOCALAPPDATA%\Google\Chrome\User Data`，macOS `~/Library/Application Support/Google/Chrome`。

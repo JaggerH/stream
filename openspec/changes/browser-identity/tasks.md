@@ -2,10 +2,10 @@
 
 - [x] 1. S1：认领页按 profile 打开、由该 profile 的节点交回，不需要 `web_accessible_resources`（javis CfT 156）
 - [x] 2. S2（Linux）：`--no-startup-window` 唤起 profile，SW 起来、不开窗口
-- [ ] 3. S2（Windows 真机）复核
+- [x] 3. S2（Windows 真机）复核：profile 被静默加载，窗口数不变
 - [ ] 4. S3：在登着号的 Chrome 上取 bilibili（`http` / JSON）、xhs（`page` / `__INITIAL_STATE__`）、eastmoney（`http` / HTML）的确切路径
 - [x] 5. S4：`Local State` 的 `info_cache` 字段与 `last_active_profiles`
-- [ ] 6. S4：Windows 真机上 `Local State` 的位置复核
+- [x] 6. S4：Windows 真机上 `Local State` 的位置复核（`%LOCALAPPDATA%\Google\Chrome\User Data`）
 - [x] 7. 结论回写 design.md（D3 新 profile 补发、D5 两种形状、D8 静默唤起、D13 标签组）
 
 ## 计划 0.5：一个 profile 一个 Stream 标签组（可独立先做）
