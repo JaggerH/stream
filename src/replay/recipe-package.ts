@@ -4,6 +4,7 @@ import type { Recipe } from './recipe.ts'
 import { assertStateIdPrefix, validateStateGraph, type StateGraph } from './state-graph.ts'
 import { validateRecipe } from './recipe-store.ts'
 import { recipeToManifest } from './recipe-manifest.ts'
+import { whoamiLoginProblem } from '../identity/whoami.ts'
 import type { SourceManifest } from '../manifest/types.ts'
 import { packageNamespace, scanPackages, type ScanPackagesOptions, type StreamPackage } from '../packages/scan.ts'
 import { namespacedSourceId } from '../registry/source-id.ts'
@@ -254,6 +255,13 @@ export function loadScannedRecipePackages(scanned: readonly StreamPackage[], opt
       seenInPkg.add(recipe.sourceId)
       // **不在这里** `recipes.set` —— 整个包都过了才提交（见 loadOne 头注：跳过必须是干净的）。
       pkgRecipes.push(recipe)
+    }
+
+    // `whoami: { kind: 'login' }` 指的那一格必须是本包登录 recipe 的 secret 参数（见 whoamiLoginProblem）。
+    // 要看 recipe，所以不在描述符那层判；安装口（recipe-install.ts）判的是同一个函数。
+    if (pkg.whoami) {
+      const problem = whoamiLoginProblem(pkg.whoami, pkgRecipes, facility)
+      if (problem) throw new Error(`recipe package "${facility}": stream.whoami.param — ${problem}`)
     }
 
     // Each recipe → its override manifest if hand-written, else a synthesized one.

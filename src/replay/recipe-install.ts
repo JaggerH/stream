@@ -5,6 +5,7 @@ import { parse as parseYaml } from 'yaml'
 import { untarGz, type TarEntry } from './untar.ts'
 import type { RegistryClient } from './recipe-registry.ts'
 import { clampRateLimit, type FacilityRateLimit } from './facility-rate-limit.ts'
+import { whoamiLoginProblem } from '../identity/whoami.ts'
 import { loadRecipePackages, RECIPE_PACKAGE_SCHEMA_VERSION, USER_LAYER_SCAN, BUILTIN_LAYER_SCAN, OFFICIAL_SCOPE, TRUST_SIDECAR, type PackageTrust } from './recipe-package.ts'
 import { validateRecipe } from './recipe-store.ts'
 import { recipeToManifest } from './recipe-manifest.ts'
@@ -449,6 +450,12 @@ function verifyTarball(
       throw new Error(`package ${name}: sourceId "${r.sourceId}" appears in more than one recipe file — sourceIds must be unique within a package`)
     }
     seenSourceIds.add(r.sourceId)
+  }
+
+  // 与装载期同一道闸（recipe-package.ts）：`whoami.param` 必须是本包登录 recipe 的 secret 参数。
+  if (stream.whoami) {
+    const problem = whoamiLoginProblem(stream.whoami, recipes, facility)
+    if (problem) throw new Error(`package ${name}: stream.whoami.param — ${problem}`)
   }
 
   // Install-time gate must be AT LEAST as strict as load-time — a package that installs

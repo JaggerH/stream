@@ -1,7 +1,8 @@
 import { z } from 'zod'
 import { PACKAGE_CODE_ENTRY } from './code-entry.ts'
 import { manifestSchema } from '../manifest/loader.ts'
-import type { SourceManifest } from '../manifest/types.ts'
+import type { SourceManifest, WhoamiSpec } from '../manifest/types.ts'
+import { allowedHostsOf, captureRegexProblem, whoamiUrlProblem } from '../identity/whoami.ts'
 import type { PluginBackend, PluginSourceGrouping } from '../plugins/types.ts'
 import type { ExpandSpec, ProviderCategory, ProviderMemberRef } from '../store/types.ts'
 import { isProviderMemberRef } from '../store/member-ref.ts'
@@ -41,6 +42,8 @@ export interface StreamDescriptor {
   /** 这个包会访问的主机名后缀。缺省 = `credentials`。派到远程设备的请求只放行这里的主机
    *  （openspec/changes/device-execution/design.md D6），安装确认页把它列给用户看。 */
   network?: { hosts: string[] }
+  /** 问站点「我是谁」（browser-identity D5，`src/manifest/types.ts` 的 `WhoamiSpec`）。缺席 = 身份退化为「这个节点上的账号」。 */
+  whoami?: WhoamiSpec
   normalizer?: string
   /**
    * 这个包带代码：`entry` 是它的 activate 模块（相对包目录），两个名单是它**申报**会注册的
@@ -498,6 +501,41 @@ function itemOwnershipProblems(
   return out
 }
 
+/**
+ * `whoami` 的形状（browser-identity D5）。`strict`：多写一格（比如把 `signedIn` 写进 `login` 形状）多半是写错了形状，
+ * 静默剥掉的话作者以为游客判据生效了，实际没有。`url` 落不落在允许主机内要看整个 `stream`，在 packageJsonSchema 上判。
+ */
+const whoamiPath = z.string().min(1)
+const whoamiSchema = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('http'),
+    url: z.string().url(),
+    id: whoamiPath,
+    name: whoamiPath.optional(),
+    signedIn: whoamiPath.optional(),
+    format: z.enum(['json', 'html']).optional(),
+  }).strict().superRefine((w, ctx) => {
+    if (w.format !== 'html') return
+    // HTML 形状的 id / name 是正则，取第一个捕获组；signedIn 只看命中与否，不要求捕获组。
+    for (const key of ['id', 'name'] as const) {
+      const src = w[key]
+      const problem = src === undefined ? null : captureRegexProblem(src)
+      if (problem) ctx.addIssue({ code: 'custom', path: [key], message: problem })
+    }
+    if (w.signedIn !== undefined) {
+      try { new RegExp(w.signedIn) } catch (e) { ctx.addIssue({ code: 'custom', path: ['signedIn'], message: `不是合法的正则：${(e as Error).message}` }) }
+    }
+  }),
+  z.object({
+    kind: z.literal('page'),
+    url: z.string().url(),
+    id: whoamiPath,
+    name: whoamiPath.optional(),
+    signedIn: whoamiPath.optional(),
+  }).strict(),
+  z.object({ kind: z.literal('login'), param: z.string().min(1) }).strict(),
+])
+
 const codeSchema = z.object({
   entry: z.string().min(1),
   adapters: z.array(z.string().min(1)).optional(),
@@ -529,6 +567,7 @@ const streamSchema = z.object({
   backend: backendSchema.optional(),
   credentials: credentialsSchema.optional(),
   network: z.object({ hosts: credentialsSchema }).strict().optional(),
+  whoami: whoamiSchema.optional(),
   normalizer: z.string().optional(),
   /** normalizer 的迁移期别名，仍受理 */
   presenter: z.string().optional(),
@@ -565,6 +604,12 @@ const packageJsonSchema = z.object({
   version: z.string().optional(),
   stream: streamSchema,
 }).superRefine((pkg, ctx) => {
+  // `whoami.url` 越界：探测会带着用户的登录态打过去（见 whoamiUrlProblem 头注）。`login.param` 要看 recipe，
+  // 不在这一层——装载（recipe-package.ts）与安装（recipe-install.ts）各判一次。
+  if (pkg.stream.whoami) {
+    const problem = whoamiUrlProblem(pkg.stream.whoami, allowedHostsOf(pkg.stream))
+    if (problem) ctx.addIssue({ code: 'custom', path: ['stream', 'whoami', 'url'], message: problem })
+  }
   if (!pkg.stream.item) return
   for (const p of itemOwnershipProblems(pkg.name, pkg.stream.code?.enrichers, pkg.stream.item)) {
     ctx.addIssue({ code: 'custom', ...p })
@@ -615,6 +660,7 @@ export function parseStreamDescriptor(raw: unknown, label: string): StreamDescri
     backend: stream.backend as PluginBackend | undefined,
     credentials: stream.credentials,
     network: stream.network,
+    whoami: stream.whoami,
     normalizer: stream.normalizer ?? stream.presenter,
     code: stream.code,
     capability: stream.capability,

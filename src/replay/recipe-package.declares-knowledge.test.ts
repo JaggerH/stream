@@ -21,6 +21,8 @@ const NOT_FACILITY_KNOWLEDGE = new Set([
   // 插件槽位：由**插件路径**（`loadPlugins` / `activatePackages`）消费，与 recipe 层无关。
   // `network` 同 `credentials`：执行位置声明（允许访问的主机），不是 facility 知识。
   'backend', 'credentials', 'network', 'code', 'capability', 'normalizer', 'presenter', 'sourceGrouping',
+  // `whoami` 由 packages 域按 facility 索引读（`whoamiForFacility`），不经 recipe 层的描述符。
+  'whoami',
   // `sources` 由跳过判据自己那半条管（`!sources.length`），不归这张表。
   'sources',
   // 迁移期别名（spec 2026-09-26-link-recognition §6）：装载时翻译进 `links`，描述符上不留这两格，

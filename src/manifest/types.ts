@@ -97,6 +97,25 @@ export type SessionAuthSpec =
   // the cookie snapshot, read from the user's own Chrome). See the launcher's cookieProvider path.
   | { type: 'session'; facility: string; login: 'cookie'; cookieDomain: string }
 
+/**
+ * 问站点「我是谁」（browser-identity D5）。facility 级知识，声明在 `package.json#stream.whoami`——不挂在某条源的
+ * `auth` 上：一个 facility 只有一个账号体系，而会话声明散在好几条 recipe 里（xhs 四份），B 站这样纯 cookie 的包
+ * 连会话声明都没有。三种形状，因为各站差别大（spike S3）：
+ *
+ * - `http`：带该节点的 cookie 发一个 GET，不开标签。`id` / `name` / `signedIn` 对 JSON 是点路径，对 HTML 是
+ *   带一个捕获组的正则。最便宜、不受页面改版影响，有现成「当前用户」接口的站点优先用它（B 站 `nav`）。
+ * - `page`：在节点的后台标签里打开站点页面，加载完从 `window` 上按点路径读。接口要签名、但首屏把当前用户
+ *   写进全局状态的站点用它（小红书 `__INITIAL_STATE__`）。
+ * - `login`：账号就是登录 recipe 的某个 secret 参数，Stream 登录那一刻就知道，不问站点（东财 `zjzh`）。
+ *
+ * `signedIn`：取到 truthy 才算登录。有的站点游客也带一份用户信息（小红书 guest 有 `userId`），光看 id 会把游客认成账号。
+ * 路径取值时遇到 Vue ref（带 `_value` / `_rawValue` 的对象）自动解一层，作者照页面上看到的结构写即可。
+ */
+export type WhoamiSpec =
+  | { kind: 'http'; url: string; id: string; name?: string; signedIn?: string; format?: 'json' | 'html' }
+  | { kind: 'page'; url: string; id: string; name?: string; signedIn?: string }
+  | { kind: 'login'; param: string }
+
 export type AuthSpec =
   | { type: 'none' }
   | { type: 'cookie'; domain: string; inject: CookieInject; optional?: boolean }
