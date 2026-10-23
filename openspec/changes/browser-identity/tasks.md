@@ -28,10 +28,10 @@
 
 ## 计划 2：profile 认领
 
-- [ ] 1. host agent：`browser.profiles`（读 `Local State`）、`browser.claim`（按 profile 打开 URL），声明进 `hello.ops`；`cargo test`
-- [ ] 2. 扩展：`claim.html` entrypoint，把 `nonce` 经全部已连绑定交回；认领成功后记下 profile
-- [ ] 3. 后端：认领会话（签 `nonce`、2 分钟一次性、校验同设备、20 秒未回标「未安装或未连上」）与 `/api/devices/:id/profiles/*` 路由
-- [ ] 4. 节点的名称与环境：`PATCH /api/devices/nodes/:nodeId`
+- [x] 1. host agent：`browser.profiles`（读 `Local State`）、`browser.claim`（按 profile 打开 URL），声明进 `hello.ops`；`cargo test`
+- [x] 2. 扩展：`claim.html` entrypoint，把 `nonce` 经全部已连绑定交回；认领成功后记下 profile
+- [x] 3. 后端：认领会话（签 `nonce`、2 分钟一次性、校验同设备、20 秒未回标「未安装或未连上」）与 `/api/devices/:id/profiles/*` 路由
+- [x] 4. 节点的名称与环境：`PATCH /api/devices/nodes/:nodeId`
 
 ## 计划 3：站点身份
 

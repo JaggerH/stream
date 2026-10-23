@@ -83,8 +83,8 @@ device-execution 之后，执行位置是「设备」，一台设备上的浏览
 host agent 新增两个 op（在 `hello.ops` 里声明才派）：
 
 ```
-browser.profiles  args: { exe?: string }
-                  result: { userDataDir, profiles: [{ dir, name, gaiaEmail?, gaiaName? }] }
+browser.profiles  args: { exe?: string, userDataDir?: string }
+                  result: { userDataDir, profiles: [{ dir, name, gaiaEmail?, gaiaName? }], lastActive: string[] }
 browser.claim     args: { profileDirectory, url, exe? }
                   result: { launched: boolean }
 ```
@@ -92,7 +92,8 @@ browser.claim     args: { profileDirectory, url, exe? }
 - `browser.profiles` 读用户数据目录下的 `Local State`（JSON），取 `profile.info_cache`。只读，Chrome 开着也能读。
   `gaiaEmail` 是 profile 登录 Chrome 用的 Google 账号，只用于给用户起名时作提示，不参与任何判定。
 - `browser.claim` 执行 `<chrome> --profile-directory=<dir> <url>`。Chrome 已在运行时，这次调用会转给已有进程，在该 profile
-  里开一个窗口打开 `url`。
+  里开一个窗口打开 `url`。`url` 只收 `chrome-extension://`：认领只需要打开扩展自己的页面，「在任意 profile 里打开任意网址」
+  不顺手给出去。
 
 认领流程（由用户在面板上点「识别 profile」发起；会开窗口，所以只在用户在场时做）：
 
@@ -106,6 +107,7 @@ browser.claim     args: { profileDirectory, url, exe? }
 
 - **新 profile 的竞态**（spike S1）：profile 第一次被拉起时，认领页会先于扩展注册打开，页面加载失败（标签停在 URL 上）。
   所以第 6 步的超时之前，若该设备上新连上了一个尚未认领的节点，就对那个 profile 再发一次 `browser.claim`，只重发一次。
+  新连上的节点说不出自己是哪个 profile，实现上对**所有仍在等**的 profile 各补发一次（没装扩展的 profile 会多开一扇窗）。
   扩展没装时页面同样打不开，两种情况在 20 秒后合并为同一个提示。
 
 - profile 显示名可能被用户改掉：每次「识别 profile」都按 `profile_dir` 刷新名字。`profile_dir` 是不变的键。

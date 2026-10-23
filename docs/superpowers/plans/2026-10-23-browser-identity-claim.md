@@ -45,46 +45,46 @@
 
 ### Task 0: 基线
 
-- [ ] 后端全量、扩展全量、三处 tsc 各跑一次，记下失败集（后端已知 17 个文件 / 34 个测试，环境类）。
+- [x] 后端全量、扩展全量、三处 tsc 各跑一次，记下失败集（后端已知 17 个文件 / 34 个测试，环境类）。
 
 ### Task 1: host agent 的两个 op
 
 **Files:** `app/host-agent/src/browser.rs`(+tests)、`protocol.rs`、`overlay.rs`、`main.rs`、`src/replay/desktop-driver.ts`
 
-- [ ] 失败的测试：三个平台的默认用户数据目录（env 注入）；`userDataDir` 显式覆盖；`exe` 是 Chromium 时目录跟着换；`Local State` 解析出 `dir/name/gaiaEmail/gaiaName`（空串不带）、`lastActive`、`Default` 在前、`Profile 10` 排在 `Profile 2` 后；坏 JSON / 没有 `info_cache` 报可操作的错；`claim` 的参数是 `--profile-directory=<dir>` + url，`url` 不是 `chrome-extension://` 拒、`profileDirectory` 为空拒；dispatch 两个 op 的路由与回包；overlay 归类完整。
-- [ ] 实现；cortana 上 `cargo test` + `cargo build`；用 Linux 二进制的解析逻辑读一次真 Windows `Local State`（只看 dir / name）。
-- [ ] Commit `feat(host-agent): browser.profiles and browser.claim`。
+- [x] 失败的测试：三个平台的默认用户数据目录（env 注入）；`userDataDir` 显式覆盖；`exe` 是 Chromium 时目录跟着换；`Local State` 解析出 `dir/name/gaiaEmail/gaiaName`（空串不带）、`lastActive`、`Default` 在前、`Profile 10` 排在 `Profile 2` 后；坏 JSON / 没有 `info_cache` 报可操作的错；`claim` 的参数是 `--profile-directory=<dir>` + url，`url` 不是 `chrome-extension://` 拒、`profileDirectory` 为空拒；dispatch 两个 op 的路由与回包；overlay 归类完整。
+- [x] 实现；cortana 上 `cargo test` + `cargo build`；用 Linux 二进制的解析逻辑读一次真 Windows `Local State`（只看 dir / name）。
+- [x] Commit `feat(host-agent): browser.profiles and browser.claim`。
 
 ### Task 2: 节点表的认领与编辑
 
 **Files:** `src/devices/node-store.ts`(+test)
 
-- [ ] 失败的测试：`claimProfile` 写两格、清同设备同 dir 的别的节点、不碰别的设备；`update` 改 label / environment，`null` 清空，没有这个节点回 undefined。
-- [ ] Commit `feat(devices): nodes can be claimed and labelled`。
+- [x] 失败的测试：`claimProfile` 写两格、清同设备同 dir 的别的节点、不碰别的设备；`update` 改 label / environment，`null` 清空，没有这个节点回 undefined。
+- [x] Commit `feat(devices): nodes can be claimed and labelled`。
 
 ### Task 3: 认领会话
 
 **Files:** `src/devices/profile-claim.ts`(+test)、`src/http/ext-relay-registry.ts`(+test)
 
-- [ ] 失败的测试：start 对每个 profile 调一次 `browser.claim`，url 带各自的 nonce；本机 agent 签的 nonce 由 `local:<nodeId>` 交回 → 节点记下 dir / name、会话该 profile 变 `claimed`；别的设备的绑定交回 → 拒、节点不变；同一 nonce 第二次 → 拒；过 2 分钟 → 拒；20 秒没交回 → `missing`，其它 profile 不受影响；等待期间同设备新连上一个未认领节点 → 对仍在等的 profile 各补发一次（只一次），已认领的节点连上不补发；兼容槽交回 → 拒；agent 没声明 op → `DeviceIncapable` 形状的错。registry：`claim` 帧不进 relay，回 `claim-result`；没有处理器时回 `ok:false`。
-- [ ] Commit `feat(devices): profile claim sessions`。
+- [x] 失败的测试：start 对每个 profile 调一次 `browser.claim`，url 带各自的 nonce；本机 agent 签的 nonce 由 `local:<nodeId>` 交回 → 节点记下 dir / name、会话该 profile 变 `claimed`；别的设备的绑定交回 → 拒、节点不变；同一 nonce 第二次 → 拒；过 2 分钟 → 拒；20 秒没交回 → `missing`，其它 profile 不受影响；等待期间同设备新连上一个未认领节点 → 对仍在等的 profile 各补发一次（只一次），已认领的节点连上不补发；兼容槽交回 → 拒；agent 没声明 op → `DeviceIncapable` 形状的错。registry：`claim` 帧不进 relay，回 `claim-result`；没有处理器时回 `ok:false`。
+- [x] Commit `feat(devices): profile claim sessions`。
 
 ### Task 4: 路由与接线
 
 **Files:** `src/http/node-routes.ts`(+test)、`src/serve.ts`
 
-- [ ] 失败的测试：非 loopback 403；设备不在线 404；没有 op 409；discover 回 profile 列表并标出已认领的节点；claim start / poll；`PATCH /api/devices/nodes/:nodeId` 改 label / environment、字段类型错 400、没有节点 404。
-- [ ] Commit `feat(devices): profile claim and node edit routes`。
+- [x] 失败的测试：非 loopback 403；设备不在线 404；没有 op 409；discover 回 profile 列表并标出已认领的节点；claim start / poll；`PATCH /api/devices/nodes/:nodeId` 改 label / environment、字段类型错 400、没有节点 404。
+- [x] Commit `feat(devices): profile claim and node edit routes`。
 
 ### Task 5: 扩展
 
 **Files:** `extension/src/lib/claim.ts`(+test)、`node.ts`(+test)、`driver.ts`、`entrypoints/claim/*`、`entrypoints/background.ts`
 
-- [ ] 失败的测试：经全部已连绑定各发一次 `claim`；之后才连上的绑定也补发；第一个 `ok` 写进 `node` 存储（`nodeId` 不变）并返回；全部拒或超时回错误；`nodeQuery` 带上认领后的两格。
-- [ ] 页面：读 `#n=`，发给 SW，显示「已识别：<name>（<dir>）」或错误。
-- [ ] `wxt build` 产出 `claim.html`。
-- [ ] Commit `feat(extension): claim page hands the nonce back over every binding`。
+- [x] 失败的测试：经全部已连绑定各发一次 `claim`；之后才连上的绑定也补发；第一个 `ok` 写进 `node` 存储（`nodeId` 不变）并返回；全部拒或超时回错误；`nodeQuery` 带上认领后的两格。
+- [x] 页面：读 `#n=`，发给 SW，显示「已识别：<name>（<dir>）」或错误。
+- [x] `wxt build` 产出 `claim.html`。
+- [x] Commit `feat(extension): claim page hands the nonce back over every binding`。
 
 ### Task 6: 收尾
 
-- [ ] rebase、全量测试与类型检查、失败集对照基线；tasks.md 勾掉计划 2 的 1–4。
+- [x] rebase、全量测试与类型检查、失败集对照基线；tasks.md 勾掉计划 2 的 1–4。
