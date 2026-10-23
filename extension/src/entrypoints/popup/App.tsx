@@ -15,6 +15,7 @@ import { nativeHostToken, nativeHostStatus } from '../../lib/native-host.ts'
 import { verifyBackend } from '../../lib/backend-identity.ts'
 import { CookiePanel } from './CookiePanel.tsx'
 import { BindingsPanel } from './BindingsPanel.tsx'
+import { readProfileLine, type ProfileLine } from '../../lib/profile-line.ts'
 import { Backdrop } from '@/components/acrylic/backdrop.tsx'
 import { Card } from '@/components/acrylic/card.tsx'
 import { Item, ItemContent, ItemTitle, ItemDescription, ItemActions } from '@/components/acrylic/item.tsx'
@@ -90,6 +91,15 @@ export default function App() {
   // 第一种能在这里查得出来——它是纯 native messaging 往返，不需要后端在跑。只在探测失败
   // （仍没有 baseUrl）时才查，成功了就不必知道原因。null=还没查/不需要查。
   const [hostStatus, setHostStatus] = useState<{ paired: boolean; reason?: string } | null>(null)
+  // 这个扩展在哪个 profile、哪个环境（browser-identity D12）。null = 还没读到 / SW 还没生成过 nodeId：不画。
+  const [profile, setProfile] = useState<ProfileLine | null>(null)
+  useEffect(() => {
+    let cancelled = false
+    readProfileLine(cfg?.baseUrl ?? '')
+      .then((p) => { if (!cancelled) setProfile(p) })
+      .catch(() => { /* 读不到就不画这一行 */ })
+    return () => { cancelled = true }
+  }, [cfg?.baseUrl])
 
   useEffect(() => {
     let cancelled = false
@@ -312,6 +322,13 @@ export default function App() {
             )}
           </span>
         </header>
+
+        {profile && (
+          <div className="flex flex-col gap-0.5 border-b border-[var(--acr-border-soft)] px-3.5 py-2 text-xs">
+            <span className={profile.claimed ? 'font-medium' : 'text-[var(--acr-orange)]'}>{profile.title}</span>
+            {profile.hint && <span className="text-[11px] text-muted-foreground">{profile.hint}</span>}
+          </div>
+        )}
 
         <div className="flex flex-col gap-3 p-3.5">
         {editUrl || !cfg.baseUrl ? (
