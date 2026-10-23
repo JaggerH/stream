@@ -35,6 +35,9 @@ export interface NodeSeenEvent {
   profileName?: string
 }
 
+/** 认领帧的回答（`ProfileClaims.redeem` 的结果）。 */
+export type ClaimReply = { ok: true; profileDir: string; profileName: string } | { ok: false; error: string }
+
 export interface ExtRelayRegistryDeps {
   /** 本机兼容槽：不带 `nodeId` 的老扩展连这条。 */
   local: ExtRelay
@@ -141,7 +144,40 @@ export class ExtRelayRegistry {
 
   /** WS 上收到的一帧交给那条绑定的 relay；已被撤销（relay 已忘）的帧丢掉。 */
   handleMessage(bindingId: string, raw: string): void {
-    this.relays.get(bindingId)?.handleMessage(raw)
+    const r = this.relays.get(bindingId)
+    if (!r) return
+    if (this.maybeClaim(bindingId, raw)) return
+    r.handleMessage(raw)
+  }
+
+  private claimHandler: ((bindingId: string, nonce: string) => ClaimReply) | undefined
+
+  /**
+   * 扩展经这条绑定交回认领码（browser-identity D3：`{ type: 'claim', nonce }`）。帧要知道是哪条绑定交的
+   * ——同设备校验就靠它——而 relay 不知道自己是哪条绑定，所以在这里、交给 relay 之前截下。
+   */
+  onClaim(fn: (bindingId: string, nonce: string) => ClaimReply): void {
+    this.claimHandler = fn
+  }
+
+  /**
+   * 是认领帧就处理掉、回 `{ type: 'claim-result', nonce, ...}`，返回 true。先看长度和字面量再解析：
+   * 这条路上过的是全部 CDP 回执，大的有几 MB（截图），每帧都 `JSON.parse` 两遍不值得。
+   */
+  private maybeClaim(bindingId: string, raw: string): boolean {
+    if (raw.length > 1024 || !raw.includes('"claim"')) return false
+    let msg: { type?: unknown; nonce?: unknown }
+    try { msg = JSON.parse(raw) } catch { return false }
+    if (msg?.type !== 'claim') return false
+    const nonce = typeof msg.nonce === 'string' ? msg.nonce : ''
+    let reply: ClaimReply
+    try {
+      reply = this.claimHandler && nonce ? this.claimHandler(bindingId, nonce) : { ok: false, error: '这个 Stream 不接受认领' }
+    } catch (e) {
+      reply = { ok: false, error: e instanceof Error ? e.message : String(e) }
+    }
+    try { this.sockets.get(bindingId)?.send(JSON.stringify({ type: 'claim-result', nonce, ...reply })) } catch { /* 已经断了 */ }
+    return true
   }
 
   relay(bindingId: string): ExtRelay {

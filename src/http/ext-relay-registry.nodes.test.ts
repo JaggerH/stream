@@ -138,4 +138,34 @@ describe('registry.local 门面', () => {
     reg.connect('local:node_a', sock(), { nodeId: 'node_a' })
     expect(reg.local.connected).toBe(true)
   })
+
+  it('认领帧：不进 relay，交给 onClaim（带着是哪条绑定），回 claim-result', () => {
+    const { reg } = makeLocal()
+    const out: string[] = []
+    reg.connect('local:node_a', { send: (raw: string) => out.push(raw) }, { nodeId: 'node_a' })
+    const calls: string[] = []
+    reg.onClaim((b, n) => { calls.push(`${b}|${n}`); return { ok: true, profileDir: 'Default', profileName: '工作' } })
+    reg.handleMessage('local:node_a', JSON.stringify({ type: 'claim', nonce: 'abc' }))
+    expect(calls).toEqual(['local:node_a|abc'])
+    expect(out.map((r) => JSON.parse(r))).toEqual([{ type: 'claim-result', nonce: 'abc', ok: true, profileDir: 'Default', profileName: '工作' }])
+  })
+
+  it('认领帧：没有处理器（或处理器抛了）回 ok:false；别的帧照常到 relay', async () => {
+    const { reg } = makeLocal()
+    const out: string[] = []
+    reg.connect('local:node_a', { send: (raw: string) => out.push(raw) }, { nodeId: 'node_a' })
+    reg.handleMessage('local:node_a', JSON.stringify({ type: 'claim', nonce: 'x' }))
+    reg.onClaim(() => { throw new Error('boom') })
+    reg.handleMessage('local:node_a', JSON.stringify({ type: 'claim', nonce: 'y' }))
+    expect(out.map((r) => JSON.parse(r))).toEqual([
+      { type: 'claim-result', nonce: 'x', ok: false, error: expect.any(String) },
+      { type: 'claim-result', nonce: 'y', ok: false, error: 'boom' },
+    ])
+    // 结果里碰巧有 "claim" 字样的普通回执不被吃掉
+    out.length = 0
+    const p = reg.relay('local:node_a').list()
+    const sent = JSON.parse(out[0]!) as { id: number }
+    reg.handleMessage('local:node_a', JSON.stringify({ id: sent.id, result: { tabs: [{ title: '"claim"' }] } }))
+    await expect(p).resolves.toEqual([{ title: '"claim"' }])
+  })
 })
