@@ -14,7 +14,7 @@
 - [x] 2. 删掉 `WINDOW_GROUP_TITLE` / `windowGroups` / `reconcileWindowGroups`
 - [x] 3. 升级收编：独立窗组里 probe 关、created 挪进主组、adopted 只解组；同名主组合并
 - [x] 4. driver 测试：新窗被并回、popup 不动、收编 47 个旧组只剩一个且 adopted 标签仍在
-- [ ] 5. Windows 真机冒烟：站点 `window.open` 后浏览器里仍只有一个 Stream 组
+- [x] 5. Windows 真机冒烟：站点 `window.open` 后浏览器里仍只有一个 Stream 组（2026-10-23 Cortana：旧独立窗组收编后只剩一个）
 
 ## 计划 1：节点（browser-node 的后端与扩展部分）
 
@@ -60,3 +60,7 @@
 - [x] 5. 扩展 popup：当前 profile 与环境；未识别时的说明
 - [x] 6a. 文档（ARCHITECTURE 执行位置一节、PACKAGE 的 `whoami`、扩展 README）
 - [ ] 6b. Windows 真机冒烟：两个 profile 同时在线、认领、指定身份执行、换号被拦
+  - 2026-10-23 Cortana 已过：两个节点同时在线；只认领点名的 profile（3 秒）；whoami 三态（http / page 形状，游客认成已登出）；
+    身份目标选对 profile（xhs 107 条）；环境里没登录的号 → 立即 `identity-offline`、不换人；
+    关着的 profile 静默唤起、跑完卸载（B 站 → 环境「个人」，20 条，10 秒；收回时扩展先断开 → `4403e07` 修成算收回）
+  - 未测：换号被拦（要第二个账号）
