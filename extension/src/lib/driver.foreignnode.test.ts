@@ -56,11 +56,11 @@ describe('配对绑定被实例以 4004 拒绝', () => {
     vi.stubGlobal('fetch', honestPairedBackend())
     const built: Array<{ url: string; fire: (code: number) => void }> = []
     class FakeSocket {
-      private close: ((ev: { code: number }) => void) | null = null
+      private onClose: ((ev: { code: number }) => void) | null = null
       constructor(public url: string) {
-        built.push({ url, fire: (code) => this.close?.({ code }) })
+        built.push({ url, fire: (code) => this.onClose?.({ code }) })
       }
-      addEventListener(type: string, fn: (ev: { code: number }) => void) { if (type === 'close') this.close = fn }
+      addEventListener(type: string, fn: (ev: { code: number }) => void) { if (type === 'close') this.onClose = fn }
       send() {}
       close() {}
     }
