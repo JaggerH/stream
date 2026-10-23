@@ -137,10 +137,15 @@ describe('IdentityRouter：按需唤起（D8）', () => {
 })
 
 describe('IdentityRouter：唤起的 profile 收回去（D8）', () => {
-  function holdWorld(opts: { wokenAt?: number; release?: () => Promise<{ userWindows: number; unloading: boolean }> } = {}) {
+  function holdWorld(opts: { wokenAt?: number; release?: (online: string[]) => Promise<{ userWindows: number; unloading: boolean }>; reconnects?: boolean } = {}) {
     const nodes: Record<string, RouterNode> = { node_work: { ...NODES.node_work!, ...(opts.wokenAt !== undefined ? { wokenAt: opts.wokenAt } : {}) } }
     const calls: string[] = []
-    const r = world([row('node_work', 'B', 10)], ['local:node_work'], {
+    const online = ['local:node_work']
+    const r = world([row('node_work', 'B', 10)], online, {
+      waitOnline: async (b) => {
+        if (opts.reconnects && !online.includes(b)) online.push(b)
+        return online.includes(b)
+      },
       node: (id) => nodes[id],
       setWokenAt: (id, t) => {
         calls.push(`woken:${t}`)
@@ -151,7 +156,7 @@ describe('IdentityRouter：唤起的 profile 收回去（D8）', () => {
       holdProfile: async (b) => void calls.push(`hold:${b}`),
       releaseProfile: async (b) => {
         calls.push(`release:${b}`)
-        return opts.release ? opts.release() : { userWindows: 0, unloading: true }
+        return opts.release ? opts.release(online) : { userWindows: 0, unloading: true }
       },
     })
     return { r, calls, nodes }
@@ -187,6 +192,18 @@ describe('IdentityRouter：唤起的 profile 收回去（D8）', () => {
 
   it('放不掉（扩展断了 / 老扩展）→ woken_at 留着，面板照样看得见', async () => {
     const { r, nodes } = holdWorld({ wokenAt: 5, release: async () => { throw new Error('unknown op') } })
+    await (await r.resolve(req)).release()
+    expect(nodes.node_work!.wokenAt).toBe(5)
+  })
+
+  it('放的时候扩展断开、没再连回来 → profile 卸载了，算收回，woken_at 清掉', async () => {
+    const { r, nodes } = holdWorld({ wokenAt: 5, release: async (online) => { online.length = 0; throw new Error('ext-relay socket disconnected') } })
+    await (await r.resolve(req)).release()
+    expect(nodes.node_work!.wokenAt).toBeUndefined()
+  })
+
+  it('放的时候扩展断开、又连回来了（SW 重启）→ profile 还开着，woken_at 留着', async () => {
+    const { r, nodes } = holdWorld({ wokenAt: 5, reconnects: true, release: async (online) => { online.length = 0; throw new Error('ext-relay socket disconnected') } })
     await (await r.resolve(req)).release()
     expect(nodes.node_work!.wokenAt).toBe(5)
   })

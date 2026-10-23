@@ -93,6 +93,9 @@ export interface IdentityRouterDeps {
 /** 唤起之后等节点连上的上限（D8）：一次冷加载 profile + 扩展 SW 起来 + 连上中继。 */
 export const WAKE_WAIT_MS = 30_000
 
+/** 收回时扩展断开：等这么久没重连才算 profile 卸载了（SW 重启重连通常 1–2 秒）。 */
+export const RELEASE_REAPPEAR_MS = 5_000
+
 export interface IdentityRequest {
   target: IdentityTarget
   facility: string
@@ -227,6 +230,13 @@ export function makeIdentityRouter(deps: IdentityRouterDeps): IdentityRouter & {
       log(`[identity] 收回 ${nodeWhere(node)}：${r.userWindows > 0 ? `用户开着 ${r.userWindows} 扇窗，只关了 Stream 的标签` : '最后一扇窗已关，profile 将被卸载'}`)
       deps.setWokenAt?.(node.nodeId, null)
     } catch (e) {
+      // 关掉最后一张标签，Chrome 当场卸载 profile，扩展连回话都来不及发：断开本身就是收回成功。
+      // 等一会儿看它回不回来——扩展 SW 重启会重连，那时 profile 还开着。
+      if (!deps.isOnline(node.bindingId) && !(await waitOnline(node.bindingId, RELEASE_REAPPEAR_MS))) {
+        log(`[identity] 收回 ${nodeWhere(node)}：扩展断开，profile 已卸载`)
+        deps.setWokenAt?.(node.nodeId, null)
+        return
+      }
       log(`[identity] 收回 ${nodeWhere(node)} 失败（它仍在后台开着）：${e instanceof Error ? e.message : String(e)}`)
     }
   }
