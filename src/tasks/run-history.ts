@@ -31,15 +31,27 @@ export interface TaskRun {
   deviceId: string
   /** 远程执行用过浏览器时选定的扩展绑定（只有成功的行记得住）。 */
   bindingId?: string
+  /** 那条绑定的节点、执行那一刻的 profile 名与环境（browser-identity D12；只有成功、且认得出节点的行有）。 */
+  nodeId?: string
+  profileName?: string
+  environment?: string
 }
 
 /** 失败行的设备只在错误文本里：`user-tasks.ts` 的 `nameDevice` 给它加了这个前缀。 */
 const DEVICE_PREFIX = /^\[设备 ([^\]\s]+)\] /
 
-function placementOf(detail: unknown, errors: unknown): { deviceId: string; bindingId?: string } {
-  const d = detail !== null && typeof detail === 'object' ? (detail as { device?: unknown; browser?: unknown }) : {}
+function placementOf(detail: unknown, errors: unknown): Pick<TaskRun, 'deviceId' | 'bindingId' | 'nodeId' | 'profileName' | 'environment'> {
+  const d = detail !== null && typeof detail === 'object' ? (detail as Record<string, unknown>) : {}
   if (typeof d.device === 'string') {
-    return { deviceId: d.device, ...(typeof d.browser === 'string' ? { bindingId: d.browser } : {}) }
+    const str = (k: string) => (typeof d[k] === 'string' ? (d[k] as string) : undefined)
+    const bindingId = str('browser'), nodeId = str('node'), profileName = str('profileName'), environment = str('environment')
+    return {
+      deviceId: d.device,
+      ...(bindingId ? { bindingId } : {}),
+      ...(nodeId ? { nodeId } : {}),
+      ...(profileName ? { profileName } : {}),
+      ...(environment ? { environment } : {}),
+    }
   }
   const first = Array.isArray(errors) ? errors[0] : errors
   const msg = first !== null && typeof first === 'object' ? (first as { message?: unknown }).message : first

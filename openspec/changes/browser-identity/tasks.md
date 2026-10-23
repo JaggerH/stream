@@ -18,13 +18,13 @@
 
 ## 计划 1：节点（browser-node 的后端与扩展部分）
 
-- [ ] 1. 扩展：生成并持久化 `nodeId`；握手带 `nodeId` / `profileDir` / `profileName`（`shared/browser-relay/handshake.ts`）
-- [ ] 2. `browser_nodes` 表与 `NodeStore`；节点首次连上建行；设备默认浏览器迁到节点
-- [ ] 3. 本机多节点：`/api/ext` 按 `nodeId` 给出 `local:<nodeId>`，不带的落兼容槽 `local`；`ExtRelayRegistry` 本机按节点
-- [ ] 4. `registry.local` 改为经 `pickBrowser` 解析的门面；测试：一次执行内所有 relay 调用落在同一节点
-- [ ] 5. 配对绑定记 `nodeId`，换 `nodeId` 来连以 4004 拒绝；扩展侧把 4004 显示为「这条绑定属于另一个 profile」
-- [ ] 6. 登录态按节点：`data/cookies/<deviceId>/<nodeId>.json`，`CookiePuller` 按节点，`requiredDomainsFor` 按节点；兼容槽读旧文件
-- [ ] 7. 运行记录加 `nodeId` / `profileName` / `environment`
+- [x] 1. 扩展：生成并持久化 `nodeId`；握手带 `nodeId` / `profileDir` / `profileName`（`shared/browser-relay/handshake.ts`）
+- [x] 2. `browser_nodes` 表与 `NodeStore`；节点首次连上建行；设备默认浏览器迁到节点
+- [x] 3. 本机多节点：`/api/ext` 按 `nodeId` 给出 `local:<nodeId>`，不带的落兼容槽 `local`；`ExtRelayRegistry` 本机按节点
+- [x] 4. `registry.local` 改为经 `pickBrowser` 解析的门面；测试：一次执行内所有 relay 调用落在同一节点
+- [x] 5. 配对绑定记 `nodeId`，换 `nodeId` 来连以 4004 拒绝；扩展侧把 4004 显示为「这条绑定属于另一个 profile」
+- [x] 6. 登录态按节点：`data/cookies/<deviceId>/<nodeId>.json`，`CookiePuller` 按节点，`requiredDomainsFor` 按节点；兼容槽读旧文件
+- [x] 7. 运行记录加 `nodeId` / `profileName` / `environment`
 
 ## 计划 2：profile 认领
 

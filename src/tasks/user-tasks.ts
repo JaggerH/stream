@@ -24,6 +24,27 @@ export interface CompileOptions {
    * 勾上），下一轮就该按新的来。存快照的表现是"改了没反应"，而且不报错。
    */
   paramsFor?: (ref: string) => Record<string, unknown>
+  /**
+   * 这次执行用的扩展绑定落在哪个节点上（browser-identity D12）：节点 id、profile 名、环境。取的是执行那一刻的
+   * 快照，写进运行记录——之后节点改名、换环境，旧记录不跟着变。缺席 / 认不出 = 不写这几格。
+   */
+  nodeOf?: (bindingId: string) => RunNode | undefined
+}
+
+export interface RunNode {
+  nodeId: string
+  profileName?: string
+  environment?: string
+}
+
+/** 运行记录明细里节点那几格（`run-history.ts` 读回去）。 */
+function nodeDetail(n: RunNode | undefined): Record<string, string> {
+  if (!n) return {}
+  return {
+    node: n.nodeId,
+    ...(n.profileName ? { profileName: n.profileName } : {}),
+    ...(n.environment ? { environment: n.environment } : {}),
+  }
 }
 
 export function compileUserTask(row: UserTaskRow, opts: CompileOptions = {}): ScheduledTask {
@@ -63,7 +84,16 @@ function runAction(row: UserTaskRow, opts: CompileOptions): ScheduledTask['run']
     const resolved = opts.placement?.(row) ?? { deviceId: LOCAL_DEVICE, allowHosts: [] }
     if (resolved.deviceId === LOCAL_DEVICE) {
       opts.ready?.(resolved)
-      return await runOnDevice(resolved, () => fn(params))
+      // 本机也可能落在某个 profile 的节点上（browser-identity D2）：用过浏览器、且选中的是一个节点，
+      // 运行记录才说是哪个；兼容槽 / 没用浏览器的照旧原样返回，存量任务的明细形状不变。
+      const browser: NonNullable<RunPlacement['browser']> = {}
+      const out = await runOnDevice({ ...resolved, browser }, () => fn(params))
+      const node = browser.bindingId ? opts.nodeOf?.(browser.bindingId) : undefined
+      if (!node) return out
+      return {
+        ...(out ?? { summary: '' }),
+        detail: { device: LOCAL_DEVICE, browser: browser.bindingId, ...nodeDetail(node), detail: out?.detail },
+      }
     }
     // 每次执行一个新标记：同一条任务的上一轮发没发过，和这一轮无关。
     const marker: DispatchMarker = { dispatched: false }
@@ -86,7 +116,11 @@ function runAction(row: UserTaskRow, opts: CompileOptions): ScheduledTask['run']
     // 运行记录要看得出在哪台设备上跑的；local 原样返回，存量任务的明细形状不变。
     return {
       ...(out ?? { summary: '' }),
-      detail: { device: p.deviceId, ...(browser.bindingId ? { browser: browser.bindingId } : {}), detail: out?.detail },
+      detail: {
+        device: p.deviceId,
+        ...(browser.bindingId ? { browser: browser.bindingId, ...nodeDetail(opts.nodeOf?.(browser.bindingId)) } : {}),
+        detail: out?.detail,
+      },
     }
   }
 }

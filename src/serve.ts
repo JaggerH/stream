@@ -863,6 +863,13 @@ const apiToken = config.api_token || loadOrCreateApiToken(dirname(config.item_db
       return resolvePlacement({ taskDevice: row.device, facility: net?.facility, binding: (f) => facilityBindings.get(f), hosts: net?.hosts ?? [] })
     },
     ready: (p: RunPlacement) => assertDeviceReady(p, harvest.hostRelays, 'http.fetch'),
+    // 运行记录带节点（browser-identity D12）：执行那一刻节点表里的 profile 名与环境。
+    nodeOf: (bindingId: string) => {
+      const nodeId = harvest.extRelays.nodeOf(bindingId)
+      if (!nodeId) return undefined
+      const n = browserNodes?.get(nodeId)
+      return { nodeId, ...(n?.profileName ? { profileName: n.profileName } : {}), ...(n?.environment ? { environment: n.environment } : {}) }
+    },
   })
   mountDeviceRoutes(app, {
     store: deviceStore,

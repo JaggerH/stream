@@ -77,6 +77,17 @@ describe('RunLedger', () => {
     ])
   })
 
+  it('节点：成功行读 detail.node / profileName / environment；没有的行这几格缺席（browser-identity D12）', () => {
+    const p = seed([
+      { inserted_at: 1, result: '{"summary":"ok","detail":{"device":"local","browser":"local:node_w","node":"node_w","profileName":"工作","environment":"工作","detail":{"n":1}}}' },
+      { inserted_at: 2, result: '{"summary":"ok","detail":{"device":"linux:nas","browser":"ext:a"}}' },
+    ])
+    const [withNode, without] = new RunLedger(p).runs('t1').reverse()
+    expect(withNode).toMatchObject({ deviceId: 'local', bindingId: 'local:node_w', nodeId: 'node_w', profileName: '工作', environment: '工作' })
+    expect(without).not.toHaveProperty('nodeId')
+    expect(without).not.toHaveProperty('profileName')
+  })
+
   it('lastRun 给最近一条', () => {
     const p = seed([{ inserted_at: 1, result: '{"summary":"老"}' }, { inserted_at: 9, result: '{"summary":"新"}' }])
     expect(new RunLedger(p).lastRun('t1')?.summary).toBe('新')

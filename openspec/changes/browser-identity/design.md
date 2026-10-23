@@ -49,7 +49,8 @@ device-execution 之后，执行位置是「设备」，一台设备上的浏览
 
   节点第一次连上时建行；`device_id` 来自它连进来的那条绑定。
 - **配对绑定与节点一一对应。** 绑定第一次连上时把 `nodeId` 记进绑定行；之后同一 token 带着不同的 `nodeId` 来连，以关闭码
-  4004 拒绝。这意味着 token 被拷到了另一个 profile，不能让它冒充原来那个节点。
+  4004 拒绝。这意味着 token 被拷到了另一个 profile，不能让它冒充原来那个节点。不带 `nodeId` 的连接（老扩展、扩展降级）
+  照旧放行：它说不出自己是谁，也就冒充不了谁。扩展收到 4004 停止重连，把绑定标成 `foreignNode`。
 - 「设备的默认浏览器」从 `ExtBindingStore.default` 搬到 `browser_nodes.is_default`：用户选的本来就是一个 profile。
   首启把已有的默认绑定迁到它所对应的节点（节点连上时迁）。
 
@@ -65,6 +66,15 @@ device-execution 之后，执行位置是「设备」，一台设备上的浏览
 - **`registry.local` 改成门面。** 30 处调用点不逐个改：`registry.local` 返回一个 `ExtRelay` 形状的门面，每次调用时按
   `pickBrowser` 解析到具体节点的 relay。执行内，`pickBrowser` 读执行上下文里选定的那个节点，整次执行不变；执行外（面板、
   MCP 工具）取本机默认节点。门面不缓存解析结果。
+  - 远程设备上的执行里调用门面，解析的仍是**本机**的默认节点（`pick('local')`，不钉）：「local」不因为在远程执行里被调用
+    就变成远程，也不能把远程执行的 `browser` 记号钉成一条本机绑定。
+  - 本机一个节点都不在线时 `pick('local')` 回兼容槽 `local`（不抛，与升级前一致），**这一刻不钉**：`ensureHarvestBrowser`
+    唤起 Chrome 之后连上来的节点要能接住这次执行。只钉在线的绑定。
+  - 长期监听（`onConnected` / `onCookiesChanged`）扇出到每一条本机 relay，包括之后才连上的节点；`subscribe` 记住订阅落在
+    哪条 relay 上，`unsubscribe` 回到同一条。
+- 扩展对账孤儿标签（`GET /api/ext/claimed-tabs`）：本机节点带 `?node=<nodeId>` 而不是 `binding=local:<nodeId>`——老后端不认
+  `node`，回它的本机全集；问它一个不认识的绑定，它会答「一个都不认」，在跑的标签就被当孤儿收了。新后端对本机节点的回答并上
+  兼容槽认领的标签（升级那一刻兼容槽上的 lane 就在某个 profile 里），宁可漏关不可误关。
 - 同机多个 profile 共享同一个 native host token：一个本机 profile 能冒充另一个本机 profile 的 `nodeId`。同机同用户，
   不防；配对绑定由 D1 的 4004 防住。
 
@@ -247,6 +257,11 @@ type Target =
   `pickBrowser`，按 D7 选出节点。HTTP 执行因此也带上了身份，远程设备的 `http.fetch` 注入的是正确账号的 cookie。
 - 远程设备该拉哪些域（`requiredDomainsFor`）改为按节点算：设备目标绑到该设备的 facility，加上身份 / 环境目标解析到该节点的 facility。
 - **不迁移旧快照。** 节点连上时 `CookiePuller` 本来就会全量拉一次。旧的 `cookies/<deviceId>.json` 只留给兼容槽（D2 的老扩展）读。
+- **节点都离线时读哪份。** 设备上一个在线节点都没有（Chrome 关着），纯 HTTP 执行照样要登录态：读设备的默认节点，再退到最近
+  见过的节点；都没有（设备从没连过节点，例如只有 `http.fetch` 的 Linux agent）才读按设备的旧文件。不退到旧文件——那份可能是
+  别的 profile 的。
+- 执行之外读登录态的地方（媒体代理、网盘的夸克 cookie、`cookieHealth`）读本机默认节点那份：`credentials.pushedCookies` 与
+  `auth.cookiePuller` 都改为每次调用按槽位解析。
 
 ### D11. 失败语义
 

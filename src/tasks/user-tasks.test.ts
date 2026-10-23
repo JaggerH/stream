@@ -182,6 +182,37 @@ describe('action tasks run on their placement', () => {
     expect(await plain.run({} as never)).toEqual({ summary: 'ok', detail: { device: 'linux:nas', detail: undefined } })
   })
 
+  it('用过浏览器且落在一个节点上：结果带节点、profile 名与环境（browser-identity D12）', async () => {
+    const nodeOf = (b: string) => (b === 'ext:a' ? { nodeId: 'node_a', profileName: '工作', environment: '工作' } : b === 'local:node_w' ? { nodeId: 'node_w' } : undefined)
+    const remote = compileUserTask(emRow, {
+      actions: () => async () => { pickBrowser({ pick: () => 'ext:a' }); return { summary: 'ok' } },
+      placement: () => ({ deviceId: 'linux:nas', allowHosts: [] }),
+      ready: () => {},
+      nodeOf,
+    })
+    expect(await remote.run({} as never)).toEqual({
+      summary: 'ok',
+      detail: { device: 'linux:nas', browser: 'ext:a', node: 'node_a', profileName: '工作', environment: '工作', detail: undefined },
+    })
+    const local = compileUserTask(emRow, {
+      actions: () => async () => { pickBrowser({ pick: () => 'local:node_w', isOnline: () => true }); return { summary: 'ok', detail: { n: 1 } } },
+      placement: () => ({ deviceId: 'local', allowHosts: [] }),
+      ready: () => {},
+      nodeOf,
+    })
+    expect(await local.run({} as never)).toEqual({ summary: 'ok', detail: { device: 'local', browser: 'local:node_w', node: 'node_w', detail: { n: 1 } } })
+  })
+
+  it('本机落在兼容槽（老扩展）上：结果原样', async () => {
+    const t = compileUserTask(emRow, {
+      actions: () => async () => { pickBrowser({ pick: () => 'local', isOnline: () => true }); return { summary: 'ok', detail: { n: 1 } } },
+      placement: () => ({ deviceId: 'local', allowHosts: [] }),
+      ready: () => {},
+      nodeOf: () => undefined,
+    })
+    expect(await t.run({} as never)).toEqual({ summary: 'ok', detail: { n: 1 } })
+  })
+
   it('local 时结果原样', async () => {
     const t = compileUserTask(emRow, {
       actions: () => async () => ({ summary: 'ok', detail: { n: 1 } }),
