@@ -43,13 +43,13 @@
 
 ## 计划 4：按身份路由
 
-- [ ] 1. `Target` 三种；`facility_devices` 加 `account_id` / `environment` 列，任务行加 `identity` / `environment` 列；`command` 类任务拒绝
-- [ ] 2. 解析器：身份 / 环境候选、在线优先、最近核对优先；预填 `browser.bindingId`；候选为空时没有回落分支
-- [ ] 3. 按需唤起：`ensureApp { profileDirectory, force }`、等节点 30 秒、单节点单飞；按 S2 结论决定定时执行是否唤起
-- [ ] 3a. 唤起后收尾：关掉自己开的标签与为它造的窗（关最后一扇窗即卸载 profile，已实测）；纯 HTTP 执行造一扇不聚焦的窗再关；`woken_at` 记录与清除
-- [ ] 4. 执行前核对：新鲜度窗口（采集 10 分钟、动作 60 秒）；`identity-mismatch` / `identity-signed-out` / `identity-offline` 与失败处置
-- [ ] 5. 通知：换号与登出指名 profile；运行记录加 `accountId` / `accountName`
-- [ ] 6. 端到端测试：两个本机节点、两个账号，任务指定身份，换号后被拦下
+- [x] 1. `Target` 三种；`facility_devices` 加 `account_id` / `environment` 列，任务行加 `identity` / `environment` 列；`command` 类任务拒绝
+- [x] 2. 解析器：身份 / 环境候选、在线优先、最近核对优先；预填 `browser.bindingId`；候选为空时没有回落分支
+- [x] 3. 按需唤起：`ensureApp { profileDirectory, force }`、等节点 30 秒、单节点单飞；按 S2 结论决定定时执行是否唤起
+- [x] 3a. 唤起后收尾：关掉自己开的标签与为它造的窗（关最后一扇窗即卸载 profile，已实测）；纯 HTTP 执行造一扇不聚焦的窗再关；`woken_at` 记录与清除
+- [x] 4. 执行前核对：新鲜度窗口（采集 10 分钟、动作 60 秒）；`identity-mismatch` / `identity-signed-out` / `identity-offline` 与失败处置
+- [x] 5. 通知：换号与登出指名 profile；运行记录加 `accountId` / `accountName`
+- [x] 6. 端到端测试：两个本机节点、两个账号，任务指定身份，换号后被拦下
 
 ## 计划 5：面板与 popup
 

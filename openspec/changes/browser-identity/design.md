@@ -222,6 +222,15 @@ type Target =
 **任何一种目标都不换身份顶上。** 实现上，`identity` / `environment` 目标的候选集合为空时，解析器没有任何退回到
 `device` 或 `local` 的分支。
 
+计划 4 实现时定的几条：
+
+- `facility_devices` 重建为三列可空、表上一条 CHECK 守「恰好一格」（老表 `device_id NOT NULL`，加列装不下身份目标的行）。
+  任务行上三格**路由层拒绝同时给两个以上**；上面的先后顺序只兜手改过库的行。
+- 解析是异步的（选节点、可能唤起、可能核对）。`RunPlacement` 记下它是为哪个 facility 解的，同一次执行里再为同一个
+  facility 问（调度器之下的 ReplayAdapter、动作里读这个 facility 的源）就复用外层那份，不再选一遍。
+- MCP 的 `run_action_recipe` 只拿 placement 判「能不能在这里跑」、不进执行上下文，钉不住节点：facility 目标是身份 /
+  环境时它 fail closed（`identity-offline`），不在默认节点上替那个身份做事。
+
 ### D8. 按需唤起 profile
 
 - 候选节点全部离线，但其中某个节点有 `profile_dir`、所在设备的 host agent 在线：调 `ensureApp { profileDirectory, force: true }`
@@ -244,6 +253,13 @@ type Target =
   - 实测里还看到：profile 第一次开窗时，它里面别的扩展可能弹自己的页面（AdBlock 的 What's new）。这扇窗里有不属于 Stream 的标签，
     按上一条不碰。
 - 一个节点同一时刻只有一次唤起在飞，并发的执行共用它的结果。
+- **执行中途按住，执行完放掉**（计划 4 实现时补）：「关最后一扇窗即卸载」同样会在执行**中途**发生——`page` 形状的核对在
+  唤起的 profile 里开一张后台标签、读完就关，那正是它唯一的一扇窗，profile 随之卸载、节点断开，后半程无处可跑。所以
+  `woken_at` 非空的节点在执行开始时让扩展按住（`holdProfile`：关最后一扇窗里最后一张自建标签时换成 about:blank 留着），
+  同一节点上并发的执行全部结束后放掉（`releaseProfile`：关 created / probe 标签与只装着它们的窗；一扇窗都没有就造一扇
+  不聚焦的再关；adopted 一根毛不碰）。放掉成功即清 `woken_at`——要么 profile 卸载了，要么用户在用它；放不掉（扩展断了、
+  老扩展不认这个 op）就留着，面板照样列出。
+- 唤起时 `--no-startup-window` 显式写进 `args`：本机借采集浏览器配置的 `exe`，而 host agent 在带了 `exe` 时不补默认参数。
 
 ### D9. 执行前核对
 
@@ -256,6 +272,9 @@ type Target =
   - `signed-out` → `identity-signed-out`，交给已有的「需要登录」通知，并指名是哪个 profile。
   - `unknown` → 按 `identity-offline` 处理（可重试），不执行。
 - 没有 `whoami` 的 facility 不核对：身份就是节点，选中了节点就等于选中了身份。
+- 环境目标对照的是选中那一行的账号：环境里换了号同样按 `identity-mismatch` 拦下（用户选的是环境，但「这个 profile 里
+  的人变了」值得他知道）。`login` 形状同「没有 whoami」，不核对。
+- 先按住（D8）再核对，核对失败也放掉。
 
 ### D10. 登录态按节点
 
