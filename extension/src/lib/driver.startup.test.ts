@@ -52,7 +52,8 @@ function stubSockets() {
   const built: string[] = []
   class FakeSocket {
     constructor(url: string) {
-      built.push(url)
+      // 握手 query（nodeId，browser-identity D1）单独断言，这里只数连接、比地址。
+      built.push(url.split('?')[0]!)
     }
     addEventListener() {}
     send() {}
@@ -79,6 +80,21 @@ async function loadModule(config: Record<string, unknown> | undefined) {
 }
 
 describe('startExtCdp：每个 SW 实例只连一条中继', () => {
+  it('握手带上这个 profile 的 nodeId（本机 Stream 据此给每个 profile 各一条中继）', async () => {
+    const urls: string[] = []
+    class FakeSocket {
+      constructor(url: string) { urls.push(url) }
+      addEventListener() {}
+      send() {}
+    }
+    vi.stubGlobal('WebSocket', FakeSocket as unknown as typeof WebSocket)
+    const mod = await loadModule({ baseUrl: 'http://127.0.0.1:8900' })
+    await mod.startExtCdp()
+    await flush()
+    expect(urls).toHaveLength(1)
+    expect(new URL(urls[0]!).searchParams.get('nodeId')).toMatch(/^node_[0-9a-f-]{36}$/)
+  })
+
   it('【核心】顶层启动 + onStartup 同时调 → 只开出一条 WS', async () => {
     const built = stubSockets()
     const mod = await loadModule({ baseUrl: 'http://127.0.0.1:8900' })

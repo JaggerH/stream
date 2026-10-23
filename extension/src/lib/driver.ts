@@ -8,6 +8,7 @@ import { setNotifySocket } from './relay-notify.ts'
 import { runSync } from './sync.ts'
 import { nativeHostToken } from './native-host.ts'
 import { verifyBackend } from './backend-identity.ts'
+import { getNode, nodeQuery } from './node.ts'
 import { findPairedPeer } from './pairing.ts'
 import { RELAY_PROTOCOL as EXT_RELAY_PROTOCOL } from '@browser-relay/wire.ts'
 
@@ -1088,8 +1089,10 @@ export async function reclaimOrphanTabs(
   const minAgeMs = opts.minAgeMs ?? 60_000
   let claimed: Set<number>
   try {
-    // 每个 Stream 只答它在这条绑定上认领的标签（本机不带参数，与以前同一个请求）。
-    const q = rt.id === LOCAL_BINDING ? '' : `?binding=${encodeURIComponent(rt.id)}`
+    // 每个 Stream 只答它在这条绑定上认领的标签。本机带 `node`（不是 `binding=local:…`）：老后端不认
+    // 这个参数，回的是它的本机全集——要是问它一个它不认识的绑定，它会答「一个都不认」，在跑的标签就被当孤儿收了。
+    const node = rt.id === LOCAL_BINDING ? await getNode().catch(() => undefined) : undefined
+    const q = rt.id !== LOCAL_BINDING ? `?binding=${encodeURIComponent(rt.id)}` : node ? `?node=${encodeURIComponent(node.nodeId)}` : ''
     const res = await fetch(`${baseUrl}/api/ext/claimed-tabs${q}`)
     if (!res.ok) return // 「不知道」≠「一个都不认」——见头注红线
     const body = (await res.json()) as { tabIds?: unknown }
@@ -1867,8 +1870,11 @@ async function connect(wsUrl: string, baseUrl: string, rt: BindingRuntime = runt
     scheduleRetry(() => void connect(wsUrl, baseUrl, rt, binding), rt)
     return
   }
+  // 握手带上节点 id（browser-identity D1）：本机 Stream 据此给每个 profile 各一条中继、互不顶替；
+  // 配对实例据此认出 token 是不是被拷到了别的 profile。存储读不出来就不带——退回兼容槽，照旧能连。
+  const node = await getNode().catch(() => undefined)
   // token 走 Sec-WebSocket-Protocol（不进 URL/日志）；服务端只回选协议名
-  const sock = new WebSocket(wsUrl, [EXT_RELAY_PROTOCOL, token])
+  const sock = new WebSocket(node ? `${wsUrl}?${nodeQuery(node)}` : wsUrl, [EXT_RELAY_PROTOCOL, token])
   let hb: ReturnType<typeof setInterval> | null = null
   let settled = false // error 与 close 会双发 —— 保证只重连一次、只清一次心跳
 

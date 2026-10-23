@@ -19,6 +19,24 @@ export interface ExtHandshake {
   extVersion?: string
   browser?: string
   platform?: string
+  /**
+   * 这个扩展实例的节点 id（browser-identity D1）：扩展首次运行生成、存在所在 profile 自己的
+   * `chrome.storage.local` 里，所以它就是 profile 的稳定标识。老扩展不带 → 本机落兼容槽 `local`。
+   */
+  nodeId?: string
+  /** profile 目录名 / 显示名：认领（计划 2）之后扩展才有，有就带上。 */
+  profileDir?: string
+  profileName?: string
+}
+
+/**
+ * 节点 id 会拼进绑定 id（`local:<nodeId>`）和快照路径（`cookies/<设备>/<nodeId>.json`），
+ * 所以只收扩展生成的那个形状；别的一律当「没带」——退回兼容槽，不报错。
+ */
+const NODE_ID = /^node_[A-Za-z0-9-]{1,59}$/
+
+export function cleanNodeId(v: unknown): string | undefined {
+  return typeof v === 'string' && NODE_ID.test(v) ? v : undefined
 }
 
 /** 自报字段的长度上限：这些值原样进日志和 UI，扩展侧写飞了不该把缓存文件撑爆。 */
@@ -45,8 +63,18 @@ export function sanitizeHandshake(raw: unknown): ExtHandshake {
   return out
 }
 
+/** 节点那三格。和上面分开：能力缓存（`markSeen`）只认版本 / 浏览器 / 平台，节点不进那份文件。 */
+export function sanitizeNodeFields(raw: unknown): Pick<ExtHandshake, 'nodeId' | 'profileDir' | 'profileName'> {
+  const src = (raw ?? {}) as Record<string, unknown>
+  const nodeId = cleanNodeId(src.nodeId)
+  if (!nodeId) return {} // 没有节点就谈不上它的 profile
+  const profileDir = cleanField(src.profileDir)
+  const profileName = cleanField(src.profileName)
+  return { nodeId, ...(profileDir ? { profileDir } : {}), ...(profileName ? { profileName } : {}) }
+}
+
 /**
- * 从扩展 WS 升级请求的 URL 里取自报字段：`/api/ext?extVersion=…&browser=…&platform=…`。
+ * 从扩展 WS 升级请求的 URL 里取自报字段：`/api/ext?extVersion=…&browser=…&platform=…&nodeId=…`。
  *
  * 为什么走 query 而不是握手后的第一条消息：写入点必须**只有一处**（`ExtRelay.connect()`），
  * query 在 connect 那一刻就已经在手上了。token 仍然走 subprotocol（那个是 secret，不能进 URL 和
@@ -60,9 +88,9 @@ export function parseExtHandshake(url: string | undefined): ExtHandshake {
   } catch {
     return {}
   }
-  return sanitizeHandshake({
-    extVersion: params.get('extVersion') ?? undefined,
-    browser: params.get('browser') ?? undefined,
-    platform: params.get('platform') ?? undefined,
-  })
+  const get = (k: string) => params.get(k) ?? undefined
+  return {
+    ...sanitizeHandshake({ extVersion: get('extVersion'), browser: get('browser'), platform: get('platform') }),
+    ...sanitizeNodeFields({ nodeId: get('nodeId'), profileDir: get('profileDir'), profileName: get('profileName') }),
+  }
 }

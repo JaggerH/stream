@@ -48,7 +48,8 @@ function stubSockets() {
   const built: string[] = []
   class FakeSocket {
     constructor(url: string) {
-      built.push(url)
+      // 握手 query（nodeId，browser-identity D1）单独断言，这里只数连接、比地址。
+      built.push(url.split('?')[0]!)
     }
     addEventListener() {}
     send() {}
