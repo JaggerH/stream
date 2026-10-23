@@ -16,7 +16,8 @@ import { existsSync, readFileSync, writeFileSync, unlinkSync } from 'node:fs'
 import { tmpdir, homedir } from 'node:os'
 import { join, dirname } from 'node:path'
 import { createRequire } from 'node:module'
-import { bootstrap, resolveDataDir } from './bootstrap.ts'
+import { resolveDataDir } from './bootstrap.ts'
+import { createStream } from './engine/index.ts'
 import { loadConfig } from './config-env.ts'
 import { createHttpApp, type HttpDeps } from './http/app.ts'
 import { classifyLauncher } from './restart/policy.ts'
@@ -115,7 +116,7 @@ import { localNameOf } from './registry/source-id.ts'
 import type { InterventionService } from './kernel/plugins/intervention.ts'
 import { errText } from './err-text.ts'
 import { ImportRunStore } from './sharing/import-run-store.ts'
-import { createKernel, quiesceKernel } from './kernel/context.ts'
+import { createKernel } from './kernel/context.ts'
 import { bindModuleHook, reportUnboundHooks } from './kernel/plugins/module-hooks.ts'
 
 /** 后端自己就是那扇门，默认口 = 唯一的对外口 8900（`DEFAULT_BACKEND_URL`、`GATEWAY_PORT`
@@ -378,25 +379,35 @@ const apiToken = config.api_token || loadOrCreateApiToken(dirname(config.item_db
   // `boot` span: the monitor above deliberately predates bootstrap to catch boot-time stalls —
   // without this span those stalls all reported "卡顿来自未埋点的门", reading like an unknown
   // hole when it was the (known, expected) registry build / provider seeding.
-  const boot = await track('boot', () => bootstrap(config, console.log, {
-    // 「该同步哪些 cookie 域」的第三个来源：已挂能力包自己申报的那些。**现取**——可选包在
-    // bootstrap 之后才装载，取快照等于永远只认内置那半，而漏一个域的表现是那个包每次都拿到
-    // 空 cookie，和"用户没登录"一字不差。
-    extraCookieDomains: () => capabilityHost.credentialDomains(),
-    // agent 修复会话给 agent 的那条 MCP 线：**口和 token 只有这儿知道**（口就是本进程绑的那个，
-    // 两个数一分家，agent 就会去敲一个没人应答的地址）。
-    mcpEndpoint: () => ({ url: `http://127.0.0.1:${PORT}/api/mcp`, token: apiToken }),
-    onItem: (item, type) => hub.broadcast({ type: 'item', item_type: type, item: toClientItem({ ...item, type }) }),
-    onDebug: recordDebug,
-    facilityDevices: facilityBindings,
-    extBindings,
-    ...(browserNodes ? { nodes: browserNodes } : {}),
-    ...(siteIdentities ? { identities: siteIdentities } : {}),
-    broadcast: (msg) => hub.broadcast(msg),
-    track,
-    trackSync,
+  // 实例本体经库入口装配（`src/engine/index.ts`）：数据目录锁、内核、`bootstrap()`、关停。serve 只是它的一个调用方。
+  // 内核仍由这里建好递进去（搬迁期过渡口）：上面的进程兜底网已经握着它的 lazy 引用。
+  const stream = await track('boot', () => createStream({
+    dataDir: process.env.STREAM_DATA_DIR ?? process.cwd(),
+    config,
+    log: console.log,
     kernel,
+    boot: {
+      facilityDevices: facilityBindings,
+      extBindings,
+      ...(browserNodes ? { nodes: browserNodes } : {}),
+      ...(siteIdentities ? { identities: siteIdentities } : {}),
+    },
+    hooks: {
+      // 「该同步哪些 cookie 域」的第三个来源：已挂能力包自己申报的那些。**现取**——可选包在
+      // bootstrap 之后才装载，取快照等于永远只认内置那半，而漏一个域的表现是那个包每次都拿到
+      // 空 cookie，和"用户没登录"一字不差。
+      extraCookieDomains: () => capabilityHost.credentialDomains(),
+      // agent 修复会话给 agent 的那条 MCP 线：**口和 token 只有这儿知道**（口就是本进程绑的那个，
+      // 两个数一分家，agent 就会去敲一个没人应答的地址）。
+      mcpEndpoint: () => ({ url: `http://127.0.0.1:${PORT}/api/mcp`, token: apiToken }),
+      onItem: (item, type) => hub.broadcast({ type: 'item', item_type: type, item: toClientItem({ ...item, type }) }),
+      onDebug: recordDebug,
+      broadcast: (msg) => hub.broadcast(msg),
+      track,
+      trackSync,
+    },
   }))
+  const boot = stream
   // 落盘状态住内核的存储域（`ctx.stores`）——下面的 HttpDeps 组装从这里取，键一个没变。
   // 设置覆盖层（`settings.json`）：TMDb/OMDb 凭证与 Source 运行时配置两组读写口直接吃它，
   // 不再经 Boot 转一手（那几格本来就只是转调）。
@@ -1363,7 +1374,8 @@ const apiToken = config.api_token || loadOrCreateApiToken(dirname(config.item_db
     // **之后**——存量的关停顺序有它自己的约定，内核这一步只负责「已经搬进来的那部分」。
     // dispose() resolve 之后可能还有后继 transition，所以要轮 `fiber.inertia` 到静默。
     // 整段有超时兜底：销毁卡死不能挡住 process.exit —— 这条路径的第一职责是让进程真的退。
-    await quiesceKernel(kernel).catch((e) => {
+    // 库入口的 `close()` = `quiesceKernel` + 放掉数据目录锁（必须早于下面的 finale：reexec 档的新进程要拿同一把锁）。
+    await stream.close().catch((e) => {
       console.error('[stream] kernel dispose error:', (e as Error).message)
     })
     releaseLock()
