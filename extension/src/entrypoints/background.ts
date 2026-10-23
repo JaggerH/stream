@@ -5,6 +5,7 @@ import {
 } from '../lib/config.ts'
 import { startExtCdp, isRelayUp, forceReconnect, startBinding, stopBinding } from '../lib/driver.ts'
 import { pairWithCode } from '../lib/pair-code.ts'
+import { claimProfile } from '../lib/claim.ts'
 import { keepDevReloadAlive } from '../lib/dev-reload.ts'
 
 /**
@@ -146,6 +147,15 @@ export default defineBackground(() => {
         void runSync(msg.id).catch(console.error)
         send({ ok: true })
       })()
+      return true
+    }
+    // 认领页（claim.html）交来的 nonce：经全部已连绑定交回 Stream（browser-identity D3，见 lib/claim.ts）。
+    // 页面往往就是叫醒 SW 的那个事件，连接可能还在建——claimProfile 自己会等。
+    if (msg?.type === 'claim' && typeof msg.nonce === 'string') {
+      void startExtCdp().catch(console.error)
+      claimProfile(msg.nonce)
+        .then((r) => send({ ok: true, ...r }))
+        .catch((e) => send({ ok: false, error: e instanceof Error ? e.message : String(e) }))
       return true
     }
   })

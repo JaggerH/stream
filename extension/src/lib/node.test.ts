@@ -46,3 +46,13 @@ describe('nodeQuery', () => {
     expect(new URLSearchParams(nodeQuery({ nodeId: 'node_x', profileDir: 'Default', profileName: '个人' })).get('profileName')).toBe('个人')
   })
 })
+
+describe('rememberProfile', () => {
+  it('认领后两格写进 node，nodeId 不变；之后的握手带上它们', async () => {
+    const s = stubStorage({ node: { nodeId: 'node_x' } })
+    const { rememberProfile, nodeQuery, getNode } = await import('./node.ts')
+    await rememberProfile('Profile 1', '个人')
+    expect(s.data.node).toEqual({ nodeId: 'node_x', profileDir: 'Profile 1', profileName: '个人' })
+    expect(new URLSearchParams(nodeQuery(await getNode())).get('profileName')).toBe('个人')
+  })
+})

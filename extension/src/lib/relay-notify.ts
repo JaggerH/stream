@@ -21,6 +21,11 @@ export function setNotifySocket(s: Sendable | null, bindingId = 'local'): void {
   else sockets.delete(bindingId)
 }
 
+/** 此刻连着的全部绑定（认领要经每一条都说一声，见 `claim.ts`）。 */
+export function notifySockets(): Array<[string, Sendable]> {
+  return [...sockets.entries()]
+}
+
 /**
  * 「同步域里的 cookie 变了，你要的话来取」——**只报事，不带值**。
  *

@@ -9,6 +9,7 @@ import { runSync } from './sync.ts'
 import { nativeHostToken } from './native-host.ts'
 import { verifyBackend } from './backend-identity.ts'
 import { getNode, nodeQuery } from './node.ts'
+import { handleClaimReply } from './claim.ts'
 import { findPairedPeer } from './pairing.ts'
 import { RELAY_PROTOCOL as EXT_RELAY_PROTOCOL } from '@browser-relay/wire.ts'
 
@@ -1960,6 +1961,8 @@ async function connect(wsUrl: string, baseUrl: string, rt: BindingRuntime = runt
       return
     }
     if ((msg as { type?: string }).type === 'ping') return // 忽略自己的心跳回声（若后端回传）
+    // 认领回话不是命令，不回执（browser-identity D3，见 claim.ts）。
+    if (handleClaimReply(rt.id, msg)) return
     const reply = await dispatch(msg, rt)
     sock.send(JSON.stringify(reply))
   })

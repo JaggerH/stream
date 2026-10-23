@@ -41,3 +41,13 @@ export function nodeQuery(n: NodeInfo): string {
   if (n.profileName) q.set('profileName', n.profileName)
   return q.toString()
 }
+
+/**
+ * 认领成功（browser-identity D3）：把 profile 记进自己的存储，之后每次握手都带上，不需要再认领。
+ * `nodeId` 不动——它是这个 profile 的身份，profile 两格只是它的名字。
+ */
+export async function rememberProfile(profileDir: string, profileName: string): Promise<NodeInfo> {
+  const node: NodeInfo = { ...(await getNode()), profileDir, profileName }
+  await chrome.storage.local.set({ [NODE_KEY]: node })
+  return node
+}
