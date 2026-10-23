@@ -21,6 +21,9 @@
 import { randomBytes, randomUUID } from 'node:crypto'
 import { DeviceIncapable, DeviceOffline } from './errors.ts'
 import type { BrowserNode } from './node-store.ts'
+import { PAIRED_PLATFORMS } from './device-store.ts'
+import { LOCAL_DEVICE } from './run-context.ts'
+import type { HostRelayRegistry } from '../http/host-registry.ts'
 
 export const CLAIM_TTL_MS = 2 * 60_000
 export const CLAIM_WAIT_MS = 20_000
@@ -36,6 +39,27 @@ export interface ClaimAgent {
   extDeviceId: string
   ops: ReadonlySet<string>
   send(op: { op: string; args?: Record<string, unknown> }): Promise<unknown>
+}
+
+/**
+ * 从 `/api/host` 的在线设备里找认领用的 agent。`local` = 后端这台机器上的桌面 agent（与 `ensureHarvestBrowser`
+ * 唤起 Chrome 时同一个判法：`deviceFor('desktop')`）。
+ *
+ * 扩展设备的判法：共享 secret 只发给本机进程，用它连进来的只能是桌面 agent（配对平台拿共享 secret 连会被
+ * 4003 拒，见 `attachHostRelay`），所以 windows / macos 的 agent 就是后端这台机器，扩展绑定在 `local` 下；
+ * 配对设备上的扩展绑定挂在那台设备自己的 id 下（`ExtBindingStore` 签码时记的目标设备）。
+ */
+export function agentFrom(registry: Pick<HostRelayRegistry, 'devices' | 'deviceFor'>): (deviceId: string) => ClaimAgent | undefined {
+  return (deviceId) => {
+    const d = deviceId === LOCAL_DEVICE ? registry.deviceFor('desktop') : registry.devices().find((x) => x.hello.deviceId === deviceId)
+    if (!d) return undefined
+    return {
+      deviceId: d.hello.deviceId,
+      extDeviceId: PAIRED_PLATFORMS.has(d.hello.platform) ? d.hello.deviceId : LOCAL_DEVICE,
+      ops: d.ops,
+      send: (op) => d.relay.send(op),
+    }
+  }
 }
 
 export interface ProfileClaimsDeps {

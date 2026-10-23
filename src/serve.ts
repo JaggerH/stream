@@ -43,6 +43,8 @@ import { DeviceStore } from './devices/device-store.ts'
 import { ExtBindingStore } from './devices/ext-binding-store.ts'
 import { FacilityDeviceStore } from './devices/facility-devices.ts'
 import { NodeStore } from './devices/node-store.ts'
+import { ProfileClaims, agentFrom } from './devices/profile-claim.ts'
+import { mountNodeRoutes } from './http/node-routes.ts'
 import { assertDeviceReady, resolvePlacement, unavailableBindings, type FacilityBindings } from './devices/placement.ts'
 import { installFetchFor, makeFetchFor } from './devices/fetch.ts'
 import { installGlobalFetchTrap } from './devices/global-fetch-trap.ts'
@@ -894,6 +896,22 @@ const apiToken = config.api_token || loadOrCreateApiToken(dirname(config.item_db
     extId: EXT_ID,
     ...(browserNodes ? { nodes: browserNodes } : {}),
   })
+  // profile 认领（browser-identity D3）：没有节点表就无处可记，整组不挂。
+  if (browserNodes) {
+    const claims = new ProfileClaims({
+      agent: agentFrom(harvest.hostRelays),
+      nodes: browserNodes,
+      deviceOf: (b) => harvest.extRelays.deviceOf(b),
+      nodeOf: (b) => harvest.extRelays.nodeOf(b),
+      extId: EXT_ID,
+      log: (line) => console.log(line),
+    })
+    harvest.extRelays.onClaim((b, nonce) => claims.redeem(b, nonce))
+    // 新 profile 的竞态：认领等待中这台设备上新连上一个未认领的节点 → 补发一次。
+    harvest.extRelays.onBindingConnected((b) => claims.onBindingConnected(b))
+    kernel.effect(() => () => claims.close())
+    mountNodeRoutes(app, { claims, nodes: browserNodes, isLocal: (c) => isLoopbackAddress(peerAddress(c)) })
+  }
   if (taskStore && runLedger) {
     mountTaskRoutes(app, {
       store: taskStore,
