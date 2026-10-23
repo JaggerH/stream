@@ -16,6 +16,13 @@ export interface TaskRunView {
   deviceId?: string
   /** 远程执行用过浏览器时选定的扩展绑定。 */
   bindingId?: string
+  /** 那条绑定的节点、执行那一刻的 profile 名与环境（browser-identity D12）。 */
+  nodeId?: string
+  profileName?: string
+  environment?: string
+  /** 按身份 / 环境执行时，执行那一刻的账号 id 与显示名（之后改名不跟着变）。 */
+  accountId?: string
+  accountName?: string
 }
 
 export interface TaskListItem {
@@ -34,6 +41,10 @@ export interface TaskListItem {
   action?: string
   /** 执行设备覆盖；缺席 = 跟随动作所属 facility 的默认设备。只对 `action` 任务有意义。 */
   device?: string
+  /** 用哪个身份执行（该动作所属 facility 的账号 id，browser-identity D7）。与 `device` / `environment` 三选一。 */
+  identity?: string
+  /** 在哪个环境里执行（节点上标的「工作」「个人」）。三选一。 */
+  environment?: string
   args?: string[]
   cwd?: string
   env?: Record<string, string>
@@ -96,6 +107,9 @@ export interface TaskInput {
   action?: string
   /** 执行设备覆盖；缺席 = 跟随 facility 的默认设备。command 任务不能设（后端 400）。 */
   device?: string
+  /** 身份 / 环境覆盖，与 `device` 三选一（后端给两个以上 400）。 */
+  identity?: string
+  environment?: string
   args: string[]
   cwd?: string
   env?: Record<string, string>
@@ -160,6 +174,11 @@ export async function saveTask(
     ...(task.timezone !== undefined ? { timezone: task.timezone } : {}),
     ...(typeof task.command === 'string' ? { command: task.command } : {}),
     ...(typeof task.action === 'string' ? { action: task.action } : {}),
+    // 执行位置也得整行带回去：漏了它，一次「暂停」就把任务的设备 / 身份 / 环境覆盖清掉，
+    // 而它接着就按 facility 的默认去跑了——换了号也没人知道。
+    ...(task.device !== undefined ? { device: task.device } : {}),
+    ...(task.identity !== undefined ? { identity: task.identity } : {}),
+    ...(task.environment !== undefined ? { environment: task.environment } : {}),
     args: task.args ?? [],
     ...(task.cwd !== undefined ? { cwd: task.cwd } : {}),
     ...(task.env !== undefined ? { env: task.env } : {}),

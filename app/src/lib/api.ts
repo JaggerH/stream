@@ -122,11 +122,85 @@ export interface ExtBindingRow {
   default: boolean
 }
 
-/** One row of `GET /api/devices/facilities`: a facility some package claims, and where it runs (`local` if unbound). */
+/**
+ * One row of `GET /api/devices/facilities`: a facility some package claims, and where it runs.
+ * Exactly one of the three target fields is present (browser-identity D7): `deviceId` (`local` if
+ * unbound), `accountId` (an identity in the identity table), or `environment`. Identity and
+ * environment rows carry **no** `deviceId` — they never fall back to this machine.
+ */
 export interface FacilityDeviceRow {
   facility: string
   packageId: string
+  deviceId?: string
+  accountId?: string
+  environment?: string
+}
+
+/** Where a facility or a task runs (browser-identity D7). */
+export type RunTarget =
+  | { kind: 'device'; deviceId: string }
+  | { kind: 'identity'; accountId: string }
+  | { kind: 'environment'; environment: string }
+
+/**
+ * One row of `GET /api/devices/nodes`: one Stream extension in one Chrome profile (browser-identity D1).
+ * `profileDir` / `profileName` appear once the profile has been claimed (D3); `label` / `environment`
+ * are what the user typed in the panel (D4); `wokenAt` = Stream loaded this profile in the
+ * background and has not put it back yet (D8).
+ */
+export interface NodeRow {
+  nodeId: string
   deviceId: string
+  bindingId: string
+  profileDir?: string
+  profileName?: string
+  label?: string
+  environment?: string
+  isDefault: boolean
+  firstSeenAt: number
+  lastSeenAt: number
+  wokenAt?: number
+  online: boolean
+}
+
+/** One profile in a claim session (`GET /api/devices/:id/profiles/claim/:claimId`). */
+export interface ClaimProfileRow {
+  dir: string
+  name: string
+  state: 'pending' | 'claimed' | 'missing' | 'failed'
+  nodeId?: string
+  /** `missing` 的人话（「扩展未安装或未连上」），或 `failed` 时 agent 回的错误。 */
+  reason?: string
+}
+
+export interface ClaimSnapshot {
+  claimId: string
+  deviceId: string
+  startedAt: number
+  expiresAt: number
+  done: boolean
+  profiles: ClaimProfileRow[]
+}
+
+/** One row of `GET /api/identities`: who is signed in to one facility on one node (browser-identity D6). */
+export interface IdentityRow {
+  facility: string
+  nodeId: string
+  /** Absent when signed out and never seen an account. `node:<nodeId>` for facilities without `whoami`. */
+  accountId?: string
+  displayName?: string
+  state: 'signed-in' | 'signed-out'
+  verifiedAt: number
+  deviceId?: string
+  profileName?: string
+  online: boolean
+}
+
+/** What one refresh asked one node (`POST /api/identities/refresh`). `unknown` is not written to the table. */
+export interface IdentityRefreshResult {
+  facility: string
+  nodeId: string
+  result: { state: 'signed-in'; accountId: string; name?: string } | { state: 'signed-out' } | { state: 'unknown'; reason: string }
 }
 
 /** 一个成员跑了多久、结果如何。搜索是并发扇出，**总耗时只等于最慢那个成员**——所以"谁慢"
@@ -919,8 +993,35 @@ export const api = {
       post<{ code: string; expiresAt: number; backends: string[] }>(c, `/api/devices/${encodeURIComponent(id)}/ext-pairing-code`, {}),
     facilities: (c: Connection) => get<{ facilities: FacilityDeviceRow[] }>(c, '/api/devices/facilities'),
     setFacilityDevice: (c: Connection, facility: string, deviceId: string) =>
-      put<{ facility: string; deviceId: string }>(c, `/api/devices/bindings/${encodeURIComponent(facility)}`, { deviceId }),
+      put<FacilityDeviceRow>(c, `/api/devices/bindings/${encodeURIComponent(facility)}`, { deviceId }),
+    /** 设备 / 身份 / 环境三选一（browser-identity D7）。设备目标选回本机请用 `clearFacilityDevice`。 */
+    setFacilityTarget: (c: Connection, facility: string, t: RunTarget) =>
+      put<FacilityDeviceRow>(c, `/api/devices/bindings/${encodeURIComponent(facility)}`,
+        t.kind === 'device' ? { deviceId: t.deviceId } : t.kind === 'identity' ? { accountId: t.accountId } : { environment: t.environment }),
     clearFacilityDevice: (c: Connection, facility: string) => del<null>(c, `/api/devices/bindings/${encodeURIComponent(facility)}`),
+  },
+  /**
+   * Browser nodes — one per Chrome profile with the extension (browser-identity D1–D4, D8).
+   * `claim*` open a window per profile on that machine, so they answer **this machine only** (403 otherwise).
+   * `:id` is the extension device: `local` for this machine, a paired device's id otherwise.
+   */
+  nodes: {
+    list: (c: Connection) => get<{ nodes: NodeRow[]; claimable: string[] }>(c, '/api/devices/nodes'),
+    update: (c: Connection, nodeId: string, p: { label?: string | null; environment?: string | null }) =>
+      patch<NodeRow>(c, `/api/devices/nodes/${encodeURIComponent(nodeId)}`, p),
+    startClaim: (c: Connection, deviceId: string) =>
+      post<ClaimSnapshot>(c, `/api/devices/${encodeURIComponent(deviceId)}/profiles/claim`, {}),
+    claim: (c: Connection, deviceId: string, claimId: string) =>
+      get<ClaimSnapshot>(c, `/api/devices/${encodeURIComponent(deviceId)}/profiles/claim/${encodeURIComponent(claimId)}`),
+  },
+  /** Who is signed in where (browser-identity D6). 503 when the identity table cannot be opened. */
+  identities: {
+    list: (c: Connection, filter: { facility?: string; nodeId?: string } = {}) => {
+      const q = new URLSearchParams(Object.entries(filter).filter(([, v]) => !!v) as Array<[string, string]>).toString()
+      return get<{ identities: IdentityRow[] }>(c, `/api/identities${q ? `?${q}` : ''}`)
+    },
+    refresh: (c: Connection, filter: { facility?: string; nodeId?: string } = {}) =>
+      post<{ results: IdentityRefreshResult[]; identities: IdentityRow[] }>(c, '/api/identities/refresh', filter),
   },
   /** Chrome extensions paired onto devices (design D7). */
   extBindings: {

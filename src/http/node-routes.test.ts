@@ -121,3 +121,32 @@ describe('agentFrom', () => {
     expect(find('desktop:gone')).toBeUndefined()
   })
 })
+
+describe('GET /api/devices/nodes', () => {
+  it('列出全部节点，带在线与「能不能识别 profile」', async () => {
+    nodes.seen({ nodeId: 'node_a', deviceId: 'local', bindingId: 'local:node_a', profileDir: 'Default', profileName: '工作' })
+    nodes.seen({ nodeId: 'node_b', deviceId: 'linux:nas', bindingId: 'eb_1' })
+    nodes.setWokenAt('node_b', 1234)
+    const a = new Hono()
+    mountNodeRoutes(a, {
+      claims, nodes, isLocal: () => false,
+      online: (bindingId) => bindingId === 'local:node_a',
+      claimable: () => ['local'],
+    })
+    // 只读设置，不是认领：远处打开面板（经 API token）也能看。
+    const res = await a.request('/api/devices/nodes')
+    expect(res.status).toBe(200)
+    const body = await res.json() as { nodes: Array<{ nodeId: string; online: boolean; wokenAt?: number; profileName?: string }>; claimable: string[] }
+    expect(body.claimable).toEqual(['local'])
+    expect(body.nodes.map((n) => [n.nodeId, n.online])).toEqual([['node_a', true], ['node_b', false]])
+    expect(body.nodes[0].profileName).toBe('工作')
+    expect(body.nodes[1].wokenAt).toBe(1234)
+  })
+
+  it('没注入判据：都不在线、谁也不能识别', async () => {
+    nodes.seen({ nodeId: 'node_a', deviceId: 'local', bindingId: 'local:node_a' })
+    const body = await (await app.request('/api/devices/nodes')).json() as { nodes: Array<{ online: boolean }>; claimable: string[] }
+    expect(body.nodes[0].online).toBe(false)
+    expect(body.claimable).toEqual([])
+  })
+})

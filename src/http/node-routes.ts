@@ -4,6 +4,7 @@
  * - `GET  /api/devices/:id/profiles`                 列出那台机器上 Chrome 的 profile（只读，不开窗）
  * - `POST /api/devices/:id/profiles/claim`           开一次认领（逐个 profile 开认领页）
  * - `GET  /api/devices/:id/profiles/claim/:claimId`  轮询认领结果
+ * - `GET  /api/devices/nodes`                        全部节点（带 `online`）与此刻能识别 profile 的设备（`claimable`）
  * - `PATCH /api/devices/nodes/:nodeId`               `{ label?, environment? }`，`null` 清空
  *
  * `:id` 是 host agent 的设备 id（`desktop:<host>`、配对设备的 id），`local` 指后端这台机器上的桌面 agent。
@@ -19,8 +20,18 @@ import type { BrowserNode } from '../devices/node-store.ts'
 
 export interface NodeRoutesDeps {
   claims: Pick<ProfileClaims, 'discover' | 'start' | 'get'>
-  nodes: { update(nodeId: string, patch: { label?: string | null; environment?: string | null }): BrowserNode | undefined }
+  nodes: {
+    list(): BrowserNode[]
+    update(nodeId: string, patch: { label?: string | null; environment?: string | null }): BrowserNode | undefined
+  }
   isLocal: (c: Context) => boolean
+  /** 节点的绑定此刻在不在线（`ExtRelayRegistry.isOnline`）。没注入 = 都当不在线。 */
+  online?: (bindingId: string) => boolean
+  /**
+   * 此刻能「识别 profile」的扩展设备 id（`local` = 后端这台机器）：那台机器的 host agent 在线且声明了
+   * `browser.claim`。面板只在这里有的设备上画按钮——点了必然 404 / 409 的键不画。
+   */
+  claimable?: () => string[]
 }
 
 /** 环境与名字都是给人看的短文本；太长多半是贴错了东西。 */
@@ -75,6 +86,13 @@ export function mountNodeRoutes(app: Hono, deps: NodeRoutesDeps): void {
     if (!s) return c.json({ error: '没有这次认领（过期了？）' }, 404)
     return c.json(s)
   })
+
+  // 面板的设备页（browser-identity D12）与扩展 popup（自己是哪个环境）读它。只是设置，不开窗、不带邮箱，
+  // 所以不像上面三条那样只认本机。`woken_at` 也在行上：面板据此列「Stream 在后台打开着的 profile」（D8）。
+  app.get('/api/devices/nodes', (c) => c.json({
+    nodes: deps.nodes.list().map((n) => ({ ...n, online: deps.online?.(n.bindingId) ?? false })),
+    claimable: deps.claimable?.() ?? [],
+  }))
 
   app.patch('/api/devices/nodes/:nodeId', async (c) => {
     let body: unknown

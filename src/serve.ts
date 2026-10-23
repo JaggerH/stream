@@ -39,7 +39,7 @@ import { loadOrCreateExtToken, loadOrCreateApiToken } from './http/secrets.ts'
 import { authorizeAccess, parseTrustedOrigins, isLoopbackAddress, peerAddress, lanBaseUrls } from './http/access-guard.ts'
 import { mountDeviceRoutes } from './http/device-routes.ts'
 import { mountExtBindingRoutes, REVOKED_CLOSE_CODE } from './http/ext-binding-routes.ts'
-import { DeviceStore } from './devices/device-store.ts'
+import { DeviceStore, PAIRED_PLATFORMS } from './devices/device-store.ts'
 import { ExtBindingStore } from './devices/ext-binding-store.ts'
 import { FacilityDeviceStore } from './devices/facility-devices.ts'
 import { NodeStore } from './devices/node-store.ts'
@@ -933,7 +933,14 @@ const apiToken = config.api_token || loadOrCreateApiToken(dirname(config.item_db
     // 新 profile 的竞态：认领等待中这台设备上新连上一个未认领的节点 → 补发一次。
     harvest.extRelays.onBindingConnected((b) => claims.onBindingConnected(b))
     kernel.effect(() => () => claims.close())
-    mountNodeRoutes(app, { claims, nodes: browserNodes, isLocal: (c) => isLoopbackAddress(peerAddress(c)) })
+    const claimAgent = agentFrom(harvest.hostRelays)
+    mountNodeRoutes(app, {
+      claims, nodes: browserNodes, isLocal: (c) => isLoopbackAddress(peerAddress(c)),
+      online: (b) => harvest.extRelays.isOnline(b),
+      // 能识别 profile 的扩展设备：本机（桌面 agent）与每台在线的配对设备，agent 声明了 browser.claim 才算。
+      claimable: () => ['local', ...harvest.hostRelays.devices().filter((d) => PAIRED_PLATFORMS.has(d.hello.platform)).map((d) => d.hello.deviceId)]
+        .filter((id) => claimAgent(id)?.ops.has('browser.claim')),
+    })
   }
   if (taskStore && runLedger) {
     mountTaskRoutes(app, {
