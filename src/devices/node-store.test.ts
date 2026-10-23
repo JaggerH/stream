@@ -105,4 +105,20 @@ describe('NodeStore', () => {
     expect(s.update('node_a', { label: '' })?.label).toBeUndefined()
     expect(s.update('node_x', { label: 'x' })).toBeUndefined()
   })
+
+  it('woken_at：记下、列出、清掉；重开库还在', () => {
+    const p = fresh()
+    const s = new NodeStore(p)
+    s.seen({ nodeId: 'node_a', deviceId: 'local', bindingId: 'local:node_a' })
+    s.seen({ nodeId: 'node_b', deviceId: 'local', bindingId: 'local:node_b' })
+    s.setWokenAt('node_a', 123)
+    s.setWokenAt('node_x', 1) // 没有这个节点：什么都不做
+    expect(s.woken().map((n) => n.nodeId)).toEqual(['node_a'])
+    s.close()
+    const t = new NodeStore(p)
+    expect(t.get('node_a')?.wokenAt).toBe(123)
+    t.setWokenAt('node_a', null)
+    expect(t.get('node_a')?.wokenAt).toBeUndefined()
+    expect(t.woken()).toEqual([])
+  })
 })

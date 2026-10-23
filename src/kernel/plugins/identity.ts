@@ -9,6 +9,8 @@ import { makeIdentityService, type IdentityFacility, type IdentityService } from
 import type { SiteIdentityStore } from '../../identity/identity-store.ts'
 import { makeIdentityRouter, type IdentityRouter } from '../../identity/identity-router.ts'
 import type { BrowserNode } from '../../devices/node-store.ts'
+import { agentFrom } from '../../devices/profile-claim.ts'
+import { LOCAL_DEVICE } from '../../devices/run-context.ts'
 
 declare module 'cordis' {
   interface Context {
@@ -23,7 +25,7 @@ declare module 'cordis' {
 export interface IdentityConfig {
   store: SiteIdentityStore
   /** 节点表：profile 名（「工作 上的账号」）、路由要的设备 / 绑定 / 环境。缺席 = 用节点 id 顶上，路由一个候选都没有。 */
-  nodes?: { get(nodeId: string): BrowserNode | undefined }
+  nodes?: { get(nodeId: string): BrowserNode | undefined; setWokenAt?(nodeId: string, at: number | null): void }
   log: (...args: unknown[]) => void
 }
 
@@ -156,10 +158,20 @@ export const identityPlugin = {
     ctx.provide('siteIdentities', svc)
 
     // 按身份 / 环境选节点（D7）。没有节点表就一个候选都没有——身份目标照样 identity-offline，不回落。
+    const agentOf = agentFrom(ctx.harvest.hostRelays)
     const router = makeIdentityRouter({
       identities: (facility) => config.store.list({ facility }),
       node: (nodeId) => config.nodes?.get(nodeId),
       isOnline: (bindingId) => extRelays.isOnline(bindingId),
+      // 唤起（D8）：设备上的 host agent（本机 = 桌面 agent，与认领同一个判法）。
+      agent: (deviceId) => agentOf(deviceId),
+      // 本机借采集浏览器的 exe：用户选了 Chrome for Testing / 别的安装路径时，拉起的得是同一个浏览器。
+      launchBase: (deviceId) => {
+        if (deviceId !== LOCAL_DEVICE) return {}
+        const { exe, process } = ctx.harvest.harvestBrowserSpec()
+        return { ...(exe ? { exe } : {}), ...(process ? { process } : {}) }
+      },
+      setWokenAt: (nodeId, at) => config.nodes?.setWokenAt?.(nodeId, at),
       log: (line) => config.log(line),
     })
     ctx.provide('identityRouter', router)

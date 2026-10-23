@@ -61,3 +61,76 @@ describe('IdentityRouter：选节点（D7）', () => {
     await expect(r.resolve({ target: { kind: 'identity', accountId: 'B' }, facility: 'xhs', purpose: 'action' })).rejects.toBeInstanceOf(IdentityOffline)
   })
 })
+
+describe('IdentityRouter：按需唤起（D8）', () => {
+  /** 一台设备的 agent：收到 ensureApp 后让那条绑定上线（或者不上线）。 */
+  function wakeWorld(opts: { comesUp?: boolean; ops?: string[]; agentOnline?: boolean; launch?: { exe?: string } } = {}) {
+    const online = new Set<string>()
+    const sent: Array<{ op: string; args?: Record<string, unknown> }> = []
+    const woken: Array<[string, number | null]> = []
+    const r = world([row('node_work', 'B', 10), row('node_lap', 'B', 5)], [], {
+      isOnline: (b) => online.has(b),
+      agent: (d) => (d === 'local' && opts.agentOnline !== false ? {
+        ops: new Set(opts.ops ?? ['ensureApp']),
+        send: async (op) => {
+          sent.push(op)
+          await new Promise((res) => setTimeout(res, 5))
+          if (opts.comesUp !== false) online.add('local:node_work')
+          return { running: true, started: true }
+        },
+      } : undefined),
+      ...(opts.launch ? { launchBase: () => opts.launch! } : {}),
+      waitOnline: async (b) => online.has(b),
+      setWokenAt: (n, t) => void woken.push([n, t]),
+    })
+    return { r, sent, woken, online }
+  }
+  const req = { target: { kind: 'identity', accountId: 'B' } as const, facility: 'xhs', purpose: 'harvest' as const }
+
+  it('候选全离线、有 profile 目录、agent 在线 → 静默唤起、等它连上、记 woken_at', async () => {
+    const { r, sent, woken } = wakeWorld({ launch: { exe: '/opt/cft/chrome' } })
+    const got = await r.resolve(req)
+    expect(got.node.nodeId).toBe('node_work')
+    expect(sent).toEqual([{ op: 'ensureApp', args: { exe: '/opt/cft/chrome', profileDirectory: 'Profile 1', force: true, args: ['--no-startup-window'] } }])
+    expect(woken).toEqual([['node_work', 1_000_000]])
+  })
+
+  it('同一节点并发两次只唤起一次，两个都拿到它', async () => {
+    const { r, sent } = wakeWorld()
+    const [a, b] = await Promise.all([r.resolve(req), r.resolve(req)])
+    expect(sent).toHaveLength(1)
+    expect(a.node.nodeId).toBe('node_work')
+    expect(b.node.nodeId).toBe('node_work')
+  })
+
+  it('等不到它连上 → identity-offline，不记 woken_at', async () => {
+    const { r, woken } = wakeWorld({ comesUp: false })
+    await expect(r.resolve(req)).rejects.toBeInstanceOf(IdentityOffline)
+    expect(woken).toEqual([])
+  })
+
+  it('agent 不在线 / 没有 ensureApp → 不唤起', async () => {
+    for (const o of [{ agentOnline: false }, { ops: ['http.fetch'] }]) {
+      const { r, sent } = wakeWorld(o)
+      await expect(r.resolve(req)).rejects.toBeInstanceOf(IdentityOffline)
+      expect(sent).toEqual([])
+    }
+  })
+
+  it('节点没记 profile 目录（没认领过）→ 不唤起', async () => {
+    const sent: unknown[] = []
+    const r = world([row('node_lap', 'B', 10)], [], { agent: () => ({ ops: new Set(['ensureApp']), send: async (op) => { sent.push(op) } }), waitOnline: async () => true })
+    await expect(r.resolve(req)).rejects.toBeInstanceOf(IdentityOffline)
+    expect(sent).toEqual([])
+  })
+
+  it('agent 回 running:false → 不等、identity-offline', async () => {
+    let waited = false
+    const r = world([row('node_work', 'B', 10)], [], {
+      agent: () => ({ ops: new Set(['ensureApp']), send: async () => ({ running: false }) }),
+      waitOnline: async () => { waited = true; return true },
+    })
+    await expect(r.resolve(req)).rejects.toBeInstanceOf(IdentityOffline)
+    expect(waited).toBe(false)
+  })
+})

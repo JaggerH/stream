@@ -19,7 +19,7 @@ import { discoverChromeCandidates, nodeDiscoverFs } from '../../browser/discover
 import { harvestBrowserStatus, type HarvestBrowserStatus } from '../../browser/harvest-browser.ts'
 import { makeExtensionLauncher } from '../../replay/browser-ext.ts'
 import { callPluginService } from '../../replay/call-service.ts'
-import { makeDesktopDriver, type DesktopDriver } from '../../replay/desktop-driver.ts'
+import { makeDesktopDriver, type DesktopDriver, type EnsureAppSpec } from '../../replay/desktop-driver.ts'
 import { makeSeeResolver, type SeeResolver } from '../../replay/desktop-see.ts'
 import { RecipeOverrideStore } from '../../replay/desktop-override-store.ts'
 import type { LlmForTask } from '../../llm/task.ts'
@@ -96,6 +96,8 @@ export interface HarvestService {
   sessionRecipes: SessionRecipeExecutor
   /** 采集前的环境前置：用户的 Chrome 得连着中继。**每一轮都要确认**。 */
   ensureHarvestBrowser: () => Promise<void>
+  /** 本机采集浏览器的生效唤起配置（config.yaml 默认 + 用户选的那个 exe），每次现读。按身份唤起 profile 时借它的 exe。 */
+  harvestBrowserSpec: () => EnsureAppSpec
   /** 看/动 recipe 正骑着的那个活 tab：求值 / 截图 / 动手。 */
   pageLook: (facility: string, expression: string) => Promise<{ value: unknown } | null>
   pageShot: (facility: string) => Promise<string | null>
@@ -641,6 +643,7 @@ export const harvestPlugin = {
       feedLedger,
       sessionRecipes,
       ensureHarvestBrowser,
+      harvestBrowserSpec,
       pageLook,
       pageShot,
       pageAct,

@@ -6,7 +6,11 @@
  *   ——用户选的是环境、不是账号，这一层歧义是他接受的。
  * - 挑法：在线的优先，同为在线取最近核对过的。
  *
- * **没有回落分支。** 候选为空、都离线——这里只会抛 `IdentityOffline`。不读设备默认、不回 `local`、不换成
+ * 候选都离线时按需唤起（D8）：其中有记下 profile 目录、且所在设备的 host agent 在线的，让 agent 用
+ * `--no-startup-window` 静默加载那个 profile（spike S2：Linux 与 Windows 上都不开窗），至多等 30 秒让节点连上。
+ * 同一个节点同一时刻只有一次唤起在飞，并发的执行共用它的结果。定时执行也唤起——不抢屏（S2 通过）。
+ *
+ * **没有回落分支。** 候选为空、都离线且唤不起——这里只会抛 `IdentityOffline`。不读设备默认、不回 `local`、不换成
  * 同一节点上别的账号。读这个文件的人如果想加一个「实在不行就……」，那正是这套设计要防的事。
  */
 import { IdentityOffline } from '../devices/errors.ts'
@@ -31,14 +35,33 @@ export interface RouterNode {
   wokenAt?: number
 }
 
+/** 一台设备上的 host agent（`agentFrom` 的结果满足它）。 */
+export interface WakeAgent {
+  ops: ReadonlySet<string>
+  send(op: { op: string; args?: Record<string, unknown> }): Promise<unknown>
+}
+
 export interface IdentityRouterDeps {
   /** 该 facility 在身份表里的全部行（现读：探测随时在写）。 */
   identities(facility: string): SiteIdentity[]
   node(nodeId: string): RouterNode | undefined
   isOnline(bindingId: string): boolean
+  /** 设备上在线的 host agent；不在线 = undefined（唤不起）。 */
+  agent?(deviceId: string): WakeAgent | undefined
+  /** 这台设备上拉起浏览器用哪个可执行文件（本机：采集浏览器的配置）。缺席 = agent 自己找 Chrome。 */
+  launchBase?(deviceId: string): { exe?: string; process?: string }
+  /** 等这条绑定连上，至多 `ms`。缺席 = 每 250ms 看一眼 `isOnline`。 */
+  waitOnline?(bindingId: string, ms: number): Promise<boolean>
+  /** 记下 / 清掉「这个 profile 是 Stream 唤起的」（`NodeStore.setWokenAt`）。 */
+  setWokenAt?(nodeId: string, at: number | null): void
+  /** 等节点连上的上限。 */
+  wakeWaitMs?: number
   now?: () => number
   log?: (line: string) => void
 }
+
+/** 唤起之后等节点连上的上限（D8）：一次冷加载 profile + 扩展 SW 起来 + 连上中继。 */
+export const WAKE_WAIT_MS = 30_000
 
 export interface IdentityRequest {
   target: IdentityTarget
@@ -70,6 +93,65 @@ export function nodeWhere(n: Pick<RouterNode, 'nodeId' | 'label' | 'profileName'
 }
 
 export function makeIdentityRouter(deps: IdentityRouterDeps): IdentityRouter & { candidates(target: IdentityTarget, facility: string): Candidate[] } {
+  const now = deps.now ?? Date.now
+  const log = deps.log ?? (() => {})
+  const wakeWaitMs = deps.wakeWaitMs ?? WAKE_WAIT_MS
+  const waitOnline = deps.waitOnline ?? (async (bindingId: string, ms: number) => {
+    const deadline = Date.now() + ms
+    while (!deps.isOnline(bindingId)) {
+      if (Date.now() >= deadline) return false
+      await new Promise((r) => setTimeout(r, 250))
+    }
+    return true
+  })
+  /** 节点 → 在飞的那次唤起。 */
+  const waking = new Map<string, Promise<boolean>>()
+
+  /** 这个节点唤得起吗：记着 profile 目录、设备上的 agent 在线且会 `ensureApp`。 */
+  const wakeable = (n: RouterNode): WakeAgent | undefined => {
+    if (!n.profileDir) return undefined
+    const agent = deps.agent?.(n.deviceId)
+    return agent?.ops.has('ensureApp') ? agent : undefined
+  }
+
+  const wake = (node: RouterNode, agent: WakeAgent): Promise<boolean> => {
+    const inflight = waking.get(node.nodeId)
+    if (inflight) return inflight
+    const p = (async () => {
+      try {
+        // `force`：节点离线这件事本身已经证明目标 profile 没加载，「有 Chrome 进程就不动手」在这里正好是错的
+        // （design Context 6）。`--no-startup-window` 显式给：带了 `exe` 时 agent 不补默认参数。
+        const out = await agent.send({
+          op: 'ensureApp',
+          args: { ...deps.launchBase?.(node.deviceId), profileDirectory: node.profileDir, force: true, args: ['--no-startup-window'] },
+        }) as { running?: boolean } | undefined
+        // 启动过了但进程始终没出现：没有扩展会来连，等 30 秒毫无意义。
+        if (out?.running === false) return false
+      } catch (e) {
+        log(`[identity] 唤起 ${nodeWhere(node)} 失败：${e instanceof Error ? e.message : String(e)}`)
+        return false
+      }
+      const ok = await waitOnline(node.bindingId, wakeWaitMs)
+      if (ok) deps.setWokenAt?.(node.nodeId, now())
+      else log(`[identity] 唤起了 ${nodeWhere(node)}，${wakeWaitMs / 1000} 秒内它的扩展没连上`)
+      return ok
+    })().finally(() => waking.delete(node.nodeId))
+    waking.set(node.nodeId, p)
+    return p
+  }
+
+  /** 候选都离线：唤起其中最近核对过、唤得起的那一个。只试一个——每个都等 30 秒，一次执行就能拖上几分钟。 */
+  const wakeOne = async (all: Candidate[]): Promise<Candidate | undefined> => {
+    for (const c of all) {
+      const agent = wakeable(c.node)
+      if (!agent) continue
+      if (!(await wake(c.node, agent))) return undefined
+      // 连上时节点表刷新了绑定（同一个 profile 重新配对过）：读新的。
+      const node = deps.node(c.node.nodeId) ?? c.node
+      return { ...c, node, online: true }
+    }
+    return undefined
+  }
   const candidates = (target: IdentityTarget, facility: string): Candidate[] => {
     const out: Candidate[] = []
     for (const row of deps.identities(facility)) {
@@ -89,8 +171,8 @@ export function makeIdentityRouter(deps: IdentityRouterDeps): IdentityRouter & {
     const label = describeTarget(target, facility)
     const all = candidates(target, facility)
     if (!all.length) throw new IdentityOffline(facility, label, '身份表里没有哪个浏览器 profile 登着它')
-    const pick = all.find((c) => c.online)
-    if (!pick) throw new IdentityOffline(facility, label, '登着它的 profile 都不在线')
+    const pick = all.find((c) => c.online) ?? await wakeOne(all)
+    if (!pick) throw new IdentityOffline(facility, label, '登着它的 profile 都不在线，也唤不起')
     return {
       node: pick.node,
       identity: {

@@ -9,7 +9,9 @@
  * 「设备的默认浏览器」也住这里（`is_default`）：用户选的本来就是一个 profile。以前它在
  * `ExtBindingStore.default` 上，节点连上时迁过来（`seen` 的 `legacyDefault`）。
  *
- * `woken_at` 是计划 4 的（Stream 静默唤起这个 profile 的时刻），这里只建列。
+ * `woken_at`：Stream 静默唤起这个 profile 的时刻（browser-identity D8）。非空 = 这个 profile 是 Stream 拉起来的、
+ * 可能还在后台加载着；执行结束后把它收回去（关掉最后一扇窗，profile 随之卸载），或者用户自己开了它的窗，
+ * 就清空。面板据此列「Stream 在后台打开着的 profile」。
  */
 import Database from 'better-sqlite3'
 import { mkdirSync } from 'node:fs'
@@ -199,6 +201,16 @@ export class NodeStore {
     const changed = this.db.prepare('UPDATE browser_nodes SET is_default = NULL WHERE node_id = ?').run(nodeId).changes > 0
     this.reload()
     return changed
+  }
+
+  /** 记下 / 清掉「这个 profile 是 Stream 唤起的」。没有这个节点什么都不做。 */
+  setWokenAt(nodeId: string, at: number | null): void {
+    if (this.db.prepare('UPDATE browser_nodes SET woken_at = ? WHERE node_id = ?').run(at, nodeId).changes) this.reload()
+  }
+
+  /** Stream 唤起、还没收回的节点。 */
+  woken(): BrowserNode[] {
+    return this.rows.filter((r) => r.wokenAt !== undefined)
   }
 
   defaultOf(deviceId: string): BrowserNode | undefined {
