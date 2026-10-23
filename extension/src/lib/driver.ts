@@ -51,10 +51,10 @@ const LEDGER_CHECKED_KEY = 'tabGroupChecked'
 const STARTUP_GRACE_MS = 2000
 /** 会话标签组在标签栏上的名字 —— 用户认边界靠它。 */
 const GROUP_TITLE = 'Stream'
-/** 主组那扇窗以外的窗口里另建的组的名字（见 adoptOpenedTab）。**必须和 GROUP_TITLE 不同**：
- *  浏览器重启后 findExistingGroup 按 GROUP_TITLE 认领主组，同名的话可能认到别的窗那组，
- *  之后开的标签全被塞进那扇窗。 */
-const WINDOW_GROUP_TITLE = 'Stream 独立窗'
+/** 旧版在主组以外的窗里另建的组的名字前缀（「Stream 独立窗」/「Stream 独立窗 · <配对名>」）。
+ *  新版不再建这种组（一条绑定只有一个组，见 adoptOpenedTab），留着它只为醒来时认出旧组、收编掉
+ *  （见 absorbLegacyGroups）。 */
+const LEGACY_WINDOW_GROUP_PREFIX = 'Stream 独立窗'
 const DEBUGGER_VERSION = '1.3'
 
 /**
@@ -142,10 +142,13 @@ export class BindingRuntime {
     readonly id: string,
     /** 标签栏上的组名。本机是 `Stream`；配对绑定带上它的名字，好让用户分得清是哪个 Stream 在动。 */
     readonly groupTitle: string = GROUP_TITLE,
-    readonly windowGroupTitle: string = WINDOW_GROUP_TITLE,
   ) {}
   get groupKey(): string {
     return storageKey(GROUP_KEY, this.id)
+  }
+  /** 这条绑定在旧版里那些「独立窗」组的名字：主组名把开头的 `Stream` 换成前缀，配对名的尾巴照留。 */
+  get legacyWindowGroupTitle(): string {
+    return LEGACY_WINDOW_GROUP_PREFIX + this.groupTitle.slice(GROUP_TITLE.length)
   }
 }
 
@@ -157,7 +160,7 @@ export function runtime(id: string = LOCAL_BINDING, label?: string): BindingRunt
   if (!rt) {
     rt = id === LOCAL_BINDING
       ? new BindingRuntime(id)
-      : new BindingRuntime(id, `${GROUP_TITLE} · ${label ?? id}`, `${WINDOW_GROUP_TITLE} · ${label ?? id}`)
+      : new BindingRuntime(id, `${GROUP_TITLE} · ${label ?? id}`)
     runtimes.set(id, rt)
   }
   return rt
@@ -349,17 +352,26 @@ type TabOrigin =
 function mayRemove(origin: TabOrigin): boolean {
   return origin !== 'adopted'
 }
-// windowGroups:主组那扇窗以外的窗口里的组。标签组只能待在一扇窗里，所以我们的标签在别的
-// 窗口里开出的新标签没法进主组，只能在那扇窗里另起一组；归属判据照旧是「在我们的组里」，只是组不止一个。
+// **一条绑定只有一个组（groupId）。** 标签组不能跨窗，旧版为别的窗里开出的新标签在那扇窗另建组，
+// 交互标签又不回收，窗和组只增不减（用户攒了近 50 个）。现在别的普通窗里的新标签一律挪回主组那扇窗
+// （见 adoptOpenedTab），浏览器里永远至多一个我们的组——用户认边界只需认这一个。
 // popups:开在 popup 窗里的在册标签(被 Stream 自己的标签 `window.open(…,'popup')` 开出来的)。
 // popup 窗放不了标签组,也不能把标签挪出去,所以它们是"在册但不在组"的唯一一类——归属判据
 // 对它们退回"账本有 ∧ 浏览器里还在 ∧ 窗口仍是 popup"。
-type GroupState = { groupId: number | null; windowGroups: number[]; popups: Set<number>; members: Map<number, TabOrigin> }
+// legacyGroups:旧版账本里记着的「独立窗」组 id，只在水合时从旧快照读出来，供醒来收编用，
+// **不再写回**——下一次 persistGroup 之后它就从存储里消失了。
+type GroupState = {
+  groupId: number | null
+  popups: Set<number>
+  members: Map<number, TabOrigin>
+  legacyGroups?: number[]
+}
+/** windowGroups 是旧版字段：只读（升级后的第一次醒来要靠它认出旧组），不写。 */
 type GroupSnapshot = { groupId: number | null; windowGroups?: number[]; popups?: number[]; members: [number, TabOrigin][] }
 
-/** 这个 groupId 是不是我们的组（主组或某扇别的窗里的组）。 */
+/** 这个 groupId 是不是我们的组。 */
 function isOurGroup(g: GroupState, gid: number | undefined): boolean {
-  return gid != null && gid !== -1 && (gid === g.groupId || g.windowGroups.includes(gid))
+  return gid != null && gid !== -1 && gid === g.groupId
 }
 
 // 组状态与它的串行队列、水合闸按绑定各一份，住在 BindingRuntime 上（理由见那边的注释）。
@@ -372,9 +384,9 @@ async function hydrateGroup(rt: BindingRuntime = runtime()): Promise<GroupState>
       const snap = s[rt.groupKey] as GroupSnapshot | undefined
       rt.groupMem = {
         groupId: snap?.groupId ?? null,
-        windowGroups: snap?.windowGroups ?? [],
         popups: new Set(snap?.popups ?? []),
         members: new Map(snap?.members ?? []),
+        ...(snap?.windowGroups?.length ? { legacyGroups: snap.windowGroups } : {}),
       }
       return rt.groupMem
     })()
@@ -384,7 +396,6 @@ async function hydrateGroup(rt: BindingRuntime = runtime()): Promise<GroupState>
 async function persistGroup(g: GroupState, rt: BindingRuntime = runtime()): Promise<void> {
   const snap: GroupSnapshot = {
     groupId: g.groupId,
-    ...(g.windowGroups.length ? { windowGroups: g.windowGroups } : {}), // 没有别的窗里的组就不写这格
     ...(g.popups.size ? { popups: [...g.popups] } : {}),
     members: [...g.members],
   }
@@ -513,7 +524,7 @@ async function nameGroup(groupId: number, title = GROUP_TITLE): Promise<void> {
  * 找浏览器里现存的会话组（按标题）——账本里没有 groupId（浏览器重启作废了它、或从未建组）
  * 时据此认领旧组、别另建。
  * 返回第一个匹配组的 id + 它当前的 tab ids；无匹配 / 无 tabGroups 权限 → null。
- * 多个同名组（修复前攒下的残留）只取第一个；修复后不再新增残留，故不特意合并。
+ * 多个同名组（历史残留）只取第一个——醒来时 mergeMainGroups 已先把它们并成一个。
  */
 async function findExistingGroup(rt: BindingRuntime = runtime()): Promise<{ groupId: number; tabIds: number[] } | null> {
   try {
@@ -537,51 +548,109 @@ const memberBornAt = new Map<number, number>()
 /** 把一个 tab 归入会话标签组（首个 tab 建新组，其后追加进同一组），记出身标记并持久化。返回 groupId。 */
 export async function addTabToGroup(tabId: number, origin: TabOrigin, rt: BindingRuntime = runtime()): Promise<number> {
   memberBornAt.set(tabId, Date.now())
-  const run = rt.groupQueue.then(async () => {
+  return inGroupQueue(rt, async () => {
     const g = await hydrateGroup(rt)
-    // g.groupId=null（浏览器重启作废了账本、或从未建组）但浏览器里旧 "Stream" 组可能还在。
-    // 先认领它（绑 id + 把它现有的 tab 当 adopted 收回账本），别无视后另建 —— 否则每次都攒一个
-    // 新组、旧组的 tab 全孤儿化。恢复的 tab 认不出原始出身，一律 adopted（红线:绝不 remove）。
-    if (g.groupId == null) {
-      const existing = await findExistingGroup(rt)
-      if (existing) {
-        g.groupId = existing.groupId
-        for (const t of existing.tabIds) if (!g.members.has(t)) g.members.set(t, 'adopted')
-        await persistGroup(g, rt)
-        // 认领来的 tab 一律 adopted（红线：绝不 remove），所以这条分支走没走过、收回了几个，
-        // 直接决定之后 reclaimOrphanTabs 还能不能动它们。低频（每次浏览器会话至多一次）。
-        debugLog('group-adopted', `认领了浏览器里遗留的 ${rt.groupTitle} 组`, {
-          groupId: existing.groupId,
-          tabs: existing.tabIds.length,
-        })
-      }
-    }
-    let groupId: number
-    let created = g.groupId == null // 本次是否新建了组（决定要不要命名）
-    try {
-      groupId = await chrome.tabs.group(
-        g.groupId != null ? { groupId: g.groupId, tabIds: [tabId] } : { tabIds: [tabId] },
-      )
-    } catch (e) {
-      // 用户手动解散组后 g.groupId 陈旧，带它 group() 会 reject —— 作为新组重建，别让陈旧 id
-      // 永久自锁（否则 `g.groupId=groupId` 那行永不到达，之后每次 addTabToGroup 都撞死这个 id）。
-      // 无 groupId 的建组失败无从重建，照抛。
-      if (g.groupId != null) {
-        groupId = await chrome.tabs.group({ tabIds: [tabId] })
-        created = true // 重建出的也是新组，同样要命名（否则解散一次就永久退化成无名灰块）
-      } else throw e
-    }
-    if (created) await nameGroup(groupId, rt.groupTitle)
-    g.groupId = groupId
+    const groupId = await groupIntoMain(g, tabId, rt)
     g.members.set(tabId, origin)
     await persistGroup(g, rt)
     return groupId
   })
+}
+
+/** 把一段读改写组状态的活排进这条绑定的 groupQueue（理由见 BindingRuntime.groupQueue 的注释）。 */
+function inGroupQueue<T>(rt: BindingRuntime, fn: () => Promise<T>): Promise<T> {
+  const run = rt.groupQueue.then(fn)
   rt.groupQueue = run.then(
     () => {},
     () => {},
   ) // 无论成败都推进队列，一次失败不卡死后续
   return run
+}
+
+/**
+ * 把一张标签放进**主组**——这条绑定唯一的组。不记出身、不排队：调用方已在 groupQueue 里。
+ * 主组不在了（从未建过 / 用户解散 / 主组那扇窗被关了）就在这张标签所在的窗里重建，
+ * 所以「至多一个组」与「随时有组可进」两头都成立。
+ */
+async function groupIntoMain(g: GroupState, tabId: number, rt: BindingRuntime): Promise<number> {
+  // g.groupId=null（浏览器重启作废了账本、或从未建组）但浏览器里旧 "Stream" 组可能还在。
+  // 先认领它（绑 id + 把它现有的 tab 当 adopted 收回账本），别无视后另建 —— 否则每次都攒一个
+  // 新组、旧组的 tab 全孤儿化。恢复的 tab 认不出原始出身，一律 adopted（红线:绝不 remove）。
+  if (g.groupId == null) {
+    const existing = await findExistingGroup(rt)
+    if (existing) {
+      g.groupId = existing.groupId
+      for (const t of existing.tabIds) if (!g.members.has(t)) g.members.set(t, 'adopted')
+      await persistGroup(g, rt)
+      // 认领来的 tab 一律 adopted（红线：绝不 remove），所以这条分支走没走过、收回了几个，
+      // 直接决定之后 reclaimOrphanTabs 还能不能动它们。低频（每次浏览器会话至多一次）。
+      debugLog('group-adopted', `认领了浏览器里遗留的 ${rt.groupTitle} 组`, {
+        groupId: existing.groupId,
+        tabs: existing.tabIds.length,
+      })
+    }
+  }
+  let groupId: number
+  let created = g.groupId == null // 本次是否新建了组（决定要不要命名）
+  try {
+    groupId = await chrome.tabs.group(
+      g.groupId != null ? { groupId: g.groupId, tabIds: [tabId] } : { tabIds: [tabId] },
+    )
+  } catch (e) {
+    // 用户手动解散组后 g.groupId 陈旧，带它 group() 会 reject —— 作为新组重建，别让陈旧 id
+    // 永久自锁（否则 `g.groupId=groupId` 那行永不到达，之后每次 addTabToGroup 都撞死这个 id）。
+    // 无 groupId 的建组失败无从重建，照抛。
+    // 主组那扇窗被用户关掉也走这里：组随窗没了，新组就建在这张标签此刻所在的窗里。
+    if (g.groupId != null) {
+      groupId = await chrome.tabs.group({ tabIds: [tabId] })
+      created = true // 重建出的也是新组，同样要命名（否则解散一次就永久退化成无名灰块）
+    } else throw e
+  }
+  if (created) await nameGroup(groupId, rt.groupTitle)
+  g.groupId = groupId
+  return groupId
+}
+
+/** 主组此刻在哪扇窗（主组不在了 → undefined）。组只能待在一扇窗里，问它任意一张标签就够。 */
+async function mainGroupWindow(g: GroupState): Promise<number | undefined> {
+  return g.groupId == null ? undefined : groupWindowOf(g.groupId)
+}
+
+/** 某个组此刻在哪扇窗（组没了 → undefined）。 */
+async function groupWindowOf(gid: number): Promise<number | undefined> {
+  const [t] = await chrome.tabs.query({ groupId: gid }).catch(() => [] as chrome.tabs.Tab[])
+  return t?.windowId
+}
+
+/**
+ * 把一张别的普通窗里的标签挪进主组那扇窗（还没入组——入组由调用方 groupIntoMain）。
+ * 不靠 `tabs.group` 顺带搬窗：那是实现细节，文档没写死；显式 move 一步，行为才说得清。
+ * 挪不了（主组已不在、目标不是普通窗、标签刚好被关）就留在原地——groupIntoMain 会在那扇窗里
+ * 重建主组，仍然只有一个组。
+ */
+async function moveToMainWindow(g: GroupState, tabId: number, fromWindowId: number | undefined): Promise<void> {
+  const target = await mainGroupWindow(g)
+  if (target == null || target === fromWindowId) return
+  try {
+    await chrome.tabs.move(tabId, { windowId: target, index: -1 })
+  } catch {
+    /* 挪不了 → 留在原地，见上 */
+  }
+}
+
+/**
+ * 窗里一张标签都不剩了就关掉它。只给「我们刚把自己的标签挪走 / 关掉」之后的那扇窗用：
+ * 空了说明窗里本来只有我们的标签（站点 window.open 随新标签一起开出来的那种）；用户自己的窗里
+ * 还有他的标签，空不了，碰不到。Chrome 多半已经在最后一张标签离开时自己关了窗，这里是兜底。
+ */
+async function closeWindowIfEmpty(windowId: number | undefined): Promise<void> {
+  if (windowId == null) return
+  try {
+    const left = await chrome.tabs.query({ windowId })
+    if (left.length === 0) await chrome.windows.remove(windowId)
+  } catch {
+    /* 窗已经没了 */
+  }
 }
 
 /** 当前会话组 id（未建组时 null）。 */
@@ -772,16 +841,22 @@ async function isPopupWindow(windowId: number | undefined): Promise<boolean> {
  * 出身沿用开启者的：交互标签开出的是给人看的（created），后台探针开出的照样没人看（probe，
  * 照样被兜底回收）。
  *
- * 放到哪：
- * - 与开启者同一扇普通窗 → 进开启者所在的那个组（主组或某扇别的窗里的组）；
- * - 另一扇普通窗 → 在那扇窗里另建一组（名字 WINDOW_GROUP_TITLE），组只能待在一扇窗里；
- * - popup 窗 → 放不了组，记进 `popups`，照样可驱动（见 GroupState 头注）。
+ * 放到哪（不变式：一条绑定至多一个组，绝不另建）：
+ * - 主组那扇窗 → 进主组；
+ * - 另一扇普通窗（站点 `window.open` 开了新窗、或 Chrome 把它放进了用户别的窗）→ `tabs.move` 挪进
+ *   主组那扇窗再入组；那扇窗因此空了就关掉（空了 = 它是随这张标签开出来的）。`window.opener` 不受
+ *   标签换窗影响，页面照常工作。**别退回「在那扇窗里另建一组」**：组不能跨窗，交互标签又不回收，
+ *   旧版就是这样攒出了近 50 扇窗、50 个组。只挪开启者在组内的标签——用户自己开的窗、标签不碰；
+ * - popup 窗 → 放不了组、也挪不出去（站点还依赖它是弹窗），记进 `popups`，照样可驱动（见 GroupState 头注）；
+ * - 主组已不在（用户把那扇窗关了）→ 在这张标签所在的窗里重建主组（groupIntoMain），仍只一个组。
  *
  * 收下之后往后端报一声 `tab-opened`：点击的回执靠它说出"这一下开了新标签 tabId=…"。
  */
 async function adoptOpenedTab(tab: chrome.tabs.Tab): Promise<void> {
   const tabId = tab.id
   const openerTabId = tab.openerTabId
+  // 事件发生那一刻它在哪扇窗：挪走之后要回头看那扇窗空没空，不能再读 tab.windowId
+  const bornInWindow = tab.windowId
   if (tabId == null || openerTabId == null) return
   // 开启者在哪条绑定的组里，新标签就归哪条绑定（一张 tab 至多属于一条）。
   let rt: BindingRuntime | undefined
@@ -796,33 +871,32 @@ async function adoptOpenedTab(tab: chrome.tabs.Tab): Promise<void> {
   memberBornAt.set(tabId, Date.now())
   // owned 只记本机绑定的自建标签：醒来对账拿它兜底回收「不在本机组里」的残留，配对绑定的标签进去会被误收。
   if (owner.id === LOCAL_BINDING) await withOwned((o) => o.add(tabId))
-  const run = owner.groupQueue.then(async () => {
+  const run = inGroupQueue(owner, async () => {
     const g = await hydrateGroup(owner)
     // 已在册只可能是 Chrome 自动进组的回声抢先把它记成了 adopted——出身以开启者为准，覆写掉。
     if (g.members.has(tabId)) {
       // 什么都不用挪
-    } else if (await isPopupWindow(tab.windowId)) {
+    } else if (await isPopupWindow(bornInWindow)) {
       g.popups.add(tabId)
     } else if (isOurGroup(g, tab.groupId)) {
       // Chrome 自己已经把它放进开启者的组了（从组内标签开出的链接常这样）——只补账。
     } else {
-      const opener = await chrome.tabs.get(openerTabId).catch(() => undefined)
-      if (opener && opener.windowId === tab.windowId && isOurGroup(g, opener.groupId)) {
-        await chrome.tabs.group({ groupId: opener.groupId, tabIds: [tabId] })
-      } else {
-        const gid = await chrome.tabs.group({ tabIds: [tabId], createProperties: { windowId: tab.windowId } })
-        await nameGroup(gid, owner.windowGroupTitle)
-        if (!g.windowGroups.includes(gid)) g.windowGroups.push(gid)
-      }
+      await moveToMainWindow(g, tabId, bornInWindow)
+      await groupIntoMain(g, tabId, owner)
+      // 挪走之后它出生的那扇窗若空了，那扇窗就是随这张标签开出来的
+      await closeWindowIfEmpty(bornInWindow)
     }
     g.members.set(tabId, openerOrigin)
     await persistGroup(g, owner)
   })
-  owner.groupQueue = run.then(
-    () => {},
-    () => {},
-  )
-  await run
+  try {
+    await run
+  } catch (e) {
+    // 没收成（入组失败）：owned 里那一笔得撤掉，否则醒来对账会把这张"在 owned、不在组"的标签当旧版
+    // 残留 remove 掉——那是一张用户可能正看着的交互标签。
+    if (owner.id === LOCAL_BINDING) await withOwned((o) => o.delete(tabId))
+    throw e
+  }
   try {
     owner.eventSocket?.send(
       JSON.stringify({ type: 'tab-opened', tabId, openerTabId, url: tab.pendingUrl ?? tab.url ?? '' }),
@@ -839,31 +913,83 @@ export function onTabCreated(tab: chrome.tabs.Tab): Promise<void> {
 chrome.tabs.onCreated?.addListener?.((tab) => void onTabCreated(tab))
 
 /**
- * 别的窗里那些组的对账，返回这些组里现在活着的 tab。
- * - 浏览器里有、账本没有的组（浏览器重启作废了账本）→ 按名字认领，同主组的 findExistingGroup；
- * - 账本有、浏览器里已经没有 tab 的组（用户关了那扇窗）→ 从账本删掉；
- * - 组里有、账本没有的 tab → 认不出出身，一律 adopted（红线：绝不 remove）。
+ * 同名的多个主组（历史残留：修「认领旧组」之前每次浏览器会话都可能另建一个）并成一个。
+ * 并进谁：账本里的主组还活着就并进它（出身记在它名下），否则并进第一个——findExistingGroup
+ * 随后认领的正是它。别的组里的标签挪进那扇窗、入组；因此空了的窗关掉。
+ * 这里不记出身：之后的主组对账（或认领）会把账本里没有的成员一律补成 adopted（红线：绝不 remove）。
  */
-async function reconcileWindowGroups(g: GroupState, rt: BindingRuntime = runtime()): Promise<Set<number>> {
+async function mergeMainGroups(g: GroupState, rt: BindingRuntime): Promise<void> {
+  let found: number[]
+  try {
+    found = (await chrome.tabGroups.query({ title: rt.groupTitle })).map((x) => x.id)
+  } catch {
+    return // 没有 tabGroups 权限 —— 认不出同名组，什么都不做
+  }
+  if (found.length === 0) return
+  const target = g.groupId != null && (await groupWindowOf(g.groupId)) != null ? g.groupId : found[0]
+  const others = found.filter((id) => id !== target)
+  if (others.length === 0) return
+  const targetWindow = await groupWindowOf(target)
+  const emptied = new Set<number>()
+  for (const gid of others) {
+    const tabs = await chrome.tabs.query({ groupId: gid }).catch(() => [] as chrome.tabs.Tab[])
+    const ids = tabs.map((t) => t.id).filter((id): id is number => id != null)
+    if (!ids.length) continue
+    for (const t of tabs) {
+      if (t.id == null || t.windowId == null || t.windowId === targetWindow || targetWindow == null) continue
+      emptied.add(t.windowId)
+      await chrome.tabs.move(t.id, { windowId: targetWindow, index: -1 }).catch(() => undefined)
+    }
+    await chrome.tabs.group({ groupId: target, tabIds: ids as [number, ...number[]] }).catch(() => undefined)
+  }
+  for (const w of emptied) await closeWindowIfEmpty(w)
+  debugLog('groups-merged', `把 ${others.length + 1} 个同名的 ${rt.groupTitle} 组并成了一个`, { groupId: target })
+}
+
+/**
+ * 升级收编：旧版在主组以外的窗里另建的「Stream 独立窗」组，一个都不留。
+ * 认组两条路：旧账本里记着的 id（legacyGroups），加上按名字认（账本作废后只剩名字认得出）。
+ * 组里每张标签按出身处理——认不出出身的一律当 adopted（红线：认不出就绝不 remove）：
+ * - probe → 关。没人看的后台探针，本来就该回收；
+ * - created → 挪进主组那扇窗、入主组。它是给人看的，换个窗照样看得见、照样驱动；
+ * - adopted → 只解组、忘掉，标签原地不动。**绝不 remove**——那是用户拖进来的东西。
+ * 收编完因此空了的窗关掉（窗里还有用户的标签就空不了，不会误关）。
+ * 每次醒来都跑，但只有第一次有活干：之后浏览器里已经没有这种名字的组了，就是一次空查询。
+ */
+async function absorbLegacyGroups(g: GroupState, rt: BindingRuntime): Promise<void> {
   let named: number[] = []
   try {
-    named = (await chrome.tabGroups.query({ title: rt.windowGroupTitle })).map((x) => x.id)
+    named = (await chrome.tabGroups.query({ title: rt.legacyWindowGroupTitle })).map((x) => x.id)
   } catch {
-    /* 没有 tabGroups 权限 —— 只对账本里已有的 */
+    /* 没有 tabGroups 权限 —— 只收编账本里记着的 */
   }
-  const kept: number[] = []
-  const live = new Set<number>()
-  for (const gid of new Set([...g.windowGroups, ...named])) {
-    const tabs = await chrome.tabs.query({ groupId: gid }).catch(() => [])
-    if (!tabs.length) continue
-    kept.push(gid)
-    for (const t of tabs) if (t.id != null) live.add(t.id)
+  const legacy = new Set([...(g.legacyGroups ?? []), ...named])
+  const hadLedgerField = g.legacyGroups != null
+  delete g.legacyGroups
+  if (legacy.size === 0) return
+  const windows = new Set<number>()
+  const counts = { probe: 0, created: 0, adopted: 0 }
+  for (const gid of legacy) {
+    if (gid === g.groupId) continue // 万一主组 id 混进了旧字段，别把主组自己收编掉
+    const tabs = await chrome.tabs.query({ groupId: gid }).catch(() => [] as chrome.tabs.Tab[])
+    for (const t of tabs) {
+      if (t.id == null) continue
+      if (t.windowId != null) windows.add(t.windowId)
+      const origin = g.members.get(t.id) ?? 'adopted'
+      counts[origin]++
+      if (origin === 'created') {
+        await moveToMainWindow(g, t.id, t.windowId)
+        await groupIntoMain(g, t.id, rt).catch(() => undefined)
+      } else {
+        await releaseTab(t.id, origin, rt) // probe → remove；adopted → 只 ungroup，绝不 remove
+      }
+    }
   }
-  if (kept.length === 0 && g.windowGroups.length === 0) return live
-  g.windowGroups = kept
-  for (const tabId of live) if (!g.members.has(tabId)) g.members.set(tabId, 'adopted')
-  await persistGroup(g, rt)
-  return live
+  for (const w of windows) await closeWindowIfEmpty(w)
+  // 旧字段要从存储里消失：没有任何标签要动时也写一次（否则下次醒来又从旧快照读出来）
+  if (hadLedgerField || counts.created) await persistGroup(g, rt)
+  if (counts.probe + counts.created + counts.adopted)
+    debugLog('legacy-groups-absorbed', `收编了 ${legacy.size} 个旧的 ${rt.legacyWindowGroupTitle} 组`, counts)
 }
 
 /**
@@ -883,16 +1009,18 @@ async function reconcileWindowGroups(g: GroupState, rt: BindingRuntime = runtime
  */
 export async function reconcileOnWake(rt: BindingRuntime = runtime()): Promise<void> {
   const g = await hydrateGroup(rt)
-  const windowLive = await reconcileWindowGroups(g, rt)
+  // 先把浏览器里的组收拢成一个（同名主组合并、旧版独立窗组收编），再按主组对账。
+  await inGroupQueue(rt, async () => {
+    await mergeMainGroups(g, rt)
+    await absorbLegacyGroups(g, rt)
+  })
   if (g.groupId != null) {
     const live = new Set(
       (await chrome.tabs.query({ groupId: g.groupId }).catch(() => []))
         .map((t: { id?: number }) => t.id)
         .filter((id): id is number => id != null),
     )
-    // 别的窗里的成员不在主组，但也是活的——①别把它们当"拖出去了"撤掉，②也别把它们塞回主组
     const inMain = new Set(live)
-    for (const id of windowLive) live.add(id)
     // popup 窗里的在册标签不在任何组里——还活着（且窗口仍是 popup）就算 live，否则按撤销处理。
     for (const id of g.popups) {
       const t = await chrome.tabs.get(id).catch(() => undefined)

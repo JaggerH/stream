@@ -53,6 +53,7 @@ function makeChrome() {
       }),
       query: vi.fn(async (q: { groupId?: number }) => [...tabs.values()].filter((t) => q.groupId == null || t.groupId === q.groupId)),
       update: vi.fn(async () => ({})),
+      move: vi.fn(async (id: number, p: { windowId: number }) => Object.assign(tabs.get(id)!, { windowId: p.windowId })),
       ungroup: vi.fn(async () => {}),
       remove: vi.fn(async () => {}),
       onUpdated: { addListener: vi.fn() },
@@ -116,13 +117,14 @@ describe('自建标签开出来的标签归 Stream', () => {
     expect(r.error).toBeUndefined()
   })
 
-  it('另一扇普通窗：在那扇窗里另建一组（组只能待在一扇窗里），不把它拽回主窗', async () => {
+  it('另一扇普通窗：挪进主组那扇窗、入主组，不另建组（一条绑定只有一个组，见 driver.onegroup.test）', async () => {
     const env = await load()
     const opener = await openStreamTab(env)
     const child: Tab = { id: 21, windowId: 2, groupId: -1, url: '', title: 'c', openerTabId: opener }
     env.tabs.set(21, child)
     await env.onTabCreated(child as unknown as chrome.tabs.Tab)
-    expect(env.chrome.tabs.group).toHaveBeenLastCalledWith({ tabIds: [21], createProperties: { windowId: 2 } })
+    expect(env.chrome.tabs.move).toHaveBeenCalledWith(21, { windowId: 1, index: -1 })
+    expect(env.chrome.tabs.group).toHaveBeenLastCalledWith({ groupId: env.tabs.get(opener)!.groupId, tabIds: [21] })
     expect((await listTabs(env)).find((t) => t.tabId === 21)).toMatchObject({ grouped: true })
   })
 

@@ -10,10 +10,10 @@
 
 ## 计划 0.5：一个 profile 一个 Stream 标签组（可独立先做）
 
-- [ ] 1. `adoptOpenedTab`：别的普通窗里的新标签挪进主组那扇窗并入主组，随它新开的空窗关掉；popup 照旧
-- [ ] 2. 删掉 `WINDOW_GROUP_TITLE` / `windowGroups` / `reconcileWindowGroups`
-- [ ] 3. 升级收编：独立窗组里 probe 关、created 挪进主组、adopted 只解组；同名主组合并
-- [ ] 4. driver 测试：新窗被并回、popup 不动、收编 47 个旧组只剩一个且 adopted 标签仍在
+- [x] 1. `adoptOpenedTab`：别的普通窗里的新标签挪进主组那扇窗并入主组，随它新开的空窗关掉；popup 照旧
+- [x] 2. 删掉 `WINDOW_GROUP_TITLE` / `windowGroups` / `reconcileWindowGroups`
+- [x] 3. 升级收编：独立窗组里 probe 关、created 挪进主组、adopted 只解组；同名主组合并
+- [x] 4. driver 测试：新窗被并回、popup 不动、收编 47 个旧组只剩一个且 adopted 标签仍在
 - [ ] 5. Windows 真机冒烟：站点 `window.open` 后浏览器里仍只有一个 Stream 组
 
 ## 计划 1：节点（browser-node 的后端与扩展部分）

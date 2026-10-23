@@ -114,40 +114,6 @@ describe('SW 醒来对账：只回收没人看的探针', () => {
   })
 })
 
-describe('别的窗里的组（adoptOpenedTab 在主组以外的窗里另建的组）', () => {
-  // 主组里没有它、它在别的窗的组里——醒来对账不能把它当成"被拖出去了"撤掉
-  function withWindowGroup(windowLive: number[]) {
-    const chrome = makeChrome({ groupId: 777, members: [[5, 'adopted'], [30, 'created']], live: [5] })
-    ;(chrome._local.tabGroup as { windowGroups?: number[] }).windowGroups = [888]
-    const mainGet = chrome.tabs.get.getMockImplementation()!
-    chrome.tabs.get.mockImplementation(async (tabId: number) =>
-      windowLive.includes(tabId) ? { id: tabId, url: 'http://g.test/', title: 'G', groupId: 888 } : mainGet(tabId),
-    )
-    const mainQuery = chrome.tabs.query.getMockImplementation()!
-    chrome.tabs.query.mockImplementation(async (q: { groupId?: number }) =>
-      q.groupId === 888 ? windowLive.map((id) => ({ id })) : mainQuery(q),
-    )
-    return chrome
-  }
-
-  it('成员留着、照样可驱动，也不会被塞回主组', async () => {
-    const chrome = withWindowGroup([30])
-    const mod = await loadModule(chrome)
-    await mod.reconcileOnWake()
-    expect(await mod.tabOrigin(30)).toBe('created')
-    expect(chrome.tabs.group).not.toHaveBeenCalledWith(expect.objectContaining({ tabIds: [30] }))
-    expect(chrome.tabs.remove).not.toHaveBeenCalledWith(30)
-  })
-
-  it('用户关了那扇窗 → 组从账本删掉、成员撤销', async () => {
-    const chrome = withWindowGroup([])
-    const mod = await loadModule(chrome)
-    await mod.reconcileOnWake()
-    expect(await mod.tabOrigin(30)).toBeUndefined()
-    expect((chrome._local.tabGroup as { windowGroups?: number[] }).windowGroups ?? []).toEqual([])
-  })
-})
-
 describe('SW 死期间漏掉的事件：醒来补账', () => {
   it('用户趁 SW 死时把 tab 拖出组 → 移出账本、detach，绝不 remove', async () => {
     // 账本说 9 在组，浏览器说它已不在（live 里没有）

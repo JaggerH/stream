@@ -74,6 +74,9 @@ app/host-agent/target/x86_64-pc-windows-gnu/release/stream-desktop.exe \
    点 Allow 之后才给。**远处的 Stream 要什么不会自动给**——本机那条照旧自动。
 
 每条绑定有自己的连接和自己的标签组（`Stream · <设备名>`），一个 Stream 碰不到另一个 Stream 组里的标签。
+每条绑定在浏览器里**只有一个**标签组：组里的标签开出新窗口（站点 `window.open`）时，新标签被挪回组所在的窗、
+随它开出来的空窗关掉；popup 窗里的留在原处。旧版另建的「Stream 独立窗」组在升级后第一次醒来时被收编
+（探针关掉、自建标签并回主组、用户拖进去的只解组不关）。
 那个 Stream 撤销这条绑定（`DELETE /api/ext/bindings/<id>`，或撤销它挂的设备）之后，弹窗里显示 revoked，
 扩展不再重连；在弹窗里移除即可。
 
