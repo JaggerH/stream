@@ -68,6 +68,8 @@ export interface BootOptions {
   facilityDevices?: import('./devices/placement.ts').FacilityBindings
   /** 扩展绑定表（design D7）：别的机器上的 Chrome 挂在哪台设备上。缺席 = 只有本机扩展。 */
   extBindings?: import('./kernel/plugins/harvest.ts').HarvestConfig['extBindings']
+  /** 浏览器节点表（browser-identity D1）。缺席（stream.db 打不开）= 本机多节点照常，没有默认节点与节点记录。 */
+  nodes?: import('./devices/node-store.ts').NodeStore
   /** fired (in addition to the item-store write) for each newly-persisted item */
   onItem?: (item: StreamItem, type: SourceType) => void
   /** push a debug entry (download queue diagnostics) to the frontend DebugBox over the WS */
@@ -477,6 +479,7 @@ export async function bootstrap(
     harvestBrowser: config.harvest_browser,
     hostSessionWaitMs: config.desktop?.session_wait_ms,
     ...(opts.extBindings && { extBindings: opts.extBindings }),
+    ...(opts.nodes && { nodes: opts.nodes }),
     onDebug: opts.onDebug,
     notify: notifyDefect,
     broadcast: opts.broadcast,

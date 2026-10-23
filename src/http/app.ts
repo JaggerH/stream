@@ -109,6 +109,8 @@ import { toClientItem, sortKeyOf, encodeCursor, decodeCursor, isAfterCursor } fr
 import { attachStoryGroups } from '../story-fold/project.ts'
 import type { StoryFoldStore } from '../story-fold/store.ts'
 import { EXT_RELAY_PROTOCOL } from './ext-relay.ts'
+import { localNodeBinding } from './ext-relay-registry.ts'
+import { cleanNodeId } from '../../shared/browser-relay/handshake.ts'
 import { extVerifyProof, extVerifyProofForBinding } from './ext-verify.ts'
 import { authorizeAccess, peerAddress, isLoopbackAddress, isTrustedHost, isTrustedOrigin, lanUrls } from './access-guard.ts'
 import { tokenEqual } from './secrets.ts'
@@ -1298,8 +1300,11 @@ export function createHttpApp(deps: HttpDeps): Hono {
   // 扩展的对账不该依赖它先拿到凭证。
   app.get('/api/ext/claimed-tabs', (c) => {
     if (!deps.claimedTabs) return c.json(errorBody('unavailable', 'facility sessions not available'), 503)
-    // 每个扩展绑定只拿自己那个 Chrome 里的标签对账（design D7）；不带 = 本机扩展，与以前一致。
-    return c.json({ tabIds: deps.claimedTabs(c.req.query('binding') || undefined) })
+    // 每个扩展绑定只拿自己那个 Chrome 里的标签对账（design D7）；不带 = 本机兼容槽，与以前一致。
+    // 本机节点带 `node`（browser-identity D2）而不是 `binding=local:…`——老后端不认 `node`，回的是本机全集，
+    // 不会把在跑的标签当孤儿。形状不对的 node 当没带。
+    const node = cleanNodeId(c.req.query('node'))
+    return c.json({ tabIds: deps.claimedTabs(c.req.query('binding') || (node ? localNodeBinding(node) : undefined)) })
   })
 
   /*

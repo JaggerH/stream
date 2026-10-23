@@ -1,6 +1,6 @@
 /** 一次执行在哪台设备上：任务覆盖 → facility 默认设备 → local。执行开始时解析一次，之后不变。 */
 import { DeviceIncapable, DeviceOffline } from './errors.ts'
-import { LOCAL_BINDING, LOCAL_DEVICE, currentPlacement, type RunPlacement } from './run-context.ts'
+import { LOCAL_DEVICE, currentPlacement, type RunPlacement } from './run-context.ts'
 
 /** 包的执行位置相关声明：它的 facility 与允许访问的主机（`stream.network.hosts` ?? `stream.credentials`）。 */
 export interface PackageNetwork {
@@ -67,22 +67,26 @@ export function assertDeviceReady(
   if (!dir.hasOp(p.deviceId, need)) throw new DeviceIncapable(p.deviceId, need)
 }
 
-/** 设备 → 它上面的一条在线扩展绑定（`ExtRelayRegistry` 满足它）。没有绑定 / 都离线时抛。 */
+/** 设备 → 它上面的一条在线扩展绑定（`ExtRelayRegistry` 满足它）。没有绑定 / 都离线时抛；本机例外，回兼容槽。 */
 export interface BrowserPicker {
   pick(deviceId: string): string
+  /** 本机那条兜底要不要钉住看它：没给 = 本机一律不钉。 */
+  isOnline?(bindingId: string): boolean
 }
 
 /**
- * 本次执行用哪个扩展绑定（design D7）。第一次问时选、记在执行上下文的 `browser` 记号上，之后整次
- * 执行不变——中途新连上的 Chrome 不会把一半的登录切到另一个浏览器里。没有执行上下文（面板、MCP
- * 工具）或执行在 `local` 上 = 本机扩展。
+ * 本次执行用哪个扩展绑定（device-execution D7、browser-identity D2）。第一次问时选、记在执行上下文的
+ * `browser` 记号上，之后整次执行不变——中途新连上的 Chrome / profile 不会把一半的登录切到另一个浏览器里。
+ * 没有执行上下文（面板、MCP 工具）= 本机此刻的默认节点，不钉。
+ *
+ * 本机一个节点都不在线时 `pick` 回兼容槽 `local`，**这一刻不钉**：`ensureHarvestBrowser` 会唤起 Chrome
+ * 再等，连上来的是哪个节点、执行就该落在哪个节点上；钉在一条不在线的兼容槽上，这次执行就再也用不上它。
  */
 export function pickBrowser(reg: BrowserPicker): string {
   const p = currentPlacement()
-  if (p.deviceId === LOCAL_DEVICE) return LOCAL_BINDING
   if (p.browser?.bindingId) return p.browser.bindingId
   const id = reg.pick(p.deviceId)
-  if (p.browser) p.browser.bindingId = id
+  if (p.browser && (p.deviceId !== LOCAL_DEVICE || reg.isOnline?.(id) === true)) p.browser.bindingId = id
   return id
 }
 

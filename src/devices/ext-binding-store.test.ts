@@ -100,6 +100,18 @@ describe('ExtBindingStore', () => {
     expect(s.list()[0].default).toBeUndefined()
   })
 
+  it('records the node of a binding once, persisted; a second node does not overwrite it', () => {
+    const s = fresh()
+    const a = s.pair(s.createPairingCode('linux:nas').code, {})
+    if (!a.ok) throw new Error('pair failed')
+    expect(s.get(a.bindingId)?.nodeId).toBeUndefined()
+    expect(s.recordNode(a.bindingId, 'node_a')).toBe(true)
+    expect(s.recordNode(a.bindingId, 'node_b')).toBe(false)
+    const file = (s as unknown as { file: string }).file
+    expect(new ExtBindingStore(file).get(a.bindingId)?.nodeId).toBe('node_a')
+    expect(s.recordNode('ext:nope', 'node_a')).toBe(false)
+  })
+
   it('refuses to start on an unreadable file', () => {
     const file = join(mkdtempSync(join(tmpdir(), 'extb-')), 'ext-bindings.json')
     writeFileSync(file, '{oops')

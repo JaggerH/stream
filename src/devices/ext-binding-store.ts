@@ -22,8 +22,16 @@ export interface ExtBinding {
   platform?: string
   pairedAt: number
   lastSeenAt?: number
-  /** 这台设备的默认浏览器（面板设的）。每台设备至多一条；没有 = 选最近连上的。 */
+  /**
+   * 升级前的「设备默认浏览器」（面板设的）。browser-identity D1 之后默认住在节点上（`NodeStore`）：
+   * 这条绑定的节点连上时迁过去、这里清掉。还没迁的（扩展没升级）照旧算数。
+   */
   default?: true
+  /**
+   * 这条绑定属于哪个节点（browser-identity D1）：第一次带着 `nodeId` 连上时记下，之后同一把 token
+   * 带着别的 `nodeId` 来连就拒（4004）——那是 token 被拷到了另一个 profile。老扩展不带，就一直没有。
+   */
+  nodeId?: string
 }
 
 export type ExtPairResult =
@@ -161,6 +169,15 @@ export class ExtBindingStore {
 
   defaultOf(deviceId: string): string | undefined {
     return this.rows.find((r) => r.deviceId === deviceId && r.default)?.bindingId
+  }
+
+  /** 记下这条绑定的节点。只记第一次：已经记过的不改（换节点是拒绝的理由，不是更新的理由）。 */
+  recordNode(bindingId: string, nodeId: string): boolean {
+    const hit = this.rows.find((r) => r.bindingId === bindingId)
+    if (!hit || hit.nodeId) return false
+    hit.nodeId = nodeId
+    this.save()
+    return true
   }
 
   /** 设备被撤销，挂在它上面的绑定一并撤销；返回被撤的 id，调用方据此断开连接。 */

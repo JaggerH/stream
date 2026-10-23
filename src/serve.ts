@@ -24,6 +24,7 @@ import { writeFixtureFromItem } from './content/ad-fixtures.ts'
 import { WsHub, attachWs } from './http/ws.ts'
 import { toClientItem } from './http/client-item.ts'
 import { attachExtRelay, closeRelayServer } from './http/ext-relay.ts'
+import { resolveExtToken } from './http/ext-upgrade.ts'
 import { summarizeCapability } from './browser/capability-store.ts'
 import { materializeExtension } from './browser/extension-dir.ts'
 import { installExtension } from './browser/extension-install.ts'
@@ -40,12 +41,12 @@ import { mountDeviceRoutes } from './http/device-routes.ts'
 import { mountExtBindingRoutes, REVOKED_CLOSE_CODE } from './http/ext-binding-routes.ts'
 import { DeviceStore } from './devices/device-store.ts'
 import { ExtBindingStore } from './devices/ext-binding-store.ts'
-import { tokenEqual } from '../shared/browser-relay/token.ts'
 import { FacilityDeviceStore } from './devices/facility-devices.ts'
+import { NodeStore } from './devices/node-store.ts'
 import { assertDeviceReady, resolvePlacement, unavailableBindings, type FacilityBindings } from './devices/placement.ts'
 import { installFetchFor, makeFetchFor } from './devices/fetch.ts'
 import { installGlobalFetchTrap } from './devices/global-fetch-trap.ts'
-import { LOCAL_BINDING, type RunPlacement } from './devices/run-context.ts'
+import { type RunPlacement } from './devices/run-context.ts'
 import type { UserTaskRow } from './tasks/task-store.ts'
 import { attachEnrichCommands } from './http/enrich-ws.ts'
 import { attachAuthLoginCommands } from './http/auth-login.ts'
@@ -296,6 +297,14 @@ try {
   console.error(`[stream] facility device bindings UNAVAILABLE — open failed: ${errText(e)}; runs of any facility will be refused until this is fixed`)
   facilityBindings = unavailableBindings()
 }
+// 浏览器节点（browser-identity D1），同一个 stream.db。打不开就没有：本机多个 profile 照样各连各的，
+// 只是没有默认节点、不留节点记录——它不像 facility 绑定那样决定「在哪儿下单」，没必要因此拒绝执行。
+let browserNodes: NodeStore | undefined
+try {
+  browserNodes = new NodeStore(join(dirname(config.item_db), 'stream.db'))
+} catch (e) {
+  console.error(`[stream] browser nodes UNAVAILABLE — open failed: ${errText(e)}; profiles still connect, without defaults`)
+}
 // `/api/*` 与 `/ws` 的访问令牌。**默认就有**（用户没配 api_token 时自动生成一份持久的）——
 // 后端绑 0.0.0.0 是有意的（用户要从手机访问），那就必须有一把默认的锁，而不是默认没有。
 // 本机 loopback 请求免密，所以自己机器上用完全无感（判据与实测见 http/access-guard.ts）。
@@ -367,6 +376,7 @@ const apiToken = config.api_token || loadOrCreateApiToken(dirname(config.item_db
     onDebug: recordDebug,
     facilityDevices: facilityBindings,
     extBindings,
+    ...(browserNodes ? { nodes: browserNodes } : {}),
     broadcast: (msg) => hub.broadcast(msg),
     track,
     trackSync,
@@ -1111,14 +1121,10 @@ const apiToken = config.api_token || loadOrCreateApiToken(dirname(config.item_db
   // 最后一处常驻连接泄漏。`closeRelayServer` 先断连再关服务器（interval 挂在连接上，
   // 光 close 服务器清不掉它）。
   kernel.effect(() => {
-    // 本机 token → 本机绑定；配对 token → 那条绑定（design D7）。连上即记一次 lastSeen。
+    // 本机 token → 本机节点（不带 nodeId 的老扩展 → 兼容槽）；配对 token → 那条绑定，换节点来连 4004
+    // （device-execution D7、browser-identity D1/D2，判法在 resolveExtToken）。
     const wss = attachExtRelay(server as unknown as Server, harvest.extRelays, {
-      resolveToken: (t) => {
-        if (tokenEqual(t, extToken)) return LOCAL_BINDING
-        const b = extBindings.bindingForToken(t)
-        if (b) extBindings.touch(b.bindingId)
-        return b?.bindingId ?? null
-      },
+      resolveToken: (t, hs) => resolveExtToken(t, hs, { localToken: extToken, bindings: extBindings, log: console.log }),
     })
     return () => closeRelayServer(wss)
   })

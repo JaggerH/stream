@@ -37,11 +37,28 @@ describe('pickBrowser（一次执行选一次扩展绑定，design D7）', () =>
     let i = 0
     return { pick: (_dev: string) => ids[i++] ?? 'exhausted' }
   }
-  it('执行之外 = local，不问 registry', () => {
-    expect(pickBrowser({ pick: () => { throw new Error('should not be asked') } })).toBe('local')
+  it('执行之外 = 本机此刻的默认节点，不钉（browser-identity D2）', () => {
+    const r = seq('local:node_a', 'local:node_b')
+    expect(pickBrowser(r)).toBe('local:node_a')
+    expect(pickBrowser(r)).toBe('local:node_b')
   })
-  it('local 设备上的执行 = local', async () => {
-    await runOnDevice({ deviceId: 'local', allowHosts: [] }, async () => expect(pickBrowser(seq('ext:a'))).toBe('local'))
+  it('本机上的执行：钉住第一次选中的在线节点', async () => {
+    const r = { ...seq('local:node_a', 'local:node_b'), isOnline: () => true }
+    await runOnDevice({ deviceId: 'local', allowHosts: [] }, async () => {
+      expect(pickBrowser(r)).toBe('local:node_a')
+      expect(pickBrowser(r)).toBe('local:node_a')
+    })
+  })
+  it('本机没有在线节点时回兼容槽，但不钉——唤起之后连上的节点要能接住这次执行', async () => {
+    const online = new Set<string>()
+    const r = { pick: () => (online.size ? [...online][0]! : 'local'), isOnline: (id: string) => online.has(id) }
+    await runOnDevice({ deviceId: 'local', allowHosts: [] }, async () => {
+      expect(pickBrowser(r)).toBe('local')
+      online.add('local:node_a')
+      expect(pickBrowser(r)).toBe('local:node_a')
+      online.add('local:node_b')
+      expect(pickBrowser(r)).toBe('local:node_a')
+    })
   })
   it('keeps the first pick for the whole run', async () => {
     const r = seq('ext:a', 'ext:b')

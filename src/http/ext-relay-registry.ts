@@ -1,25 +1,54 @@
 /**
- * 每条扩展绑定一条 `ExtRelay`（design D7）。`local` 那条就是今天的单例，构造时交进来、永远在；
- * 配对绑定的 relay 在它第一次连上时建，之后常驻（断开只是 `connected=false`，pending 由 relay 自己 reject）。
+ * 每条扩展绑定一条 `ExtRelay`（device-execution D7）。配对绑定的 relay 在它第一次连上时建，之后常驻
+ * （断开只是 `connected=false`，pending 由 relay 自己 reject）。
  *
- * 「设备有浏览器」= 至少一条挂在它上面的绑定在线。选哪条：最近连上的那条——计划 4 的默认绑定落地前，
- * 这是唯一不需要用户配置就说得通的规则（刚开的那个 Chrome 最可能是用户正看着的）。
+ * **本机按节点（browser-identity D2）。** 同一台机器上每个 Chrome profile 的扩展各是一个节点：握手带
+ * `nodeId` 的本机连接落 `local:<nodeId>`，一个节点一条 relay，互不顶替；不带的（老扩展）落兼容槽
+ * `local`——那条在构造时交进来、永远在，行为与升级前一模一样（以最新为准）。
+ *
+ * 「设备有浏览器」= 至少一条挂在它上面的绑定在线。选哪条（`pick`）：设备的默认节点在线就选它，
+ * 否则最近连上的那条。本机一条都不在线时回兼容槽，不抛——本机的 Chrome 可以被唤起，调用方会等它连上。
+ *
+ * `local` 这个 getter 不是某一条 relay，而是一个门面（`LocalExtRelay`）：每次调用经 `pickBrowser`
+ * 解析到本机的某个节点。本机路径上直接拿 relay 的地方有三十来处，不逐个改。
  */
 import { DeviceIncapable, DeviceOffline } from '../devices/errors.ts'
-import { LOCAL_BINDING, LOCAL_DEVICE } from '../devices/run-context.ts'
+import { pickBrowser } from '../devices/placement.ts'
+import { LOCAL_BINDING, LOCAL_DEVICE, currentDeviceId } from '../devices/run-context.ts'
 import type { ExtHandshake } from '../../shared/browser-relay/handshake.ts'
-import type { ExtRelay, ExtSocket } from './ext-relay.ts'
+import type { ExtCdpEvent, ExtRelay, ExtSocket } from './ext-relay.ts'
 
 export { LOCAL_BINDING }
 
+/** 本机节点的绑定 id。 */
+export const localNodeBinding = (nodeId: string): string => `${LOCAL_BINDING}:${nodeId}`
+
+/** 本机的绑定：兼容槽 `local` 与每个节点的 `local:<nodeId>`。 */
+export const isLocalBinding = (bindingId: string): boolean =>
+  bindingId === LOCAL_BINDING || bindingId.startsWith(`${LOCAL_BINDING}:`)
+
+export interface NodeSeenEvent {
+  nodeId: string
+  deviceId: string
+  bindingId: string
+  profileDir?: string
+  profileName?: string
+}
+
 export interface ExtRelayRegistryDeps {
+  /** 本机兼容槽：不带 `nodeId` 的老扩展连这条。 */
   local: ExtRelay
   makeRelay: (bindingId: string) => ExtRelay
-  /** 绑定挂在哪台设备（`ExtBindingStore.get`）；`local` 不经它。 */
+  /** 配对绑定挂在哪台设备（`ExtBindingStore.get`）；本机的不经它。 */
   deviceOf: (bindingId: string) => string | undefined
+  /** 设备上的配对绑定；本机的由 registry 自己数（它们不在绑定表里）。 */
   bindingsOf: (deviceId: string) => string[]
-  /** 设备的默认浏览器（`ExtBindingStore.defaultOf`）。没注入 = 没有默认。 */
+  /** 设备的默认浏览器是哪条绑定（默认节点的绑定，迁移前是 `ExtBindingStore.defaultOf`）。没注入 = 没有默认。 */
   defaultOf?: (deviceId: string) => string | undefined
+  /** 配对绑定记下的节点（`ExtBindingStore.get().nodeId`）。本机节点的从绑定 id 上读。 */
+  nodeOf?: (bindingId: string) => string | undefined
+  /** 带 `nodeId` 的连接连上了（`NodeStore.seen`）。 */
+  onNodeSeen?: (n: NodeSeenEvent) => void
   now?: () => number
 }
 
@@ -27,13 +56,12 @@ export class ExtRelayRegistry {
   private readonly relays = new Map<string, ExtRelay>()
   private readonly connectedAt = new Map<string, number>()
   private readonly sockets = new Map<string, ExtSocket & { close?: (code: number, reason: string) => void }>()
+  private readonly localRelayHooks: Array<(r: ExtRelay) => void> = []
+  readonly local: LocalExtRelay
 
   constructor(private readonly deps: ExtRelayRegistryDeps) {
     this.relays.set(LOCAL_BINDING, deps.local)
-  }
-
-  get local(): ExtRelay {
-    return this.deps.local
+    this.local = new LocalExtRelay(this)
   }
 
   connect(bindingId: string, socket: ExtSocket & { close?: (code: number, reason: string) => void }, info?: ExtHandshake): void {
@@ -41,10 +69,24 @@ export class ExtRelayRegistry {
     if (!r) {
       r = this.deps.makeRelay(bindingId)
       this.relays.set(bindingId, r)
+      if (isLocalBinding(bindingId)) for (const fn of this.localRelayHooks) fn(r)
     }
     r.connect(socket, info)
     this.sockets.set(bindingId, socket)
     this.connectedAt.set(bindingId, (this.deps.now ?? Date.now)())
+    if (info?.nodeId) {
+      const deviceId = this.deviceOf(bindingId)
+      // 节点表写不进去不影响这条连接：表只服务默认节点与留痕，relay 本身已经能用了。
+      if (deviceId) {
+        try {
+          this.deps.onNodeSeen?.({
+            nodeId: info.nodeId, deviceId, bindingId,
+            ...(info.profileDir ? { profileDir: info.profileDir } : {}),
+            ...(info.profileName ? { profileName: info.profileName } : {}),
+          })
+        } catch { /* 同上 */ }
+      }
+    }
     for (const fn of this.connectedListeners) {
       try { fn(bindingId) } catch { /* 听众的问题不是中继的问题 */ }
     }
@@ -52,14 +94,27 @@ export class ExtRelayRegistry {
 
   private readonly connectedListeners: Array<(bindingId: string) => void> = []
 
-  /** 任何一条绑定连上（含重连）时叫一声——登录态取数挂在这儿（配对绑定的 relay 是连上时才建的，
-   *  没法提前在它身上挂 `onConnected`）。 */
+  /** 任何一条绑定连上（含重连）时叫一声——登录态取数挂在这儿（本机节点与配对绑定的 relay 是连上时
+   *  才建的，没法提前在它身上挂 `onConnected`）。 */
   onBindingConnected(fn: (bindingId: string) => void): void {
     this.connectedListeners.push(fn)
   }
 
+  /** 对每一条本机 relay（现有的，以及之后才连上的节点）各调一次——门面的长期监听靠它扇出。 */
+  eachLocalRelay(fn: (r: ExtRelay) => void): void {
+    for (const [id, r] of this.relays) if (isLocalBinding(id)) fn(r)
+    this.localRelayHooks.push(fn)
+  }
+
   deviceOf(bindingId: string): string | undefined {
-    return bindingId === LOCAL_BINDING ? LOCAL_DEVICE : this.deps.deviceOf(bindingId)
+    return isLocalBinding(bindingId) ? LOCAL_DEVICE : this.deps.deviceOf(bindingId)
+  }
+
+  /** 这条绑定是哪个节点。兼容槽与没记过节点的配对绑定（老扩展）没有。 */
+  nodeOf(bindingId: string): string | undefined {
+    if (bindingId === LOCAL_BINDING) return undefined
+    if (isLocalBinding(bindingId)) return bindingId.slice(LOCAL_BINDING.length + 1)
+    return this.deps.nodeOf?.(bindingId)
   }
 
   disconnect(bindingId: string, socket: ExtSocket): void {
@@ -77,7 +132,8 @@ export class ExtRelayRegistry {
     if (s) this.relays.get(bindingId)?.disconnect(s)
     this.sockets.delete(bindingId)
     this.connectedAt.delete(bindingId)
-    if (bindingId !== LOCAL_BINDING) this.relays.delete(bindingId)
+    // 本机的 relay 不忘：门面挂在它们身上的监听要一直在。
+    if (!isLocalBinding(bindingId)) this.relays.delete(bindingId)
     if (!s) return false
     try { s.close?.(code, reason) } catch { /* 已经断了 */ }
     return true
@@ -98,17 +154,26 @@ export class ExtRelayRegistry {
     return this.relays.get(bindingId)?.connected ?? false
   }
 
+  /** 设备上的全部绑定。本机 = 兼容槽 + 连上过的每个节点（D2）。 */
+  bindingsOf(deviceId: string): string[] {
+    if (deviceId === LOCAL_DEVICE) return [...this.relays.keys()].filter(isLocalBinding)
+    return this.deps.bindingsOf(deviceId)
+  }
+
   hasBrowser(deviceId: string): boolean {
-    if (deviceId === LOCAL_DEVICE) return this.deps.local.connected
-    return this.deps.bindingsOf(deviceId).some((b) => this.isOnline(b))
+    return this.bindingsOf(deviceId).some((b) => this.isOnline(b))
   }
 
   pick(deviceId: string): string {
-    if (deviceId === LOCAL_DEVICE) return LOCAL_BINDING
-    const all = this.deps.bindingsOf(deviceId)
-    if (!all.length) throw new DeviceIncapable(deviceId, 'browser')
+    const all = this.bindingsOf(deviceId)
     const online = all.filter((b) => this.isOnline(b))
-    if (!online.length) throw new DeviceOffline(deviceId)
+    if (deviceId === LOCAL_DEVICE) {
+      // 本机一条都不在线：回兼容槽，与升级前一致——调用方（ensureHarvestBrowser）会唤起 Chrome 再等。
+      if (!online.length) return LOCAL_BINDING
+    } else {
+      if (!all.length) throw new DeviceIncapable(deviceId, 'browser')
+      if (!online.length) throw new DeviceOffline(deviceId)
+    }
     // 默认是偏好不是约束：它离线时照旧选最近连上的，不让这次执行因为一个设置失败。
     const preferred = this.deps.defaultOf?.(deviceId)
     if (preferred && online.includes(preferred)) return preferred
@@ -119,9 +184,81 @@ export class ExtRelayRegistry {
   statuses(): Array<{ bindingId: string; deviceId: string; online: boolean; since: string | null }> {
     return [...this.relays.entries()].map(([bindingId, r]) => ({
       bindingId,
-      deviceId: bindingId === LOCAL_BINDING ? LOCAL_DEVICE : this.deps.deviceOf(bindingId) ?? '?',
+      deviceId: this.deviceOf(bindingId) ?? '?',
       online: r.connected,
       since: r.status().since,
     }))
+  }
+}
+
+/**
+ * `registry.local`：一个 `ExtRelay` 形状的门面（browser-identity D2），每次调用时解析到本机某个节点的 relay。
+ *
+ * - 执行内（上下文在本机）：经 `pickBrowser`，第一次解析钉在执行上下文上，之后整次执行不变——中途新连上
+ *   的 profile 接不走这次执行。
+ * - 执行外（面板、MCP 工具）与远程设备上的执行：本机此刻的默认节点，不钉。「本机」不因为在远程执行里
+ *   被调用就变成远程。
+ *
+ * **不缓存解析结果。** 长期监听（`onConnected` / `onCookiesChanged`）扇出到每一条本机 relay，包括之后
+ * 才连上的节点；`onEvent` 是跟着一次订阅走的，挂在解析出来的那一条上。
+ */
+export class LocalExtRelay {
+  /** 订阅号 → 下订阅的那条 relay：退订得回到同一个节点（订阅号是各节点自己编的）。 */
+  private readonly subscriptions = new Map<number, ExtRelay>()
+
+  constructor(private readonly reg: ExtRelayRegistry) {}
+
+  /** 这一次调用落在哪条本机绑定上。 */
+  bindingId(): string {
+    return currentDeviceId() === LOCAL_DEVICE ? pickBrowser(this.reg) : this.reg.pick(LOCAL_DEVICE)
+  }
+
+  private get r(): ExtRelay {
+    return this.reg.relay(this.bindingId())
+  }
+
+  get connected(): boolean {
+    return this.r.connected
+  }
+
+  status(): { connected: boolean; since: string | null } {
+    return this.r.status()
+  }
+
+  onConnected(fn: () => void): void {
+    this.reg.eachLocalRelay((r) => r.onConnected(fn))
+  }
+
+  onCookiesChanged(fn: (domains: string[]) => void): void {
+    this.reg.eachLocalRelay((r) => r.onCookiesChanged(fn))
+  }
+
+  onEvent(listener: (event: ExtCdpEvent) => void): () => void {
+    return this.r.onEvent(listener)
+  }
+
+  sendCommand(...a: Parameters<ExtRelay['sendCommand']>): ReturnType<ExtRelay['sendCommand']> { return this.r.sendCommand(...a) }
+  frameSessions(...a: Parameters<ExtRelay['frameSessions']>): ReturnType<ExtRelay['frameSessions']> { return this.r.frameSessions(...a) }
+  openedSince(...a: Parameters<ExtRelay['openedSince']>): ReturnType<ExtRelay['openedSince']> { return this.r.openedSince(...a) }
+  newTab(...a: Parameters<ExtRelay['newTab']>): ReturnType<ExtRelay['newTab']> { return this.r.newTab(...a) }
+  openTab(...a: Parameters<ExtRelay['openTab']>): ReturnType<ExtRelay['openTab']> { return this.r.openTab(...a) }
+  closeTab(...a: Parameters<ExtRelay['closeTab']>): ReturnType<ExtRelay['closeTab']> { return this.r.closeTab(...a) }
+  list(): ReturnType<ExtRelay['list']> { return this.r.list() }
+  cookieNames(...a: Parameters<ExtRelay['cookieNames']>): ReturnType<ExtRelay['cookieNames']> { return this.r.cookieNames(...a) }
+  cookiePull(...a: Parameters<ExtRelay['cookiePull']>): ReturnType<ExtRelay['cookiePull']> { return this.r.cookiePull(...a) }
+  activeTab(): ReturnType<ExtRelay['activeTab']> { return this.r.activeTab() }
+  activateTab(...a: Parameters<ExtRelay['activateTab']>): ReturnType<ExtRelay['activateTab']> { return this.r.activateTab(...a) }
+
+  async subscribe(tabId: number, domains: string[]): Promise<number> {
+    const r = this.r
+    const id = await r.subscribe(tabId, domains)
+    this.subscriptions.set(id, r)
+    return id
+  }
+
+  unsubscribe(subscriptionId: number): Promise<void> {
+    const r = this.subscriptions.get(subscriptionId) ?? this.r
+    this.subscriptions.delete(subscriptionId)
+    return r.unsubscribe(subscriptionId)
   }
 }

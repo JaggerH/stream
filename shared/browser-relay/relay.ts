@@ -603,12 +603,22 @@ export function verifyExtUpgrade(
  * 回这把 token 属于哪条绑定，都不是就 null。比对交给 `resolveToken`——配对绑定只存哈希，
  * 定长比较在 `ExtBindingStore.bindingForToken` 里。
  */
-export function resolveExtUpgrade(
+export function resolveExtUpgrade<V>(
   info: { origin?: string; protocolHeader?: string },
-  resolveToken: (token: string) => string | null,
-): string | null {
+  resolveToken: (token: string) => V | null,
+): V | null {
   const candidate = offeredToken(info)
   return candidate === undefined ? null : resolveToken(candidate)
+}
+
+/**
+ * token 认得、但这条连接不该放进来（browser-identity D1：配对绑定的 token 带着另一个节点来连，4004）。
+ * 和 401 不同，它要在 WS 升级之后以一个关闭码说出来——扩展要据此停止重连并告诉用户为什么，
+ * 而 HTTP 401 在浏览器的 WebSocket 里只是一次说不出原因的失败。
+ */
+export interface ExtUpgradeRefusal {
+  close: number
+  reason: string
 }
 
 /** Origin 不是网页、且子协议里**恰好**带了一把 token 时回它，否则 undefined。 */
@@ -657,14 +667,19 @@ export function attachExtRelay(
   relay: ExtRelay | ExtRelayTarget,
   opts: (
     | { token: string; resolveToken?: undefined }
-    | { token?: undefined; resolveToken: (token: string) => string | null }
+    | {
+        token?: undefined
+        /** token → 绑定 id；不认得 = null（401）；认得但拒收 = `ExtUpgradeRefusal`。握手自报字段一并给出（本机按 `nodeId` 分绑定）。 */
+        resolveToken: (token: string, handshake: ExtHandshake) => string | ExtUpgradeRefusal | null
+      }
   ) & { path?: string; log?: (line: string) => void },
 ): WebSocketServer {
   const { path = '/api/ext', log = console.log } = opts
   const target = asTarget(relay)
   // 只给了一把 token（插件、老调用点）= 只有本机绑定。
   const token = opts.token
-  const resolveToken = opts.resolveToken ?? ((t: string) => (token !== undefined && tokenEqual(t, token) ? 'local' : null))
+  const resolveToken = opts.resolveToken
+    ?? ((t: string): string | ExtUpgradeRefusal | null => (token !== undefined && tokenEqual(t, token) ? 'local' : null))
   // noServer + 自路由：`{ server, path }` 模式下同一 http server 上的多个 WSS 会互相
   // 对不匹配路径的 upgrade 回 400（/ws 的实例会抢先拒掉发往 /api/ext 的握手）。
   // 各自只认领自己的路径，其余 upgrade 留给其他监听器。
@@ -683,19 +698,27 @@ export function attachExtRelay(
     // 只在真有值时才带这个键。
     const origin = req.headers.origin
     const protocolHeader = req.headers['sec-websocket-protocol']
-    const bindingId = resolveExtUpgrade(
+    const handshake = parseExtHandshake(req.url)
+    const verdict = resolveExtUpgrade(
       {
         ...(origin !== undefined ? { origin } : {}),
         ...(protocolHeader !== undefined ? { protocolHeader } : {}),
       },
-      resolveToken,
+      (t) => resolveToken(t, handshake),
     )
-    if (bindingId === null) {
+    if (verdict === null) {
       log(`[ext-relay] rejected upgrade (origin=${req.headers.origin ?? '<none>'})`)
       socket.write('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n')
       socket.destroy()
       return
     }
+    if (typeof verdict !== 'string') {
+      // 先升级再关：关闭码只存在于 WS 里。这条连接不进 target，一条命令都收不到。
+      log(`[ext-relay] refused upgrade (origin=${req.headers.origin ?? '<none>'}, code=${verdict.close}, ${verdict.reason})`)
+      wss.handleUpgrade(req, socket, head, (ws) => ws.close(verdict.close, verdict.reason))
+      return
+    }
+    const bindingId = verdict
     upgraded.set(req, bindingId)
     wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req))
   })

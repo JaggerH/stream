@@ -10,9 +10,9 @@ import type { EventInput } from '../../events/store.ts'
 import { ExtRelay, ExtRelayDisconnected } from '../../http/ext-relay.ts'
 import { INTERACTIVE_SESSION_WAIT_MS } from '../../http/host-relay.ts'
 import { HostRelayRegistry } from '../../http/host-registry.ts'
-import { ExtRelayRegistry } from '../../http/ext-relay-registry.ts'
+import { ExtRelayRegistry, isLocalBinding, type LocalExtRelay } from '../../http/ext-relay-registry.ts'
 import { pickBrowser } from '../../devices/placement.ts'
-import { LOCAL_BINDING } from '../../devices/run-context.ts'
+import { LOCAL_BINDING, LOCAL_DEVICE } from '../../devices/run-context.ts'
 import { BrowserCapabilityStore } from '../../browser/capability-store.ts'
 import { discoverChromeCandidates, nodeDiscoverFs } from '../../browser/discover-chrome.ts'
 import { harvestBrowserStatus, type HarvestBrowserStatus } from '../../browser/harvest-browser.ts'
@@ -48,8 +48,11 @@ declare module 'cordis' {
  * 旧名字一字不差**——搬家不改名。
  */
 export interface HarvestService {
-  /** 本机扩展那条中继（= `extRelays.local`）。读它的地方都只关心本机 Chrome。 */
-  extRelay: ExtRelay
+  /**
+   * 本机扩展的中继门面（= `extRelays.local`，browser-identity D2）：每次调用解析到本机某个节点——执行内
+   * 是这次执行钉住的那个，执行外是本机默认节点。读它的地方都只关心本机 Chrome。
+   */
+  extRelay: LocalExtRelay
   /** 每条扩展绑定一条中继（design D7）；serve.ts 用 attachExtRelay 把它挂到 `/api/ext`。 */
   extRelays: ExtRelayRegistry
   /** host-desktop Engine 中继单例；serve.ts 用 attachHostRelay 把它挂到 `/api/host`。 */
@@ -156,9 +159,18 @@ export interface HarvestConfig {
   llmForTask?: LlmForTask
   /** 扩展绑定表（`ExtBindingStore`）：绑定挂在哪台设备、设备上有哪些绑定。缺席 = 只有本机扩展。 */
   extBindings?: {
-    get(bindingId: string): { deviceId: string } | undefined
+    get(bindingId: string): { deviceId: string; nodeId?: string } | undefined
     forDevice(deviceId: string): Array<{ bindingId: string }>
     defaultOf(deviceId: string): string | undefined
+    clearDefault(bindingId: string): unknown
+  }
+  /**
+   * 浏览器节点表（`NodeStore`，browser-identity D1）：节点连上时建行；设备的默认浏览器住在它上面。
+   * 缺席（stream.db 打不开）= 本机多节点照常，只是没有默认节点、不留节点记录。
+   */
+  nodes?: {
+    seen(n: { nodeId: string; deviceId: string; bindingId: string; profileDir?: string; profileName?: string; legacyDefault?: boolean }): unknown
+    defaultOf(deviceId: string): { bindingId: string } | undefined
   }
 }
 
@@ -197,12 +209,35 @@ export const harvestPlugin = {
     const browserCapability = new BrowserCapabilityStore(join(dataDir, 'browser-capability.json'))
     // onDebug：慢命令 / 超时的分段账本进 debug bus 的 `ext-cdp` channel——和扩展侧那两条
     // （slow-command / slow-command-done）落在同一个频道里，好对着读出"慢在哪一跳"。
-    const extRelay = new ExtRelay({
-      capability: browserCapability,
+    // 本机的 relay 都接能力缓存：那份缓存答的是「**这台**机器装过 Chrome + 扩展没有」，哪个 profile 连上都算。
+    // 配对绑定的不接：那个 Chrome 在别的机器上。
+    const makeExtRelay = (withCapability: boolean) => new ExtRelay({
+      ...(withCapability && { capability: browserCapability }),
       ...(config.onDebug && { onDebug: config.onDebug }),
       // 超时那一档另外进通知中心（debug ring 会被冲掉，而症状是用户先感知到的）。
       ...(config.notify && { onNotify: config.notify }),
     })
+    // 每条扩展绑定一条 relay（device-execution D7）。本机按节点各一条（browser-identity D2）：不带 nodeId 的
+    // 老扩展落兼容槽 `local`（构造时交进去的这条）；节点与配对绑定的 relay 在它第一次连上时建。
+    const extRelays = new ExtRelayRegistry({
+      local: makeExtRelay(true),
+      makeRelay: (bindingId) => makeExtRelay(isLocalBinding(bindingId)),
+      deviceOf: (id) => config.extBindings?.get(id)?.deviceId,
+      bindingsOf: (dev) => config.extBindings?.forDevice(dev).map((b) => b.bindingId) ?? [],
+      // 默认浏览器住在节点上；还没迁过去的（那条绑定的扩展没升级）照旧看绑定表上的旧标记。
+      defaultOf: (dev) => config.nodes?.defaultOf(dev)?.bindingId ?? config.extBindings?.defaultOf(dev),
+      nodeOf: (id) => config.extBindings?.get(id)?.nodeId,
+      onNodeSeen: (n) => {
+        if (!config.nodes) return
+        // 迁移（D1）：这条绑定是升级前的设备默认 → 默认搬到它的节点上，旧标记清掉。
+        const legacyDefault = n.deviceId !== LOCAL_DEVICE && config.extBindings?.defaultOf(n.deviceId) === n.bindingId
+        config.nodes.seen({ ...n, ...(legacyDefault ? { legacyDefault } : {}) })
+        if (legacyDefault) config.extBindings?.clearDefault(n.bindingId)
+      },
+    })
+    // 本机的中继门面：每次调用解析到一个节点（见 `LocalExtRelay` 头注）。采集的 Transport / launcher 都建在
+    // 它上面——执行内钉住的节点就是这次执行的全部浏览器操作落点。
+    const extRelay = extRelays.local
     const extLauncher = makeExtensionLauncher(extRelay, { onDebug: config.onDebug })
     // host-desktop Engine 中继：每台设备一条（`hello` 报身份），serve.ts 用 attachHostRelay 把
     // /api/host 挂到 http server。没有桌面设备在线时 desktopDriver 返 undefined → kind:'desktop'
@@ -241,21 +276,10 @@ export const harvestPlugin = {
     // Single transport seam (CP1): the session manager, the executor and look/act/shot all read
     // the page through this one object rather than each holding a Playwright page.
     const transport = resolveTransport({ extLauncher, extRelay, onDebug: config.onDebug })
-    // 每条扩展绑定一条 relay（design D7）。本机那条就是上面的单例；配对绑定的在它第一次连上时建。
-    // 配对绑定的 relay 不接能力缓存：那份缓存答的是「**这台**机器装过 Chrome 没有」。
-    const extRelays = new ExtRelayRegistry({
-      local: extRelay,
-      makeRelay: () => new ExtRelay({
-        ...(config.onDebug && { onDebug: config.onDebug }),
-        ...(config.notify && { onNotify: config.notify }),
-      }),
-      deviceOf: (id) => config.extBindings?.get(id)?.deviceId,
-      bindingsOf: (dev) => config.extBindings?.forDevice(dev).map((b) => b.bindingId) ?? [],
-      defaultOf: (dev) => config.extBindings?.defaultOf(dev),
-    })
     // 每条绑定一个 Transport，按需建、建了就留（无状态，留着只省一次构造）。被撤销的绑定，
     // registry 已经忘了它的 relay，这里的旧 Transport 发命令会拿到 ExtRelayDisconnected。
-    const transports = new Map<string, Transport>([[LOCAL_BINDING, transport]])
+    // 兼容槽 `local` 也按绑定建在它自己那条 relay 上，不借门面：lane 记着的绑定是哪条，命令就去哪条。
+    const transports = new Map<string, Transport>()
     const transportOf = (bindingId: string): Transport => {
       let t = transports.get(bindingId)
       if (!t) {
@@ -521,8 +545,9 @@ export const harvestPlugin = {
      */
     const ensureHarvestBrowser = async (): Promise<void> => {
       // 落在配对绑定上的执行：那个 Chrome 在别的机器上，这里唤不起它——在线就过，不在线就是环境没就绪。
+      // 本机的（兼容槽或某个节点）往下走：门面的 `connected` 看的就是这次执行解析到的那一条。
       const bindingId = bindingOf()
-      if (bindingId !== LOCAL_BINDING) {
+      if (!isLocalBinding(bindingId)) {
         if (!extRelays.isOnline(bindingId)) throw new ExtRelayDisconnected()
         return
       }
@@ -590,11 +615,17 @@ export const harvestPlugin = {
     // 后端认领的标签 = 每条活 lane 骑着的那个 tab。lanes() 是"什么标签存在"的唯一真相源。
     // 再加上常驻 lane 落盘的标签：重启后、骑回去之前，它们也得算认领，否则扩展重连对账就当孤儿收走了。
     // 按绑定：每个 Chrome 只拿自己的标签去对账（别的 Chrome 的 tabId 在它那里是另一张标签）。
-    const claimedTabs = (bindingId: string = LOCAL_BINDING): number[] => [...new Set([
+    // 本机节点的回答并上兼容槽认领的标签：升级那一刻兼容槽上的 lane 骑着的标签就在这个 profile 里，
+    // 不并上它们会被当成孤儿收掉。多答几个 id 只是少收几个探针（宁可漏关不可误关）。
+    const claimedOn = (bindingId: string): number[] => [
       ...recipeSessions.lanes()
         .filter((l) => (l.binding ?? LOCAL_BINDING) === bindingId)
         .map((l) => l.tabId).filter((id): id is number => typeof id === 'number'),
       ...recipeSessions.pinnedTabIds(bindingId),
+    ]
+    const claimedTabs = (bindingId: string = LOCAL_BINDING): number[] => [...new Set([
+      ...claimedOn(bindingId),
+      ...(bindingId !== LOCAL_BINDING && isLocalBinding(bindingId) ? claimedOn(LOCAL_BINDING) : []),
     ])]
     const pageLook = (facility: string, expression: string) => recipeSessions.look(facility, expression)
     const pageShot = (facility: string) => recipeSessions.shot(facility)

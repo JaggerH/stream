@@ -82,4 +82,39 @@ describe('attachExtRelay with a binding registry', () => {
       await new Promise<void>((resolve) => server.close(() => resolve()))
     }
   })
+
+  // browser-identity D1/D2：resolveToken 拿到握手，按 nodeId 分绑定；认得但拒收的以关闭码说出来。
+  it('resolveToken sees the handshake (nodeId → local:<nodeId>); a refusal closes with its code and never connects', async () => {
+    const reg = new ExtRelayRegistry({
+      local: new ExtRelay(),
+      makeRelay: () => new ExtRelay(),
+      deviceOf: () => 'linux:nas',
+      bindingsOf: () => ['ext:a'],
+    })
+    const server = createServer()
+    attachExtRelay(server, reg, {
+      resolveToken: (t, hs) => {
+        if (t === LOCAL_TOKEN) return hs.nodeId ? `local:${hs.nodeId}` : 'local'
+        if (t === PAIRED_TOKEN) return { close: 4004, reason: 'binding belongs to another node' }
+        return null
+      },
+      log: () => {},
+    })
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+    const port = (server.address() as AddressInfo).port
+    const a = new WebSocket(`ws://127.0.0.1:${port}/api/ext?nodeId=node_a`, [EXT_RELAY_PROTOCOL, LOCAL_TOKEN], { origin: ORIGIN })
+    const b = new WebSocket(`ws://127.0.0.1:${port}/api/ext?nodeId=node_b`, [EXT_RELAY_PROTOCOL, PAIRED_TOKEN], { origin: ORIGIN })
+    try {
+      await new Promise<void>((resolve, reject) => { a.on('open', () => resolve()); a.on('error', reject) })
+      expect(reg.isOnline('local:node_a')).toBe(true)
+      const code = await new Promise<number>((resolve) => b.on('close', (c) => resolve(c)))
+      expect(code).toBe(4004)
+      expect(reg.isOnline('ext:a')).toBe(false)
+    } finally {
+      a.terminate()
+      b.terminate()
+      server.closeAllConnections?.()
+      await new Promise<void>((resolve) => server.close(() => resolve()))
+    }
+  })
 })

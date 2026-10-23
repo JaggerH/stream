@@ -33,6 +33,15 @@ describe('GET /api/ext/claimed-tabs', () => {
     expect(await res.json()).toEqual({ tabIds: [] })
   })
 
+  it('本机节点带 ?node=<nodeId> → 问的是 local:<nodeId>；形状不对的 node 当没带（browser-identity D2）', async () => {
+    const asked: Array<string | undefined> = []
+    const app = appWith((b?: string) => { asked.push(b); return [] })
+    await app.request('/api/ext/claimed-tabs?node=node_a')
+    await app.request('/api/ext/claimed-tabs?node=..%2Fx')
+    await app.request('/api/ext/claimed-tabs?binding=ext:a&node=node_a')
+    expect(asked).toEqual(['local:node_a', undefined, 'ext:a'])
+  })
+
   it('后端根本没接会话层（dep 缺失）→ 503，别返回空集合', async () => {
     // 空集合的含义是「一个都不认」，扩展据此会去回收。dep 没接线时返回空集合
     // 等于让扩展把用户正在用的标签全关掉——所以这两件事必须分开报。
