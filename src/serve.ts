@@ -17,7 +17,7 @@ import { tmpdir, homedir } from 'node:os'
 import { join, dirname } from 'node:path'
 import { createRequire } from 'node:module'
 import { resolveDataDir } from './bootstrap.ts'
-import { createStream } from './engine/index.ts'
+import { createStream, type Stream } from './engine/index.ts'
 import { loadConfig } from './config-env.ts'
 import { createHttpApp, type HttpDeps } from './http/app.ts'
 import { classifyLauncher } from './restart/policy.ts'
@@ -37,7 +37,6 @@ import { attachHostRelay } from './http/host-relay.ts'
 import { EventSourceRelay, attachEventSourceRelay } from './event-source/relay.ts'
 import { makeDrain } from './event-source/drain.ts'
 import { wireCookiesFeed } from './event-source/cookies-feed.ts'
-import { loadOrCreateExtToken, loadOrCreateApiToken } from './http/secrets.ts'
 import { authorizeAccess, parseTrustedOrigins, isLoopbackAddress, peerAddress, lanBaseUrls } from './http/access-guard.ts'
 import { mountDeviceRoutes } from './http/device-routes.ts'
 import { mountExtBindingRoutes, REVOKED_CLOSE_CODE } from './http/ext-binding-routes.ts'
@@ -273,14 +272,6 @@ async function main() {
   // 不登记成内核 effect：这道网要一直活到进程真的退出为止，关停期的异常同样该被看见。
   installProcessGuards({ notify: lazyNotify(() => kernel.streamEvents as EventsService | undefined) })
   const config = loadConfig()
-// ext-relay 共享 secret：首启生成、持久化在 item_db 同目录（0600），重启不变。
-// **后端从不把它发出去**：扩展经 native messaging 让 stream-desktop 读同一个文件自取，
-// 后端只在 /api/ext/verify 上用它签一条 proof 自证身份。握手仍走 WS subprotocol，用户全程无感。
-const extToken = loadOrCreateExtToken(dirname(config.item_db))
-// `/api/*` 与 `/ws` 的访问令牌。**默认就有**（用户没配 api_token 时自动生成一份持久的）——
-// 后端绑 0.0.0.0 是有意的（用户要从手机访问），那就必须有一把默认的锁，而不是默认没有。
-// 本机 loopback 请求免密，所以自己机器上用完全无感（判据与实测见 http/access-guard.ts）。
-const apiToken = config.api_token || loadOrCreateApiToken(dirname(config.item_db))
   const hub = new WsHub()
   // one shared debug bus: record() rings + broadcasts, so audio-resolve (http route) and download
   // (queue) entries all land in the same log that GET /api/debug/log reads.
@@ -320,7 +311,7 @@ const apiToken = config.api_token || loadOrCreateApiToken(dirname(config.item_db
   // hole when it was the (known, expected) registry build / provider seeding.
   // 实例本体经库入口装配（`src/engine/index.ts`）：数据目录锁、内核、`bootstrap()`、关停。serve 只是它的一个调用方。
   // 内核仍由这里建好递进去（搬迁期过渡口）：上面的进程兜底网已经握着它的 lazy 引用。
-  const stream = await track('boot', () => createStream({
+  const stream: Stream = await track('boot', () => createStream({
     dataDir: process.env.STREAM_DATA_DIR ?? process.cwd(),
     config,
     log: console.log,
@@ -328,7 +319,7 @@ const apiToken = config.api_token || loadOrCreateApiToken(dirname(config.item_db
     hooks: {
       // agent 修复会话给 agent 的那条 MCP 线：**口和 token 只有这儿知道**（口就是本进程绑的那个，
       // 两个数一分家，agent 就会去敲一个没人应答的地址）。
-      mcpEndpoint: () => ({ url: `http://127.0.0.1:${PORT}/api/mcp`, token: apiToken }),
+      mcpEndpoint: () => ({ url: `http://127.0.0.1:${PORT}/api/mcp`, token: stream.secrets.apiToken }),
       onItem: (item, type) => hub.broadcast({ type: 'item', item_type: type, item: toClientItem({ ...item, type }) }),
       onDebug: recordDebug,
       broadcast: (msg) => hub.broadcast(msg),
@@ -340,6 +331,8 @@ const apiToken = config.api_token || loadOrCreateApiToken(dirname(config.item_db
   // 设备 / 节点 / 身份表随实例建（`src/engine/devices.ts`）；下面的设备路由、中继、任务的执行位置都读这几格。
   // 能力包宿主随实例建、可选包也在 createStream 里装好了（`src/engine/capabilities.ts`）；内置的 Stream Desktop
   // 仍在下面 `mountHostAgent` 挂（它要养本机进程、要知道本进程的口）。
+  // 两把令牌随实例落数据目录（`src/engine/index.ts` 的 `loadSecrets`）：访问守卫与三条中继认它们。
+  const { extToken, apiToken } = stream.secrets
   const { host: capabilityHost, loaded: loadedCapabilities } = stream.capabilities
   const { deviceStore, extBindings, facilityDevices, facilityBindings, nodes: browserNodes, identities: siteIdentities } = stream.devices
   // 落盘状态住内核的存储域（`ctx.stores`）——下面的 HttpDeps 组装从这里取，键一个没变。

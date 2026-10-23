@@ -54,7 +54,10 @@ describe('createStream', () => {
     await a.close()
     await a.close()
     expect(existsSync(join(root, 'data', LOCK_NAME))).toBe(false)
-    await make(root, config)
+    const b = await make(root, config)
+    // 令牌落在数据目录里，重开还是那两把（扩展与本机进程靠它认人）。
+    expect(b.secrets).toEqual(a.secrets)
+    expect(a.secrets.extToken).not.toBe(a.secrets.apiToken)
   })
 
   it('两个数据目录各起一份，互不相干', async () => {

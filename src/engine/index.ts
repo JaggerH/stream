@@ -13,6 +13,7 @@ import { bootstrap, deploymentFromEnv, readConfig, resolveDataDir, type BootOpti
 import { createKernel, quiesceKernel } from '../kernel/context.ts'
 import type { AppConfig } from '../types.ts'
 import { lockDataDir } from './data-dir-lock.ts'
+import { loadOrCreateApiToken, loadOrCreateExtToken } from '../http/secrets.ts'
 import { createRuntime, type StreamRuntime } from './runtime.ts'
 import { openDevices, type StreamDevices } from './devices.ts'
 import { createCapabilities, loadOptional, provideBrowserCookies, type StreamCapabilities } from './capabilities.ts'
@@ -50,10 +51,25 @@ export interface Stream {
   readonly runtime: StreamRuntime
   /** 设备 / 节点 / 身份表（执行位置的真相源）。 */
   readonly devices: StreamDevices
+  /** 实例的两把令牌（落在可写状态目录，0600，重启不变）。 */
+  readonly secrets: StreamSecrets
   /** 能力包宿主与已装载的可选包。 */
   readonly capabilities: StreamCapabilities
   /** 撤掉内核上的全部 effect（库句柄、定时器、子进程、采集标签的归还），放掉数据目录锁。幂等。 */
   close(): Promise<void>
+}
+
+export interface StreamSecrets {
+  /**
+   * 扩展 / 本机进程中继的共享 secret。**实例从不把它发出去**：扩展经 native messaging 让本机进程读同一个文件自取，
+   * 后端只在 `/api/ext/verify` 上用它签一条 proof 自证身份。
+   */
+  extToken: string
+  /**
+   * `/api/*` 与 `/ws` 的访问令牌。**默认就有**（没配 `api_token` 时自动生成一份持久的）：后端绑 0.0.0.0 是有意的
+   * （用户要从手机访问），那就必须有一把默认的锁。本机 loopback 免密（判据见 http/access-guard.ts）。
+   */
+  apiToken: string
 }
 
 export async function createStream(opts: CreateStreamOptions): Promise<Stream> {
@@ -65,6 +81,10 @@ export async function createStream(opts: CreateStreamOptions): Promise<Stream> {
   const stateDir = resolveDataDir(config)
   // 锁拿在建内核之前：第二份实例连一张表都不该打开。
   const release = lockDataDir(stateDir)
+  const secrets: StreamSecrets = {
+    extToken: loadOrCreateExtToken(stateDir),
+    apiToken: config.api_token || loadOrCreateApiToken(stateDir),
+  }
   const ownsRuntime = !opts.runtime
   const runtime = opts.runtime ?? createRuntime()
   const kernel = opts.kernel ?? createKernel()
@@ -102,6 +122,7 @@ export async function createStream(opts: CreateStreamOptions): Promise<Stream> {
     stateDir,
     runtime,
     devices,
+    secrets,
     capabilities,
     close: () => closing ??= (async () => {
       try {
