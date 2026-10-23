@@ -123,13 +123,15 @@ browser.claim     args: { profileDirectory, url, exe? }
 
 ### D5. `whoami`：问站点「我是谁」
 
-包在会话声明里可选地加一段，两种形状二选一（spike S3：各站差别大，一种形状覆盖不了）：
+包在 `package.json#stream.whoami` 里可选地加一段，三种形状选一（spike S3：各站差别大，一种形状覆盖不了）。
+**声明在包这一层、不在某条源的 `auth` 上**（计划 3 实现时定）：一个 facility 一个账号体系，而会话声明散在好几条 recipe
+里（xhs 四份），B 站这样的纯 cookie 包连会话声明都没有；允许主机与登录 recipe 也都是包级的，校验就近。
 
 ```ts
-// src/manifest/types.ts，三种 session 登录都可带
+// 类型 WhoamiSpec 在 src/manifest/types.ts；声明在 package.json#stream.whoami
 whoami?:
   | { kind: 'http'              // 带该节点的 cookie 发一个 GET，不开标签
-      url: string               // 必须落在包的 network.hosts 内
+      url: string               // 必须落在包的 network.hosts ?? credentials 内
       id: string                // JSON：点路径，如 'data.mid'；HTML：带一个捕获组的正则
       name?: string
       format?: 'json' | 'html'  // 缺省 json
@@ -178,8 +180,12 @@ site_identities(facility TEXT, node_id TEXT, account_id TEXT, display_name TEXT,
 
 - 一个节点上一个 facility 至多一个账号（Non-Goal：同 profile 多账号）。身份 = `(facility, account_id)`，可以出现在多个节点上。
 - 什么时候探测：
-  - 节点连上时：只探测 `sessionPrecheck` 为 `PRESENT` 的 facility，按节点串行、一次一个标签。
-  - 某个 facility 的会话 cookie 在该节点上变了（扩展已有的 `cookiesChanged` 通知）。
+  - 节点连上时：只探测 `sessionPrecheck` 为 `PRESENT` 的 facility，按节点串行、一次一个标签。`http` 形状的 facility
+    没声明会话 cookie（B 站）时照探——不开标签，代价一次 GET；`GONE` 不开标签，已有记录直接标登出。
+  - 某个 facility 的会话 cookie 在该节点上变了（扩展已有的 `cookiesChanged` 通知）。防抖后比对声明的会话 cookie
+    值的指纹（拉一份该节点的新快照算），变了才探；没声明会话 cookie 的按最短间隔 10 分钟。站点每次加载都轮换一批
+    cookie，按事件就开标签等于采集时每分钟一张探测标签。
+  - `ctx.login` 成功之后：在登录用的那个节点上，`login` 形状直接写，其余重新探测。
   - 执行前核对（D9）。
   - 面板上手动刷新。
 - `unknown` 不写表。`signed-out` 写表（保留上次的账号 id，显示为「已登出」），路由不再把它当作该身份的候选。

@@ -20,6 +20,10 @@
     "credentials": [
       "eastmoneysec.com"
     ],
+    "whoami": {
+      "kind": "login",
+      "param": "zjzh"
+    },
     "code": {
       "entry": "dist/index.js"
     }

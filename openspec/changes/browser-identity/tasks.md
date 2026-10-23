@@ -35,11 +35,11 @@
 
 ## 计划 3：站点身份
 
-- [ ] 1. `whoami` 进 manifest 类型与安装校验（三种形状、`signedIn`、ref 自动解包；`url` 须在允许主机内；`login.param` 须是该包登录 recipe 的 secret_params 之一）
-- [ ] 2. 节点上的探测器：后台标签导航、解析、三态结果、按节点串行
-- [ ] 3. `site_identities` 表；节点连上、会话 cookie 变化、手动刷新三个触发；无 `whoami` 的 facility 记 `node:<nodeId>`
-- [ ] 4. `ctx.login` 成功后重新探测
-- [ ] 5. 给 bilibili、xhs、eastmoney 补 `whoami`（按 spike S3 的结论）
+- [x] 1. `whoami` 进 manifest 类型与安装校验（三种形状、`signedIn`、ref 自动解包；`url` 须在允许主机内；`login.param` 须是该包登录 recipe 的 secret_params 之一）
+- [x] 2. 节点上的探测器：后台标签导航、解析、三态结果、按节点串行
+- [x] 3. `site_identities` 表；节点连上、会话 cookie 变化、手动刷新三个触发；无 `whoami` 的 facility 记 `node:<nodeId>`
+- [x] 4. `ctx.login` 成功后重新探测
+- [x] 5. 给 bilibili、xhs、eastmoney 补 `whoami`（按 spike S3 的结论）
 
 ## 计划 4：按身份路由
 

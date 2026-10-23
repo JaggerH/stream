@@ -25,6 +25,18 @@
     "homepage": "https://www.xiaohongshu.com",
     "schemaVersion": 1,
     "cookieDomain": "xiaohongshu.com",
+    "network": {
+      "hosts": [
+        "xiaohongshu.com"
+      ]
+    },
+    "whoami": {
+      "kind": "page",
+      "url": "https://www.xiaohongshu.com/explore",
+      "id": "__INITIAL_STATE__.user.userInfo.userId",
+      "name": "__INITIAL_STATE__.user.userInfo.nickname",
+      "signedIn": "__INITIAL_STATE__.user.loggedIn"
+    },
     "rsshubNoBrowserNamespaces": [
       "xiaohongshu"
     ],
