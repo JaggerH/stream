@@ -64,7 +64,7 @@ describe('ensureSystemRows', () => {
     const { store, cleanup } = freshStore('seed-')
 
     expect(ensureSystemRows(store)).toEqual({ inserted: ALWAYS_SEEDED.length, retired: [], keptAbsent: [] })
-    expect(ALWAYS_SEEDED.length).toBe(17) // 18 条宿主身份 − transcribe（包声明的行不在这张表里）
+    expect(ALWAYS_SEEDED.length).toBe(18) // 19 条宿主身份 − transcribe（包声明的行不在这张表里）
     const ids = store.listProviders().map((p) => p.id)
     expect(ids).toEqual([...ALWAYS_SEEDED].sort()) // listProviders 是 ORDER BY id
     expect(ids).not.toContain('transcribe')

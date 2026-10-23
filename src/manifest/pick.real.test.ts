@@ -32,6 +32,7 @@ const PROVIDER_ONLY = [
 /** 两个面都不出现：后端代码 / 配置流程按名字直调，没有"挑"这个动作。 */
 const NEVER_PICKABLE = [
   'chatgpt-chat', // 对话动作：按会话 URL 直调，不是可订阅的信息源
+  'chatgpt-image', // 动作 recipe：ChatGPT 网页版生图，同 doubao-image
   'deepseek-chat', // 同上：对话动作，只经工具按 URL 调用
   'doubao-chat-images', // 动作 recipe：把一条豆包对话里生成好的图读回来，按对话 URL 直调
   'doubao-drafts-clear', // 动作 recipe：清空豆包网页版「草稿」栏（不可恢复），只经 run_action_recipe 跑
@@ -39,9 +40,11 @@ const NEVER_PICKABLE = [
   'eastmoney-login', // 登录动作：不是内容来源，两个选择面都不该出现它
   'firecrawl-create-key',
   'firecrawl-read-key',
+  'gemini-image', // 动作 recipe：Gemini 网页版生图，同 doubao-image
   'goofish-edit', // 动作 recipe：改在售商品的标题/描述/价，同 goofish-publish
   'goofish-polish', // 动作 recipe：擦亮在售商品，同 goofish-publish
   'goofish-publish', // 动作 recipe：把商品发上闲鱼，只经 run_action_recipe 跑，且必须二次确认
+  'grok-image', // 动作 recipe：Grok Imagine 生图，同 doubao-image
   'groq-create-key',
   'photopea-cutout', // 动作 recipe：Photopea 抠图，只经 run_action_recipe / POST /api/recipes/action 跑
   'photopea-mask', // 同上：按多边形 / 魔棒切层

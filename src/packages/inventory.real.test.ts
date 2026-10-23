@@ -15,8 +15,8 @@ const PACKAGES_DIR = fileURLToPath(new URL('../../packages', import.meta.url))
 describe('package inventory (real packages/ directory)', () => {
   const inventory = () => buildPackageInventory({ builtin: scanPackages(PACKAGES_DIR), user: [] })
 
-  it('列出全部 51 个内置包（不像 /api/plugins 那样漏掉纯 recipe 包）', () => {
-    expect(inventory()).toHaveLength(51)
+  it('列出全部 55 个内置包（不像 /api/plugins 那样漏掉纯 recipe 包）', () => {
+    expect(inventory()).toHaveLength(55)
   })
 
   it('恰好 5 个 hosted，且就是那 5 个', () => {

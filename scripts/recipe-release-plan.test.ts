@@ -57,7 +57,7 @@ describe('selectPackagesToPublish', () => {
 })
 
 /** 判"可不可发"走的是装载器那把尺（`parseStreamDescriptor` + 有无 `*.recipe.json` + 有无 `stream.code`），
- *  不读 `stream.type`。对着仓库真实的内置包目录钉一个数：31 个纯 recipe 包 + 13 个带代码且可发的包 = 44
+ *  不读 `stream.type`。对着仓库真实的内置包目录钉一个数：35 个纯 recipe 包 + 13 个带代码且可发的包 = 48
  *  （v2ex / hackernews / cloudflare / xunlei / shooter / omdb 是纯代码包，没有 recipe 文件，靠 `stream.code` 进可发名单；
  *  没在 npm 上的，CI 只打「首发请人工」，不会自动发）。rsshub 也带代码，但它是 `required` 的宿主内核包、保持 private。
  *  另外 3 个带容器的带代码包（alist / pansou / douyin-tiktok-download-api）保持 private——
@@ -86,10 +86,10 @@ describe('readRecipePackages（真实内置包目录）', () => {
     '@streamapp/douyin-tiktok-download-api',
     '@streamapp/pansou',
   ]
-  it('恰好 44 个可发的包（31 纯 recipe + 13 带代码），13 个带代码的逐名在内且都不 private', () => {
+  it('恰好 48 个可发的包（35 纯 recipe + 13 带代码），13 个带代码的逐名在内且都不 private', () => {
     const all = readRecipePackages(packagesDir)
     const publishable = all.filter((p) => p.publishable && !p.private)
-    expect(publishable).toHaveLength(44)
+    expect(publishable).toHaveLength(48)
     expect(publishable.map((p) => p.name)).toContain('@streamapp/wechat')
     const codePkgs = publishable.filter((p) => p.code).map((p) => p.name).sort()
     expect(codePkgs).toEqual(CODE_PACKAGE_NAMES)
