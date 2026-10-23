@@ -180,3 +180,70 @@ describe('CookiePuller.ensureFresh', () => {
     expect(cookiePull).toHaveBeenCalledTimes(1)
   })
 })
+
+// 身份探测一次连上要问十几个 facility，每问一个都想「先拉一份新的」——实机上一秒拉两三次全量。
+describe('CookiePuller.pullRecent', () => {
+  const build = () => {
+    let t = 0
+    const { store } = makeStore()
+    let resolve!: (v: { cookies: Record<string, unknown[]>; refused: string[] }) => void
+    const { relay, cookiePull } = makeRelay(() => new Promise((r) => { resolve = r }))
+    const puller = new CookiePuller({ relay, store, requiredDomains: () => REQUIRED, log: () => {}, now: () => t })
+    return { puller, cookiePull, done: () => resolve({ cookies: {}, refused: [] }), at: (ms: number) => { t = ms } }
+  }
+
+  it('在飞的那一轮直接共用（不管谁发起的）', async () => {
+    const { puller, cookiePull, done } = build()
+    const a = puller.pull('cookies-changed')
+    const b = puller.pullRecent(5_000, 'identity')
+    done()
+    await Promise.all([a, b])
+    expect(cookiePull).toHaveBeenCalledTimes(1)
+  })
+
+  it('窗口内刚拉完的复用，过了窗口再拉', async () => {
+    const { puller, cookiePull, done, at } = build()
+    const first = puller.pullRecent(5_000, 'identity')
+    done()
+    await first
+    at(4_000)
+    for (let i = 0; i < 10; i++) await puller.pullRecent(5_000, 'identity')
+    expect(cookiePull).toHaveBeenCalledTimes(1)
+    at(5_001)
+    const again = puller.pullRecent(5_000, 'identity')
+    done()
+    await again
+    expect(cookiePull).toHaveBeenCalledTimes(2)
+  })
+
+  it('一串连发（N 次）至多一轮', async () => {
+    const { puller, cookiePull, done } = build()
+    const all = Array.from({ length: 12 }, () => puller.pullRecent(5_000, 'identity'))
+    done()
+    await Promise.all(all)
+    expect(cookiePull).toHaveBeenCalledTimes(1)
+  })
+})
+
+// 快照里一个域空着，可能是没登，也可能是根本没去取（被扩展拒、远程设备不取与它无关的域）。
+describe('CookiePuller.covers', () => {
+  it('上一轮成功取数要过、且没被拒的域才算取过', async () => {
+    const { store } = makeStore()
+    const { relay } = makeRelay(async () => ({ cookies: {}, refused: ['xiaohongshu.com'] }))
+    const p = new CookiePuller({ relay, store, requiredDomains: () => ['.quark.cn', 'xiaohongshu.com'], log: () => {} })
+    expect(p.covers('quark.cn')).toBe(false) // 还没取过
+    await p.pull('t')
+    expect(p.covers('quark.cn')).toBe(true)
+    expect(p.covers('pan.quark.cn')).toBe(true)
+    expect(p.covers('xiaohongshu.com')).toBe(false) // 被拒
+    expect(p.covers('bilibili.com')).toBe(false) // 没要过
+  })
+
+  it('Chrome 没连 / 取失败的那一轮不算取过', async () => {
+    const { store } = makeStore()
+    const { relay } = makeRelay(async () => ({ cookies: {}, refused: [] }), false)
+    const p = new CookiePuller({ relay, store, requiredDomains: () => REQUIRED, log: () => {} })
+    await p.pull('t')
+    expect(p.covers('quark.cn')).toBe(false)
+  })
+})

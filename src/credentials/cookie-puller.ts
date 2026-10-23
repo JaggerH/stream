@@ -53,8 +53,16 @@ export interface PullOutcome {
  */
 export class CookiePuller {
   private inFlight: Promise<PullOutcome> | null = null
+  /** 上一轮走完的时刻与结果（`pullRecent` 复用它）。 */
+  private last: { at: number; outcome: PullOutcome } | null = null
+  /** 上一轮**成功**取数时要的域与被拒的域（归一后）：快照里一个域空着，靠它分「没登」与「没去取」。 */
+  private coverage: { requested: string[]; refused: string[] } | null = null
 
   constructor(private readonly deps: CookiePullerDeps) {}
+
+  private now(): number {
+    return this.deps.now?.() ?? Date.now()
+  }
 
   /**
    * 拉一次并整份写回。
@@ -68,10 +76,38 @@ export class CookiePuller {
    */
   pull(reason: string): Promise<PullOutcome> {
     if (this.inFlight) return this.inFlight
-    this.inFlight = this.run(reason).finally(() => {
-      this.inFlight = null
-    })
+    this.inFlight = this.run(reason)
+      .then((outcome) => {
+        this.last = { at: this.now(), outcome }
+        return outcome
+      })
+      .finally(() => {
+        this.inFlight = null
+      })
     return this.inFlight
+  }
+
+  /**
+   * 在飞的那一轮直接共用；`withinMs` 内刚走完的一轮原样复用；否则拉一次。
+   *
+   * 给「每做一件事都想先要一份新的」的调用方（身份探测：一次连上问十几个 facility，每问一个都要一次）。
+   * 事件触发的（扩展报 cookie 变了）仍走 `pull`：那一刻手里那份已知是旧的，不能复用变化之前的那一轮。
+   */
+  pullRecent(withinMs: number, reason: string): Promise<PullOutcome> {
+    if (this.inFlight) return this.inFlight
+    if (this.last && this.now() - this.last.at <= withinMs) return Promise.resolve(this.last.outcome)
+    return this.pull(reason)
+  }
+
+  /**
+   * 快照里的这个域是取过的：上一轮成功取数要过它（含子域），且扩展没拒。为 false 时它空着说明不了「没登」——
+   * 可能被扩展拒了，可能这台设备本来就不取它（远程设备只取绑给它的 facility），也可能还一轮都没取成。
+   */
+  covers(domain: string): boolean {
+    if (!this.coverage) return false
+    const d = normDomain(domain)
+    const hit = (list: string[]) => list.some((x) => d === x || d.endsWith(`.${x}`))
+    return hit(this.coverage.requested) && !hit(this.coverage.refused)
   }
 
   /**
@@ -107,6 +143,7 @@ export class CookiePuller {
         if (Array.isArray(list) && list.length) normalized[domain] = list as BrowserCookie[]
       }
       this.deps.store.replace(normalized)
+      this.coverage = { requested: domains.map(normDomain), refused: (refused ?? []).map(normDomain) }
       const got = Object.keys(normalized)
       log(`[cookie-pull] ${reason}: 取回 ${got.length}/${domains.length} 个域`)
       // 被拒 = 后端要的域不在扩展申报的同步范围里。**必须喊**：它的表现和"用户没登录"
@@ -145,6 +182,8 @@ export class CookiePuller {
     })
   }
 }
+
+const normDomain = (d: string): string => d.replace(/^\./, '').toLowerCase()
 
 /** 「这份快照多旧了」——排查时最想知道的那一个数，别让人拿时间戳自己减。 */
 function describeAge(updatedAt: number | null, now?: () => number): string {

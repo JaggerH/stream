@@ -162,7 +162,8 @@ whoami?:
   而首屏 SSR 的 `__INITIAL_STATE__` 里有用户信息）。
 - 结果三态，与 `sessionPrecheck` 一个脾气：
   - `signed-in { accountId, name? }`：取到了非空的 id。
-  - `signed-out`：响应是 JSON，但 id 路径为空。
+  - `signed-out`：响应是 JSON，但 id 路径为空；或（`http`）该节点的快照取过这个域、里面一个 cookie 都没有——不发请求也知道没登。
+    取没取过看上一轮成功取数要过它、且扩展没拒（`CookiePuller.covers`）：被拒的域、远程设备不取的域空着说明不了什么，仍是 `unknown`。
   - `unknown`：打不开、不是 JSON、节点断了。**绝不当成任何一边**，身份表维持原状。
 - 没有 `whoami` 的 facility：身份退化为「这个节点上的账号」，`accountId = node:<nodeId>`，显示为「<profile 名> 上的账号」。
   它照样能按节点路由，只是同一账号登在两个 profile 里会被当成两个身份。
@@ -280,6 +281,8 @@ type Target =
 
 - 快照从 `data/cookies/<deviceId>.json` 改为 `data/cookies/<deviceId>/<nodeId>.json`，仍整份替换、仍 0600。
 - `CookiePuller` 从按设备缓存改为按节点缓存；拉取走该节点自己的绑定，写该节点自己的快照。
+- 身份探测前的「先拉一份新的」走 `pullRecent`：在飞的那一轮共用，5 秒（`IDENTITY_PULL_REUSE_MS`）内走完的一轮直接复用。
+  一次连上问十几个 facility，每问一个都拉全量，实机上是一秒两三次。扩展报 cookie 变了时仍由 auth 域当场 `pull`（不复用变化之前那一轮）。
 - `CookieProvider.cookieString(domain)` 读执行上下文里选定的节点。纯 HTTP 的执行也一样：第一次 `cookieFor` 会触发
   `pickBrowser`，按 D7 选出节点。HTTP 执行因此也带上了身份，远程设备的 `http.fetch` 注入的是正确账号的 cookie。
 - 远程设备该拉哪些域（`requiredDomainsFor`）改为按节点算：设备目标绑到该设备的 facility，加上身份 / 环境目标解析到该节点的 facility。

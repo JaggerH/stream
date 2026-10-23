@@ -74,7 +74,7 @@ export interface AuthService {
   startLogin: (facility: string, emit: (e: LoginEvent) => void) => Promise<void>
   /** 登录态的取数方（后端去用户的 Chrome 里取）。调度侧在 beforeTick 上调它的 ensureFresh。
    *  每次调用按槽位解析到此刻该读的那一份（browser-identity D10）。 */
-  cookiePuller: Pick<CookiePuller, 'pull' | 'ensureFresh'>
+  cookiePuller: Pick<CookiePuller, 'pull' | 'ensureFresh' | 'pullRecent' | 'covers'>
   /**
    * 把「现在谁挂着登录墙」重新算一遍并推出去。
    *
@@ -236,6 +236,8 @@ export const authPlugin = {
     const cookiePuller: AuthService['cookiePuller'] = {
       pull: (reason) => cookiePullerFor(slotNow()).pull(reason),
       ensureFresh: (maxAgeMs, reason) => cookiePullerFor(slotNow()).ensureFresh(maxAgeMs, reason),
+      pullRecent: (withinMs, reason) => cookiePullerFor(slotNow()).pullRecent(withinMs, reason),
+      covers: (domain) => cookiePullerFor(slotNow()).covers(domain),
     }
     /**
      * 把「登录态掉了自己登回来」这条能力回填给包那一层（`ctx.login`）。

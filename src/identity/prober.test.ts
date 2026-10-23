@@ -25,6 +25,19 @@ describe('makeIdentityProber', () => {
     expect((await makeIdentityProber(io({})).probe(NODE, BILI, ['bilibili.com'])).state).toBe('unknown')
   })
 
+  it('快照取过、这个域一个 cookie 都没有 → signed-out（不发请求也知道没登）', async () => {
+    const p = makeIdentityProber(io({ httpGet: async () => 'no-cookies' }))
+    expect(await p.probe(NODE, BILI, ['bilibili.com'])).toEqual({ state: 'signed-out' })
+  })
+
+  it('page 形状不看快照：照样开标签问', async () => {
+    const httpGet = vi.fn(async () => 'no-cookies' as const)
+    const evalInPage = vi.fn(async () => ({ root: true, values: ['u1', undefined, true] }))
+    const p = makeIdentityProber(io({ httpGet, evalInPage }))
+    expect(await p.probe(NODE, XHS, ['xiaohongshu.com'])).toEqual({ state: 'signed-in', accountId: 'u1' })
+    expect(httpGet).not.toHaveBeenCalled()
+  })
+
   it('page：节点中途断开 → unknown', async () => {
     const p = makeIdentityProber(io({ evalInPage: async () => { throw new Error('extension relay disconnected') } }))
     expect(await p.probe(NODE, XHS, ['xiaohongshu.com'])).toEqual({ state: 'unknown', reason: 'extension relay disconnected' })
@@ -76,10 +89,27 @@ describe('makeNodeProbeIO', () => {
       fetch,
       refreshCookies,
       cookieString: async (d) => (d === 'bilibili.com' ? 'SESSDATA=x' : null),
+      snapshotCovers: () => true,
     })
     expect(await pio.httpGet(NODE, 'https://api.bilibili.com/nav', { cookieDomain: 'bilibili.com', allowHosts: ['bilibili.com'] }))
       .toEqual({ status: 200, body: '{"data":{"mid":1}}' })
     expect(seen).toEqual(['local:node_a', 'local:node_a'])
+  })
+
+  it('http：这个域空着——取过它 → no-cookies；没取过（被拒 / 不归这台设备）→ null；都不发请求', async () => {
+    const fetch = vi.fn() as unknown as typeof globalThis.fetch
+    const covered = new Set(['bilibili.com'])
+    const pio = makeNodeProbeIO({
+      relay: () => { throw new Error('no tab for http') },
+      fetch,
+      refreshCookies: async () => {},
+      cookieString: async () => null,
+      snapshotCovers: (d) => covered.has(d),
+    })
+    const opts = (d: string) => ({ cookieDomain: d, allowHosts: [d] })
+    expect(await pio.httpGet(NODE, 'https://api.bilibili.com/nav', opts('bilibili.com'))).toBe('no-cookies')
+    expect(await pio.httpGet(NODE, 'https://www.douyin.com/me', opts('douyin.com'))).toBeNull()
+    expect(fetch).not.toHaveBeenCalled()
   })
 
   it('page 开后台标签、读完关掉；读失败也关', async () => {
@@ -90,7 +120,7 @@ describe('makeNodeProbeIO', () => {
       sendCommand: vi.fn(async (_t: number, method: string) => (method === 'Runtime.evaluate' ? { result: { value: 'v' } } : {})),
       list: async () => [],
     }
-    const pio = makeNodeProbeIO({ relay: () => relay, fetch: globalThis.fetch, refreshCookies: async () => {}, cookieString: async () => null })
+    const pio = makeNodeProbeIO({ relay: () => relay, fetch: globalThis.fetch, refreshCookies: async () => {}, cookieString: async () => null, snapshotCovers: () => false })
     expect(await pio.evalInPage(NODE, 'https://www.xiaohongshu.com/explore', '1')).toBe('v')
     expect(closed).toEqual([7])
     relay.sendCommand.mockImplementation(async (_t: number, method: string) => {

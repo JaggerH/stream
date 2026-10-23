@@ -24,8 +24,11 @@ export interface ProbeNode {
 
 /** 探测器要的两样原料。真实现见 `makeNodeProbeIO`；测试换假货。 */
 export interface ProbeIO {
-  /** 在该节点上带它的登录态 GET 一次。快照里这个域一个 cookie 都没有 → `null`（没同步过，不是登出）。 */
-  httpGet(node: ProbeNode, url: string, opts: { cookieDomain: string; allowHosts: readonly string[] }): Promise<{ status: number; body: string } | null>
+  /**
+   * 在该节点上带它的登录态 GET 一次。快照里这个域一个 cookie 都没有时不发：取过这个域 → `'no-cookies'`（确定没登）；
+   * 没取过（被扩展拒、这台设备不取它、一轮都没取成）→ `null`（不知道，不是登出）。
+   */
+  httpGet(node: ProbeNode, url: string, opts: { cookieDomain: string; allowHosts: readonly string[] }): Promise<{ status: number; body: string } | 'no-cookies' | null>
   /** 在该节点的后台标签里打开 `url`，`load` 后求值 `expression`，关标签。 */
   evalInPage(node: ProbeNode, url: string, expression: string): Promise<unknown>
 }
@@ -58,6 +61,7 @@ export function makeIdentityProber(io: ProbeIO, opts: { timeoutMs?: number } = {
         if (!cookieDomain) return { state: 'unknown', reason: `${w.url} 不在允许主机内` }
         const res = await withTimeout(io.httpGet(node, w.url, { cookieDomain, allowHosts: hosts }), timeoutMs)
         if (!res) return { state: 'unknown', reason: `节点上没有 ${cookieDomain} 的登录态快照` }
+        if (res === 'no-cookies') return { state: 'signed-out' }
         return classifyHttp(w, res)
       }
       const read = await withTimeout(io.evalInPage(node, w.url, pageReadExpr(pagePaths(w))), timeoutMs)
@@ -90,6 +94,8 @@ export interface NodeProbeIODeps {
   refreshCookies(): Promise<void>
   /** 该节点快照里这个域的 Cookie 头（`CookieProvider.cookieString`，按执行上下文的槽位读）。 */
   cookieString(domain: string): Promise<string | null>
+  /** 该节点的快照取过这个域没有（`CookiePuller.covers`，同一个槽位）。取过而空着 = 没登；没取过 = 不知道。 */
+  snapshotCovers(domain: string): boolean
 }
 
 /** 真实的原料：http 钉在节点上走 `fetchFor`，page 走该节点 relay 的后台标签。 */
@@ -101,7 +107,7 @@ export function makeNodeProbeIO(deps: NodeProbeIODeps): ProbeIO {
         // 拉新快照失败不致命：盘上那份仍是这个节点的，只是可能旧一点。
         await deps.refreshCookies().catch(() => {})
         const cookie = await deps.cookieString(cookieDomain)
-        if (!cookie) return null
+        if (!cookie) return deps.snapshotCovers(cookieDomain) ? 'no-cookies' as const : null
         const res = await deps.fetch(url, {
           headers: { cookie, 'user-agent': BROWSER_UA, referer: `${new URL(url).origin}/`, accept: 'application/json, text/html;q=0.9' },
           signal: AbortSignal.timeout(20_000),

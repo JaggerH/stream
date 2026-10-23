@@ -33,6 +33,13 @@ export interface IdentityConfig {
 const CONNECT_SETTLE_MS = 5_000
 
 /**
+ * 探测前「先拉一份新快照」的复用窗口：这么久之内走完的一轮（不论谁拉的）直接用。一次连上要问十几个 facility，
+ * 每问一个都拉一次全量，实机上是一秒两三次；cookie 变化后的指纹比对排在 3 秒防抖之后，auth 域在事件当场拉的
+ * 那一轮正好落在窗口里，不必再拉。
+ */
+export const IDENTITY_PULL_REUSE_MS = 5_000
+
+/**
  * 站点身份这一域：把 `whoami` 探测接到三个触发上（节点连上、会话 cookie 变化、`ctx.login` 成功），
  * 结果落 `site_identities`。路由（`/api/identities`）由 serve.ts 挂在 `ctx.siteIdentities` 上。
  *
@@ -79,9 +86,10 @@ export const identityPlugin = {
       const deviceId = extRelays.deviceOf(bindingId)
       return nodeId && deviceId ? { nodeId, deviceId, bindingId } : undefined
     }
-    /** 在钉住该节点的执行上下文里：去它的浏览器拉一份新快照、让缓存重读。拉不到不致命（盘上那份仍是它的）。 */
+    /** 在钉住该节点的执行上下文里：去它的浏览器拉一份新快照、让缓存重读。拉不到不致命（盘上那份仍是它的）。
+     *  在飞的、刚拉完的都复用（`IDENTITY_PULL_REUSE_MS`）。 */
     const freshSnapshot = async (): Promise<void> => {
-      await ctx.auth.cookiePuller.pull('identity').catch(() => {})
+      await ctx.auth.cookiePuller.pullRecent(IDENTITY_PULL_REUSE_MS, 'identity').catch(() => {})
       await cookieProvider.refresh()
     }
 
@@ -90,6 +98,7 @@ export const identityPlugin = {
       fetch: fetchFor,
       refreshCookies: freshSnapshot,
       cookieString: (domain) => cookieProvider.cookieString(domain),
+      snapshotCovers: (domain) => ctx.auth.cookiePuller.covers(domain),
     }))
 
     const svc = makeIdentityService({
