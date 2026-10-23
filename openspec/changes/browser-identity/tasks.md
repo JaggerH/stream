@@ -53,9 +53,10 @@
 
 ## 计划 5：面板与 popup
 
-- [ ] 1. 面板 API 层（节点、认领、身份表、目标）
-- [ ] 2. 设备页：节点列表（profile、环境、在线、默认）、「识别 profile」、身份表、「Stream 在后台打开着的 profile」
-- [ ] 3. facility 默认目标与任务覆盖的选择器：设备 / 身份 / 环境
-- [ ] 4. 运行记录显示 profile、环境、账号
-- [ ] 5. 扩展 popup：当前 profile 与环境；未识别时的说明
-- [ ] 6. 文档（ARCHITECTURE 执行位置一节、PACKAGE 的 `whoami`、扩展 README）；Windows 真机冒烟：两个 profile 同时在线、认领、指定身份执行、换号被拦
+- [x] 1. 面板 API 层（节点、认领、身份表、目标）；后端补 `GET /api/devices/nodes`（带 `online` 与 `claimable`）
+- [x] 2. 设备页：节点列表（profile、环境、在线、默认）、「识别 profile」、身份表、「Stream 在后台打开着的 profile」
+- [x] 3. facility 默认目标与任务覆盖的选择器：设备 / 身份 / 环境
+- [x] 4. 运行记录显示 profile、环境、账号
+- [x] 5. 扩展 popup：当前 profile 与环境；未识别时的说明
+- [x] 6a. 文档（ARCHITECTURE 执行位置一节、PACKAGE 的 `whoami`、扩展 README）
+- [ ] 6b. Windows 真机冒烟：两个 profile 同时在线、认领、指定身份执行、换号被拦

@@ -74,6 +74,7 @@ app/host-agent/target/x86_64-pc-windows-gnu/release/stream-desktop.exe \
    点 Allow 之后才给。**远处的 Stream 要什么不会自动给**——本机那条照旧自动。
 
 每条绑定有自己的连接和自己的标签组（`Stream · <设备名>`），一个 Stream 碰不到另一个 Stream 组里的标签。
+一个 profile 通常只绑一个 Stream，浏览器里就只有一个 Stream 组；绑了两个才有两个。
 每条绑定在浏览器里**只有一个**标签组：组里的标签开出新窗口（站点 `window.open`）时，新标签被挪回组所在的窗、
 随它开出来的空窗关掉；popup 窗里的留在原处。旧版另建的「Stream 独立窗」组在升级后第一次醒来时被收编
 （探针关掉、自建标签并回主组、用户拖进去的只解组不关）。
@@ -85,6 +86,30 @@ app/host-agent/target/x86_64-pc-windows-gnu/release/stream-desktop.exe \
 | Pair | `POST {stream}/api/ext/pair {code, name, browser, platform}` → `{bindingId, token, deviceId, deviceName}` |
 | Prove the backend is ours | `POST {stream}/api/ext/verify {nonce, binding}` → `{proof}`（key = token 的 SHA-256） |
 | Learn the sync scope | 不问 sync-config（远程要 API token）：它在 `cookiePull` 里要的域记成待批准 |
+
+### 一个 profile 一个节点
+
+Chrome 里每个 profile 各装一份扩展，各有自己的 `chrome.storage.local`。扩展第一次运行时在那里生成一个
+`nodeId`（`node_<uuid>`，存在 `node` 键下）——它就是这个 profile 的稳定标识。握手（本机与配对绑定都一样）在
+query 里带上 `nodeId`，认领过之后再带 `profileDir` / `profileName`。Stream 据此给每个 profile 一个**节点**：
+
+- **本机**：带 `nodeId` 的连接落在绑定 `local:<nodeId>`，每个 profile 一条，互不顶替；不带的老扩展落兼容槽 `local`（以最新为准）。
+- **配对绑定**第一次连上时记下 `nodeId`。之后同一个 token 带着**别的** `nodeId` 来连，后端以关闭码 **4004** 拒绝——
+  token 被拷进了另一个 profile，不能让它冒充原来那个。扩展收到 4004 停止重连，弹窗里这条绑定显示
+  「这条绑定属于另一个 profile」：在这里移除它，再给这个 profile 单独配对。
+- 扩展重装、profile 删了重建，存储没了，就得到新的 `nodeId`，Stream 按新节点处理。
+
+**认领（识别 profile）。** Chrome 不给扩展任何读 profile 的 API，所以扩展说不出自己在哪个 profile 里。面板 →
+管理 → 设备 →「识别 profile」：那台机器上的 Stream Desktop 读 Chrome 的 `Local State` 列出全部 profile，逐个用
+`--profile-directory=<dir>` 打开扩展自己的认领页 `chrome-extension://<id>/claim.html#n=<一次性码>`。哪个 profile 里的扩展
+打开了它，就把码经自己**所有**已连上的绑定交回（`{type:'claim', nonce}`，回 `claim-result`）；签码的 Stream 校验交回的
+绑定与执行认领的是同一台设备，把 profile 记进节点，扩展也记进 `node` 存储，之后每次握手都带上。认领页显示
+「已识别：<名字>（<目录>）」。20 秒没交回的 profile 在面板上标「扩展未安装或未连上」。认领会每个 profile 开一扇窗，
+只在用户点的时候做。没装 Stream Desktop 的机器认领不了：节点照样能用，名字在面板上手填。
+
+**弹窗顶部**显示「<环境> · <profile 名>」：profile 名读自己的 `node` 存储，环境问本机 Stream 的
+`GET /api/devices/nodes` 里自己那一行（用户在面板上标的，预置「工作」「个人」）。没认领过显示「未识别的 profile」
+和一行去哪里识别。
 
 ## Develop
 

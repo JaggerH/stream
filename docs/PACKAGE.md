@@ -1837,6 +1837,42 @@ A run can be bound to a device (e.g. a NAS in mainland China), so a package's HT
 
 A run with no owning package (host-internal outbound, or a task row whose `device` is set but whose action's package is gone) cannot reach anything through a non-`local` device: its allowed-host list is empty, so every request fails before dispatch as `host-not-allowed`. See `docs/ARCHITECTURE.md` "Execution Placement".
 
+### 5.5 Who is signed in: `stream.whoami`
+
+A facility can be targeted by **identity** ("run as this account") or **environment** ("run in a 工作 profile"), and Stream refuses to run under any other account (`docs/ARCHITECTURE.md` "Execution Placement"). For that it has to know who is signed in to the site in each Chrome profile. `stream.whoami` in `package.json` says how to ask. It is optional and **package-level**, not on a source's `auth`: one facility has one account system, while session declarations are spread over several recipes (xhs has four) and a cookie-only package like bilibili has none. Type: `WhoamiSpec` in `src/manifest/types.ts`; schema in `src/packages/descriptor.ts`; logic in `src/identity/whoami.ts`.
+
+Three shapes, pick one:
+
+```jsonc
+// http: one GET with that profile's cookies, no tab. Prefer it whenever the site has a "current user" endpoint.
+"whoami": { "kind": "http", "url": "https://api.bilibili.com/x/web-interface/nav",
+            "id": "data.mid", "name": "data.uname", "signedIn": "data.isLogin" }
+// format: "html" -> id / name are regexes with one capture group, signedIn is a regex that must match
+"whoami": { "kind": "http", "format": "html", "url": "https://example.com/account", "id": "uid=(\\d+)" }
+
+// page: open the page in a background tab of that profile, read globals off `window` once loaded
+"whoami": { "kind": "page", "url": "https://www.xiaohongshu.com/explore",
+            "id": "__INITIAL_STATE__.user.userInfo.userId",
+            "name": "__INITIAL_STATE__.user.userInfo.nickname",
+            "signedIn": "__INITIAL_STATE__.user.loggedIn" }
+
+// login: the account is the secret parameter Stream itself typed in when logging in; the site is never asked
+"whoami": { "kind": "login", "param": "zjzh" }
+```
+
+- **Paths.** For `http` (JSON, the default `format`) and `page`, `id` / `name` / `signedIn` are dot paths (into the response body, or from `window`). Each step **unwraps a Vue ref** (an object with `_value` / `_rawValue`, up to three levels), so write the path as the structure looks on the page; xhs's `__INITIAL_STATE__` is refs all the way down.
+- **Results are three-state.** `signed-in { accountId, name? }` when the id is a non-empty string or a non-zero number; `signed-out` when the site answered (JSON parsed, the page global exists) but the id is empty or `signedIn` is falsy; `unknown` for everything else (non-2xx, not JSON, the page global missing, node gone). `unknown` is never written to the identity table and never treated as either side: a run that needed verifying fails as `identity-offline`, not as a changed account.
+- **`signedIn`** is the login flag: when present, the result is `signed-in` only if it is truthy. Write it whenever guests also carry a user object (xhs guests have a `userId`); the id alone would take a guest for an account.
+- **`login`** stores the SHA-256 prefix (16 hex) of the account, shows it masked (`12****78`), never stores it in clear. It is written after `ctx.login` succeeds and is never verified before a run (Stream cannot tell if the user signed in another account by hand in that profile).
+- **No `whoami`**: the account is the profile itself (`node:<nodeId>`, shown as 「<profile 名> 上的账号」). It still routes by node; the same account in two profiles counts as two identities.
+
+Validated at install and at load (a bad declaration rejects the package, it is never silently dropped):
+
+- the shape is strict: an unknown key (e.g. `signedIn` on `login`) is an error, not ignored;
+- `http` / `page` `url` must be a valid `http(s)` URL whose host is inside the package's allowed hosts (`stream.network.hosts ?? stream.credentials`): the probe carries the user's cookies, and on a remote device the device sends it, so a `whoami` must not reach a host the install page never named;
+- `format: "html"`: `id` / `name` must compile and have at least one capture group; `signedIn` must compile;
+- `login.param` must be one of the `secret_params` of this package's login recipe (`meta.login: true`, same facility); a package with no login recipe cannot use the `login` shape.
+
 ---
 
 ## 5.9 Slot: capability (`stream.capability`)
