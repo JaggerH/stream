@@ -74,3 +74,6 @@
 - [x] 5. 后端：`CookiePuller` 记每个槽位最近一轮的缺口，`GET /api/devices/nodes` 带 `cookieGaps`
 - [x] 6. 面板节点行说出读不到的登录态；弹窗「允许」（`permissions.request` + 并进同步域 + 同步一轮）
 - [ ] 7. Windows 真机复核：新 profile 认领后身份直接认出（不再 `signed-out`）；「识别 profile」不再给没装扩展的 profile 开窗
+  - 2026-10-23 Cortana（`61713d9`）：discover 的 `hasExtension` 对上了（Default、紫卡装了；另三个没装）；
+    desktop agent `window:<id>` 读到指定窗、同进程两窗报 `ambiguous-window` 列出 id、未知 id 报 `no-window-match`
+  - 未测：新 profile 认领后直接认出身份；弹窗「允许」（要一个新 profile）
