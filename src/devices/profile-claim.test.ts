@@ -89,6 +89,15 @@ describe('ProfileClaims', () => {
     expect(r.claims.redeem('local:node_b', 'n2').ok).toBe(false)
   })
 
+  it('start 只认领指定的 profile：其余的不开页面、不进结果；指定了不存在的目录就拒', async () => {
+    vi.useFakeTimers()
+    const r = rig()
+    const s = await r.claims.start('desktop:pc', { dirs: ['Profile 1'] })
+    expect(r.claimUrls()).toEqual([`Profile 1|chrome-extension://${EXT}/claim.html#n=n1`])
+    expect(s.profiles.map((p) => p.dir)).toEqual(['Profile 1'])
+    await expect(rig().claims.start('desktop:pc', { dirs: ['Profile 9'] })).rejects.toThrow('Profile 9')
+  })
+
   it('别的机器交回 nonce：拒绝，任何节点都不动，nonce 留给这台机器', async () => {
     vi.useFakeTimers()
     const r = rig()

@@ -15,7 +15,7 @@
  */
 import type { Context, Hono } from 'hono'
 import { DeviceIncapable, DeviceOffline } from '../devices/errors.ts'
-import type { DiscoverOpts, ProfileClaims } from '../devices/profile-claim.ts'
+import type { ClaimOpts, DiscoverOpts, ProfileClaims } from '../devices/profile-claim.ts'
 import type { BrowserNode } from '../devices/node-store.ts'
 
 export interface NodeRoutesDeps {
@@ -62,6 +62,23 @@ async function discoverOpts(c: Context): Promise<DiscoverOpts | string> {
   return { ...(exe ? { exe } : {}), ...(userDataDir ? { userDataDir } : {}) }
 }
 
+/** 认领在 discover 那两格之外多一格 `dirs`：只认领这几个 profile（目录名）。 */
+async function claimOpts(c: Context): Promise<ClaimOpts | string> {
+  const text = await c.req.text()
+  let body: unknown = {}
+  if (text.trim()) {
+    try { body = JSON.parse(text) } catch { return 'body 不是合法 JSON' }
+  }
+  const { exe, userDataDir, dirs } = (body ?? {}) as Record<string, unknown>
+  if ((exe !== undefined && typeof exe !== 'string') || (userDataDir !== undefined && typeof userDataDir !== 'string')) {
+    return 'exe / userDataDir 可选，必须是字符串'
+  }
+  if (dirs !== undefined && (!Array.isArray(dirs) || dirs.length === 0 || dirs.some((d) => typeof d !== 'string' || !d))) {
+    return 'dirs 可选，必须是非空的目录名数组'
+  }
+  return { ...(exe ? { exe } : {}), ...(userDataDir ? { userDataDir } : {}), ...(dirs ? { dirs: dirs as string[] } : {}) }
+}
+
 export function mountNodeRoutes(app: Hono, deps: NodeRoutesDeps): void {
   const LOCAL_ONLY = '只能在运行 Stream 的那台机器上识别 profile'
 
@@ -74,7 +91,7 @@ export function mountNodeRoutes(app: Hono, deps: NodeRoutesDeps): void {
 
   app.post('/api/devices/:id/profiles/claim', async (c) => {
     if (!deps.isLocal(c)) return c.json({ error: LOCAL_ONLY }, 403)
-    const opts = await discoverOpts(c)
+    const opts = await claimOpts(c)
     if (typeof opts === 'string') return c.json({ error: opts }, 400)
     try { return c.json(await deps.claims.start(c.req.param('id'), opts)) } catch (e) { return failure(c, e) }
   })

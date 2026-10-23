@@ -87,6 +87,12 @@ export interface DiscoverOpts {
   userDataDir?: string
 }
 
+/** 认领时还可以只点名几个 profile（按目录名）。不点名 = 全部——但没装扩展的 profile 每个都会弹出一扇
+ *  打不开的窗、并一直加载着，用户只装了一两个时就该点名。 */
+export interface ClaimOpts extends DiscoverOpts {
+  dirs?: string[]
+}
+
 export interface DiscoveredProfile {
   dir: string
   name: string
@@ -223,10 +229,14 @@ export class ProfileClaims {
    * 开一次认领：列 profile、每个签一个 `nonce`、逐个 `browser.claim`。同一台设备上一次没完的会话被它顶替
    * （旧 `nonce` 全部作废）——用户又点了一次，就是要重来。
    */
-  async start(deviceId: string, opts: DiscoverOpts = {}): Promise<ClaimSnapshot> {
+  async start(deviceId: string, opts: ClaimOpts = {}): Promise<ClaimSnapshot> {
     const a = this.agentWith(deviceId, CLAIM_OP)
     if (!a.ops.has(PROFILES_OP)) throw new DeviceIncapable(deviceId, PROFILES_OP)
-    const list = await this.listProfiles(a, opts)
+    const all = await this.listProfiles(a, opts)
+    // 点名了一个不存在的目录就整次拒掉，而不是悄悄少认一个：用户以为认领了它，面板上却永远没有结果。
+    const unknown = opts.dirs?.filter((d) => !all.profiles.some((p) => p.dir === d)) ?? []
+    if (unknown.length) throw new Error(`这台设备的 Chrome 没有这些 profile：${unknown.join('、')}`)
+    const list = opts.dirs ? { ...all, profiles: all.profiles.filter((p) => opts.dirs!.includes(p.dir)) } : all
     for (const s of this.sessions.values()) if (s.deviceId === a.deviceId) this.drop(s)
     const t = this.now()
     const session: Session = {

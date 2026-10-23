@@ -89,6 +89,16 @@ describe('node routes', () => {
     expect(poll.done).toBe(false)
   })
 
+  it('claim 带 dirs：只认领点名的 profile；dirs 形状不对 400', async () => {
+    connectAgent({ deviceId: 'desktop:pc' })
+    const r = await json('POST', '/api/devices/desktop:pc/profiles/claim', { dirs: ['Profile 1'] })
+    expect(r.status).toBe(200)
+    expect(ops).toEqual(['browser.profiles', 'browser.claim:Profile 1'])
+    for (const dirs of [[], 'Default', [1]]) {
+      expect((await json('POST', '/api/devices/desktop:pc/profiles/claim', { dirs })).status).toBe(400)
+    }
+  })
+
   it('exe / userDataDir 透传给 agent，类型不对 400', async () => {
     connectAgent({ deviceId: 'desktop:pc' })
     expect((await json('POST', '/api/devices/desktop:pc/profiles/claim', { exe: 3 })).status).toBe(400)
