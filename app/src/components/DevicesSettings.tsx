@@ -1,7 +1,10 @@
 import { useCallback, useEffect, useState } from 'react'
 import { renderSVG } from 'uqr'
 import { toast } from './acrylic/sonner.tsx'
-import { api, ApiError, type Connection, type DeviceRow, type ExtBindingRow } from '../lib/api.ts'
+import { api, ApiError, type Connection, type DeviceRow, type ExtBindingRow, type NodeRow as Node } from '../lib/api.ts'
+import { NodeRow } from './devices/NodeRow.tsx'
+import { ProfileClaim } from './devices/ProfileClaim.tsx'
+import { WokenProfiles } from './devices/WokenProfiles.tsx'
 
 /** A one-time code for pairing a Chrome extension onto one device (design D7). */
 interface BrowserPairing {
@@ -27,10 +30,19 @@ const errText = (e: unknown) => (e instanceof ApiError ? e.message : '后端未�
  * "添加浏览器" on a paired computer mints a code for that device: typed into the extension's Streams tab
  * on that machine, it makes that Chrome the device's browser. A device can hold several; runs use the
  * default one while it is online, otherwise the one that connected last.
+ *
+ * 浏览器节点（browser-identity D1、D12）：一个 Chrome profile 里的一个扩展实例。后端有节点表时，顶上多一张
+ * 「本机」卡——本机的扩展不经配对、不在绑定表里，只有节点表里有它们；Stream Desktop（用本机 secret 连进来、
+ * 不可撤销的那一行）并进这张卡，不再单列。配对设备下的浏览器行并上节点的 profile、名字与环境。
+ * 名字与环境可改；「识别 profile」只在后端说这台设备此刻能识别（host agent 在线且有 `browser.claim`）时出现。
+ * 老后端没有节点表：一切照旧。
  */
 export function DevicesSettings({ conn }: { conn: Connection }) {
   const [devices, setDevices] = useState<DeviceRow[] | null>(null)
   const [browsers, setBrowsers] = useState<ExtBindingRow[]>([])
+  // null = 后端没有节点表（老后端）：不画本机卡，Stream Desktop 照旧单列。
+  const [nodes, setNodes] = useState<Node[] | null>(null)
+  const [claimable, setClaimable] = useState<string[]>([])
   const [pairing, setPairing] = useState<{ code: string; expiresAt: number; qr: string[]; knownIds: Set<string> } | null>(null)
   const [expired, setExpired] = useState(false)
   const [browserPairing, setBrowserPairing] = useState<BrowserPairing | null>(null)
@@ -46,6 +58,9 @@ export function DevicesSettings({ conn }: { conn: Connection }) {
     api.extBindings.list(conn)
       .then((b) => setBrowsers(b.bindings ?? []))
       .catch(() => setBrowsers([]))
+    api.nodes.list(conn)
+      .then((r) => { setNodes(Array.isArray(r.nodes) ? r.nodes : null); setClaimable(Array.isArray(r.claimable) ? r.claimable : []) })
+      .catch(() => { setNodes(null); setClaimable([]) })
   }, [conn])
   useEffect(load, [load])
 
@@ -142,13 +157,65 @@ export function DevicesSettings({ conn }: { conn: Connection }) {
   if (error) return <div className="text-[12px] text-muted-foreground">{error}</div>
   if (!devices) return <div className="text-[12px] text-muted-foreground">读取中…</div>
 
+  const environments = [...new Set((nodes ?? []).flatMap((n) => (n.environment ? [n.environment] : [])))]
+  const patchNode = (n: Node, p: { label?: string | null; environment?: string | null }) =>
+    void browserAction(p.environment !== undefined ? '改环境' : '改名', () => api.nodes.update(conn, n.nodeId, p))
+  const defaultToggle = (bindingId: string, name: string, isDefault: boolean) => (
+    <button
+      type="button"
+      aria-label={isDefault ? `${name} 取消默认` : `${name} 设为默认`}
+      onClick={() => browserAction(
+        isDefault ? '取消默认' : '设为默认',
+        () => (isDefault ? api.extBindings.clearDefault(conn, bindingId) : api.extBindings.setDefault(conn, bindingId)),
+      )}
+      className="text-muted-foreground hover:text-foreground"
+    >
+      {isDefault ? '取消默认' : '设为默认'}
+    </button>
+  )
+  // 用本机 secret 连进来的 Stream Desktop 就是这台机器（`agentFrom` 的判法）：有本机卡时并进去。
+  const isThisMachine = (d: DeviceRow) => !d.paired && (d.platform === 'windows' || d.platform === 'macos')
+  const desktops = nodes ? devices.filter(isThisMachine) : []
+  const listed = nodes ? devices.filter((d) => !isThisMachine(d)) : devices
+  const localNodes = (nodes ?? []).filter((n) => n.deviceId === 'local')
+  const deviceName = (id: string) => (id === 'local' ? '本机' : devices.find((d) => d.deviceId === id)?.name ?? id)
+
   return (
     <div className="space-y-2.5">
-      {devices.length === 0 ? (
-        <p className="text-[12px] text-muted-foreground">还没有设备。</p>
+      {nodes && (
+        <div className="space-y-1.5 rounded-md border border-[var(--acr-border-soft)] px-2.5 py-1.5">
+          <div className="flex items-center gap-2">
+            <span className="min-w-0 flex-1 truncate text-[12px]">本机</span>
+            {desktops.map((d) => <span key={d.deviceId} className="text-[11px] text-muted-foreground">Stream Desktop · {d.name}</span>)}
+          </div>
+          {localNodes.length === 0 ? (
+            <p className="pl-3.5 text-[11px] text-muted-foreground">还没有浏览器连上。在这台机器的 Chrome 里装上 Stream 扩展，它会自己连上来。</p>
+          ) : (
+            <ul className="space-y-1 pl-3.5">
+              {localNodes.map((n) => (
+                <NodeRow
+                  key={n.nodeId}
+                  node={n}
+                  environments={environments}
+                  onPatch={(p) => patchNode(n, p)}
+                  actions={defaultToggle(n.bindingId, n.label ?? n.profileName ?? '未识别的 profile', n.isDefault)}
+                />
+              ))}
+            </ul>
+          )}
+          {claimable.includes('local')
+            ? <ProfileClaim conn={conn} deviceId="local" deviceName="本机" onDone={load} />
+            : localNodes.some((n) => !n.profileDir) && (
+              <p className="pl-3.5 text-[11px] text-muted-foreground">要认出这些浏览器各是哪个 Chrome profile，需要这台机器上的 Stream Desktop 在线。</p>
+            )}
+        </div>
+      )}
+
+      {listed.length === 0 ? (
+        !nodes && <p className="text-[12px] text-muted-foreground">还没有设备。</p>
       ) : (
         <ul className="space-y-1.5">
-          {devices.map((d) => {
+          {listed.map((d) => {
             const own = browsers.filter((b) => b.deviceId === d.deviceId)
             // 手机上没有 Chrome 扩展；后端也只给已配对的设备签码（Stream Desktop 不在配对表里）。
             const canAddBrowser = d.paired && d.platform !== 'android'
@@ -187,7 +254,33 @@ export function DevicesSettings({ conn }: { conn: Connection }) {
 
                 {own.length > 0 && (
                   <ul className="space-y-1 pl-3.5">
-                    {own.map((b) => (
+                    {own.map((b) => {
+                      const n = nodes?.find((x) => x.bindingId === b.bindingId)
+                      if (n) {
+                        const name = n.label ?? n.profileName ?? b.name
+                        return (
+                          <NodeRow
+                            key={b.bindingId}
+                            node={{ ...n, online: b.online, isDefault: b.default }}
+                            fallbackName={b.name}
+                            environments={environments}
+                            onPatch={(p) => patchNode(n, p)}
+                            actions={<>
+                              {defaultToggle(b.bindingId, name, b.default)}
+                              <button
+                                type="button"
+                                aria-label={`撤销浏览器 ${name}`}
+                                onClick={() => browserAction('撤销', () => api.extBindings.revoke(conn, b.bindingId))}
+                                className="text-muted-foreground hover:text-foreground"
+                              >
+                                撤销
+                              </button>
+                            </>}
+                          />
+                        )
+                      }
+                      // 节点表里没有：扩展还没升级（握手不带 nodeId），只有绑定本身可管。
+                      return (
                       <li key={b.bindingId} className="flex items-center gap-2 text-[11px]">
                         <span className={`size-1.5 shrink-0 rounded-full ${b.online ? 'bg-emerald-400' : 'bg-muted-foreground/40'}`} />
                         <span className="min-w-0 flex-1 truncate">{b.name}</span>
@@ -213,9 +306,12 @@ export function DevicesSettings({ conn }: { conn: Connection }) {
                           撤销
                         </button>
                       </li>
-                    ))}
+                      )
+                    })}
                   </ul>
                 )}
+
+                {claimable.includes(d.deviceId) && <ProfileClaim conn={conn} deviceId={d.deviceId} deviceName={d.name} onDone={load} />}
 
                 {note && <p className="pl-3.5 text-[11px] text-muted-foreground">{note}</p>}
 
@@ -284,6 +380,8 @@ export function DevicesSettings({ conn }: { conn: Connection }) {
           )}
         </div>
       )}
+
+      {nodes?.some((n) => n.wokenAt !== undefined) && <div className="pt-2"><WokenProfiles nodes={nodes} deviceName={deviceName} /></div>}
     </div>
   )
 }

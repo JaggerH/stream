@@ -6,7 +6,8 @@
  * 归属，落点是 DSH 设置里的一个 Stream 分区（`settings.section` 插槽，注册在
  * dsh-plugin-stream-ui 那侧）。**四页**（分页条切换）：包与插件（`PackagesPage`）、源健康
  * （`SourceHealthList` / `SourceRepairPage`，spec 2026-09-12 §4）、设备（`DevicesSettings`：
- * 配对码与二维码、设备列表、撤销——配对码只在本机生成，这一页正是在本机打开的）、设置
+ * 配对码与二维码、设备列表、撤销——配对码只在本机生成，这一页正是在本机打开的；各设备下的浏览器 profile、
+ * 识别 profile、身份表、Stream 在后台打开着的 profile，以及账号在哪里执行）、设置
  * （`SettingsPage`：采集浏览器、远程访问令牌、音频归档）。
  *
  * **为什么是独立 bundle 而不是塞进主面板**：主 bundle 是**开页必载**的那一份，而这一页
@@ -53,6 +54,7 @@ import '../i18n/index.ts'   // 副作用 import：设好 react-i18next 的全局
 import { applyBackend, LOCAL } from '../lib/api.ts'
 import { DevicesSettings } from '../components/DevicesSettings.tsx'
 import { FacilityDevicesSettings } from '../components/FacilityDevicesSettings.tsx'
+import { IdentitiesSettings } from '../components/devices/IdentitiesSettings.tsx'
 import { SettingsPage } from '../components/SettingsPage.tsx'
 import { PackagesPage } from '../components/packages/PackagesPage.tsx'
 import { PreviewModal } from '../components/PreviewModal.tsx'
@@ -100,8 +102,13 @@ function ManageShell({ backend, initial }: { backend: string; initial?: ManageTa
             <div className="space-y-5 p-4">
               <DevicesSettings conn={LOCAL} />
               <section className="space-y-2">
-                <h3 className="text-[13px] font-semibold">账号在哪台设备上执行</h3>
-                <p className="text-[12px] text-muted-foreground">账号的动作和采集都在这台设备上跑；单条任务可以在任务编辑器里另指定。</p>
+                <h3 className="text-[13px] font-semibold">各站点登着谁</h3>
+                <p className="text-[12px] text-muted-foreground">每个浏览器 profile 里各站点登着的账号。浏览器连上、登录变化时 Stream 会自己去问。</p>
+                <IdentitiesSettings conn={LOCAL} />
+              </section>
+              <section className="space-y-2">
+                <h3 className="text-[13px] font-semibold">账号在哪里执行</h3>
+                <p className="text-[12px] text-muted-foreground">账号的动作和采集在哪台设备、用哪个身份、在哪个环境里跑；指定了身份或环境就绝不换别的号顶上。单条任务可以在任务编辑器里另指定。</p>
                 <FacilityDevicesSettings conn={LOCAL} />
               </section>
             </div>
