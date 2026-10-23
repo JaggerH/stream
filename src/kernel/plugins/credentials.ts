@@ -40,6 +40,8 @@ export interface CredentialsService {
 export interface CredentialsConfig {
   /** 可写状态根目录——`PushedCookieStore` 的落盘位置。 */
   dataDir: string
+  /** 部署环境（BYOK 的环境变量回落）。**显式传入**，域里不读 `process.env`；缺席 = 没有环境回落。 */
+  env?: Readonly<Record<string, string | undefined>>
   log: (...args: unknown[]) => void
   /**
    * 这台 Stream 需要同步哪些 cookie 域。**前向引用是有意的**：它从 registry + 已订阅流推出来，
@@ -93,7 +95,7 @@ export const credentialsPlugin = {
         groq: 'GROQ_API_KEY',
         openai: 'OPENAI_API_KEY',
       },
-      process.env,
+      config.env ?? {},
       (name) => {
         const v = settings.runtimeConfig(name).apiKey
         return typeof v === 'string' && v ? v : null

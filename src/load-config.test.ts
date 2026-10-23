@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { loadConfig } from './bootstrap.ts'
+import { loadConfig } from './config-env.ts'
 
 /**
  * config.yaml → AppConfig 的**传递**本身要有人守。漏传一个字段不会报错、不会有类型错

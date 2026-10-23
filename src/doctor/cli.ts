@@ -1,4 +1,5 @@
-import { loadConfig, bootstrap } from '../bootstrap.ts'
+import { bootstrap } from '../bootstrap.ts'
+import { loadConfig } from '../config-env.ts'
 import { quiesceKernel } from '../kernel/context.ts'
 import { buildDoctorReport } from './report.ts'
 import { classifyError } from '../failure.ts'

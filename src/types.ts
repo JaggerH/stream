@@ -100,6 +100,28 @@ export interface AppConfig {
    * 那是包与它的用户之间的约定，宿主插一脚就得跟着包的版本走。缺席 → 每个能力拿到 `{}`。
    */
   capabilities?: Record<string, unknown>
+  /**
+   * 部署层的开关、地址与环境。今天它们只有环境变量一个入口：进程入口（`serve.ts` / CLI）经
+   * `deploymentFromEnv()`（`bootstrap.ts`）翻译进来，库入口与它可达的模块**不读 `process.env`**。
+   * 缺席 = 开关全开、没有环境回落（库入口的缺省）。
+   */
+  deployment?: {
+    /** 部署环境变量（BYOK 的回落：TokenProvider 的映射表、runtime-config 的 `DEPLOYMENT_ENV_FALLBACK`）。
+     *  **含密钥**：只经那两张表读，不许落盘、不许回显。 */
+    env?: Readonly<Record<string, string | undefined>>
+    /** false = 桌面 recipe 的 see 梯子不用视觉模型（`STREAM_DESKTOP_SEE_MODEL=off`）。 */
+    desktop_see_model?: boolean
+    /** false = web_search 不取正文做内容级折叠（`STREAM_SEARCH_TEXT_FOLD=0`）。 */
+    search_text_fold?: boolean
+    /** false = web_search 不问模型做语义折叠（`STREAM_SEARCH_SEMANTIC_FOLD=0`）。 */
+    search_semantic_fold?: boolean
+    /** 声纹引擎的显式地址（`VOICEPRINT_URL`）。 */
+    voiceprint_url?: string
+    /** false = 查询档：不起采集调度、不起任务中心（`STREAM_NO_SCHEDULER=1`）。 */
+    scheduler?: boolean
+    /** false = 不装配包更新检查任务（`STREAM_RECIPE_UPDATE_CHECK=0`）。 */
+    recipe_update_check?: boolean
+  }
   /** base url of the MinerU document-parsing backend; unset → MINERU_URL env or the
    *  bootstrap-injected plugin target (compose mode: container DNS). A remote relay
    *  url here = the cloud (paid) tier. */

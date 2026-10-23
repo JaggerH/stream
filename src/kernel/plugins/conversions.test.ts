@@ -84,8 +84,9 @@ async function mountUpstream() {
 
   const kernel = createKernel()
   await kernel.plugin(settingsPlugin, { path: join(dataDir, 'settings.json') })
-  await kernel.plugin(runtimeConfigPlugin)
-  await kernel.plugin(credentialsPlugin, { dataDir, log: () => {}, requiredDomains: () => [] })
+  // 部署环境显式递进去（域里不读 process.env）；递的是活引用，下面的 vi.stubEnv 照样看得见。
+  await kernel.plugin(runtimeConfigPlugin, { env: process.env })
+  await kernel.plugin(credentialsPlugin, { dataDir, log: () => {}, requiredDomains: () => [], env: process.env })
   await kernel.plugin(packagesPlugin, {
     packagesDir, dataDir, manageContainers: false, log: () => {},
     catalogSummary: (id) => ({ id } as unknown as PluginSummary),

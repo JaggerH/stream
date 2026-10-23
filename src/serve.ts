@@ -16,7 +16,8 @@ import { existsSync, readFileSync, writeFileSync, unlinkSync } from 'node:fs'
 import { tmpdir, homedir } from 'node:os'
 import { join, dirname } from 'node:path'
 import { createRequire } from 'node:module'
-import { bootstrap, loadConfig, resolveDataDir } from './bootstrap.ts'
+import { bootstrap, resolveDataDir } from './bootstrap.ts'
+import { loadConfig } from './config-env.ts'
 import { createHttpApp, type HttpDeps } from './http/app.ts'
 import { classifyLauncher } from './restart/policy.ts'
 import { makeRestartTrigger, type Shutdown } from './restart/trigger.ts'
@@ -644,6 +645,7 @@ const apiToken = config.api_token || loadOrCreateApiToken(dirname(config.item_db
       envCovered: (ref) => envCoveredFields(
         ref,
         Object.keys(sources.registry.all().find((m) => m.runtime_config?.ref === ref)?.runtime_config?.fields ?? {}),
+        config.deployment?.env ?? {},
       ),
       // `userInitiated: true` 够格的依据：这个闭包**只有** `POST /api/source-runtime-config/provision`
       // 一个消费方，而那个端点只由配置卡上那颗需要用户先在弹窗里点第二下的按钮触发——没有任何

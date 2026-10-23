@@ -18,8 +18,8 @@ export interface RuntimeConfigDeps {
     runtimeConfig(ref: string): Record<string, unknown>
     rows: { has(id: string): boolean; resolve(id: string): Record<string, unknown> }
   }
-  /** 部署环境（缺省 `process.env`）——只经 `DEPLOYMENT_ENV_FALLBACK` 那张表读，测试注入假环境。 */
-  env?: Record<string, string | undefined>
+  /** 部署环境——只经 `DEPLOYMENT_ENV_FALLBACK` 那张表读。**显式传入**（缺省 = 没有环境回落），本模块不读 `process.env`。 */
+  env?: Readonly<Record<string, string | undefined>>
 }
 
 /**
@@ -34,7 +34,7 @@ export interface RuntimeConfigDeps {
  * 互相看见对方的设置库。
  */
 export function makeRuntimeConfigResolver(deps: RuntimeConfigDeps): RuntimeConfigResolver {
-  const env = deps.env ?? process.env
+  const env = deps.env ?? {}
   return (manifest) => {
     if (!manifest.runtime_config) return {}
     const ref = manifest.runtime_config.ref
@@ -71,7 +71,7 @@ const DEPLOYMENT_ENV_FALLBACK: Record<string, Record<string, string>> = {
  * 出现在浏览器里。和 `withDeploymentEnv` 读同一张表：面板说「兜得住」的格，执行时就真的补得上。
  */
 export function envCoveredFields(
-  ref: string, declared: string[], env: Record<string, string | undefined> = process.env,
+  ref: string, declared: string[], env: Readonly<Record<string, string | undefined>>,
 ): string[] {
   const table = DEPLOYMENT_ENV_FALLBACK[ref]
   if (!table) return []
@@ -105,7 +105,7 @@ function withDeploymentEnv(
 export const runtimeConfigPlugin = {
   name: 'runtimeConfig',
   inject: ['settings'],
-  apply(ctx: Context): void {
-    ctx.provide('runtimeConfig', makeRuntimeConfigResolver({ settings: ctx.settings }))
+  apply(ctx: Context, config: { env?: RuntimeConfigDeps['env'] } = {}): void {
+    ctx.provide('runtimeConfig', makeRuntimeConfigResolver({ settings: ctx.settings, ...(config.env ? { env: config.env } : {}) }))
   },
 }

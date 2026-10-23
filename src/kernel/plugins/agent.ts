@@ -102,6 +102,9 @@ export interface AgentDomain {
 export interface AgentConfig {
   /** 可写状态根目录（`conversations.db` / `agent-runs.db` / `intents/` 都在它下面）。 */
   dataDir: string
+  /** web_search 折叠的两个关灯开关（`AppConfig.deployment`）。缺席 = 开。 */
+  searchTextFold?: boolean
+  searchSemanticFold?: boolean
   log: (...args: unknown[]) => void
   /**
    * MCP/对话工具面骑的那个 `StreamService`（订阅、预览、搜目录）。**同一个实例**，不是副本
@@ -308,7 +311,7 @@ export const agentPlugin = {
         // **内容级折叠的取正文能力**——和 `read_url` 是同一份实现（全后端只有转换域 `readUrl`
         // 一处）。接上之后，标题被改写过的转载也能折起来；`STREAM_SEARCH_TEXT_FOLD=0` 是它的
         // 关灯开关（关掉只是退回「只比链接和标题」，不影响搜索本身）。
-        readUrl: process.env.STREAM_SEARCH_TEXT_FOLD === '0' ? undefined : ctx.conversions.readUrl,
+        readUrl: config.searchTextFold === false ? undefined : ctx.conversions.readUrl,
         onReadUrlFailure: (url, reason) => log(`[stream] web_search 折叠取正文没成 ${url}: ${reason}`),
         // **折叠的第 3 档：问模型「这几篇是不是同一件事」**。治的是第 2 档治不了的那类——同一篇
         // 通稿被 AI 重写过（实测共享块只剩 17 字，和「各写各的」的 6–11 字挨在一起，字数门槛分
@@ -316,7 +319,7 @@ export const agentPlugin = {
         // 那几条保持原样，绝不影响这次搜索。`STREAM_SEARCH_SEMANTIC_FOLD=0` 是它的关灯开关
         // （默认开：它一个网络抓取都不发，只吃第 2 档已经抓到的正文，一次搜索最多一发调用）。
         askLlm:
-          process.env.STREAM_SEARCH_SEMANTIC_FOLD === '0'
+          config.searchSemanticFold === false
             ? undefined
             : (messages) => llmContentQuiet(ctx.llm.forTask, 'story-fold.semantic', { messages, temperature: 0 }),
         onSemanticFailure: (q, reason) => log(`[stream] web_search 语义折叠没判成 "${q}": ${reason}`),

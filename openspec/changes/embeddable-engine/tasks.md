@@ -6,8 +6,8 @@
 
 ## 1. 库入口骨架
 
-- [ ] 1.1 `src/engine/index.ts`：`createStream({dataDir, config, log, runtime})` 包住现有 `bootstrap()`，`close()` 走 `quiesceKernel`
-- [ ] 1.2 数据目录文件锁：同一目录第二次启动抛错
+- [x] 1.1 `src/engine/index.ts`：`createStream({dataDir, config, log, runtime})` 包住现有 `bootstrap()`，`close()` 走 `quiesceKernel`
+- [x] 1.2 数据目录文件锁：同一目录第二次启动抛错
 - [ ] 1.3 环境变量收进 config：库入口可达模块不读 `process.env`，守卫测试 + 白名单
 - [ ] 1.4 `serve.ts` 改用 `createStream`；把非 HTTP 的装配按块搬进入口（每块一个提交，每块后跑全量测试 + 真启动）
 

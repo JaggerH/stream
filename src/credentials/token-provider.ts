@@ -18,7 +18,7 @@ export class TokenProvider implements CredentialProvider {
 
   constructor(
     private readonly map: Record<string, string>,
-    private readonly env: NodeJS.ProcessEnv = process.env,
+    private readonly env: Readonly<Record<string, string | undefined>>,
     /** logical name → the stored secret, or null when unset (runtime_config overlay) */
     private readonly stored?: (name: string) => string | null,
   ) {}

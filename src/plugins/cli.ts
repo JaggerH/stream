@@ -1,5 +1,5 @@
 import { writeFileSync } from 'node:fs'
-import { loadConfig } from '../bootstrap.ts'
+import { loadConfig } from '../config-env.ts'
 import { loadPlugins } from './loader.ts'
 import { generateCaddyfile, generateCompose, generateDevOverride, type ComposeOptions } from './compose.ts'
 

@@ -4,7 +4,8 @@ import { tmpdir } from 'node:os'
 import { join, isAbsolute, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { parse as parseYaml } from 'yaml'
-import { loadConfig, resolveDataDir } from '../bootstrap.ts'
+import { resolveDataDir } from '../bootstrap.ts'
+import { loadConfig } from '../config-env.ts'
 import { buildCompose } from './cli.ts'
 
 const SRC_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')

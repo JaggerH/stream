@@ -88,6 +88,8 @@ export interface ConversionsDomain {
 export interface ConversionsConfig {
   /** 可写状态根目录（`voiceprint.db` / `jobs.db` / `audio-tracks/` 都在它下面）。 */
   dataDir: string
+  /** 声纹引擎的显式地址（`AppConfig.deployment.voiceprint_url`）。缺席 = 客户端自己的回落（插件目标）。 */
+  voiceprintUrl?: string
   /** 持久那一侧（`stream.db`）——转换记录表住在它里面。 */
   streamDb: string
   log: (...args: unknown[]) => void
@@ -325,7 +327,7 @@ export const conversionsPlugin = {
       // 句柄清欠：voiceprint.db 上的这条连接过去从没人关。
       const registryHandle = speakerRegistry
       ctx.effect(() => () => registryHandle.close())
-      voiceprintEngine = new VoiceprintEngineClient(process.env.VOICEPRINT_URL)
+      voiceprintEngine = new VoiceprintEngineClient(config.voiceprintUrl)
       // readiness 问的是"管不管得着",不是"现在醒着吗":显式 URL/env/compose DNS 配置了 → true
       // (原语义);host 档下 standby 管着 voiceprint(哪怕此刻睡着)→ 也 true —— 真调用时
       // withAwake 会把容器唤醒(见 engine-client.ts diarize/embed),睡着不该成为早退的理由。

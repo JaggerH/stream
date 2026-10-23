@@ -122,8 +122,9 @@ type RawConfig = Partial<AppConfig> & {
  *  bundled template to seed from: the embedded-exe model that shipped
  *  config.default.yaml as a sidecar resource has been retired). Dev (no
  *  STREAM_DATA_DIR) is untouched — './config.yaml' as always. */
-function resolveConfigPath(dataDir: string | undefined): string {
-  if (process.env.STREAM_CONFIG) return process.env.STREAM_CONFIG
+export function resolveConfigPath(env: ConfigEnv): string {
+  if (env.STREAM_CONFIG) return env.STREAM_CONFIG
+  const dataDir = env.STREAM_DATA_DIR
   if (!dataDir) return './config.yaml'
   const target = join(dataDir, 'config.yaml')
   if (!existsSync(target)) mkdirSync(dataDir, { recursive: true })
@@ -203,13 +204,32 @@ function warnRetiredContainerUrlKeys(cfg: Record<string, unknown>): void {
   )
 }
 
-export function loadConfig(path = resolveConfigPath(process.env.STREAM_DATA_DIR)): AppConfig {
+/**
+ * 读配置时用到的部署环境。**显式传入**：本模块在库入口（`src/engine/`）可达范围里，不读 `process.env`
+ * （`src/engine/no-process-env.guard.test.ts`）。进程入口经 `src/config-env.ts` 的 `loadConfig()` 把真环境递进来。
+ */
+export type ConfigEnv = Readonly<Record<string, string | undefined>>
+
+/** 环境变量 → `AppConfig.deployment`。今天这些开关只有环境变量一个入口，翻译集中在这一处。 */
+export function deploymentFromEnv(env: ConfigEnv): NonNullable<AppConfig['deployment']> {
+  return {
+    env,
+    desktop_see_model: env.STREAM_DESKTOP_SEE_MODEL !== 'off',
+    search_text_fold: env.STREAM_SEARCH_TEXT_FOLD !== '0',
+    search_semantic_fold: env.STREAM_SEARCH_SEMANTIC_FOLD !== '0',
+    ...(env.VOICEPRINT_URL ? { voiceprint_url: env.VOICEPRINT_URL } : {}),
+    scheduler: env.STREAM_NO_SCHEDULER !== '1',
+    recipe_update_check: env.STREAM_RECIPE_UPDATE_CHECK !== '0',
+  }
+}
+
+export function readConfig(path: string, env: ConfigEnv = {}): AppConfig {
   // Writable user state (vault/dedup/items) resolves under STREAM_DATA_DIR when set.
   // Read-only assets (manifests/plugins/RSSHub catalog) resolve relative to the
   // process cwd — the same in Docker and dev. The embedded-exe resource-dir
   // reverse-derivation (STREAM_RESOURCE_DIR / argv[1]) was retired along with the
   // node sidecar.
-  const dataDir = process.env.STREAM_DATA_DIR
+  const dataDir = env.STREAM_DATA_DIR
   const underData = (rel: string) => (dataDir ? join(dataDir, rel.replace(/^\.\//, '')) : rel)
   const underResource = (rel: string) => rel
   const cfg = existsSync(path) ? (parseYaml(readFileSync(path, 'utf-8')) as RawConfig) : ({} as RawConfig)
@@ -224,7 +244,7 @@ export function loadConfig(path = resolveConfigPath(process.env.STREAM_DATA_DIR)
     // 默认 false —— 没写就是今天的行为（容器归 compose 管，后端一个 docker 写操作都不发）。
     manage_containers:
       cfg.manage_containers ??
-      (process.env.STREAM_MANAGE_CONTAINERS === '1' || process.env.STREAM_MANAGE_CONTAINERS === 'true'),
+      (env.STREAM_MANAGE_CONTAINERS === '1' || env.STREAM_MANAGE_CONTAINERS === 'true'),
     mineru_url: cfg.mineru_url, // unset → MineruClient falls back to MINERU_URL env / plugin target
     // catalog（RSSHub 全量路由长尾）只有开发检出里有：`assets/build/routes.json` 是 RSSHub 的
     // 构建产物，**不在 npm 包 `rsshub` 的 tarball 里**（那里只有 `dist-lib/`）。所以发行安装是
@@ -237,7 +257,7 @@ export function loadConfig(path = resolveConfigPath(process.env.STREAM_DATA_DIR)
     audio_archive_db: cfg.audio_archive_db ?? join(dirname(itemDb), 'audio-archive.db'),
     // 缺省落在 Stream 根目录下（和 vault / 各库同一个家）；只有用户自己设了才去别处——要放 NAS 就在
     // config.yaml 或 AUDIO_ARCHIVE_ROOT 里写明（用户 2026-09-27 拍板：默认位置一律在 Stream 根目录下）。
-    audio_archive_root: cfg.audio_archive_root ?? process.env.AUDIO_ARCHIVE_ROOT ?? underData('./music'),
+    audio_archive_root: cfg.audio_archive_root ?? env.AUDIO_ARCHIVE_ROOT ?? underData('./music'),
     // 不给默认值：缺席就是「用 RecipeSessionManager 自己的默认」。在这里也写一份数字，就等于
     // 把同一个上限写进两个地方，而它们迟早会漂（这个仓库为同类漂移付过多次代价）。
     browser_lanes: cfg.browser_lanes,
@@ -248,6 +268,7 @@ export function loadConfig(path = resolveConfigPath(process.env.STREAM_DATA_DIR)
     session_exports: cfg.session_exports,
     // 能力包的配置：原样透传（见 AppConfig.capabilities）。
     capabilities: cfg.capabilities,
+    deployment: deploymentFromEnv(env),
   }
 }
 
@@ -288,6 +309,9 @@ export async function bootstrap(
   // 内核：调用方那棵，或自建一棵。域插件往它上面挂服务、把句柄登记成 effect；
   // 关停时一次 `quiesceKernel` 全撤（serve.ts）。
   const kernel = opts.kernel ?? createKernel()
+  // 部署开关与部署环境（`AppConfig.deployment`）：缺席 = 开关全开、没有环境回落。环境变量的翻译在
+  // `deploymentFromEnv`，本函数不读 `process.env`（库入口可达，见 src/engine/no-process-env.guard.test.ts）。
+  const deployment = config.deployment ?? {}
   // 设置覆盖层（settings.json）——infra 最底下那一格，凭证/运行时配置/插件开关都读它。
   await kernel.plugin(settingsPlugin, {
     path: join(resolveDataDir(config), 'settings.json'),
@@ -301,6 +325,7 @@ export async function bootstrap(
     dataDir: resolveDataDir(config),
     log,
     requiredDomains: () => requiredCookieDomainsNow(),
+    ...(deployment.env ? { env: deployment.env } : {}),
   })
   const credentials = kernel.credentials
   const { cookieProvider, tokenProvider, resolver } = credentials
@@ -469,12 +494,13 @@ export async function bootstrap(
   wireOcrImageCache(contentCache)
   // 四个消费点（此处 + Scheduler + ResolveEngine + 分集索引）共用同一个引用——曾经是四份逐字
   // 相同的内联闭包，改一处漏三处的表现只是"部分路径吃旧默认"，不报错。
-  const runtimeConfigFor = makeRuntimeConfigResolver({ settings })
+  const runtimeConfigFor = makeRuntimeConfigResolver({ settings, ...(deployment.env ? { env: deployment.env } : {}) })
   // 设置库经 inject 从内核取（见 runtimeConfigPlugin），所以这里不再喂 config。
-  void kernel.plugin(runtimeConfigPlugin)
+  void kernel.plugin(runtimeConfigPlugin, deployment.env ? { env: deployment.env } : {})
   // 采集运输面整域进内核（两条中继 / Transport / lane 管理器 / recipe 执行器 / 看动页面 /
   // xhs 两个动作）。`recipeSessions.closeAll()` 随之变成域内 effect——关停时把标签还给用户
   // 这件事，不再挂在下面 shutdown() 的手写清单上。
+  const seeModelOff = deployment.desktop_see_model === false
   await kernel.plugin(harvestPlugin, {
     dataDir,
     log,
@@ -498,11 +524,11 @@ export async function bootstrap(
     // 模板）。识别层拿不到 llm 就不调模型，「没找到」那句话会如实报"没配视觉模型"。用途是量本地
     // 能力单独能走多远、或者不想为桌面 recipe 花一分钱的机器。调用点绑定不能为空（fixed 模式恰好
     // 一个 provider），所以开关只能放这里。
-    ...(process.env.STREAM_DESKTOP_SEE_MODEL === 'off'
+    ...(seeModelOff
       ? {}
       : { llmForTask: (callsiteId, input, opts) => kernel.llm.forTask(callsiteId, input, opts) }),
   })
-  if (process.env.STREAM_DESKTOP_SEE_MODEL === 'off') console.log('[desktop-see] STREAM_DESKTOP_SEE_MODEL=off：视觉模型段停用，只用控件树 / OCR / 模板')
+  if (seeModelOff) console.log('[desktop-see] STREAM_DESKTOP_SEE_MODEL=off：视觉模型段停用，只用控件树 / OCR / 模板')
   // bootstrap 自己一格都不再解：`mcpExtras` 那张转发表随 agent 域搬走后，运输面只剩下游域
   // （adapters / auth / agent 经 inject 从 `ctx.harvest` 自取）与 serve.ts（直接读内核）在吃。
   // Serializes the re-login flow per facility (two concurrent logins on one site fight over the
@@ -687,6 +713,7 @@ export async function bootstrap(
     dataDir,
     streamDb,
     log,
+    ...(deployment.voiceprint_url ? { voiceprintUrl: deployment.voiceprint_url } : {}),
     // **thunk 而不是值，而且是跨域的运行时解引用**：摘要 prompt 的状态面住 agent 域，它比本域
     // 晚挂——但这个函数只在真跑一次 summary 转换时才调，那时它早就在了。装配期冻结的话改完
     // prompt 得重启才算数，而没有一处会报错。
@@ -708,6 +735,8 @@ export async function bootstrap(
     dataDir,
     log,
     service,
+    searchTextFold: deployment.search_text_fold !== false,
+    searchSemanticFold: deployment.search_semantic_fold !== false,
     // thunk：三条网页搜索腿全部经 scheduler → registry → replay adapter → 用户的 Chrome。
     readSource: (sourceId, params) => scheduler.readSource(sourceId, params),
     // 同 harvest / adapters 两处：经 config 递 thunk 从根 kernel 现取，不在插件里 inject
