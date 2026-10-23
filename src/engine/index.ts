@@ -14,9 +14,11 @@ import { createKernel, quiesceKernel } from '../kernel/context.ts'
 import type { AppConfig } from '../types.ts'
 import { lockDataDir } from './data-dir-lock.ts'
 import { createRuntime, type StreamRuntime } from './runtime.ts'
+import { openDevices, type StreamDevices } from './devices.ts'
 
 export type { StreamRuntime } from './runtime.ts'
 export { createRuntime } from './runtime.ts'
+export type { StreamDevices } from './devices.ts'
 
 /** 宿主层递进来的回调：实例往外推东西（ws 广播、调试总线、归因）只经这几个口，自己不持有任何连接。 */
 export type StreamHostHooks = Pick<
@@ -35,8 +37,6 @@ export interface CreateStreamOptions {
   hooks?: StreamHostHooks
   /** 搬迁期过渡口：`serve.ts` 还有装配块在 `createStream` 之前要用到内核时传它自己建的那棵。 */
   kernel?: Context
-  /** 搬迁期过渡口：设备 / 节点 / 身份表（D1 的 `devices`），见 tasks.md 1.4 的剩余项。 */
-  boot?: Pick<BootOptions, 'facilityDevices' | 'extBindings' | 'nodes' | 'identities'>
 }
 
 export interface Stream {
@@ -46,6 +46,8 @@ export interface Stream {
   /** 可写状态的根（`resolveDataDir(config)`），数据目录锁就拿在这里。 */
   readonly stateDir: string
   readonly runtime: StreamRuntime
+  /** 设备 / 节点 / 身份表（执行位置的真相源）。 */
+  readonly devices: StreamDevices
   /** 撤掉内核上的全部 effect（库句柄、定时器、子进程、采集标签的归还），放掉数据目录锁。幂等。 */
   close(): Promise<void>
 }
@@ -62,8 +64,18 @@ export async function createStream(opts: CreateStreamOptions): Promise<Stream> {
   const ownsRuntime = !opts.runtime
   const runtime = opts.runtime ?? createRuntime()
   const kernel = opts.kernel ?? createKernel()
+  const log = opts.log ?? console.error
+  let devices: StreamDevices
   try {
-    await bootstrap(config, opts.log ?? console.error, { ...opts.hooks, ...opts.boot, kernel })
+    devices = openDevices(stateDir, kernel, log)
+    await bootstrap(config, log, {
+      ...opts.hooks,
+      kernel,
+      facilityDevices: devices.facilityBindings,
+      extBindings: devices.extBindings,
+      ...(devices.nodes ? { nodes: devices.nodes } : {}),
+      ...(devices.identities ? { identities: devices.identities } : {}),
+    })
   } catch (e) {
     // 装到一半失败：已经挂上的那部分照样要撤，锁照样要放——否则同一个目录再也起不来。
     await quiesceKernel(kernel).catch(() => {})
@@ -77,6 +89,7 @@ export async function createStream(opts: CreateStreamOptions): Promise<Stream> {
     config,
     stateDir,
     runtime,
+    devices,
     close: () => closing ??= (async () => {
       try {
         await quiesceKernel(kernel)

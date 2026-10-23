@@ -41,16 +41,12 @@ import { loadOrCreateExtToken, loadOrCreateApiToken } from './http/secrets.ts'
 import { authorizeAccess, parseTrustedOrigins, isLoopbackAddress, peerAddress, lanBaseUrls } from './http/access-guard.ts'
 import { mountDeviceRoutes } from './http/device-routes.ts'
 import { mountExtBindingRoutes, REVOKED_CLOSE_CODE } from './http/ext-binding-routes.ts'
-import { DeviceStore, PAIRED_PLATFORMS } from './devices/device-store.ts'
-import { ExtBindingStore } from './devices/ext-binding-store.ts'
-import { FacilityDeviceStore } from './devices/facility-devices.ts'
-import { NodeStore } from './devices/node-store.ts'
+import { PAIRED_PLATFORMS } from './devices/device-store.ts'
 import { ProfileClaims, agentFrom } from './devices/profile-claim.ts'
 import { mountNodeRoutes } from './http/node-routes.ts'
 import { cookieSlot } from './credentials/cookie-slot.ts'
-import { SiteIdentityStore } from './identity/identity-store.ts'
 import { mountIdentityRoutes } from './http/identity-routes.ts'
-import { assertDeviceReady, facilityTarget, placeRun, unavailableBindings, type FacilityBindings } from './devices/placement.ts'
+import { assertDeviceReady, facilityTarget, placeRun } from './devices/placement.ts'
 import { LOCAL_TARGET, taskTarget } from './devices/target.ts'
 import { installFetchFor, makeFetchFor } from './devices/fetch.ts'
 import { installGlobalFetchTrap } from './devices/global-fetch-trap.ts'
@@ -289,37 +285,6 @@ async function main() {
 // **后端从不把它发出去**：扩展经 native messaging 让 stream-desktop 读同一个文件自取，
 // 后端只在 /api/ext/verify 上用它签一条 proof 自证身份。握手仍走 WS subprotocol，用户全程无感。
 const extToken = loadOrCreateExtToken(dirname(config.item_db))
-const deviceStore = new DeviceStore(join(dirname(config.item_db), 'devices.json'), { log: console.log })
-// 扩展绑定（design D7）：别的机器上的 Chrome 用一次性码挂到某台已配对设备上。本机扩展不在表里。
-const extBindings = new ExtBindingStore(join(dirname(config.item_db), 'ext-bindings.json'), { log: console.log })
-// facility → 默认设备，与 TaskStore 同一个 stream.db。在 bootstrap 之前建：adapters 域要它，而它只依赖路径。
-// 开不起来（文件锁/损坏）不让启动失败，但**不是**「没有绑定 = 全部本机」：用户把东财绑在大陆的 NAS 上，
-// 表一坏就改从本机下单，正是这套设计要防的事。换成查就抛的替身——有 facility 的执行一律拒绝，
-// 没有 facility 的照常 local。绑定路由不挂（读写都无从谈起）。
-let facilityDevices: FacilityDeviceStore | undefined
-let facilityBindings: FacilityBindings
-try {
-  facilityDevices = new FacilityDeviceStore(join(dirname(config.item_db), 'stream.db'))
-  facilityBindings = facilityDevices
-} catch (e) {
-  console.error(`[stream] facility device bindings UNAVAILABLE — open failed: ${errText(e)}; runs of any facility will be refused until this is fixed`)
-  facilityBindings = unavailableBindings()
-}
-// 浏览器节点（browser-identity D1），同一个 stream.db。打不开就没有：本机多个 profile 照样各连各的，
-// 只是没有默认节点、不留节点记录——它不像 facility 绑定那样决定「在哪儿下单」，没必要因此拒绝执行。
-let browserNodes: NodeStore | undefined
-try {
-  browserNodes = new NodeStore(join(dirname(config.item_db), 'stream.db'))
-} catch (e) {
-  console.error(`[stream] browser nodes UNAVAILABLE — open failed: ${errText(e)}; profiles still connect, without defaults`)
-}
-// 站点身份表（browser-identity D6），同一个 stream.db。打不开就没有：不影响执行，只是答不出「哪个号」。
-let siteIdentities: SiteIdentityStore | undefined
-try {
-  siteIdentities = new SiteIdentityStore(join(dirname(config.item_db), 'stream.db'))
-} catch (e) {
-  console.error(`[stream] site identities UNAVAILABLE — open failed: ${errText(e)}`)
-}
 // `/api/*` 与 `/ws` 的访问令牌。**默认就有**（用户没配 api_token 时自动生成一份持久的）——
 // 后端绑 0.0.0.0 是有意的（用户要从手机访问），那就必须有一把默认的锁，而不是默认没有。
 // 本机 loopback 请求免密，所以自己机器上用完全无感（判据与实测见 http/access-guard.ts）。
@@ -386,12 +351,6 @@ const apiToken = config.api_token || loadOrCreateApiToken(dirname(config.item_db
     config,
     log: console.log,
     kernel,
-    boot: {
-      facilityDevices: facilityBindings,
-      extBindings,
-      ...(browserNodes ? { nodes: browserNodes } : {}),
-      ...(siteIdentities ? { identities: siteIdentities } : {}),
-    },
     hooks: {
       // 「该同步哪些 cookie 域」的第三个来源：已挂能力包自己申报的那些。**现取**——可选包在
       // bootstrap 之后才装载，取快照等于永远只认内置那半，而漏一个域的表现是那个包每次都拿到
@@ -408,6 +367,8 @@ const apiToken = config.api_token || loadOrCreateApiToken(dirname(config.item_db
     },
   }))
   const boot = stream
+  // 设备 / 节点 / 身份表随实例建（`src/engine/devices.ts`）；下面的设备路由、中继、任务的执行位置都读这几格。
+  const { deviceStore, extBindings, facilityDevices, facilityBindings, nodes: browserNodes, identities: siteIdentities } = stream.devices
   // 落盘状态住内核的存储域（`ctx.stores`）——下面的 HttpDeps 组装从这里取，键一个没变。
   // 设置覆盖层（`settings.json`）：TMDb/OMDb 凭证与 Source 运行时配置两组读写口直接吃它，
   // 不再经 Boot 转一手（那几格本来就只是转调）。
