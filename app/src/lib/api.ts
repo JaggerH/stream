@@ -161,6 +161,11 @@ export interface NodeRow {
   lastSeenAt: number
   wokenAt?: number
   online: boolean
+  /**
+   * Cookie domains the extension in this profile withheld on the last pull: `refused` = outside that
+   * profile's sync scope, `noAccess` = no site permission there. Fixed in that profile's extension popup.
+   */
+  cookieGaps?: { refused: string[]; noAccess: string[]; at: number }
 }
 
 /** One Chrome profile on a machine (`GET /api/devices/:id/profiles`, read-only, opens nothing). */

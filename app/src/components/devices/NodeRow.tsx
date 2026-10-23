@@ -36,6 +36,7 @@ export function NodeRow({ node, fallbackName, environments, onPatch, actions }: 
   const [renaming, setRenaming] = useState(false)
   const [customEnv, setCustomEnv] = useState(false)
   const options = environmentOptions([...environments, ...(node.environment ? [node.environment] : [])])
+  const gaps = [...new Set([...(node.cookieGaps?.refused ?? []), ...(node.cookieGaps?.noAccess ?? [])])]
 
   return (
     <li className="space-y-1 text-[11px]">
@@ -104,6 +105,13 @@ export function NodeRow({ node, fallbackName, environments, onPatch, actions }: 
         {node.isDefault && <span className="rounded bg-foreground/10 px-1.5">默认</span>}
         {actions}
       </div>
+      {/* 最近一轮取登录态时这个 profile 没给的域（不在它的同步范围 / 没给站点权限）。两样都按 profile 记，
+          表现都和「没登录」一样；只有那个 profile 里的扩展弹窗能补（站点权限要用户点）。 */}
+      {gaps.length > 0 && (
+        <p className="pl-3.5 text-amber-300">
+          读不到 {gaps.join('、')} 的登录态——在这个 profile 里打开 Stream 扩展的弹窗，点「允许」。
+        </p>
+      )}
     </li>
   )
 }

@@ -236,6 +236,20 @@ describe('DevicesSettings — browser nodes', () => {
     expect(within(section).getByText(/Chrome 完全退出时卸载/)).toBeTruthy()
   })
 
+  it('节点行说出这个 profile 没给 Stream 的登录态域，并指去扩展弹窗里点「允许」', async () => {
+    backend({
+      nodes: [
+        node({ profileName: 'Jagger' }),
+        node({ nodeId: 'node_b', bindingId: 'local:node_b', profileName: '小号', cookieGaps: { refused: ['bilibili.com'], noAccess: ['xiaohongshu.com'], at: 1 } }),
+      ],
+      claimable: [], patches: [],
+    })
+    render(<DevicesSettings conn={conn} />)
+    const gap = await screen.findByText(/读不到 bilibili\.com、xiaohongshu\.com 的登录态/)
+    expect(gap.textContent).toMatch(/在这个 profile 里打开 Stream 扩展的弹窗，点「允许」/)
+    expect(screen.getAllByText(/读不到/)).toHaveLength(1)
+  })
+
   it('没有唤起着的 profile：这一节不出现', async () => {
     backend({ nodes: [node({ profileName: 'Jagger' })], claimable: [], patches: [] })
     render(<DevicesSettings conn={conn} />)
