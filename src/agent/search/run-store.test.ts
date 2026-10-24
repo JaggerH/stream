@@ -5,6 +5,7 @@ import { mkdtempSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { SearchRunStore, RESULT_MAX_BYTES } from './run-store.ts'
+import { runWithToolCaller } from '../../tool-caller.ts'
 
 const store = () => new SearchRunStore(':memory:')
 
@@ -238,6 +239,30 @@ describe('SearchRunStore：账本不是 blob 库', () => {
     expect(statSync(path).size).toBeLessThan(before / 4)
     // 没什么可删时不白写盘
     expect(s.prune({ now }).vacuumed).toBe(false)
+    s.close()
+  })
+
+  // embeddable-engine D3：`tools.call(..., { caller })` 期间建的 run 记下是谁调的，便于嵌入方追溯。
+  it('工具调用上下文里建的 run 落 caller；上下文外不落（存量行与 MCP 端点照旧）', () => {
+    const s = store()
+    const outside = s.create('a')
+    expect(outside.caller).toBeUndefined()
+    expect('caller' in outside).toBe(false)
+    const inside = runWithToolCaller('embedder:job-7', () => s.create('b'))
+    expect(inside.caller).toBe('embedder:job-7')
+    expect(s.get(inside.runId)?.caller).toBe('embedder:job-7')
+    s.close()
+  })
+
+  it('旧库没有 caller 列也能开（迁移补列）', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'runs-'))
+    const path = join(dir, 'agent-runs.db')
+    const db = new Database(path)
+    db.exec(`CREATE TABLE agent_runs (run_id TEXT PRIMARY KEY, goal TEXT NOT NULL, status TEXT NOT NULL,
+      trajectory TEXT NOT NULL, targets TEXT, onboardable TEXT, error TEXT, updated_at TEXT NOT NULL)`)
+    db.close()
+    const s = new SearchRunStore(path)
+    expect(runWithToolCaller('x', () => s.create('g')).caller).toBe('x')
     s.close()
   })
 })

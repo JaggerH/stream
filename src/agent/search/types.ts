@@ -116,5 +116,7 @@ export interface RunRecord {
    * 这一格空着。形状随 `domain` 变——读它之前先看 `domain`，和 `targets` 一个道理。
    */
   result?: unknown
+  /** 建这条 run 的那次工具调用是谁发起的（`stream.tools.call` 的 `ctx.caller`）。经 MCP 端点 / HTTP 起的不记。 */
+  caller?: string
   updatedAt: string
 }

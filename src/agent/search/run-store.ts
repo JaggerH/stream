@@ -4,6 +4,7 @@ import { mkdirSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import type { Hub, RunRecord, RunStatus, TrajectoryStep } from './types.ts'
+import { currentToolCaller } from '../../tool-caller.ts'
 
 /**
  * 一条 run 的 `result` 落库时的**上限**（JSON 文本字节）。
@@ -60,6 +61,8 @@ export class SearchRunStore {
     if (!cols.has('stopped')) this.db.exec('ALTER TABLE agent_runs ADD COLUMN stopped TEXT')
     // `result`：非发现类 job（购买决策）的最终产物；发现类用 targets/hubs，这一列空着。
     if (!cols.has('result')) this.db.exec('ALTER TABLE agent_runs ADD COLUMN result TEXT')
+    // `caller`：建这条 run 的那次工具调用是谁发起的（`tools.call` 的 `ctx.caller`，见 src/tool-caller.ts）。
+    if (!cols.has('caller')) this.db.exec('ALTER TABLE agent_runs ADD COLUMN caller TEXT')
   }
 
   private rowToRecord(row: Record<string, unknown> | undefined): RunRecord | null {
@@ -78,18 +81,21 @@ export class SearchRunStore {
       stopped: (row.stopped as RunRecord['stopped']) ?? undefined,
       error: (row.error as string) ?? undefined,
       result: row.result ? (JSON.parse(row.result as string) as unknown) : undefined,
+      // 没记就**不出这个键**：`get_agent_run` 的发现档把记录原样回给模型，多一个 `caller: null` 就是 MCP 输出变了。
+      ...(row.caller ? { caller: row.caller as string } : {}),
       updatedAt: row.updated_at as string,
     }
   }
 
-  create(goal: string, domain = 'netdisk'): RunRecord {
+  /** `caller` 缺省取当前工具调用上下文（`tools.call` 的 `ctx.caller`）；不在调用里 = 不记。 */
+  create(goal: string, domain = 'netdisk', caller: string | undefined = currentToolCaller()): RunRecord {
     const runId = randomUUID()
     this.db
       .prepare(
-        `INSERT INTO agent_runs (run_id, goal, status, trajectory, domain, updated_at)
-         VALUES (?, ?, 'queued', '[]', ?, ?)`
+        `INSERT INTO agent_runs (run_id, goal, status, trajectory, domain, caller, updated_at)
+         VALUES (?, ?, 'queued', '[]', ?, ?, ?)`
       )
-      .run(runId, goal, domain, new Date().toISOString())
+      .run(runId, goal, domain, caller ?? null, new Date().toISOString())
     return this.get(runId)!
   }
 

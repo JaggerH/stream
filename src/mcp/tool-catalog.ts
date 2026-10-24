@@ -292,8 +292,30 @@ export interface ToolEntry {
   description: string
   /** raw zod shape (what MCP `registerTool` wants); the agent wraps it in `z.object`. */
   schema: z.ZodRawShape
-  run: (args: Record<string, unknown>) => unknown | Promise<unknown>
+  /** MCP 标准风险提示。**必填**——嵌入方据 `readOnlyHint` 决定哪些工具能交给无人值守的调用方。 */
+  annotations: ToolAnnotations
+  run: (args: Record<string, unknown>, ctx?: import('./tool-registry.ts').ToolCallContext) => unknown | Promise<unknown>
 }
+
+/**
+ * MCP `ToolAnnotations` 的子集，`readOnlyHint` **必须显式给**（守卫在 `tool-registry.test.ts`）。
+ * 判据（design.md 附录 C）：只读 = 不改用户能看见的状态、不在外部留下副作用；付费调用、内部缓存不算改。
+ * 拿不准一律按非只读。
+ */
+export interface ToolAnnotations {
+  readOnlyHint: boolean
+  /** 只在非只读时有意义：true = 可能不可逆 / 覆盖已有状态 / 在外部（用户账号、网盘、别人的界面）留下副作用。 */
+  destructiveHint?: boolean
+  idempotentHint?: boolean
+  openWorldHint?: boolean
+}
+
+/** 只读：搜、列、读、查状态。 */
+export const RO: ToolAnnotations = Object.freeze({ readOnlyHint: true })
+/** 写本地状态、可撤或追加式（立意图、起后台 run、记判定）。 */
+export const WRITE: ToolAnnotations = Object.freeze({ readOnlyHint: false, destructiveHint: false })
+/** 真动手：外部副作用 / 移动删除文件 / 覆盖配置 / 在用户的浏览器或桌面上执行。 */
+export const ACTS: ToolAnnotations = Object.freeze({ readOnlyHint: false, destructiveHint: true })
 
 // （原来这里有个 pickMeta：list_transcripts/list_parses 各自在工具层把正文投影掉。现在精简是
 // ConversionStore.list 的 expandResult 在服务端做的——一处，HTTP 与 MCP 共享同一个保证。）
@@ -322,12 +344,14 @@ export function toolCatalog(service: StreamServiceLike, extras: McpExtras): Tool
   const entries: ToolEntry[] = [
     {
       name: 'stream_list',
+      annotations: RO,
       description: 'List the curated Streams — the subscribed feed units (the default vocabulary).',
       schema: {},
       run: () => service.list(),
     },
     {
       name: 'stream_search',
+      annotations: RO,
       description:
         'NAVIGATE the source tree — discover WHICH sources exist and how to call them. Returns SOURCES (id + category + capabilities + call schema), NOT their content. To actually retrieve content from the user\'s configured sources, use content_search instead. Narrow by `categories` (one or MANY — a site/question can span several branches; use stream_categories to see them) and/or an `intent` string; set searchable=true to get only query-capable sources vs any source (to browse/subscribe). Either intent or categories should be given.',
       schema: {
@@ -344,6 +368,7 @@ export function toolCatalog(service: StreamServiceLike, extras: McpExtras): Tool
     },
     {
       name: 'stream_sources',
+      annotations: RO,
       description:
         'BROWSE the source catalog ACROSS ALL plugins — faceted, grouped by plugin. Returns SOURCES (id + pluginId + capabilities + call schema), NOT their content, and NOT ranked by relevance. Use this to enumerate/filter what sources exist everywhere (optionally narrowed by `query` substring, `category`, or `capability`/`searchable`); use stream_search instead when you want the few sources most relevant to an intent, and content_search to retrieve actual items.',
       schema: {
@@ -366,6 +391,7 @@ export function toolCatalog(service: StreamServiceLike, extras: McpExtras): Tool
     },
     {
       name: 'stream_categories',
+      annotations: RO,
       description:
         'Top of the search tree — content categories (finance / programming / social-media / news …) with how many sources and how many are searchable. Pick the branch a question belongs to, then stream_search({ category, searchable: true }).',
       schema: {},
@@ -373,6 +399,7 @@ export function toolCatalog(service: StreamServiceLike, extras: McpExtras): Tool
     },
     {
       name: 'stream_read',
+      annotations: RO,
       description:
         'FETCH LIVE from a Stream id (every source in that Stream is pulled again, right now) OR from a single source id with ad-hoc params. Either way this is a live network fetch: nothing is read from what Stream already collected, and nothing is stored. ' +
         '**Do not use it to answer "what is in my timeline / what did I already collect"** — it re-runs the harvest instead of reading the inbox, so it is slow (a busy Stream means one fetch per member source) and it can return items the user has never seen while missing older ones they have. ' +
@@ -388,18 +415,21 @@ export function toolCatalog(service: StreamServiceLike, extras: McpExtras): Tool
     },
     {
       name: 'stream_unsubscribe',
+      annotations: ACTS,
       description: 'Remove a Stream by id.',
       schema: { id: z.string() },
       run: ({ id }) => ({ unsubscribed: id, existed: service.unsubscribe(id as string) }),
     },
     {
       name: 'stream_status',
+      annotations: RO,
       description: 'Per-Stream last tick time and item counts.',
       schema: {},
       run: () => service.status(),
     },
     {
       name: 'stream_fetch_url',
+      annotations: RO,
       description:
         'Fetch a URL and return normalized content (title, author, media list with download links, text). Handles the platforms the installed packages claim (their declared links) plus direct image/video links. Returns structured media for downstream transcoding/OCR.',
       schema: { url: z.string().describe('The URL to fetch (a supported platform page, or a direct image/video link)') },
@@ -420,6 +450,7 @@ export function toolCatalog(service: StreamServiceLike, extras: McpExtras): Tool
     const inboxSearch = extras.inboxSearch
     entries.push({
       name: 'inbox_search',
+      annotations: RO,
       description:
         "Search the items ALREADY HARVESTED into the user's Stream inbox — their subscribed feeds' stored content. Offline: reads the local store, never fetches, never triggers a harvest. " +
         'THIS is the tool for "what did <person/account> post recently", "summarize my timeline", "what have I collected about X" — anything about content the user already follows. ' +
@@ -448,6 +479,7 @@ export function toolCatalog(service: StreamServiceLike, extras: McpExtras): Tool
     const contentSearch = extras.contentSearch
     entries.push({
       name: 'content_search',
+      annotations: RO,
       description:
         'Run a LIVE keyword search RIGHT NOW across the searchable content sources the user has enabled. It goes out to the network on every call and returns whatever those sources answer at this moment. ' +
         '**This does NOT read the content Stream has already collected for the user.** Nothing here comes from their inbox or their subscriptions; results are ephemeral and are not stored, and every `fetched_at` is the instant of this call. If the user asks about "my timeline", "what X posted recently", "the stuff I follow", or anything else phrased as already-collected content, this is the WRONG tool — it will hand back freshly-scraped web hits that merely match the keyword, and passing those off as the user\'s own feed is a silent lie. ' +
@@ -470,6 +502,7 @@ export function toolCatalog(service: StreamServiceLike, extras: McpExtras): Tool
     const priceSearch = extras.priceSearch
     entries.push({
       name: 'price_search',
+      annotations: RO,
       description:
         'Compare a product\'s price ACROSS e-commerce platforms RIGHT NOW. Give a product name (the more specific — model / capacity / color — the better it pins the same SKU) and it fans out over the enabled 比价 (price-comparison) sources and returns, one row per platform offer, each platform\'s current price for that product. ' +
         'It goes to the network on every call; results are ephemeral, not stored, every `fetched_at` is this instant. ' +
@@ -498,6 +531,7 @@ export function toolCatalog(service: StreamServiceLike, extras: McpExtras): Tool
     const purchaseDecide = extras.purchaseDecide
     entries.push({
       name: 'purchase_decide',
+      annotations: WRITE,
       description:
         'The ONE tool for "what should I buy" — a category, a budget, maybe a few things the user cares about. It runs the whole decision as a closed job: enumerate the candidate universe under the hard constraints, read reviews to see which models get named for the soft criteria, price each, and compute the Pareto frontier (斩杀线). Do not assemble a comparison by hand from content_search / price_search rows: the step that gets skipped by hand is the enumeration, and a domination verdict over an arbitrary subset is MISLEADING rather than merely incomplete. ' +
         'CALL IT IMMEDIATELY with what the user already gave. Do NOT interview the user first: every field except category has a sensible default (softCriteria [] = rank on price alone; holdDays 730 if unstated; willResell false if unstated), and the receipt itself reports what was missing. One run with defaults plus "here is what I assumed" beats a table of questions — the user came for an answer, not a form. Ask a follow-up only AFTER showing a result, and only if the receipt says the missing input would change it. ' +
@@ -550,6 +584,7 @@ export function toolCatalog(service: StreamServiceLike, extras: McpExtras): Tool
     const webSearch = extras.webSearch
     entries.push({
       name: 'web_search',
+      annotations: RO,
       description:
         'Search the WEB and return the top hits as {title, url, snippet}. This is the tool for questions the user\'s own content cannot answer — finding a project\'s GitHub URL, an official site, documentation, who someone is, what a term means. ' +
         'Contrast: content_search searches only the content the USER has configured/subscribed; search_agent is NOT a web search — it is a netdisk资源获取 agent (multi-round hub discovery, 夸克-first, returns acquisition targets), wrong tool for looking something up. ' +
@@ -576,6 +611,7 @@ export function toolCatalog(service: StreamServiceLike, extras: McpExtras): Tool
     const readUrl = extras.readUrl
     entries.push({
       name: 'read_url',
+      annotations: RO,
       description:
         'Read a web page as TEXT (article extraction: local reader first, paid fallback only if it declines). This is how you follow up a web_search hit. ' +
         'Returns {url, text, chars, truncated} — or {error} when the page yields no article text (paywall, JS-only app, login wall, a bare file). ' +
@@ -604,6 +640,7 @@ export function toolCatalog(service: StreamServiceLike, extras: McpExtras): Tool
     const videoSearch = extras.videoSearch
     entries.push({
       name: 'video_search',
+      annotations: RO,
       description:
         'Search film/TV/anime DOWNLOAD sources (magnet/torrent) by name. Returns a FACETED tree, not a flat list — "aggregation" is explicit dimensions you filter over, not a fixed grouping:\n' +
         '• shows[]: groups per (source, show, season). Each has qualities[] and a season `total` (episode count, null if unknown).\n' +
@@ -621,6 +658,7 @@ export function toolCatalog(service: StreamServiceLike, extras: McpExtras): Tool
       const videoResolve = extras.videoResolve
       entries.push({
         name: 'video_resolve',
+        annotations: RO,
         description:
           'Resolve a release whose needsResolve=true — its `link` is a page on the source site, not a direct download. Returns { downloads: [{url, type, password?, name?}] } where type is magnet/ed2k/quark/baidu/aliyun/http; usually one entry, first is preferred.',
         schema: { url: z.string() },
@@ -637,6 +675,7 @@ export function toolCatalog(service: StreamServiceLike, extras: McpExtras): Tool
     const extract = extras.extract
     entries.push({
       name: 'extract',
+      annotations: WRITE,
       description:
         "Get an item's text content. Input: `item` is a HANDLE, and it has three namespaces — (1) an inbox item id; (2) the id of an item you just got back from content_search or stream_read, which is NOT in the inbox but stays addressable here for ~30 minutes; (3) a netdisk-bound movie/episode key `tmdb:<id>` or `tmdb:<id>:SxxExx`, which is not an item at all — that is the only way to read a netdisk-bound episode. The backend picks how by itself (speech-to-text for video/audio, OCR for images/PDF, article fetch for links, or the post's own text) — you do not choose. Served from a persistent cache: a second call returns the cached text without re-running (no re-charge). Returns {status: running|done|error, result?: {text, format: markdown|plain, branch, detail?}}. `detail.segments` (a timed transcript) exists only for the speech branch, and is stripped when the result comes back digested (see below). This call WAITS for the work to finish (up to ~90s) rather than returning early, so a settled answer is normally the first thing you get back — do not call it again to poll unless the answer itself tells you to. " +
         'The cache is matched on the item alone, NOT on the options: a cached result comes back even if you now ask for diarize. So when the user asks to 重跑 / 重新取一次 / 重新识别发言人 (re-run, redo, extract it again, identify the speakers this time), pass rerun:true — otherwise nothing at all happens and no error is reported. ' +
@@ -672,6 +711,7 @@ export function toolCatalog(service: StreamServiceLike, extras: McpExtras): Tool
     const conversions = extras.conversions
     entries.push({
       name: 'get_conversions',
+      annotations: RO,
       description:
         "Read what has been derived from items — extracted text (kind:'extract'; its `result.branch` says how: stt/ocr/article/inline), speaker identification (kind:'identify'), on-screen text pulled from video frames (kind:'frames'; `result.track` is [{at,text}] holding ONLY what the transcript could not carry — slides, code, chart numbers; an EMPTY track does not mean it never ran, read `result.probe.stop` for which of the five stops it took) and summaries (kind:'summary'). " +
         "When `extract` returned a digest (`digested: true`), THIS is where the full text lives — call it with the item id. " +
@@ -705,6 +745,7 @@ export function toolCatalog(service: StreamServiceLike, extras: McpExtras): Tool
     const speakers = extras.speakers
     entries.push({
       name: 'read_content',
+      annotations: RO,
       description:
         "Read what is already known about an item's content, as ONE time-ordered script. " +
         'It combines up to three separate layers: the base text (speech-to-text / OCR / article), WHO is speaking, and WHAT IS WRITTEN ON SCREEN (slides, code, charts — text the speech never says out loud). ' +
@@ -756,6 +797,7 @@ export function toolCatalog(service: StreamServiceLike, extras: McpExtras): Tool
     const identify = extras.identify
     entries.push({
       name: 'identify_speakers',
+      annotations: WRITE,
       description:
         'Identify WHO is speaking in an item: runs diarization + voiceprint naming over the existing transcript (it does NOT re-run speech-to-text, and it works even when there is no transcript yet). ' +
         'Returns {status: running|done|error, ...}; if status is running, call again to poll, then use read_content to read the named script. ' +
@@ -771,6 +813,7 @@ export function toolCatalog(service: StreamServiceLike, extras: McpExtras): Tool
     const wishlist = extras.wishlist
     entries.push({
       name: 'note_unonboardable',
+      annotations: WRITE,
       description:
         'Record a site that the user wanted to follow but Stream cannot ingest yet (resolve_intent returned no matches). ' +
         'Call this right after telling the user the site cannot be onboarded — do NOT silently drop it, and do NOT substitute a different source. ' +
@@ -788,6 +831,7 @@ export function toolCatalog(service: StreamServiceLike, extras: McpExtras): Tool
     const appearances = extras.appearances
     entries.push({
       name: 'list_person_appearances',
+      annotations: RO,
       description:
         'List the content a person appears in, by voiceprint identity. Input: {person} (a registered person name or alias — exact match preferred, else substring) and optional {minSeconds} (default 30, filters out brief interjections). Returns items sorted by speaking time descending: [{itemId, title, source, seconds, segments, firstAt, nameAtTime}]. Read-only — reads the appearances ledger, never re-transcribes.',
       schema: { person: z.string(), minSeconds: z.number().optional() },
@@ -800,6 +844,7 @@ export function toolCatalog(service: StreamServiceLike, extras: McpExtras): Tool
     const rx = extras.resolve
     entries.push({
       name: 'resolve_intent',
+      annotations: RO,
       description:
         'Resolve a pasted URL into the candidate Stream sources (RSSHub catalog + native plugins) that can ingest it, each with extracted params. ' +
         'An EMPTY `matches` means Stream cannot ingest this site today (`fallback: generic-url` is NOT a subscribable source): say so plainly, do not substitute a different source.' +
@@ -825,6 +870,7 @@ export function toolCatalog(service: StreamServiceLike, extras: McpExtras): Tool
     })
     entries.push({
       name: 'resolve',
+      annotations: RO,
       description:
         'One-shot resolve a Target via the exclusive (failover) source ladder — first source that answers wins. Pass {target_type,key}, or {input} to classify first.',
       schema: {
@@ -846,6 +892,7 @@ export function toolCatalog(service: StreamServiceLike, extras: McpExtras): Tool
     })
     entries.push({
       name: 'list_sources',
+      annotations: RO,
       description: 'List sources in the resolve pool (optionally by target-type) with priority + live health.',
       schema: { target_type: z.string().optional() },
       run: ({ target_type }) => rx.listSources(target_type as string | undefined),
@@ -859,6 +906,7 @@ export function toolCatalog(service: StreamServiceLike, extras: McpExtras): Tool
     const nd = extras.netdisk
     entries.push({
       name: 'netdisk_bindings',
+      annotations: RO,
       description:
         'List netdisk (AList) bindings with their last-sync coverage — use this to find a binding\'s setId and see which have residue (unmatched left / orphan right) worth optimizing. Returns a compact projection (no per-entry dump).',
       schema: {},
@@ -866,6 +914,7 @@ export function toolCatalog(service: StreamServiceLike, extras: McpExtras): Tool
     })
     entries.push({
       name: 'netdisk_browse',
+      annotations: RO,
       description:
         "List a directory on the user's netdisk (AList). This is how you SEE the disk — every other netdisk tool addresses things by binding id or by a path you already know; this is the only one that answers \"what is actually in here\". Use it when the user names a folder in words (\"我夸克里那个播客合集\") instead of giving a path, and to confirm a path before anything writes to it. `path` is an absolute AList path (`/quark/…`, mount root first); omit it to list the roots. IT TAKES A PATH, NOT A BINDING: to see a binding's folder, read `dirPath` off netdisk_bindings and pass that as `path` — a `setId` here is rejected. `recursive:true` walks the whole subtree (names come back as relative sub-paths) — use it to judge what a folder actually holds, not just its top level. " +
         'RESPONSE SHAPE CHANGES WITH SIZE, read it before concluding: small directories come back as `entries[]` (one row per item); big ones come back as `shape` (file/dir counts, extension histogram, size range) plus a `sample` of names and NO entries[] — that is not a failure and not an empty directory, it means listing every name would not fit in the conversation. `total` is always the true count; `truncated:true` means even the shape only covers the first 5000. Read-only — it never creates, moves or deletes anything.',
@@ -884,6 +933,7 @@ export function toolCatalog(service: StreamServiceLike, extras: McpExtras): Tool
     })
     entries.push({
       name: 'netdisk_residue',
+      annotations: RO,
       description:
         'Read one binding\'s residue: current coverage + the left items the rule failed to place (unmatchedLeft) + the right files nothing used (orphanRight) + human corrections (corrected, a labelled set: rightFile set = should match that / null = should stay empty). This is everything you need to author a better MatchSpec. ' +
         NETDISK_SPEC_DOC,
@@ -892,6 +942,7 @@ export function toolCatalog(service: StreamServiceLike, extras: McpExtras): Tool
     })
     entries.push({
       name: 'netdisk_preview_spec',
+      annotations: RO,
       description:
         'Dry-run a candidate MatchSpec against a binding — computes, persists nothing. Returns before/after coverage, `changed` (rows that would move: {leftKey, from, to}), and `correctedConflicts` (where the rule disagrees with a human correction — those stay pinned to the human on apply). Author the spec from netdisk_residue, preview here, then netdisk_apply_spec. ' +
         NETDISK_SPEC_DOC,
@@ -900,6 +951,7 @@ export function toolCatalog(service: StreamServiceLike, extras: McpExtras): Tool
     })
     entries.push({
       name: 'netdisk_apply_spec',
+      annotations: ACTS,
       description:
         'Validate + persist a MatchSpec onto a binding and resync (human corrections stay pinned). Returns the post-sync coverage summary. Preview with netdisk_preview_spec first. Same closed-set schema as preview.',
       schema: { setId: z.string(), spec: z.record(z.string(), z.unknown()) },
@@ -911,6 +963,7 @@ export function toolCatalog(service: StreamServiceLike, extras: McpExtras): Tool
       const open = nd.reconcileOpen
       entries.push({
         name: 'reconcile_open',
+        annotations: ACTS,
         description:
           "Point a subscription at netdisk folders so reconcile can run on them — the setup step BEFORE reconcile_status/decide/execute. Use it when the user says \"整理这个目录到<某档节目>\" and reconcile_status does not already list a show for that subscription. `streamId` is the subscription (stream_list / stream_search to find it — never guess it from a display name, the files that move are real). `sourceDirs` are absolute AList paths holding the loose files to be sorted; confirm them with netdisk_browse first. " +
           'ONE ATOMIC ACTION, deliberately: it creates the two shelf folders, creates or reuses the binding, gives the subscription the "下架" source that scans the offline shelf, and writes the config — in that order, rolling everything back if any step fails. Do NOT try to assemble this from other tools; a half-built setup silently sends offlined files into a folder nothing scans, which reads to the user as the files vanishing. ' +
@@ -927,6 +980,7 @@ export function toolCatalog(service: StreamServiceLike, extras: McpExtras): Tool
       const listen = nd.transcribeFile
       entries.push({
         name: 'netdisk_transcribe',
+        annotations: RO,
         description:
           "LISTEN to a loose audio file on the user's netdisk: returns a speech transcript of a SAMPLE — about the first two minutes and the last two minutes, NOT the whole file. `path` is an absolute AList path (get it from reconcile_status's pending cards or from netdisk_browse). " +
           'USE IT when you must decide WHICH EPISODE a netdisk file is and the filename/duration do not settle it — the opening minutes name the topic, and the ending tells you whether the file is complete (a proper sign-off) or was cut short (a sentence stopping mid-word). Those are the two questions metadata cannot answer, and "truncated file" vs "the listing\'s duration is wrong" have OPPOSITE fixes. ' +
@@ -939,6 +993,7 @@ export function toolCatalog(service: StreamServiceLike, extras: McpExtras): Tool
     }
     entries.push({
       name: 'reconcile_status',
+      annotations: RO,
       description:
         "Netdisk reconcile (归档整理) status. No args → list configured shows (id/label/bindingId). `show` accepts the show id, the SUBSCRIPTION id (what an `@` reference in the composer carries — `「name」(stream:<id>)`), or the show's display name; a miss reports the ids that do exist, so you never need a separate listing round-trip. With `show` → run a READ-ONLY preview and return {counts, pending[], pendingTotal, pendingTruncated, suspectDirs[]}. NOTHING HAS HAPPENED YET: every number in `counts` is a PLANNED action this preview would take, never a completed one — only reconcile_execute moves anything, so never report these as \"已移动\"/\"already moved\". Read `counts` as: `move` is the total planned moves and `moveClaimed` + `moveSecondary` + `movePureCut` (files whose name says 纯享 — a separate playlist, shelved under `<claimed>/纯享/S<nn>/`, never an episode) are its BREAKDOWN (they sum to `move` — reporting them alongside `move` as separate figures double-counts the same files); `deleteDup`/`deleteLoser`/`deleteRedundant`/`replace` are planned too; `pending` is how many cards await adjudication. EVERY PLANNED DELETE IS LISTED HERE, per file, in `plannedDeletes[]` — {kind:'delete-dup'|'delete-loser'|'delete-redundant'|'replace', path (the file that disappears), keptPath? (the copy that stays; absent for delete-redundant, where what stays is the source site itself), episode?, sizeBytes?/durationS? (the copy that disappears), keptSizeBytes?/keptDurationS? (the copy that stays), basis? (why the planner picked the keeper)} — that is the list reconcile_execute expects you to have checked, since a delete is the one action nothing walks back. CHECK IT ON `durationS`: two copies of the same episode have EXACTLY equal durations, so `durationS !== keptDurationS` means stop, and `keptSizeBytes < sizeBytes` (keeping the smaller file) means stop; a wildly implausible duration is a failed probe, not evidence about the content. A duration field is ABSENT when the planner had no candidate row for that path — absent is not zero. This list is paged on its OWN cursor `deletesOffset` (NOT `offset`, which belongs to `expandDir`): one page is at most 50 entries, and the reply carries `plannedDeletesTotal`, `plannedDeletesOffset` and `plannedDeletesTruncated` (true = call again with `deletesOffset: <offset + 50>` to get the rest). `planFingerprint` is a stable hash of the whole plan — pass it to reconcile_execute as `expectFingerprint` so the run you checked is the run that happens. Per-file details for the routine MOVES live in the panel, not here (a moved file can always be moved back). `pending[]` are the per-file cards that need adjudication, each with the file (path/size/durationS), the colliding episode (episode/leftKey/authorityDurationS), competing candidates, and the planner's reason — capped at `limit` (default 50, max 200); `pendingTotal`/`pendingTruncated` tell you whether you are holding the whole list, so never assume you are. " +
         "`suspectDirs[]` is DIFFERENT and you must not treat it as more cards: each entry is ONE directory-level finding ({dir, unrecognized, scanned, files, sample[], hint}) saying that directory looks mis-claimed, which pressed ALL `files` actions under it into pending. That is one question — \"is this directory even the right folder?\" — so ASK THE USER it first; a mis-pointed binding is fixed by re-pointing it, not by adjudicating hundreds of files one by one. Only after the user confirms the folder is right, call again with `expandDir:<that dir>` (plus `offset`/`limit`) to page through that group's files; the expanded reply carries {expanded:{dir,total,offset,returned,hasMore}} and each row's own `priorVerdict`. " +
@@ -961,6 +1016,7 @@ export function toolCatalog(service: StreamServiceLike, extras: McpExtras): Tool
     })
     entries.push({
       name: 'reconcile_decide',
+      annotations: WRITE,
       description:
         "Record adjudications for pending reconcile cards. BATCH BY DEFAULT: pass `decisions` — an array of the shapes below — and settle every card you have decided in ONE call. Do not loop this tool one card per call; each call re-sends the whole conversation, so 28 cards one-by-one costs 28 round-trips for 28 sixteen-byte replies. Returns {ok, decided, failed, errors?}, where each error carries the offending `index` + `target` and the others still went through — resend only the failures. The single-decision shape (fields at the top level, no `decisions`) still works and is exactly the 1-element case. " +
         "Each decision has two shapes: {verdict:'is-episode'|'not-episode', leftKey, path} answers \"is this FILE that EPISODE\" (verdict:null + leftKey+path = 撤回); {verdict:'prefer', keptPath, loserPath} answers \"of these two copies keep the first\". Writes only the decision ledger — nothing moves until reconcile_execute. EVIDENCE POLICY (hard rule): decide directly WITHOUT asking the user only when the conclusion is a logical deduction, not a judgment — byte-identical duplicates (same size+duration), duration matching the episode listing to within seconds with a matching name, or a plainly broken filename. For everything softer — a compilation file (duration way over the listing), multiple candidates competing for one slot, name and duration contradicting each other — lay out the evidence in the conversation and let the user answer first; for those cards 'is-episode' means \"this file CONTAINS that episode\", which the user must see. After deciding without asking, report what you did and why in one line.",
@@ -988,6 +1044,7 @@ export function toolCatalog(service: StreamServiceLike, extras: McpExtras): Tool
     })
     entries.push({
       name: 'reconcile_execute',
+      annotations: ACTS,
       description:
         'Execute a show\'s reconcile plan: move claimed files onto the shelf, apply recorded decisions, delete byte-identical duplicates. THIS ONE REALLY MOVES AND DELETES FILES on the user\'s netdisk — everything before it was a preview. Returns {moved, deleted, renamed, removedDirs, runId, pending, errors}. Run reconcile_status first and settle the pending cards (reconcile_decide) — anything still pending is skipped, not forced. Decision rows follow moved files automatically (path migration), so a decided card never re-pends after the move. ' +
         "`show` takes the same values as reconcile_status, INCLUDING a binding setId (or `binding:<setId>`) — that is how a TV/movie binding is archived. For a TV binding the plan does more than move: it renames files with an `SxxExx - ` prefix and shelves 纯享 cuts as a separate playlist, so `renamed`/`removedDirs` are usually non-zero there. " +
@@ -1000,6 +1057,7 @@ export function toolCatalog(service: StreamServiceLike, extras: McpExtras): Tool
     })
     entries.push({
       name: 'reconcile_undo_run',
+      annotations: ACTS,
       description:
         "Undo ONE WHOLE reconcile run: replay that run's provenance rows backwards — files move back to where they came from, `SxxExx - ` renames revert, directories the run emptied and removed are recreated. `runId` comes from reconcile_execute's reply, or from netdisk_follow view's `lastRuns[].archived.runId` (a follow round archives too, and that is the runId to undo when a round filed episodes wrongly). " +
         'DELETES ARE NOT UNDONE HERE and never will be — they come back as `skipped`, not `undone`, so a reply of {undone:0, skipped:7} means the run was all deletions and nothing was restored. Say that plainly instead of reporting a successful undo; on quark the deleted copies sit in the netdisk trash for about ten days and the user can restore them there. ' +
@@ -1011,6 +1069,7 @@ export function toolCatalog(service: StreamServiceLike, extras: McpExtras): Tool
       const adjudicate = nd.adjudicate
       entries.push({
         name: 'reconcile_adjudicate',
+        annotations: ACTS,
         description:
           "Ask a model to rule on the pending cards reconcile_status leaves behind for this `show` — the ones a rule cannot settle but a glance at the evidence can (evidence-conflict / duration-collision / no-duration; `season-unresolved`/`replace`/`suspect-dir` cards are NOT sent, those stay for a human). Its answers pass through a CODE GATE before anything is written — high confidence only, the candidate must be one this card actually offered, the episode number embedded in the filename must match, and duration must line up within tolerance — so a wrong guess gets rejected, not applied. THE MODEL NEVER DELETES: it can only mark a file 'is this episode' or 'not this episode'; any card whose answer would be a duplicate/replace decision is left for a human. Returns {runId, skipped?, asked, applied, rejected, unsure, failed?}. `skipped:'same cards'` means the exact same batch was already asked within the last 7 days and nothing was re-sent — that is normal throttling, not a bug — pass `force:true` when the user explicitly wants this batch re-asked now (the model's answers still go through the same gate); `skipped:'no cards'` means there was nothing to ask. `failed` means the whole batch was thrown out (no LLM configured, or its reply was not parseable JSON) — nothing was written either way. If `applied` > 0 for a TV binding, the archive step ran again automatically, so call reconcile_status again before trusting the tree. `losers` (default false) is the delete-confirmation-gate flag passed to that re-archive, same meaning as elsewhere. " +
           'reconcile_revoke_adjudication takes back everything one runId wrote, in one call.',
@@ -1022,6 +1081,7 @@ export function toolCatalog(service: StreamServiceLike, extras: McpExtras): Tool
       const revoke = nd.revokeAdjudication
       entries.push({
         name: 'reconcile_revoke_adjudication',
+        annotations: ACTS,
         description:
           "Undo everything ONE reconcile_adjudicate call decided — every is-episode/not-episode row it wrote, in one shot (they all carry the same `runId` as a marker). It does NOT undo a transfer: if the run also pulled a follow candidate onto the user's own netdisk, that file stays put — this only erases the model's verdict about which episode it is, so the next sync goes back to treating it as unmatched/pending. `runId` comes from the reconcile_adjudicate reply. Returns {ok, revoked} — `revoked` is how many decision rows were deleted; 0 is not an error, it means that run applied nothing (everything it proposed was rejected by the gate or came back unsure).",
         schema: { runId: z.string() },
@@ -1030,6 +1090,7 @@ export function toolCatalog(service: StreamServiceLike, extras: McpExtras): Tool
     }
     entries.push({
       name: 'netdisk_sync',
+      annotations: WRITE,
       description:
         "Re-run recognition on one binding: rescan its netdisk folder and re-match the files against the episode list, then report what is matched and what is still missing, PER SEASON. Call it after the files on disk changed — a manual upload, a netdisk_follow run that transferred episodes, a reconcile_execute that renamed or moved them — because every other view reports the LAST sync, not the disk as it is now. `setId` comes from netdisk_bindings. " +
         'IT MOVES NOTHING. It only re-computes the pairing, so it is safe to call whenever you are unsure the picture is current. Returns {setId, title, bySeason:[{season, matched, total, unaired, missing:[{leftKey,title,airDate}], missingTruncated}], orphanFiles, orphanSample} — `total` counts only episodes that have AIRED (matched ones included); `unaired` is how many are still unaired or undated placeholders, and they are neither in `total` nor in `missing`, so "matched 97 / total 97, unaired 4" means nothing is missing — never report unaired episodes as gaps. `missing` is capped per season and `missingTruncated` tells you when there are more, so never read a capped list as the complete set of gaps. `orphanFiles` counts files on disk that no episode claimed (a sample of names is included): a big number there usually means the naming defeats the match rule, which is what netdisk_residue + netdisk_preview_spec/netdisk_apply_spec are for. ' +
@@ -1041,6 +1102,7 @@ export function toolCatalog(service: StreamServiceLike, extras: McpExtras): Tool
       const verify = nd.shareVerify
       entries.push({
         name: 'netdisk_share_verify',
+        annotations: RO,
         description:
           "Check whether a QUARK SHARE LINK (someone else's 夸克网盘 分享) is still alive and list what is inside it — READ-ONLY, nothing is transferred, nothing is written to the user's disk. QUARK ONLY: any other netdisk comes back as `validity:'unsupported'` with a reason, which is NOT a dead link — tell the user we cannot check that one and they can open it themselves. A link that is not a netdisk share at all comes back `unsupported` too: video_search releases marked `needsResolve:true` are landing pages, so run video_resolve on those first and verify the real link it returns. Pass `link` (the full share URL, parsed for you) or `netdisk` + `pwdId`; add `passcode` when the share is locked (without it a locked share can only be reported as 'needs-login'). " +
           "USE IT on the links video_search hands back, BEFORE you propose transferring one: `validity` is 'alive' (usable), 'not-usable' (deleted or taken down — for anything but a currently-airing show this is the NORMAL outcome, not an error, and it is not worth retrying), 'needs-login' (the account cannot open it: a passcode or the user's login is missing), 'unknown' (the check itself did not get an answer — do NOT report that as dead), or 'unsupported' (we cannot check this one at all — a non-quark netdisk, or not a share link; never report that as dead either). " +
@@ -1065,6 +1127,7 @@ export function toolCatalog(service: StreamServiceLike, extras: McpExtras): Tool
       const follow = nd.follow
       entries.push({
         name: 'netdisk_follow',
+        annotations: ACTS,
         description:
           "追更 for one TV binding: the standing loop that watches for episodes the user is missing, finds shares for them, transfers them in and files them away. `setId` comes from netdisk_bindings (TV bindings only — a podcast or movie binding has no follow). `action` is one of: " +
           "`view` (read-only) → {follow:{enabled,dryRuns,lastCheckAt,nextCheckAt}, missingAired[] (leftKeys of episodes that HAVE AIRED and are still missing — this is the number that matters), upcoming (aired-in-the-future, nothing to fetch yet), shares[] (the links this binding already knows, with their validity), lastRuns[] (the last 5 rounds, newest first: {id, at, trigger, missingAired, saved (files transferred), synced:{matchedBefore,matchedAfter}, archived?:{runId,moved,deleted,renamed,gated?}, errors} — and `lastRuns[0]` additionally carries `errorList[]`, the per-error text, which is the only thing that explains a round that achieved nothing)}. `enable`/`disable` flip the standing loop and return the same view. A binding that cannot follow at all (not a TMDb TV binding) answers {error} instead of a view. " +
@@ -1081,6 +1144,7 @@ export function toolCatalog(service: StreamServiceLike, extras: McpExtras): Tool
     const cap = extras.harvestCapability
     entries.push({
       name: 'harvest_capability',
+      annotations: RO,
       description:
         "Whether harvesting can run on this machine at all — the FIRST thing to check when a cdp_*/harvest call says the extension is not connected, or when nothing is being collected from a logged-in source. Stream ships no browser of its own: it drives the user's OWN Chrome through the Stream extension, so this is the precondition for every browser-backed tool. Returns {state, connected, since, everSeen, lastSeenAt?, extVersion?, browser?, platform?, chrome:{selected, origin, candidates[], mustChoose}}. `state` is the whole verdict: 'ready' = harvest now; 'disconnected' = installed before but the extension is not connected (normal for a reclaimed MV3 service worker — tell the user to open Chrome / reload the unpacked extension, do NOT treat it as a source failure); 'never-seen' = Chrome + extension were never seen, so guide the install. The `chrome` block answers WHICH SIDE to install on: `candidates[]` are the chrome.exe paths found (windows entries first), `mustChoose:true` means nothing is selected yet and more than one candidate exists — picking wrong fails silently (harvest runs as a guest and collects nothing), so ask the user instead of guessing. Read-only; enumerates the filesystem for candidates, so call it when diagnosing, not in a loop.",
       schema: {},
@@ -1094,6 +1158,7 @@ export function toolCatalog(service: StreamServiceLike, extras: McpExtras): Tool
     const capabilityStatus = extras.capabilityStatus
     entries.push({
       name: 'capability_status',
+      annotations: RO,
       description:
         "Why a Stream capability cannot run right now, and WHO can fix it. Call it the moment a request fails with 'branch_unavailable', '未配置', 'no transcription source' or similar — that error says WHAT is missing, this says whether YOU can fix it for the user or he has to. Read-only, no side effects. "
         + 'Returns {capabilities:[{id,label,state,available,why,keys[],keys_mode:"any",blockers[]}]} — today: transcribe (audio/video → text), ocr (images/PDF → text), article (a link → article text). '
@@ -1117,6 +1182,7 @@ export function toolCatalog(service: StreamServiceLike, extras: McpExtras): Tool
     const provisionerFor = extras.configProvisionerFor
     entries.push({
       name: 'provision_capability_key',
+      annotations: ACTS,
       description:
         "Get an API key FOR the user, by driving his own browser: it opens the vendor's console in HIS Chrome, signs in as HIM (his existing session), creates a new key on HIS account, and writes the one-time plaintext straight into Stream's local config. `ref` is the slot id — take it from a capability_status blocker of kind 'config' with can_provision:true; never guess one. "
         + 'TWO-STEP CONFIRMATION, always: call WITHOUT `confirmed` first — NOTHING runs, and it returns {status:"needs-confirmation", ref, field, label, entryUrl, sourceId, params, effects[]} describing exactly what would happen. SHOW `effects` to the user verbatim-in-substance before asking: this is an ACCOUNT-LEVEL side effect on his real account, the plaintext is shown once and stored locally, and creating a key is NOT idempotent — running it twice leaves two look-alike keys sitting in his account forever. Only after he agrees, call again with the SAME `ref` and `params` PLUS `confirmed:true`. '
@@ -1167,6 +1233,7 @@ export function toolCatalog(service: StreamServiceLike, extras: McpExtras): Tool
     const cdpPages = extras.cdpPages!
     entries.push({
       name: 'cdp_look',
+      annotations: ACTS,
       description: cdpToolSpec('cdp_look').description,
       schema: cdpSchema('cdp_look'),
       run: ({ target, js, url, interactive, inventory, frame }) =>
@@ -1181,12 +1248,14 @@ export function toolCatalog(service: StreamServiceLike, extras: McpExtras): Tool
     })
     entries.push({
       name: 'cdp_shot',
+      annotations: RO,
       description: cdpToolSpec('cdp_shot').description,
       schema: cdpSchema('cdp_shot'),
       run: ({ target }) => cdpShot({ target: target as string }),
     })
     entries.push({
       name: 'cdp_act',
+      annotations: ACTS,
       description: cdpToolSpec('cdp_act').description,
       schema: cdpSchema('cdp_act'),
       run: ({ target, kind, domain, ref, frame, selector, text, targetUrl, exe, args, x, y, px, paths, expression, expect, intent, confirmed }) =>
@@ -1213,6 +1282,7 @@ export function toolCatalog(service: StreamServiceLike, extras: McpExtras): Tool
     })
     entries.push({
       name: 'cdp_pages',
+      annotations: ACTS,
       description: cdpToolSpec('cdp_pages').description,
       schema: cdpSchema('cdp_pages'),
       run: ({ target, close }) => cdpPages({ target: target as string, close: close as number | undefined }),
@@ -1235,18 +1305,21 @@ export function toolCatalog(service: StreamServiceLike, extras: McpExtras): Tool
     }
     entries.push({
       name: 'graph_frontier',
+      annotations: RO,
       description: '探索建图：当前状态下还能点什么（带编号）。exhausted=true 表示整张图都探够了。',
       schema: { runId: z.string() },
       run: ({ runId }) => withSession(runId, (s) => s.frontier()),
     })
     entries.push({
       name: 'graph_act',
+      annotations: ACTS,
       description: '探索建图：让 Stream 点 frontier 里的一个编号，回 {from,to,effect}。to 为 unknown 时先 graph_record_state 起名。',
       schema: { runId: z.string(), ref: z.number().int(), note: z.string().optional() },
       run: ({ runId, ref, note }) => withSession(runId, (s) => s.act(ref as number, note as string | undefined)),
     })
     entries.push({
       name: 'graph_record_state',
+      annotations: WRITE,
       description: '探索建图：给当前没见过的屏起名。id 必须 <facility>/<名>，features 只能 url / dom，要能只匹配这一屏。',
       schema: {
         runId: z.string(),
@@ -1267,12 +1340,14 @@ export function toolCatalog(service: StreamServiceLike, extras: McpExtras): Tool
     })
     entries.push({
       name: 'graph_back',
+      annotations: WRITE,
       description: '探索建图：退到上一个状态。',
       schema: { runId: z.string() },
       run: ({ runId }) => withSession(runId, (s) => s.back()),
     })
     entries.push({
       name: 'graph_mark_irrelevant',
+      annotations: WRITE,
       description: '探索建图：这个状态与目标无关，不再展开。',
       schema: { runId: z.string(), state: z.string() },
       run: ({ runId, state }) => withSession(runId, (s) => s.markIrrelevant(state as string)),
@@ -1283,6 +1358,7 @@ export function toolCatalog(service: StreamServiceLike, extras: McpExtras): Tool
     const sa = extras.searchAgent
     entries.push({
       name: 'search_agent',
+      annotations: WRITE,
       description:
         '启动一个目标导向的信息搜索 Agent 运行：给一个具体获取目标（如"怡楽播客"），它在网盘元搜索上多轮扩源、' +
         '判切题、夸克优先，返回具体网盘获取目标。异步——返回 {runId, status}，用 get_agent_run(runId) 轮询进度与结果。',
@@ -1293,6 +1369,7 @@ export function toolCatalog(service: StreamServiceLike, extras: McpExtras): Tool
       const enumerate = sa.enumerate
       entries.push({
         name: 'enumerate_candidates',
+        annotations: WRITE,
         description:
           '按约束枚举一份**商品候选清单**：给品类 + 价格区间 + 硬性条件，它去找这类东西的聚集地（排行榜/导购/比价页），' +
           '从聚集地抽出「型号 ↔ 价格」，再逐个用比价数据核实"这个型号真在售、价格真在区间内"，返回一份带出处的清单。' +
@@ -1327,6 +1404,7 @@ export function toolCatalog(service: StreamServiceLike, extras: McpExtras): Tool
     }
     entries.push({
       name: 'get_agent_run',
+      annotations: RO,
       description:
         '读取一次 search_agent / enumerate_candidates / purchase_decide / run_action_recipe 运行。只读、不触发新运行。status 为 running 时隔 20–30 秒再调一次（action 档 10–15 秒）。' +
         '\n\n**action 档**（run_action_recipe 回 running 时给的 runId）返回 {domain:"action", status, sourceId, elapsedSec, result?, error?, note}：run 的 `status` 只说跑没跑完；' +
@@ -1398,6 +1476,7 @@ export function toolCatalog(service: StreamServiceLike, extras: McpExtras): Tool
     const intents = extras.intents
     entries.push({
       name: 'intent_create',
+      annotations: WRITE,
       description:
         '立一个长期跟踪意图（不是一次性搜索）：给一句目标（如"追踪某播客的新一季"），LLM 生成判定标准（criteria——' +
         '什么算相关、什么明确排除）并持久化。之后的新内容会拿这份标准逐条判是否入选（消化在后台跑，不在这个工具里）。' +
@@ -1407,6 +1486,7 @@ export function toolCatalog(service: StreamServiceLike, extras: McpExtras): Tool
     })
     entries.push({
       name: 'intent_list',
+      annotations: RO,
       description:
         '列出所有跟踪中的意图（含已退休的），每条附 ledgerCount（已消化过的 item 数，粗略反映活跃度）。',
       schema: {},
@@ -1422,6 +1502,7 @@ export function toolCatalog(service: StreamServiceLike, extras: McpExtras): Tool
     const runActionRecipe = extras.runActionRecipe
     entries.push({
       name: 'run_action_recipe',
+      annotations: ACTS,
       description:
         'Run an ACTION recipe — a recipe that does not harvest content, it just DOES one thing with a side effect (e.g. `qq-send` sends a chat message). Most recipes in this system are harvest recipes (they feed the inbox); this tool is ONLY for the small opt-in set explicitly marked as actions — it refuses anything else. ' +
         'TWO-STEP CONFIRMATION, always: call WITHOUT `confirmed` first — it validates `params` and returns {status:"needs-confirmation", sourceId, params, description, targetApp?, screenTakeover?, targetSite?} describing EXACTLY what would happen, without doing anything. Exactly one physical-side-effect field comes back, depending on the recipe: a DESKTOP action returns `targetApp` (which window it acts on) + `screenTakeover` (it steals the foreground window and may fall back to real keyboard input); a BROWSER action returns `targetSite` (it opens a tab in the user\'s OWN Chrome and acts with their real logged-in session — it does not steal the screen, but the account-level side effect is real, e.g. logging into a brokerage kicks other sessions). SHOW whichever came back to the user alongside description/params, not just description: it is the whole point of the confirmation, and none of it is obvious from the recipe id alone. Only after the user agrees, call again with the SAME sourceId+params PLUS `confirmed:true` to actually execute — a side-effecting action (a real message sent, a real login performed, unrecoverable) must never run on your own say-so. ' +
@@ -1446,6 +1527,7 @@ export function toolCatalog(service: StreamServiceLike, extras: McpExtras): Tool
     const dbg = extras.recipeDebug
     entries.push({
       name: 'recipe_debug_start',
+      annotations: ACTS,
       description:
         'STEP-DEBUG a DESKTOP recipe: start a real run of it that PAUSES BEFORE EVERY STEP and waits for recipe_debug_next. Same runner, same driver, same recognition as run_action_recipe — nothing is simulated, every step that you release really happens on the user\'s machine (a released "send" really sends). Use it to walk a recipe with the user step by step: after each pause, look at the screen yourself (cdp_shot / cdp_look with target "app:<process>/<title>"), read `probes` (which recognition rung found the target, whether a branch held, how long each read took), decide, then call recipe_debug_next to release the next step or recipe_debug_abort to stop. ' +
         'Returns {sessionId, state, step?, probes}. state "paused" = stopped BEFORE `step` (index/total/kind/label/spec — spec is the step as written in the recipe); "running" = the step is still executing (reads can take a while) — call recipe_debug_next again to keep waiting; "finished" = the whole run ended, `outcome` is the run result; "aborted" = stopped (`reason`). A paused session auto-aborts after 10 minutes without a next — it holds the desktop session lease and every other recipe queues behind it, so do not leave one hanging. Params go through the recipe\'s own params_schema exactly like run_action_recipe (there is NO confirmation step here: starting a debug session IS the confirmation — ask the user before starting one for a recipe with side effects).',
@@ -1457,6 +1539,7 @@ export function toolCatalog(service: StreamServiceLike, extras: McpExtras): Tool
     })
     entries.push({
       name: 'recipe_debug_next',
+      annotations: ACTS,
       description:
         'Release the step a recipe_debug_start session is paused before, run it, and pause before the following one. Returns the same {sessionId, state, step?, probes, outcome?} shape: `probes` are the runner\'s own trace lines for the step that just ran (recognition rung, branch verdict, expect result, timings) — read them before deciding on the next step. If state is "running" the step is still going; call again. Calling it on a "finished"/"aborted" session says so and does nothing.',
       schema: { sessionId: z.string() },
@@ -1464,6 +1547,7 @@ export function toolCatalog(service: StreamServiceLike, extras: McpExtras): Tool
     })
     entries.push({
       name: 'recipe_debug_abort',
+      annotations: WRITE,
       description:
         'Stop a step-debug session: the paused step is NOT run and no further input is sent (the run ends as drift "aborted-by-debugger@<step>"). A step that is mid-execution cannot be interrupted; the session stops right after it. Always abort a session you are not going to continue.',
       schema: { sessionId: z.string() },
@@ -1475,6 +1559,7 @@ export function toolCatalog(service: StreamServiceLike, extras: McpExtras): Tool
     const ev = extras.events
     entries.push({
       name: 'get_events',
+      annotations: RO,
       description:
         'List recent backend events, newest first: auth.needed (a facility login died), transcribe.done / transcribe.error (a transcription settled), harvest.error (a scheduled harvest failed). Each: {id,type,at,title,body?,severity,ref?,readAt?}. `since` returns only events with id > since — poll with the last seen id after kicking off async work (e.g. transcribe) to learn its outcome. `types` is a comma-separated filter.',
       schema: { since: z.number().optional(), types: z.string().optional() },

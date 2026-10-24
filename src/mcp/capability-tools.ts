@@ -1,5 +1,5 @@
 /**
- * 把能力包的 `ToolDef` 挂进 `/api/mcp` 那个 `McpServer`。
+ * 能力包的 `ToolDef` 进工具接口（`tool-registry.ts` 的 `toolSpecs`，MCP 与 `stream.tools` 共用）的那层翻译。
  *
  * ## 必须走高层 `registerTool`，别改回 `Server.setRequestHandler`
  *
@@ -18,7 +18,6 @@
  * 代价应该是"这一格的校验松了"，不是"整个包装不上"）。
  */
 import { z } from 'zod'
-import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import type { ToolDef } from '../../shared/capability/types.ts'
 import type { McpExtras } from './tool-catalog.ts'
 
@@ -89,37 +88,6 @@ function shapeOf(
  */
 export function zodShapeFromParameters(parameters: ToolDef['parameters']): Record<string, z.ZodTypeAny> {
   return shapeOf(parameters, (_key, spec) => spec.required === true)
-}
-
-/**
- * 把一组 ToolDef 登记进一个 `McpServer`。`execute` 抛错走 MCP 自己的 `isError` 通道——
- * 工具失败是一条**结果**，不是协议错误：让它变成协议错误，客户端看到的是连接层面的失败，
- * 模型连"这次调用为什么没成"都读不到。
- *
- * `extra.signal` 必须透传：客户端取消这次调用时靠它，断了的话表现是"它一直没回来"，静默。
- */
-export function registerCapabilityTools(server: McpServer, defs: ToolDef[]): void {
-  for (const def of defs) {
-    server.registerTool(
-      def.name,
-      {
-        description: def.description,
-        inputSchema: zodShapeFromParameters(def.parameters),
-        ...(def.annotations ? { annotations: def.annotations } : {}),
-      },
-      async (args: Record<string, unknown>, extra?: { signal?: AbortSignal }) => {
-        try {
-          const value = await def.execute(args ?? {}, { signal: extra?.signal })
-          return { content: def.output.render(args, value) }
-        } catch (err) {
-          return {
-            content: [{ type: 'text' as const, text: err instanceof Error ? err.message : String(err) }],
-            isError: true,
-          }
-        }
-      },
-    )
-  }
 }
 
 /**

@@ -22,6 +22,8 @@ export type { StreamRuntime } from './runtime.ts'
 export { createRuntime } from './runtime.ts'
 export type { StreamDevices } from './devices.ts'
 export type { StreamCapabilities } from './capabilities.ts'
+export type { StreamTools, ToolAnnotations, ToolCallContext, ToolDescriptor, ToolProgress, ToolResult } from './tools.ts'
+import { createTools, type StreamTools } from './tools.ts'
 
 /** 宿主层递进来的回调：实例往外推东西（ws 广播、调试总线、归因）只经这几个口，自己不持有任何连接。 */
 export type StreamHostHooks = Pick<
@@ -55,6 +57,8 @@ export interface Stream {
   readonly secrets: StreamSecrets
   /** 能力包宿主与已装载的可选包。 */
   readonly capabilities: StreamCapabilities
+  /** 工具目录的进程内接口（D3）：与 MCP 端点同一份工具、同一套结果。 */
+  readonly tools: StreamTools
   /** 撤掉内核上的全部 effect（库句柄、定时器、子进程、采集标签的归还），放掉数据目录锁。幂等。 */
   close(): Promise<void>
 }
@@ -124,6 +128,7 @@ export async function createStream(opts: CreateStreamOptions): Promise<Stream> {
     devices,
     secrets,
     capabilities,
+    tools: createTools(kernel, capabilities),
     close: () => closing ??= (async () => {
       try {
         await quiesceKernel(kernel)
