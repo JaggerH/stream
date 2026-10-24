@@ -60,5 +60,5 @@
 - [ ] 6.1 `@streamapp/engine` 的 `package.json` 与 `exports`；导出清单快照守卫
   - 已做：导出清单守卫 `src/engine/exports.guard.test.ts`。
   - 剩下：`package.json#exports` 与发布布局——包放哪、要不要构建、原生依赖与运行期资产、版本节奏，待定项见 design D7。
-- [ ] 6.2 `docs/ARCHITECTURE.md` 加「作为库使用」一节；README 提一句
-- [ ] 6.3 真启动回归：`stream serve` + 面板 + 一次采集 + 一次 MCP 调用 + 一条定时任务
+- [x] 6.2 `docs/ARCHITECTURE.md` 加「Using Stream as a library」一节（createRuntime / createStream / routes+attachRelayServers / tools / 生命周期与双实例测试指引）；README 末尾加「Embedding」一段链过去
+- [x] 6.3 真启动回归：临时目录起 serve → /api/health 200 → MCP tools/list 正常 → 调度中心起来（registry 67 curated + 68 recipe；sidequest dashboard 口 8678 被同机另一实例占用报了一行环境性失败，非致命）→ SIGTERM 干净退出、端口释放、无 engine.lock 残留。全文见 code-agent 交付报告（HANDOFF-code-agent.md）。

@@ -2011,6 +2011,46 @@ it silently does not attach (the Stream is created and scheduling is added, but 
 `ensureChannel`. When connection fails (`matches` is empty), the assistant says so truthfully and stops, while calling `note_unonboardable` to record it in
 the `想接还接不了` ("wants to connect but cannot yet") list (`/api/onboard/wishlist`) -- that list depends on the model proactively calling it and is **not guaranteed to be complete**.
 
+## Using Stream as a library (`embeddable-engine`)
+
+Stream's backend can be embedded into another process instead of being run as
+`stream serve`. The entry points live in `src/engine/`:
+
+- **`createRuntime({ env, process })`** (`src/engine/runtime.ts`) — the
+  **process-level** shared resources: the single RSSHub worker thread, Chrome
+  discovery, exit hooks and (with `process: true`) the crash guards and global
+  fetch trap. One process = one runtime; pass it to every `createStream` call
+  you make. The creator also owns closing it.
+- **`createStream({ dataDir, config?, runtime? })`** (`src/engine/index.ts`) —
+  one **instance**: data-dir lock, the cordis kernel, full bootstrap, the task
+  center and the two API tokens. One instance per data directory (a second
+  `createStream` on the same directory throws); instances sharing a runtime
+  share its lazily-created worker. `stream.close()` quiesces the kernel and
+  releases the lock — the shared runtime survives unless you created it.
+- **`routes(io)` / `attachRelayServers(server, io)`** (`src/engine/routes.ts`) —
+  the whole HTTP surface. `routes` builds and returns the Hono app (REST API,
+  MCP, plugin gateway, panel assets); `attachRelayServers` hangs the
+  extension/host/event-source relays and the Stream Desktop host agent onto an
+  already-listening server. Callers that don't serve HTTP simply never call
+  these — the instance works in-process without any port.
+- **`stream.tools`** (`src/engine/tools.ts`) — the in-process tool interface
+  the MCP endpoint is built on: `stream.tools.list()` / `stream.tools.call()`
+  return the same results the MCP client sees.
+
+Lifecycle: `createRuntime` → `createStream` (per data dir) → [`routes` +
+`attachRelayServers` if you serve HTTP] → on shutdown `stream.close()` per
+instance, then `runtime.close()` from the creator. Instance switches (serving
+policies, plugin targets, provider identities, caches, env-derived flags)
+translate through `AppConfig.deployment` — engine-reachable modules never read
+`process.env` (guarded by `src/engine/no-process-env.guard.test.ts`).
+
+Two instances in one process are covered end-to-end by
+`src/engine/two-instances.test.ts`: subscriptions, items, settings, tasks,
+cookies and caches are per instance; the runtime's worker is shared.
+
+The publish shape of `@streamapp/engine` (package layout, versioning) is
+deliberately open — see openspec `embeddable-engine` design D7.
+
 ## Data & File Structures (target state)
 
 The designed shapes, from the model above — current code differs (see

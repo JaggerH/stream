@@ -173,3 +173,10 @@ form: [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md). Contribution workflow:
 ## Status
 
 Dogfooding daily. Stream is licensed under the [Apache License 2.0](LICENSE).
+
+## Embedding
+
+The backend can run inside another process: `createRuntime()` +
+`createStream()` from `src/engine/` give you a full instance per data
+directory (HTTP surface optional), sharing one process-level RSSHub worker.
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) → "Using Stream as a library".
