@@ -207,7 +207,7 @@ function FeedPostItem({
   // 动作条没了：这条内容的动作全在右键菜单里（转成文字 / 打开原文 / 下载）。别把任何一格加回
   // 行上——常驻 × 118 行就是 118 排噪音，理由见 ItemContextMenu。
   return (
-    <ItemContextMenu item={item} videoDl={canDownload ? videoDl : undefined}>
+    <ItemContextMenu item={item} videoDl={canDownload ? videoDl : undefined} onOpen={onOpen}>
       {row}
     </ItemContextMenu>
   )

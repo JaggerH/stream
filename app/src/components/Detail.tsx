@@ -37,7 +37,8 @@ import { sourceLabel } from '../lib/sourceLabel.ts'
 import { ModalAcrylicBody } from './acrylic/use-modal-acrylic.ts'
 import { Button as AcrylicButton } from './acrylic/button.tsx'
 import { cn } from '../lib/utils.ts'
-import { askExtract } from '../lib/askExtract.ts'
+import { TranscriptPanel } from './TranscriptPanel.tsx'
+import { useExtractConversion } from '../lib/useExtractConversion.ts'
 import type { Item, Media, Quoted } from '../lib/types.ts'
 import { overlayBlurb } from '../lib/blurb.ts'
 import { BlurbOverlay } from './BlurbOverlay.tsx'
@@ -373,15 +374,20 @@ function CommentsPanel({ enr }: { enr: EnrichmentState }) {
 }
 
 /**
- * 右面板：**只有详情这一档**，所以没有切换器。
+ * 右面板：**详情那一档无条件在**；条目还能转成文字时多一档「转写」（`transcript` 非空）。
+ *
+ * 一档不画切换器：一个只有一个选项的分段控件是纯噪声——「转写」档出现才画。
  *
  * 对话曾经是第二档（`ChatStage`），随原生抽屉一起退役——对话入口只剩 DSH 工作台
- * （spec 2026-08-17-native-chat-drawer-removal）。转写更早（2026-08-12）就不在这儿了。
- * 一档不画切换器：一个只有一个选项的分段控件是纯噪声。
+ * （spec 2026-08-17-native-chat-drawer-removal）。转写 2026-08-12 也曾离开过这里（去对话里
+ * 落地）；这次回来（2026-10-24）背后换成了 /api/conversions 转换资源，见 TranscriptPanel 头注。
  */
 function PostPanelTabs({
   detail,
   enr,
+  transcript,
+  tab,
+  onTabChange,
 }: {
   /** 详情档要画的东西（作者块 / 标题 / 动作行 / 正文）。组件不认识它们是什么——
    *  三个布局分支装的内容不一样（无媒体那档的正文在左栏），由调用方组装。 */
@@ -389,9 +395,36 @@ function PostPanelTabs({
   /** 评论。**没有评论线程的条目由调用方传 `null`**——详情档无条件画这一块，
    *  判据留在调用方那一份 `hasCommentThread` 上，组件这边只认"有没有给我评论"。 */
   enr: EnrichmentState | null
+  /** 转写档。**只有 canExtract 的条目才递**（undefined = 这条没有转写档，不画切换器）。
+   *  tab/onTabChange 由 DetailContent 持有——动作行的「转成文字」和 autoExtract 都要能把
+   *  档位切过来，状态不能埋在这个组件里。 */
+  transcript?: ReactNode
+  tab?: 'detail' | 'transcript'
+  onTabChange?: (tab: 'detail' | 'transcript') => void
 }) {
+  const active = tab ?? 'detail'
   return (
     <div className="flex min-h-0 flex-1 flex-col">
+      {transcript !== undefined ? (
+        <div className="flex shrink-0 gap-1 border-b px-3 pt-2">
+          {(['detail', 'transcript'] as const).map((k) => (
+            <button
+              key={k}
+              type="button"
+              onClick={() => onTabChange?.(k)}
+              className={
+                'rounded-t-md px-3 pb-1.5 pt-1 text-xs transition-colors ' +
+                (active === k
+                  ? 'border-b-2 border-foreground font-medium text-foreground'
+                  : 'border-b-2 border-transparent text-muted-foreground hover:text-foreground')
+              }
+              data-testid={k === 'transcript' ? 'panel-tab-transcript' : 'panel-tab-detail'}
+            >
+              {k === 'detail' ? '详情' : '转写'}
+            </button>
+          ))}
+        </div>
+      ) : null}
       <div
         // 面板自己滚。它因此就是评论无限滚动那个哨兵的观察根——CommentsPanel 用
         // closest('[data-scroll-root]') 找最近的一个，不标的话找到的是外面那个不再滚动的壳，
@@ -403,8 +436,12 @@ function PostPanelTabs({
         data-scroll-root
         className="min-h-0 flex-1 overflow-y-auto p-5 scrollbar-mac"
       >
-        {detail}
-        {enr ? <CommentsPanel enr={enr} /> : null}
+        {transcript !== undefined && active === 'transcript' ? transcript : (
+          <>
+            {detail}
+            {enr ? <CommentsPanel enr={enr} /> : null}
+          </>
+        )}
       </div>
     </div>
   )
@@ -425,6 +462,7 @@ export function Detail({
   onClose,
   startMediaIndex = 0,
   autoPlayMedia = false,
+  autoExtract = false,
   variant = 'default',
   onPlayAudio,
   onNavigate,
@@ -438,6 +476,10 @@ export function Detail({
    *  （判据在 lib/openDetail.ts 的 autoPlaysDetailMedia）。以前这里没有开关，进详情页
    *  一律自动播——那是"点缩略图才会进详情页"年代的假设，现在点标题/正文也进得来。 */
   autoPlayMedia?: boolean
+  /** 开出来就把右栏切到「转写」档并启动转换。**缺省 false**：和 autoPlayMedia 同一形状的
+   *  一次性意图（openDetail 的 `extract: true`），来自粘贴流的确认框和右键菜单。缓存安全：
+   *  转过的那条这里是命中既有记录，不重新计费。 */
+  autoExtract?: boolean
   variant?: 'default' | 'acrylic'
   /** the timeline's podcast-queue producer (see PostItemRow) — absent → single-track play */
   onPlayAudio?: (item: Item) => void
@@ -456,6 +498,7 @@ export function Detail({
       onClose={onClose}
       startMediaIndex={startMediaIndex}
       autoPlayMedia={autoPlayMedia}
+      autoExtract={autoExtract}
       variant={variant}
       onPlayAudio={onPlayAudio}
       onNavigate={onNavigate}
@@ -470,6 +513,7 @@ function DetailContent({
   onClose,
   startMediaIndex,
   autoPlayMedia,
+  autoExtract,
   variant,
   onPlayAudio,
   onNavigate,
@@ -480,6 +524,7 @@ function DetailContent({
   onClose: () => void
   startMediaIndex: number
   autoPlayMedia: boolean
+  autoExtract: boolean
   variant: 'default' | 'acrylic'
   onPlayAudio?: (item: Item) => void
   onNavigate?: (direction: 'next' | 'prev') => void
@@ -499,6 +544,15 @@ function DetailContent({
   const enr = useEnrichment(item, conn, !!item)
   const stage = useVideoStage()
   const { t } = useTranslation()
+  // 转写档的全部状态（起/查/轮询/取消）——挂在这棵树里，详情关掉轮询随卸载停。
+  // enabled 门：canExtract 为假时整份静默（不查缓存不轮询——不然每开一条详情都白挨一发 GET）。
+  const conv = useExtractConversion(conn, item, { enabled: canExtract?.(item) ?? false })
+  // 右栏档位。持在组件上而不是 PostPanelTabs 里：动作行的「转成文字」和 autoExtract 都要
+  // 能把它切到「转写」，埋在子组件里就够不着了。
+  const [rightTab, setRightTab] = useState<'detail' | 'transcript'>('detail')
+  useEffect(() => {
+    setRightTab('detail')
+  }, [item.id])
   const copyId = () => {
     if (!item) return
     navigator.clipboard.writeText(item.id).catch(() => {})
@@ -689,6 +743,16 @@ function DetailContent({
   // 可见性判别式**只有一份**：canExtract 谓词由 App 注入（archetype → planExtract →
   // 分支可用性，shared/extract/plan.ts），这里不重算嗅探逻辑。
   const canExtractItem = canExtract?.(item) ?? false
+  // 「开出来就转」的一次性意图（粘贴确认框 / 右键菜单，openDetail 的 extract: true）：
+  // 只在换条目的那一下起作用，不跟 caps 晚半拍补上的节奏走——caps 还没到时这一下不亮，
+  // 用户也不会从那条路进来（按钮显隐同一份 caps）。
+  useEffect(() => {
+    if (autoExtract && canExtractItem) {
+      setRightTab('transcript')
+      conv.start()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoExtract, item.id])
   // 这里曾经算一格 sttLikely（「这条大概率走语音转写」），唯一的消费方是那个已经撤掉的
   // 「识别发言人」开关。走哪条分支由后端 planExtract 判，前端不需要预判。
   // 下载可见性和列表行(PostItemRow)读同一个派生层，别开第三个副本。
@@ -796,7 +860,14 @@ function DetailContent({
           <AcrylicButton
             variant="neutral"
             size="small"
-            onClick={() => void askExtract(conn, item)}
+            onClick={() => {
+              // 面板原生：切到「转写」档并起转换（缓存命中直接给全文，不重复计费）。
+              // 曾经是 askExtract 发进对话——那是因为转写稿在前端没有归宿（见
+              // TranscriptPanel 头注）；现在有了，一个按钮一种行为。对话宿主里模型自己调
+              // extract 工具的路径不受影响（ExtractCard 照旧）。
+              setRightTab('transcript')
+              conv.start()
+            }}
           >
             <FileText className="size-4" />
             {t('timeline.extract')}
@@ -820,14 +891,27 @@ function DetailContent({
 
   // 有媒体那一档（info 的右列）：作者头 + 正文都进详情插槽，左边是播放器。
   // **必须在 headerNode / bodyNode 之后声明**：插槽在这里就被求值，早一行就是 TDZ 报错。
+  const transcriptNode = canExtractItem ? <TranscriptPanel conv={conv} /> : undefined
   const mediaPanelNode: ReactNode = hasArtifacts ? (
-    <PostPanelTabs detail={<>{headerNode}{bodyNode}</>} enr={hasCommentThread(item) ? enr : null} />
+    <PostPanelTabs
+      detail={<>{headerNode}{bodyNode}</>}
+      enr={hasCommentThread(item) ? enr : null}
+      transcript={transcriptNode}
+      tab={rightTab}
+      onTabChange={setRightTab}
+    />
   ) : null
 
   // 无媒体 + 有面板那一档：详情插槽里**只有作者头**，正文在左栏（articleNode）。
   // 别为了和上面对齐而把 bodyNode 也塞进来——那是同一篇正文的第二份。
   const readingPanelNode: ReactNode = hasArtifacts ? (
-    <PostPanelTabs detail={headerNode} enr={hasCommentThread(item) ? enr : null} />
+    <PostPanelTabs
+      detail={headerNode}
+      enr={hasCommentThread(item) ? enr : null}
+      transcript={transcriptNode}
+      tab={rightTab}
+      onTabChange={setRightTab}
+    />
   ) : null
 
   const info = (

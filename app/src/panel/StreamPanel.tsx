@@ -67,6 +67,7 @@ import { autoPlaysDetailMedia } from '../lib/openDetail.ts'
 import { detailBundle } from './detailBundle.ts'
 import { askChatSink } from '../lib/askExtract.ts'
 import { firstUrlIn, isEditableTarget, resolvePastedLink } from '../lib/pasteLink.ts'
+import { PasteActionModal } from '../components/PasteActionModal.tsx'
 import { movieBundle, type MovieBundle } from './movieBundle.ts'
 import { publishThemeToFrame } from './embedTheme.ts'
 
@@ -106,7 +107,10 @@ export function StreamPanel({ onWidthChange, onItemContext }: {
   // 光靠"落地时比一下 channelId"不够：同一个频道来回切两次，旧请求的 id 又对上了，它带回的
   // 却是上一轮的游标，接着分页就从别处继续——**内容静默错位，没有任何一处会报错**。
   const loadSeqRef = useRef(0)
-  const [detail, setDetail] = useState<{ item: StreamItem; mediaIndex: number; autoPlay: boolean } | null>(null)
+  const [detail, setDetail] = useState<{ item: StreamItem; mediaIndex: number; autoPlay: boolean; autoExtract: boolean } | null>(null)
+  // 粘贴确认框里那一条（null = 没开）。认领过且带视频/音频媒体的链接先落这里问一句
+  // 「转写 / 下载 / 仅看」，不认领的照旧直接开详情（见 paste handler）。
+  const [pasteAction, setPasteAction] = useState<StreamItem | null>(null)
   // 图文流那一档的「内容 / 配置」分页。音乐/影视/研究各自的树里有自己那一份（分页归频道，
   // 见 `ChannelTabs` 头注），这一格只管这棵树顶栏下面那条。
   //
@@ -336,6 +340,7 @@ export function StreamPanel({ onWidthChange, onItemContext }: {
           item: detail.item,
           startMediaIndex: detail.mediaIndex,
           autoPlayMedia: detail.autoPlay,
+          autoExtract: detail.autoExtract,
           extractCaps: extractSeedRef.current,
           // 对话通道要**现取**（不是开页时存一份）：壳是在挂载主 bundle 那一刻才装上它的，
           // 而这里每次开详情都会重新读到当前那一份。递不过去的症状见 askChatSink() 头注。
@@ -381,8 +386,19 @@ export function StreamPanel({ onWidthChange, onItemContext }: {
       void resolvePastedLink(LOCAL, url).then((r) => {
         if (seq !== pasteSeqRef.current) return
         setPasting(false)
-        if ('error' in r) toast.error(`这条链接没打开：${r.error}`)
-        else setDetail({ item: r.item, mediaIndex: 0, autoPlay: false })
+        if ('error' in r) {
+          toast.error(`这条链接没打开：${r.error}`)
+          return
+        }
+        // 认领过、且是视频/音频 → 先问一句要干嘛（转写 / 下载 / 仅看）。面板不做意图猜测：
+        // 粘贴这个动作说的可以是三种里的任何一种，而转写是要花钱的，问一句是对的。
+        // 没认领的网页 / 纯图集 → 维持原行为，直接开详情。
+        const media = r.item.content?.media ?? []
+        if (r.claimed && media.some((m) => m.kind === 'video' || m.kind === 'audio')) {
+          setPasteAction(r.item)
+          return
+        }
+        setDetail({ item: r.item, mediaIndex: 0, autoPlay: false, autoExtract: false })
       })
     }
     document.addEventListener('paste', onPaste)
@@ -748,6 +764,7 @@ export function StreamPanel({ onWidthChange, onItemContext }: {
             item,
             mediaIndex: opts?.mediaIndex ?? 0,
             autoPlay: autoPlaysDetailMedia(opts?.intent),
+            autoExtract: opts?.extract ?? false,
           })}
           onPlayAudio={playPodcastFrom}
         />
@@ -776,6 +793,22 @@ export function StreamPanel({ onWidthChange, onItemContext }: {
         <div data-testid="panel-paste-loading" className="absolute inset-0 z-10 flex items-center justify-center bg-background/80 text-sm text-muted-foreground">
           正在读取链接…
         </div>
+      ) : null}
+      {pasteAction !== null ? (
+        <PasteActionModal
+          item={pasteAction}
+          onTranscribe={() => {
+            const item = pasteAction
+            setPasteAction(null)
+            setDetail({ item, mediaIndex: 0, autoPlay: false, autoExtract: true })
+          }}
+          onOpenDetail={() => {
+            const item = pasteAction
+            setPasteAction(null)
+            setDetail({ item, mediaIndex: 0, autoPlay: false, autoExtract: false })
+          }}
+          onClose={() => setPasteAction(null)}
+        />
       ) : null}
       {/* 一整条 Stream 的抓取设置（周期/策略/网盘绑定）是一整页，配置分页里塞不下，盖上来。
           `absolute inset-0` 而不是 Radix 的 Sheet：Sheet 会 portal 到 DSH 的 body 上去，

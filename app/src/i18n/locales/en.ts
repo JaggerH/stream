@@ -41,6 +41,27 @@ const en = {
       save: 'Save',
       likes: '{{count}} likes',
     },
+    transcript: {
+      loadingCache: 'Looking up a previous run…',
+      intro: 'Turn this item into text: audio/video via transcription, images via OCR, pages via article extraction. Reopening an already-transcribed link shows the full text immediately.',
+      start: 'Transcribe',
+      queued: 'Queued',
+      queuePos: '{{n}} ahead',
+      running: 'Transcribing…',
+      cancel: 'Cancel',
+      retry: 'Retry',
+      rerun: 'Re-run',
+      rerunHint: 'Discard the stored result and run again (billed again)',
+      failed: 'Transcription failed',
+      words: '{{n}} chars',
+      segments: 'Segment timeline ({{n}})',
+      emptyResult: 'No text was produced this time.',
+      backendMissing: 'Transcription backend not configured (stt branch unavailable in /api/conversion-kinds)',
+    },
+    paste: {
+      foundLink: 'Recognized a link',
+      close: 'Close',
+    },
     video: {
       // page chrome
       searchTitle: 'Video Search',

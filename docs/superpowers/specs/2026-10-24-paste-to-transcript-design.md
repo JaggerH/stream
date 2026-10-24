@@ -42,16 +42,22 @@
 | 完成 | `result.text`（按 format 渲染）+ 可折叠分段时间轴（`detail.segments`）+ 分支徽章 + 重新转写（force） |
 | 失败 | `error.message` + 重试 |
 
-刷新：`transcribe.done/error` 事件（`/ws`，`EventsProvider` 已收）按 `event.ref.id === item.id`
-即时刷新；运行期叠 3s 轮询 `api.conversions.latest(..., { expandResult: true })` 兜底，详情卸载即停。
+刷新：运行期间 2.5s 轮询 `api.conversions.latest(..., { expandResult: true })` 兜底，详情卸载即停；
+完成/失败另有既有的 `transcribe.done/error` 通知（通知中心，不在详情树里订）。~~ws 事件即时刷新~~
+落地时弃用：详情是独立 bundle 的第二个 React root，`EventsProvider` 不在那棵树里，为它单开
+一条 ws 订阅不如轮询一条路简单——轮询只在一个转写档在场时发生。
 
-## 数据流（后端零改动）
+## 数据流（后端一处一行改动）
 
-- 粘贴 item：`api.conversions.start('extract', 'paste:<url>', { media, snapshot, options:{ content } })`
+- **后端唯一改动**：`src/http/conversions-routes.ts` 的 POST——未知句柄时 `content`/`url` 回退到
+  调用方在 `options` 里的声明（原来无条件用 `resolved.content`，粘贴句柄解析不到就判不了分支；
+  已知句柄仍是 store 赢，语义不变；`media`/`snapshot` 本来就是调用方优先）。
+- 粘贴 item：`api.conversions.start('extract', 'paste:<url>', { media, snapshot, options:{ content, url } })`
   （客户端函数在 `app/src/lib/api.ts` 本就存在、无消费者）。缓存键 (`paste:<url>`, `extract`)，
   同链接再粘命中缓存秒出；`conversions` 表按设计比 item 活得久。
 - 库内 item：同一 POST，句柄由后端 `resolveHandle` 解析。
-- 状态归属：`useExtractConversion(item)` hook 挂 Detail 树内；不进全局 store。
+- 状态归属：`useExtractConversion(item, { enabled })` hook 挂 Detail 树内；不进全局 store；
+  `enabled` 跟 canExtract（为假的条目开详情零请求、零额外渲染）。
 
 ## 边界
 

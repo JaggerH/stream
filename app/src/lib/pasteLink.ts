@@ -69,18 +69,20 @@ export function itemFromFetched(url: string, r: FetchUrlResult): Item {
   }
 }
 
-export type PastedLink = { item: Item } | { error: string }
+export type PastedLink = { item: Item; claimed: boolean } | { error: string }
 
-/** 一条链接 → 详情要的 `Item`，或一句给人看的失败原因。网络错误也收成 `{ error }`，不抛。 */
+/** 一条链接 → 详情要的 `Item`，或一句给人看的失败原因。网络错误也收成 `{ error }`，不抛。
+ *  `claimed`：这条链接有没有包认领（弹不弹「下载 / 转写」确认框由它 + 媒体形状决定，
+ *  见 StreamPanel 的 paste handler——没认领的网页直接开详情，不问）。 */
 export async function resolvePastedLink(conn: Connection, url: string): Promise<PastedLink> {
   try {
     const ref = await api.recognizeLink(conn, url)
     if (ref) {
       const r = await api.mediaFromUrl(conn, ref.url)
-      return r.error ? { error: r.error } : { item: itemFromFetched(ref.url, r) }
+      return r.error ? { error: r.error } : { item: itemFromFetched(ref.url, r), claimed: true }
     }
     const r = await api.mediaFromUrl(conn, url)
-    return r.error ? { item: linkItem(url) } : { item: itemFromFetched(url, r) }
+    return r.error ? { item: linkItem(url), claimed: false } : { item: itemFromFetched(url, r), claimed: false }
   } catch (e) {
     return { error: e instanceof Error ? e.message : String(e) }
   }

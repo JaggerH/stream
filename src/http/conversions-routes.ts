@@ -78,7 +78,11 @@ export function registerConversionsRoutes(app: Hono, deps: ConversionsDeps): voi
 
     try {
       const { record, created } = deps.runner.start(kind, item, {
-        options: { ...(body.options ?? {}), media: body.media ?? resolved.media, content: resolved.content, url: resolved.url },
+        // 已知句柄：store 是权威，覆盖调用方的声明（今天的语义）。未知句柄（粘贴的
+        // `paste:<url>` 这类瞬时句柄）：resolved 侧全是 undefined，回退到调用方在 options 里
+        // 声明的 content/url——不回退的话 extract 判不了分支，converter 只能报 no_content。
+        // media/snapshot 本来就是调用方优先，这里对齐的是同一条语义。
+        options: { ...(body.options ?? {}), media: body.media ?? resolved.media, content: resolved.content ?? body.options?.content, url: resolved.url ?? body.options?.url },
         snapshot: body.snapshot ?? resolved.snapshot,
         inputId: body.input,
         force: body.force,

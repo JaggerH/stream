@@ -44,6 +44,8 @@ interface MountOptions {
   startMediaIndex: number
   /** 见 `detailBundle.ts` 的同名字段：点媒体进来的才自动播。 */
   autoPlayMedia: boolean
+  /** 见 `detailBundle.ts` 的同名字段：粘贴确认框/右键菜单那条「开出来就转写」的意图。 */
+  autoExtract?: boolean
   /** 列表那棵树已经拉到的「转成文字」能力发现结果（理由见 `PanelDetail.tsx` 头注 §3）。
    *  缺席 = 那边还没拉到/拉失败，这棵树自己去拉。 */
   extractCaps?: ExtractCapabilities
@@ -70,6 +72,7 @@ export function mount(el: HTMLElement, opts: MountOptions): void {
         item={opts.item}
         startMediaIndex={opts.startMediaIndex}
         autoPlayMedia={opts.autoPlayMedia}
+        autoExtract={opts.autoExtract}
         extractCaps={opts.extractCaps}
         onClose={opts.onClose}
       />

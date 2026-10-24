@@ -14,6 +14,9 @@ export interface DetailBundle {
     /** 左边那格媒体要不要自己播起来——由**打开它的那一下点击**决定
      *  （`autoPlaysDetailMedia(opts.intent)`，判据与主应用同一份）。 */
     autoPlayMedia: boolean
+    /** 开出来就切「转写」档并启动转换（openDetail 的 `extract: true`，粘贴确认框 /
+     *  右键菜单那条路）。缓存安全：转过的命中既有记录。 */
+    autoExtract?: boolean
     /** 列表那棵树**已经拉到**的「转成文字」能力发现结果（`/api/conversion-kinds`）——
      *  详情是另一个 React root、另一份 JS 运行时，context 过不来，只能顺着 mount 递数据。
      *  **只在确实拉到时才递**（理由见 `PanelDetail.tsx` 头注 §3）；缺席 = 那棵树自己去拉。 */

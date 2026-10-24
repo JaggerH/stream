@@ -56,6 +56,7 @@ export function PanelDetail({
   item,
   startMediaIndex,
   autoPlayMedia,
+  autoExtract,
   extractCaps,
   onClose,
 }: {
@@ -64,6 +65,8 @@ export function PanelDetail({
   startMediaIndex: number
   /** 点媒体进来的（`autoPlaysDetailMedia`）才自动播；点标题进来的先让人读。 */
   autoPlayMedia: boolean
+  /** 「开出来就转写」的一次性意图（openDetail 的 `extract: true`）。 */
+  autoExtract?: boolean
   /** 列表那棵树**已经拉到**的能力发现结果（见头注 §3）。缺席 = 这棵树自己去拉。 */
   extractCaps?: ExtractCapabilities
   onClose: () => void
@@ -77,6 +80,7 @@ export function PanelDetail({
         item={item}
         startMediaIndex={startMediaIndex}
         autoPlayMedia={autoPlayMedia}
+        autoExtract={autoExtract}
         onClose={onClose}
       />
     </ExtractCapsProvider>
@@ -89,11 +93,13 @@ function PanelDetailBody({
   item,
   startMediaIndex,
   autoPlayMedia,
+  autoExtract,
   onClose,
 }: {
   item: StreamItem
   startMediaIndex: number
   autoPlayMedia: boolean
+  autoExtract?: boolean
   onClose: () => void
 }): ReactElement {
   const canExtract = useCanExtract()
@@ -107,6 +113,7 @@ function PanelDetailBody({
           onClose={onClose}
           startMediaIndex={startMediaIndex}
           autoPlayMedia={autoPlayMedia}
+          autoExtract={autoExtract}
           // variant 走 'default' 而不是主应用那档 'acrylic'：acrylic 那档会挂
           // `ModalAcrylicBody`，它把 `modal-acrylic` 这个类点到**DSH 那一页的 <html>** 上。
           // 面板是客人，不改主人家的根元素。

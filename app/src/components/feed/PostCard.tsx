@@ -259,7 +259,7 @@ export function PostCard({
   // 卡片上没有任何常驻动作：全在右键菜单里，和列表行同一份（两种布局是同一批内容的两个画法，
   // 动作住在哪儿不该跟着布局变）。
   return (
-    <ItemContextMenu item={item} videoDl={canDownload ? videoDl : undefined}>
+    <ItemContextMenu item={item} videoDl={canDownload ? videoDl : undefined} onOpen={onOpen}>
       {card}
     </ItemContextMenu>
   )

@@ -16,6 +16,9 @@ export type OpenDetailOptions = {
   mediaIndex?: number
   /** 这一下点击是想看还是想读；缺省按 'read' 处理（见 autoPlaysDetailMedia）。 */
   intent?: OpenDetailIntent
+  /** 这一下是冲着「转成文字」来的：详情右栏直接开进转写档并启动转换。粘贴流的 modal
+   *  和右键菜单都靠它把「打开详情」和「开始转写」并成一步（缓存安全：转过的是命中，不重跑）。 */
+  extract?: boolean
 }
 
 /** 详情页左边那格媒体要不要自己播起来。**缺省不播**：说不清用户是不是冲着媒体来的时候，

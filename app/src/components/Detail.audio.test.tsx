@@ -4,16 +4,17 @@
 //  2) 解析 / 下载：瀑布流卡片没有常驻动作条，所以这两件事只剩全屏 Detail 一个入口
 //     （搜索页默认瀑布流）。闸门必须和列表行同款。
 import { afterEach, describe, it, expect, vi } from 'vitest'
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import type { ReactNode } from 'react'
 import { Detail } from './Detail.tsx'
+import { api } from '../lib/api.ts'
 import { AudioStageContext, type AudioStage, type AudioTrack } from '../lib/audioStage.ts'
 import { VideoStageContext, type VideoStage } from '../lib/videoStage.ts'
 import type { Item } from '../lib/types.ts'
 
-// 「转成文字」的动作面（两个入口共用的那一份）。
-const askExtractMock = vi.hoisted(() => vi.fn())
-vi.mock('../lib/askExtract.ts', () => ({ askExtract: askExtractMock }))
+// 「转成文字」的动作面已是面板原生（起 extract 转换，见下面用例）；这份 mock 只为斩断
+// askExtract 模块的真实副作用（它 import 了 toast / sonner 那一串）。
+vi.mock('../lib/askExtract.ts', () => ({ askExtract: vi.fn(), referenceItem: vi.fn() }))
 
 // 真 Artplayer 在 jsdom 里挂不起来；下载用例只关心动作面，不关心播放器。
 vi.mock('./ArtPlayer.tsx', () => ({ ArtPlayer: () => <div data-testid="art-player" /> }))
@@ -144,18 +145,24 @@ function renderDetail(node: ReactNode) {
 }
 
 describe('Detail — 转成文字 / 下载入口', () => {
-  it('可转成文字时显示「转成文字」入口，点它把这条交给对话', () => {
+  it('可转成文字时显示「转成文字」入口，点它起面板原生的 extract 转换', async () => {
+    // 2026-10-24 起动作面是面板原生：POST /api/conversions + 右栏切「转写」档（不再发进对话）。
+    const start = vi.spyOn(api.conversions, 'start').mockResolvedValue({
+      id: 'cv_1', kind: 'extract', itemId: 'pdf1', status: 'queued',
+      createdAt: '2026-10-24T00:00:00Z', updatedAt: '2026-10-24T00:00:00Z',
+    } as never)
+    vi.spyOn(api.conversions, 'latest').mockResolvedValue(null)
     renderDetail(<Detail item={pdfPost} conn={conn} onClose={() => {}} canExtract={() => true} />)
     fireEvent.click(screen.getByRole('button', { name: /转成文字/ }))
-    // 动作面是两个入口共用的那一份（lib/askExtract.ts）——提示语形状与"面板内 / 独立前端"
-    // 两条路的判据住在它自己那份测试里，这里只钉「点了有没有调它、带的是不是这条 item」。
-    expect(askExtractMock).toHaveBeenCalledWith(conn, pdfPost)
+    await waitFor(() => expect(start).toHaveBeenCalled())
+    expect(start.mock.calls[0][2]).toBe('pdf1')
   })
 
-  it('既有评论又能转成文字时：按钮在动作行（右面板只有一档，没有切换器）', () => {
+  it('既有评论又能转成文字时：按钮在动作行，右栏出现「转写」档', () => {
+    vi.spyOn(api.conversions, 'latest').mockResolvedValue(null)
     renderDetail(<Detail item={forumPost} conn={conn} onClose={() => {}} canExtract={() => true} />)
     expect(screen.getByRole('button', { name: /转成文字/ })).toBeTruthy()
-    expect(screen.queryAllByRole('radio')).toHaveLength(0)
+    expect(screen.getByTestId('panel-tab-transcript')).toBeTruthy()
   })
 
   it('canExtract 谓词说不行时不显示转成文字入口（判定在 shared/extract/plan.ts，这里只消费）', () => {

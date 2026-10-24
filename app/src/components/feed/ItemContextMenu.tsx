@@ -3,8 +3,8 @@ import { AtSignIcon, DownloadIcon, ExternalLinkIcon, FileTextIcon } from 'lucide
 
 import { triggerDownload } from '../../lib/feedPresent.ts'
 import { useCanExtract } from '../../lib/extractCaps.tsx'
-import { askExtract, referenceItem } from '../../lib/askExtract.ts'
-import { LOCAL } from '../../lib/api.ts'
+import { referenceItem } from '../../lib/askExtract.ts'
+import type { OpenDetailOptions } from '../../lib/openDetail.ts'
 import type { Item as StreamItem } from '../../lib/types.ts'
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from '../ui/context-menu.tsx'
 
@@ -25,17 +25,22 @@ import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } 
  * 它**塞进输入框、不发送**：引用之后用户还要接着说下一句。
  *
  * 「转成文字」的显隐吃 `useCanExtract()`（判定权威在 `shared/extract/plan.ts`，和后端选分支同一份）——
- * **别在这里自己判 archetype**；动作本身走 `askExtract`（和详情页动作行同一份，别另写）：
- * 它开一条对话让模型去取，结果落进对话里的 ExtractCard。
+ * **别在这里自己判 archetype**；动作本身是「开详情 + 启动转写」（`onOpen` 带 `extract: true`，
+ * 和详情页动作行汇到同一个转写档）。曾经它把一句话发进对话（askExtract）——那是因为转写稿
+ * 在前端没有归宿；现在有了（详情右栏的「转写」档），一个动作一种行为。
  */
 export function ItemContextMenu({
   item,
   videoDl,
+  onOpen,
   children,
 }: {
   item: StreamItem
   /** 视频直链（`usePostPresentation` 的 `videoDl`）。空 = 这条没什么可下的。 */
   videoDl?: string
+  /** 「开详情」回调（行/卡片本来就有那份）。「转成文字」靠它带 `extract: true` 进详情；
+   *  缺席（如 PreviewModal 的 view-only 树）= 这一项不出现，而不是出现一个点了没反应的。 */
+  onOpen?: (item: StreamItem, opts?: OpenDetailOptions) => void
   children: ReactNode
 }) {
   const canExtract = useCanExtract()
@@ -50,8 +55,8 @@ export function ItemContextMenu({
           <AtSignIcon />
           在对话中引用
         </ContextMenuItem>
-        {canExtract(item) ? (
-          <ContextMenuItem onSelect={() => void askExtract(LOCAL, item)}>
+        {canExtract(item) && onOpen ? (
+          <ContextMenuItem onSelect={() => onOpen(item, { intent: 'read', extract: true })}>
             <FileTextIcon />
             转成文字
           </ContextMenuItem>

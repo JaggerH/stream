@@ -97,6 +97,71 @@ describe('POST /api/conversions', () => {
     expect(res.status).toBe(201)
   })
 
+  // —— 瞬时句柄（粘贴的 paste:<url>）：不在库里，media 内联受理，content/url 靠调用方声明 ——
+
+  /** 记下 converter 实际收到的 options 的假 converter。 */
+  function spyingConverter(seen: Array<Record<string, unknown>>): Converter {
+    return converter({
+      stages: ['run'],
+      async run(ctx) {
+        seen.push(ctx.options)
+        return { ok: true, result: {} }
+      },
+    })
+  }
+
+  it('未知句柄：options 里声明的 content/url 原样到达 converter（不回退就判不了分支）', async () => {
+    const seen: Array<Record<string, unknown>> = []
+    const { app } = setup([spyingConverter(seen)], false)
+    const res = await app.request('/api/conversions', {
+      method: 'POST',
+      body: JSON.stringify({
+        kind: 'extract',
+        item: 'paste:https://x.test/v/1',
+        media: [{ url: 'https://cdn/x.mp4', kind: 'video' }],
+        snapshot: { title: '粘贴的那条' },
+        options: {
+          content: { archetype: 'video', media: [{ url: 'https://cdn/x.mp4', kind: 'video' }] },
+          url: 'https://x.test/v/1',
+        },
+      }),
+    })
+    expect(res.status).toBe(201)
+    await settle()
+    expect(seen[0]).toMatchObject({
+      content: { archetype: 'video' },
+      url: 'https://x.test/v/1',
+      media: [{ kind: 'video' }],
+    })
+  })
+
+  it('已知句柄：store 的 content/url 赢过调用方声明（既有语义，不为瞬时句柄破例）', async () => {
+    const seen: Array<Record<string, unknown>> = []
+    const store = new ConversionStore(':memory:')
+    const runner = new ConversionRunner({ store, converters: [spyingConverter(seen)], derivations: [], costarts: [] })
+    const app = new Hono()
+    registerConversionsRoutes(app, {
+      runner,
+      resolveHandle: () => ({
+        known: true,
+        content: { archetype: 'gallery' },
+        url: 'https://store.test/authority',
+        media: [{ url: 'u', kind: 'image' }],
+      }),
+    })
+    const res = await app.request('/api/conversions', {
+      method: 'POST',
+      body: JSON.stringify({
+        kind: 'extract',
+        item: 'stored-1',
+        options: { content: { archetype: 'video' }, url: 'https://caller.test/guess' },
+      }),
+    })
+    expect(res.status).toBe(201)
+    await settle()
+    expect(seen[0]).toMatchObject({ content: { archetype: 'gallery' }, url: 'https://store.test/authority' })
+  })
+
   it('frames 也是派生类 kind：item 不在库里照样受理（它读的是上游那条 extract）', async () => {
     const frames = converter({
       kind: 'frames',

@@ -41,6 +41,27 @@ const zh = {
       save: '保存',
       likes: '{{count}} 赞',
     },
+    transcript: {
+      loadingCache: '查看已转过的内容…',
+      intro: '把这条内容转成文字：音视频走转写，图片走识别，网页抽正文。转写过的同一链接再打开会直接给全文。',
+      start: '开始转写',
+      queued: '排队中',
+      queuePos: '前面还有 {{n}} 条',
+      running: '转写中…',
+      cancel: '取消',
+      retry: '重试',
+      rerun: '重新转写',
+      rerunHint: '丢掉已有结果重新跑一遍（重新计费）',
+      failed: '转写失败',
+      words: '{{n}} 字',
+      segments: '分段时间轴（{{n}} 段）',
+      emptyResult: '这次没有取到正文。',
+      backendMissing: '转写后端未配置（/api/conversion-kinds 里 stt 分支不可用）',
+    },
+    paste: {
+      foundLink: '识别到一条内容',
+      close: '关闭',
+    },
     video: {
       // page chrome
       searchTitle: '视频搜索',

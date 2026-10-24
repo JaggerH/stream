@@ -20,10 +20,10 @@ import type { Item } from '../../lib/types.ts'
 /** 后端三档全开。不传就是全关（NO_CAPS）——「转成文字」那一项据此显隐。 */
 const ALL_CAPS: ExtractCapabilities = { stt: true, ocr: true, article: true }
 
-// 「转成文字」的动作面（两个入口共用的那一份，lib/askExtract.ts）。这里只钉「点了有没有调它、
-// 带的是不是这条 item」——它自己发什么话、走哪条路由它自己那份测试管。
+// 「在对话中引用」仍住 askExtract 模块（referenceItem）；「转成文字」2026-10-24 起是
+// 面板原生（onOpen 带 extract 意图开详情）。mock 只为斩断该模块的真实副作用。
 const askExtractMock = vi.hoisted(() => vi.fn())
-vi.mock('../../lib/askExtract.ts', () => ({ askExtract: askExtractMock }))
+vi.mock('../../lib/askExtract.ts', () => ({ askExtract: askExtractMock, referenceItem: vi.fn() }))
 
 const videoStage: VideoStage = {
   activeId: null, openId: null, node: null, videoSize: null,
@@ -109,14 +109,18 @@ describe.each(Object.entries(layouts))('%s 的动作全在右键菜单里', (_na
     expect(screen.queryByText('查看详情')).toBeNull()
   })
 
-  it('能转成文字时菜单里有这一项，点它把这条交给对话', async () => {
+  it('能转成文字时菜单里有这一项，点它开详情并带上转写意图', async () => {
     const item = makeItem({
       content: { archetype: 'video', media: [{ kind: 'video', url: 'https://x/v.mp4' }] } as never,
     })
-    render(renderLayout(item, () => {}, { caps: ALL_CAPS }))
+    const onOpen = vi.fn()
+    render(renderLayout(item, onOpen, { caps: ALL_CAPS }))
     openMenu()
     fireEvent.click(await screen.findByText('转成文字'))
-    expect(askExtractMock).toHaveBeenCalledWith(expect.anything(), item)
+    // 面板原生动作（2026-10-24 起）：不再发进对话，而是带着 extract 意图开详情——
+    // 详情右栏切「转写」档并起转换（那条路在 PanelDetail.extract.test 里钉）。
+    expect(onOpen).toHaveBeenCalledWith(item, { intent: 'read', extract: true })
+    expect(askExtractMock).not.toHaveBeenCalled()
   })
 
   // 判定权威在 shared/extract/plan.ts（后端选分支用的同一份）。后端那档没配上就别亮出来——
