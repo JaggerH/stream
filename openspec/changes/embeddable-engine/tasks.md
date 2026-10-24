@@ -39,9 +39,8 @@
 - [x] 3.1 调度中心（按 0.2 的结论 B，每实例一份）：`tasks/center.ts`、`tasks/deps.ts`、`tasks/registry.ts`（`652ddfd`）
 - [x] 3.2 来源钩子：`search/seeds`、`links/recognize`、`media/serving`、`registry/public`、`http/client-item`、`providers/identities`、`credentials/cookie-provider`、`plugins/plugin-target`、`plugins/standby/hook`
   - `search/seeds`、`links/recognize`、normalizer 注册表（`642aab8`）；serving / sites / projection / cookie env（`12555f1`，原 `2798deb` 已丢失、按同样标准重做）；plugin-target 与 standby（`155698f`，`ctx.packages.targets` / `ctx.packages.standby`，`STREAM_PLUGIN_NETWORK` 收进 deployment）；providers/identities（`031ef7f`，`ProviderIdentityTable` 于 ctx.sources，seed/bindings/callsite/UserStore 均按实例表）。
-- [ ] 3.3 内容缓存：`content/extract`、`adapters/favicon`；normalizer 注册表；`devices/fetch` 的 `impl`
-  - 已做：normalizer 注册表（`642aab8`）。
-  - 剩下：`content/extract`、`adapters/favicon` 的缓存句柄、`devices/fetch` 的 `impl`。
+- [x] 3.3 内容缓存：`content/extract`、`adapters/favicon`；normalizer 注册表；`devices/fetch` 的 `impl`
+  - normalizer 注册表（`642aab8`）；extract/favicon 缓存与 devices/fetch 的 impl 归实例（`ce3b963`：`ctx.stores.articles/favicons`、`ctx.deviceFetch`，replay 的 http/html 档显式穿 fetch）。OCR 图片缓存（`content/images/ocr-cache.ts`）同形状但不在本项清单，未动。
 - [ ] 3.4 每处补「两个内核互相读不到」的用例
 
 ## 4. 工具接口
