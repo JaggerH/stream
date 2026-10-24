@@ -113,10 +113,10 @@ fetch('http://127.0.0.1:8900/api/recipes/action', { method: 'POST', headers: { '
 | `doc.saveToOE("png" | "jpg:0.8" | "webp" | "psd")` | recipe 末尾替你调，脚本里一般不用 |
 | `layer.translate` / `resize(w%,h%,AnchorPosition.X)` / `rotate` / `duplicate()` / `duplicate(otherDoc, ElementPlacement.PLACEATBEGINNING)` / `remove` / `rasterize` | `duplicate(otherDoc)` **保位置保像素**（摆放靠它）；返回的对象**不是**目标文档里那一层，改名要 `otherDoc.layers[0].name = …` |
 | `layer.opacity` / `blendMode` / `name` / `visible`；`layers.getByName`；`artLayers.add()`；`layerSets.add()` | |
-| `layer.adjustCurves([[0,0],[128,150],[255,255]])` / `adjustLevels` / `adjustBrightnessContrast` / `invert` / `applyGaussianBlur` | |
+| `layer.adjustBrightnessContrast(b, c)` / `invert` / `applyGaussianBlur` | **`adjustCurves` / `adjustLevels` 不报错但没效果**（2026-10-17 实测：导出和原图逐像素差 0；同一脚本换 `adjustBrightnessContrast(80,0)` 差 64）——调明暗只用亮度/对比度 |
 | 文字层：`artLayers.add()` → `kind = LayerKind.TEXT` → `textItem.contents/size` | |
 | `selection.select(polygon[, SelectionType.EXTEND | DIMINISH | INTERSECT])` / `selectAll` / `invert` / `expand` / `contract` / `feather` / `deselect` / `clear`（删像素）/ `fill(SolidColor)` | `bounds` 的四个元素是 UnitValue，取 `.value` |
-| `executeAction`：`setd`（魔棒，见 cutout 的描述符）、`Dlt `、`Mk  `（新层）、`Dplc`、`slct`（按名选层）、`move`（层偏移）、`GsnB`、`Crvs` | `Crvs` 空描述符不报错但也没看出效果，曲线用 `layer.adjustCurves` |
+| `executeAction`：`setd`（魔棒，见 cutout 的描述符）、`Dlt `、`Mk  `（新层）、`Dplc`、`slct`（按名选层）、`move`（层偏移）、`GsnB`、`Crvs` | `Crvs` 空描述符不报错但也没看出效果；`layer.adjustCurves` 也一样没效果，调明暗用 `adjustBrightnessContrast` |
 
 | 会死（脚本静默终止，只有超时） | 用什么代替 |
 |---|---|

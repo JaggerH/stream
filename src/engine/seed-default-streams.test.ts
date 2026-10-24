@@ -1,7 +1,7 @@
 // S1（N3 返工）：空白实例 / 嵌入方不要开箱订阅——`deployment.seed_default_streams=false`
 // 时不种影视频道的缺省流；缺省（含 `stream serve` 部署）行为不变，照种。
 import { afterEach, describe, expect, it } from 'vitest'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createStream, type Stream } from './index.ts'
@@ -49,5 +49,14 @@ describe('deployment.seed_default_streams', () => {
   it('false：空白实例一条都不种（嵌入方开箱即空）', { timeout: 60_000 }, async () => {
     const ids = await listedIds(await boot(false))
     expect(ids).toEqual([])
+  })
+
+  it('config.yaml 里写 deployment 键同样生效（嵌入方写文件的那条路）', { timeout: 60_000 }, async () => {
+    const root = mkdtempSync(join(tmpdir(), 'seed-default-streams-yaml-'))
+    roots.push(root)
+    writeFileSync(join(root, 'config.yaml'), ['deployment:', '  seed_default_streams: false', ''].join('\n'))
+    const s = await createStream({ dataDir: root, log: () => {} })
+    open.push(s)
+    expect(await listedIds(s)).toEqual([])
   })
 })

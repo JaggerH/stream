@@ -283,7 +283,9 @@ export function readConfig(path: string, env: ConfigEnv = {}): AppConfig {
     session_exports: cfg.session_exports,
     // 能力包的配置：原样透传（见 AppConfig.capabilities）。
     capabilities: cfg.capabilities,
-    deployment: deploymentFromEnv(env),
+    // config.yaml 的 deployment 键显式覆盖 env 缺省（此前这一整段被静默忽略——写了不生效又不报错，
+    // 正是「配置写了像没写」那一族故障）。env 表（BYOK 回落）只能来自进程环境，yaml 不携带。
+    deployment: { ...deploymentFromEnv(env), ...(cfg.deployment ?? {}) },
   }
 }
 

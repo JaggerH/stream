@@ -82,10 +82,10 @@ export interface StreamSecrets {
 
 export async function createStream(opts: CreateStreamOptions): Promise<Stream> {
   // 缺省配置：数据目录当 `STREAM_DATA_DIR` 用来定 config.yaml 与可写状态的位置；部署开关全按默认、没有环境回落。
-  const config = opts.config ?? {
-    ...readConfig(join(opts.dataDir, 'config.yaml'), { STREAM_DATA_DIR: opts.dataDir }),
-    deployment: deploymentFromEnv({}),
-  }
+  // 缺省配置：数据目录当 `STREAM_DATA_DIR` 用来定 config.yaml 与可写状态的位置。
+  // 不读进程环境（deploymentFromEnv 只见这里显式给的 env）；config.yaml 里的 deployment
+  // 键照读——嵌入方写文件关掉开箱订阅，就是走的这一格。
+  const config = opts.config ?? readConfig(join(opts.dataDir, 'config.yaml'), { STREAM_DATA_DIR: opts.dataDir })
   const stateDir = resolveDataDir(config)
   // 锁拿在建内核之前：第二份实例连一张表都不该打开。
   const release = lockDataDir(stateDir)

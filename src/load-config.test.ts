@@ -1,3 +1,5 @@
+import { dirname, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
@@ -74,8 +76,10 @@ describe('loadConfig：packages_dir 与两个旧字段', () => {
     return p
   }
 
-  it('没写 → ./packages', () => {
-    expect(loadConfig(write('vault_enabled: false\n')).packages_dir).toBe('./packages')
+  it('没写 → 按安装位置解析（仓库的 packages/），不随 cwd 变', () => {
+    expect(loadConfig(write('vault_enabled: false\n')).packages_dir).toBe(
+      resolve(dirname(fileURLToPath(import.meta.url)), '..', 'packages'),
+    )
   })
 
   it('写了 packages_dir → 原样传出', () => {
