@@ -1,7 +1,7 @@
 import type { Readable } from 'node:stream'
 import { owned } from './owned-outbound.ts'
 import { BROWSER_UA } from '../../shared/package-sdk/browser-ua.ts'
-import { refererForUrl } from '../media/serving.ts'
+import type { Serving } from '../media/serving.ts'
 
 // 私人 node-http 快照并入 owned 受控通道：从"抢在 RSSHub 补丁前 import"的运气升级为进程入口
 // 保证的显式捕获（见 owned-outbound.ts / serve.ts）。按主机带哪个 Referer 问包的 serving 声明。
@@ -55,7 +55,7 @@ export { BROWSER_UA }
 export function getNoReferer(
   rawUrl: string,
   signal: AbortSignal,
-  opts: { range?: string; accept?: string; redirects?: number; referer?: string; userAgent?: string } = {}
+  opts: { range?: string; accept?: string; redirects?: number; referer?: string; userAgent?: string; serving?: Serving } = {}
 ): Promise<NoRefererResponse> {
   const redirects = opts.redirects ?? 3
   return new Promise((resolve, reject) => {
@@ -71,7 +71,7 @@ export function getNoReferer(
     if (opts.userAgent) headers['User-Agent'] = opts.userAgent
     // Referer 按主机：多数图床拒带 Referer 的请求（缺省不带）；少数反着防盗链、不带就拒——
     // 那几台由站点包的 serving 声明 `referer`（src/media/serving.ts refererForUrl），宿主不认识站。
-    const referer = opts.referer ?? refererForUrl(u.toString())
+    const referer = opts.referer ?? opts.serving?.refererFor(u.toString())
     if (referer) headers.Referer = referer
     if (opts.range) headers.Range = opts.range
     const get = u.protocol === 'https:' ? httpsGet : httpGet
@@ -99,8 +99,9 @@ export function getNoReferer(
 export async function getImageNoReferer(
   rawUrl: string,
   signal: AbortSignal,
-  redirects = 3
+  redirects = 3,
+  serving?: Serving
 ): Promise<{ status: number; contentType: string | null; body: Readable }> {
-  const r = await getNoReferer(rawUrl, signal, { redirects })
+  const r = await getNoReferer(rawUrl, signal, { redirects, serving })
   return { status: r.status, contentType: r.contentType, body: r.body }
 }

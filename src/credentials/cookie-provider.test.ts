@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach, vi } from 'vitest'
-import { CookieProvider, setPackageCookieEnvSource, type CookieSource } from './cookie-provider.ts'
+import { CookieProvider, type CookieSource } from './cookie-provider.ts'
 import type { BrowserCookie } from '../types.ts'
 import { runOnDevice } from '../devices/run-context.ts'
 
@@ -140,28 +140,35 @@ describe('CookieProvider', () => {
 })
 
 describe('transform 注入先查包声明的模板', () => {
-  afterEach(() => setPackageCookieEnvSource(() => new Map()))
-
-  const provider = (cookies: Record<string, BrowserCookie[]>) =>
-    new CookieProvider({ fetch: async () => cookies })
+  const provider = (cookies: Record<string, BrowserCookie[]>, env?: () => ReadonlyMap<string, string>) => {
+    const p = new CookieProvider({ fetch: async () => cookies })
+    if (env) p.setCookieEnvSource(env)
+    return p
+  }
 
   it('占位符换成该 cookie 的值，变量值是整份 cookie 串', async () => {
-    setPackageCookieEnvSource(() => new Map([['site', 'SITE_COOKIE_{Uid}']]))
     const p = provider({ 'site.test': [
       { name: 'Uid', value: '42' } as BrowserCookie,
       { name: 'SESS', value: 'abc' } as BrowserCookie,
-    ] })
+    ] }, () => new Map([['site', 'SITE_COOKIE_{Uid}']]))
     const r = await p.resolve({ type: 'cookie', domain: 'site.test', inject: { kind: 'transform', ref: 'site' } })
     expect(r?.envOverrides).toEqual({ SITE_COOKIE_42: 'Uid=42; SESS=abc' })
   })
 
   it('占位的那个 cookie 缺席 → 不写变量（等价于没解析出来），并出声', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
-    setPackageCookieEnvSource(() => new Map([['site', 'SITE_COOKIE_{Uid}']]))
-    const p = provider({ 'site.test': [{ name: 'SESS', value: 'abc' } as BrowserCookie] })
+    const p = provider({ 'site.test': [{ name: 'SESS', value: 'abc' } as BrowserCookie] }, () => new Map([['site', 'SITE_COOKIE_{Uid}']]))
     expect(await p.resolve({ type: 'cookie', domain: 'site.test', inject: { kind: 'transform', ref: 'site' } })).toBeNull()
     expect(warn).toHaveBeenCalled()
     warn.mockRestore()
+  })
+
+  it('一个实例一张：A 接的包模板 B 读不到', async () => {
+    const a = provider({ 'site.test': [{ name: 'Uid', value: '42' } as BrowserCookie] }, () => new Map([['site', 'SITE_COOKIE_{Uid}']]))
+    const b = provider({ 'site.test': [{ name: 'Uid', value: '42' } as BrowserCookie] })
+    const r = await a.resolve({ type: 'cookie', domain: 'site.test', inject: { kind: 'transform', ref: 'site' } })
+    expect(r?.envOverrides).toEqual({ SITE_COOKIE_42: 'Uid=42' })
+    await expect(b.resolve({ type: 'cookie', domain: 'site.test', inject: { kind: 'transform', ref: 'site' } })).rejects.toThrow(/No cookie transform/)
   })
 
   it('包没声明 → 落回宿主 transformRegistry（github 仍然走老路）', async () => {

@@ -1,4 +1,4 @@
-import { refererForUrl } from '../media/serving.ts'
+import type { Serving } from '../media/serving.ts'
 
 const SIZE = 32
 
@@ -42,10 +42,10 @@ export async function comparePosterBuffers(source: Buffer, candidate: Buffer): P
   return leftVariance && rightVariance ? covariance / Math.sqrt(leftVariance * rightVariance) : 0
 }
 
-async function posterBytes(url: string): Promise<Buffer | null> {
+async function posterBytes(url: string, serving?: Serving): Promise<Buffer | null> {
   try {
-    // 带哪个 Referer 问包的 serving 声明（与图片代理同一个函数），宿主不认识任何图床。
-    const referer = refererForUrl(url)
+    // 带哪个 Referer 问包的 serving 声明（本实例的 ctx.sources.serving），宿主不认识任何图床。
+    const referer = serving?.refererFor(url)
     const response = await fetch(url, {
       headers: { accept: 'image/*,*/*', ...(referer ? { referer } : {}) },
       signal: AbortSignal.timeout(10_000),
@@ -56,9 +56,9 @@ async function posterBytes(url: string): Promise<Buffer | null> {
   } catch { return null }
 }
 
-export async function comparePosterUrls(sourceUrl: string, candidateUrl: string): Promise<number | null> {
+export async function comparePosterUrls(sourceUrl: string, candidateUrl: string, serving?: Serving): Promise<number | null> {
   try {
-    const [source, candidate] = await Promise.all([posterBytes(sourceUrl), posterBytes(candidateUrl)])
+    const [source, candidate] = await Promise.all([posterBytes(sourceUrl, serving), posterBytes(candidateUrl, serving)])
     return source && candidate ? await comparePosterBuffers(source, candidate) : null
   } catch { return null }
 }

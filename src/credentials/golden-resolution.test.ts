@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { CookieProvider, setPackageCookieEnvSource, type CookieSource } from './cookie-provider.ts'
+import { CookieProvider, type CookieSource } from './cookie-provider.ts'
 import type { AuthSpec } from '../manifest/types.ts'
 import type { BrowserCookie } from '../types.ts'
 
@@ -91,14 +91,10 @@ const CASES: Case[] = [
 ]
 
 describe('golden credential resolution (byte-identical to retired MAPPING)', () => {
-  beforeEach(() => {
-    setPackageCookieEnvSource(() => new Map([['bilibili', 'BILIBILI_COOKIE_{DedeUserID}']]))
-  })
-  afterEach(() => setPackageCookieEnvSource(() => new Map()))
-
   for (const tc of CASES) {
     it(tc.label, async () => {
       const p = new CookieProvider(source({ [tc.domain]: tc.cookies }))
+      p.setCookieEnvSource(() => new Map([['bilibili', 'BILIBILI_COOKIE_{DedeUserID}']]))
       const r = await p.resolve(tc.auth)
       expect(r).not.toBeNull()
       expect(r!.envOverrides).toEqual(tc.expected)

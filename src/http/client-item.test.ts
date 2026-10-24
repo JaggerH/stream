@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach } from 'vitest'
-import { toClientItem, encodeCursor, decodeCursor, isAfterCursor, sortKeyOf, setItemProjectionSource } from './client-item.ts'
-import type { ItemOwnerPackage } from '../packages/item-projection.ts'
+import { toClientItem, encodeCursor, decodeCursor, isAfterCursor, sortKeyOf } from './client-item.ts'
+import { SourceSites, type ItemOwnerPackage, type ItemProjectionSource } from '../packages/item-projection.ts'
 import type { StoredItem } from '../item-store.ts'
 
 const base = (raw: unknown): StoredItem => ({
@@ -69,19 +69,17 @@ describe('keyset cursor', () => {
 })
 
 describe('toClientItem —— 包声明的条目投影（stream.item）', () => {
-  afterEach(() => setItemProjectionSource(null))
-
   const pkgItem = { ...base({}), source_id: 'demo-home', author: 'A', content: { archetype: 'text', enrich: { source: 'd', params: { postId: 'p1' } } } } as StoredItem
 
   it('出口现取投影：包声明的动作与源名挂上', () => {
-    setItemProjectionSource(() => ({
+    const projection = (): ItemProjectionSource => ({
       packages: [{
         facility: 'demo',
         item: { actions: [{ id: 'like', icon: 'heart', label: '点赞', recipe: '@acme/demo/like', params: { postId: '{content.enrich.params.postId}' }, toggle: ['like', 'unlike'] }] },
       }],
-      lookup: (id) => (id === 'demo-home' ? { id: '@acme/demo/demo-home', title: '首页', facility: { key: 'demo', label: '演示' } } : undefined),
-    }))
-    const out = toClientItem(pkgItem) as ReturnType<typeof toClientItem> & { actions?: unknown[]; source_label?: string }
+      lookup: (id: string) => (id === 'demo-home' ? { id: '@acme/demo/demo-home', title: '首页', facility: { key: 'demo', label: '演示' } } : undefined),
+    })
+    const out = toClientItem(pkgItem, projection()) as ReturnType<typeof toClientItem> & { actions?: unknown[]; source_label?: string }
     expect(out.actions).toEqual([{ id: 'like', icon: 'heart', label: '点赞', recipe: '@acme/demo/like', params: { postId: 'p1' }, toggle: ['like', 'unlike'] }])
     expect(out.source_label).toBe('演示 · 首页')
     expect('raw' in out).toBe(false)
@@ -90,9 +88,20 @@ describe('toClientItem —— 包声明的条目投影（stream.item）', () => 
   it('每次序列化都现取（热装的包立刻生效），没接线时原样', () => {
     expect('actions' in toClientItem(pkgItem)).toBe(false)
     let pkgs: ItemOwnerPackage[] = []
-    setItemProjectionSource(() => ({ packages: pkgs, lookup: () => ({ id: 'x', facility: { key: 'demo' } }) }))
-    expect('actions' in toClientItem(pkgItem)).toBe(false)
+    const projection = (): ItemProjectionSource => ({ packages: pkgs, lookup: () => ({ id: 'x', facility: { key: 'demo' } }) })
+    expect('actions' in toClientItem(pkgItem, projection())).toBe(false)
     pkgs = [{ facility: 'demo', item: { actions: [{ id: 'a', icon: 'bookmark', label: '收藏', recipe: '@acme/demo/c', params: {}, toggle: ['c', 'u'] }] } }]
-    expect('actions' in toClientItem(pkgItem)).toBe(true)
+    expect('actions' in toClientItem(pkgItem, projection())).toBe(true)
+  })
+
+  it('一个实例一张：A 的包声明 B 读不到', () => {
+    const a = (): ItemProjectionSource => ({
+      packages: [{ facility: 'demo', item: { actions: [{ id: 'a', icon: 'heart', label: 'A 动作', recipe: '@acme/demo/a', params: {}, toggle: ['a', 'b'] }] } }],
+      lookup: () => ({ id: 'demo-home', facility: { key: 'demo', label: '演示' } }),
+    })
+    const b = (): ItemProjectionSource => ({ packages: [], lookup: () => undefined })
+    expect('actions' in toClientItem(pkgItem, a())).toBe(true)
+    expect('actions' in toClientItem(pkgItem, b())).toBe(false)
+    void a; void b
   })
 })

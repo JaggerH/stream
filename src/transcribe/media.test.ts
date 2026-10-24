@@ -7,7 +7,7 @@ import { makeVideoResolver } from '../video/resolve-video.ts'
 import type { InvokeResult } from '../providers/executor.ts'
 import type { TrackSource } from '../audio/track-source.ts'
 import * as extractAudio from '../netdisk/extract-audio.ts'
-import * as serving from '../media/serving.ts'
+import type { Serving } from '../media/serving.ts'
 import type { Media } from '../content/types.ts'
 import { AudioCache } from '../media/audio-cache.ts'
 
@@ -21,7 +21,10 @@ function realCache<T extends { read: ReturnType<typeof vi.fn>; write: ReturnType
 }
 
 vi.mock('../netdisk/extract-audio.ts', () => ({ extractNetdiskAudio: vi.fn() }))
-vi.mock('../media/serving.ts', () => ({ servingPolicyFor: vi.fn(), serveWithPolicy: vi.fn() }))
+// 送字节策略用替身：media.ts 走 deps.serving 的方法（实例对象，不再有模块级表）。
+const policyFor = vi.fn()
+const serve = vi.fn()
+const serving = { policyFor, serve } as unknown as Serving
 
 const netdiskVideo = (q: string): Media => ({ kind: 'video', url: `/api/media/videos/resolve?${q}` })
 
@@ -112,11 +115,11 @@ describe('transcribableMedia / resolveMediaBytes — 音频走统一漏斗', () 
   const fetchMock = vi.fn()
   /** 漏斗的答案由 bootstrap 绑好后以函数形式注入——转写层不认识 provider executor。 */
   const withTrack = (source: TrackSource, over: Record<string, unknown> = {}) =>
-    ({ resolveTrack: vi.fn(async () => source), ...over }) as never
+    ({ resolveTrack: vi.fn(async () => source), serving, ...over }) as never
 
   beforeEach(() => {
-    vi.mocked(serving.servingPolicyFor).mockReset()
-    vi.mocked(serving.serveWithPolicy).mockReset()
+    vi.mocked(policyFor).mockReset()
+    vi.mocked(serve).mockReset()
     vi.mocked(extractAudio.extractNetdiskAudio).mockReset()
     fetchMock.mockReset()
     vi.stubGlobal('fetch', fetchMock)
@@ -142,7 +145,7 @@ describe('transcribableMedia / resolveMediaBytes — 音频走统一漏斗', () 
   // 前三档全落空，3ms 就判「没地址」。单测当时全绿，因为没有一条钉住"传了什么进去"。
   it('把这条 media 身上的源站直链一并递给漏斗（否则第四档手里是空的）', async () => {
     const deps = withTrack({ kind: 'fallback', url: LIZHI_URL })
-    vi.mocked(serving.servingPolicyFor).mockReturnValue(undefined)
+    vi.mocked(policyFor).mockReturnValue(undefined)
     fetchMock.mockResolvedValue(new Response(new Uint8Array([1]), { headers: { 'content-type': 'audio/mpeg' } }))
     await resolveMediaBytes([podcast()], deps)
     expect((deps as unknown as { resolveTrack: ReturnType<typeof vi.fn> }).resolveTrack)
@@ -165,7 +168,7 @@ describe('transcribableMedia / resolveMediaBytes — 音频走统一漏斗', () 
     const out = await resolveMediaBytes([podcast()], deps)
     expect(out).toEqual({ bytes: new Uint8Array([1, 2, 3]), mime: 'audio/mpeg' })
     expect(fetchMock).not.toHaveBeenCalled()
-    expect(serving.serveWithPolicy).not.toHaveBeenCalled()
+    expect(serve).not.toHaveBeenCalled()
   })
 
   it('第 2 档 网盘绑定 → 取返回的直链', async () => {
@@ -183,18 +186,18 @@ describe('transcribableMedia / resolveMediaBytes — 音频走统一漏斗', () 
 
   it('第 4 档 回落直链命中服务策略 → serveWithPolicy，不裸 fetch（荔枝冷对象裸取必 403）', async () => {
     const policy = { match: '.lizhi.fm', label: '荔枝 FM' }
-    vi.mocked(serving.servingPolicyFor).mockReturnValue(policy)
-    vi.mocked(serving.serveWithPolicy).mockResolvedValue(
+    vi.mocked(policyFor).mockReturnValue(policy)
+    vi.mocked(serve).mockResolvedValue(
       new Response(new Uint8Array([1, 2, 3]), { status: 200, headers: { 'content-type': 'audio/mpeg' } }),
     )
     const out = await resolveMediaBytes([podcast()], withTrack({ kind: 'fallback', url: LIZHI_URL }))
-    expect(serving.serveWithPolicy).toHaveBeenCalledWith(LIZHI_URL, policy)
+    expect(serve).toHaveBeenCalledWith(LIZHI_URL, policy)
     expect(fetchMock).not.toHaveBeenCalled()
     expect(out).toEqual({ bytes: new Uint8Array([1, 2, 3]), mime: 'audio/mpeg' })
   })
 
   it('回落直链没命中策略 → 普通 fetch，上游没给 content-type 按 audio/mpeg 兜底', async () => {
-    vi.mocked(serving.servingPolicyFor).mockReturnValue(undefined)
+    vi.mocked(policyFor).mockReturnValue(undefined)
     fetchMock.mockResolvedValue(new Response(new Uint8Array([9]), { status: 200 }))
     const out = await resolveMediaBytes([podcast()], withTrack({ kind: 'fallback', url: 'https://other.example/a.mp3' }))
     expect(out).toEqual({ bytes: new Uint8Array([9]), mime: 'audio/mpeg' })
@@ -207,8 +210,8 @@ describe('transcribableMedia / resolveMediaBytes — 音频走统一漏斗', () 
 
   it('上游拒绝 → 抛出上游原话', async () => {
     const policy = { match: '.lizhi.fm', label: '荔枝 FM' }
-    vi.mocked(serving.servingPolicyFor).mockReturnValue(policy)
-    vi.mocked(serving.serveWithPolicy).mockResolvedValue(
+    vi.mocked(policyFor).mockReturnValue(policy)
+    vi.mocked(serve).mockResolvedValue(
       new Response(JSON.stringify({ error: 'upstream_rejected', detail: '荔枝 FM 拒绝了这次请求（HTTP 403）' }), {
         status: 502, headers: { 'content-type': 'application/json' },
       }),
@@ -233,7 +236,7 @@ describe('transcribableMedia / resolveMediaBytes — 音频走统一漏斗', () 
     // 取白文 ‖ 声纹时间轴——并行之后这是常态。落盘缓存拦不住（取完才写），只有在途表能。
     const audioCache = realCache({ read: vi.fn().mockResolvedValue(null), write: vi.fn(async () => {}) })
     const deps = withTrack({ kind: 'fallback', url: LIZHI_URL }, { audioCache })
-    vi.mocked(serving.servingPolicyFor).mockReturnValue(undefined)
+    vi.mocked(policyFor).mockReturnValue(undefined)
     fetchMock.mockResolvedValue(new Response(new Uint8Array([9]), { status: 200, headers: { 'content-type': 'audio/mpeg' } }))
 
     const [a, b] = await Promise.all([
@@ -247,7 +250,7 @@ describe('transcribableMedia / resolveMediaBytes — 音频走统一漏斗', () 
   })
 
   it('老形状（只有裸 url、没有 platform/track_id）走直链兜底', async () => {
-    vi.mocked(serving.servingPolicyFor).mockReturnValue(undefined)
+    vi.mocked(policyFor).mockReturnValue(undefined)
     fetchMock.mockResolvedValue(new Response(new Uint8Array([2]), { status: 200, headers: { 'content-type': 'audio/mpeg' } }))
     const bare: Media = { kind: 'audio', url: 'https://other.example/legacy.mp3' }
     const out = await resolveMediaBytes([bare], withTrack({ kind: 'unresolved' }))
@@ -256,7 +259,7 @@ describe('transcribableMedia / resolveMediaBytes — 音频走统一漏斗', () 
   })
 
   it('没接漏斗（deps 没给 resolveTrack）时仍能靠裸 url 取，两者都没有才 null', async () => {
-    vi.mocked(serving.servingPolicyFor).mockReturnValue(undefined)
+    vi.mocked(policyFor).mockReturnValue(undefined)
     fetchMock.mockResolvedValue(new Response(new Uint8Array([3]), { status: 200 }))
     expect(await resolveMediaBytes([podcast()], {})).toEqual({ bytes: new Uint8Array([3]), mime: 'audio/mpeg' })
     expect(await resolveMediaBytes([podcast({ url: undefined })], {})).toBeNull()

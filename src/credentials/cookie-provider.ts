@@ -18,16 +18,6 @@ export interface CookieSource {
 const normalizeDomain = (key: string): string => key.replace(/^\./, '').toLowerCase()
 
 /**
- * 包声明的 RSSHub cookie 环境变量模板（facility → 模板）。**thunk 现取**：热装一个包之后
- * 下一次取凭证就该按新表来；存结果 = 新装的包永远不生效，且没有一处会报错。
- */
-let packageCookieEnvSource: () => ReadonlyMap<string, string> = () => new Map()
-
-export function setPackageCookieEnvSource(source: () => ReadonlyMap<string, string>): void {
-  packageCookieEnvSource = source
-}
-
-/**
  * 模板 + 该域的 cookie → 环境变量覆盖。`{Name}` 换成同名 cookie 的**值**，变量的值 =
  * 整份 cookie 串。占位的那个 cookie 缺席 → 出声 + 返回空表（调用方据此判成"没解析出来"）。
  */
@@ -62,6 +52,19 @@ export class CookieProvider implements CredentialProvider {
 
   setSlotResolver(fn: () => string): void {
     this.slotOf = fn
+  }
+
+  /**
+   * 包声明的 RSSHub cookie 环境变量模板（facility → 模板）。**一个实例一份**：本 provider 由
+   * credentials 域建（每实例一个），模板源由 sources 域经 `setCookieEnvSource` 接上。
+   * **thunk 现取**：热装一个包之后下一次取凭证就该按新表来；存结果 = 新装的包永远不生效，
+   * 且没有一处会报错。没接（单测）= 只落宿主自己手写的转换注册表。
+   */
+  private cookieEnvSource: () => ReadonlyMap<string, string> = () => new Map()
+
+  /** sources 域接线用（`ctx.credentials.cookieProvider`；thunk 现取，包热装后自动跟上）。 */
+  setCookieEnvSource(source: () => ReadonlyMap<string, string>): void {
+    this.cookieEnvSource = source
   }
 
   // Source is swappable at runtime: adapters/resolver hold this provider by reference, so
@@ -137,7 +140,7 @@ export class CookieProvider implements CredentialProvider {
       overrides = { [auth.inject.name]: cookieStr(scoped) }
     } else {
       // 先查包声明（`stream.rsshubCookieEnv`），再落宿主自己手写的转换（transformRegistry）。
-      const template = packageCookieEnvSource().get(auth.inject.ref)
+      const template = this.cookieEnvSource().get(auth.inject.ref)
       if (template) {
         overrides = expandCookieEnv(template, scoped, auth.inject.ref)
       } else {

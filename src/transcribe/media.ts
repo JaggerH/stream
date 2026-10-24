@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises'
 import { extractNetdiskAudio } from '../netdisk/extract-audio.ts'
-import { servingPolicyFor, serveWithPolicy } from '../media/serving.ts'
+import type { Serving } from '../media/serving.ts'
 import { originFallback } from '../../shared/music/origin-fallback.ts'
 import { memberFailureReason, type VideoResolver } from '../video/resolve-video.ts'
 import type { InvokeResult } from '../providers/executor.ts'
@@ -13,6 +13,9 @@ export interface MediaBytes {
 }
 
 export interface MediaDeps {
+  /** 本实例的送字节策略（回落直链的代理/冷却）。缺 = 裸 fetch（测试替身常用）。 */
+  serving?: Serving
+
   /** Stream-managed netdisk episodes/movies: resolve the bound file and extract its audio track.
    *  noteResolveError/Ok 记绑定级健康态（object-not-found 标 broken、成功清）——可选（`?.` 调用），
    *  仅注入完整 NetdiskService 时上报，只握 lookup/rawUrl 的替身不必实现。 */
@@ -171,9 +174,10 @@ export async function resolveMediaBytes(media: Media[] | undefined, deps: MediaD
         }
         // 回落原始直链**不能裸 fetch**：这些直链绝大多数在荔枝 CDN 上，冷对象第一次被请求就 403，
         // 而同一文件不同主机速度差过一万三千倍（策略表在 src/media/serving.ts，播放侧同款处置）。
-        const policy = src.kind === 'fallback' ? servingPolicyFor(src.url) : undefined
-        const resp = policy
-          ? await serveWithPolicy(src.url, policy)
+        const serving = deps.serving
+        const policy = src.kind === 'fallback' ? serving?.policyFor(src.url) : undefined
+        const resp = policy && serving
+          ? await serving.serve(src.url, policy)
           : await fetch(src.url, src.kind === 'stream' && src.headers ? { headers: src.headers } : undefined)
         return bytesOf(resp, audioMimeOf(resp))
       }
@@ -183,8 +187,9 @@ export async function resolveMediaBytes(media: Media[] | undefined, deps: MediaD
       const url = v.url
       cacheKey = `audio:${url}`
       fetchBytes = async () => {
-        const policy = servingPolicyFor(url)
-        const resp = policy ? await serveWithPolicy(url, policy) : await fetch(url, undefined)
+        const serving = deps.serving
+        const policy = serving?.policyFor(url)
+        const resp = policy && serving ? await serving.serve(url, policy) : await fetch(url, undefined)
         return bytesOf(resp, audioMimeOf(resp))
       }
     } else {

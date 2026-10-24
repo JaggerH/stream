@@ -109,6 +109,14 @@ export function sourceSitesOf(pkgs: readonly ItemOwnerPackage[]): (entry: ItemSo
   }
 }
 
+/** 一个实例的「源 → 站点」查表（`ctx.sources.sites`）。包声明是它的全部数据源，宿主代码不认识任何站。 */
+export class SourceSites {
+  constructor(private readonly source: () => (entry: ItemSourceEntry) => SourceSiteView | undefined) {}
+  /** 箭头字段：可以直接当 `SiteLookup` 传（不用 bind）。 */
+  lookup = (entry: { id: string; facility?: import('../manifest/types.ts').Facility }): SourceSiteView | undefined =>
+    this.source()(entry)
+}
+
 /** 源在条目上给人看的名字：源目录的标题，前面带上站名（标题里已有站名就不重复）。 */
 export function sourceLabelOf(entry: ItemSourceEntry): string | undefined {
   const title = entry.title && entry.title !== entry.id ? entry.title : undefined

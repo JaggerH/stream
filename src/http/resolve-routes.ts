@@ -13,6 +13,8 @@ import { withLyricsCache, type LyricsCache } from '../audio/lyrics-cache.ts'
  *  plus the Stream tree view (/api/resolve/targets). Standing subscription lives in the
  *  Channel+Stream path, not here. */
 export interface ResolveDeps {
+  /** 本实例的「源 → 站点」查表（ctx.sources.sites）。缺席 = 摘要不带 site 格。 */
+  sites?: import('../packages/item-projection.ts').SourceSites
   registry: Registry
   resolveEngine: ResolveEngine
   intentResolver: IntentResolver
@@ -72,7 +74,7 @@ export function registerResolveRoutes(app: Hono, deps: ResolveDeps): void {
     const list = tt ? deps.resolveEngine.resolveLadder(tt) : deps.registry.all().filter((m) => m.provides?.length)
     return c.json(
       list.map((m) => ({
-        ...publicSource(m),
+        ...publicSource(m, deps.sites?.lookup),
         provides: m.provides ?? [],
         priority: m.priority ?? 100,
         health: deps.sourceHealth.stateOf(m.id),
@@ -132,7 +134,7 @@ export function registerResolveRoutes(app: Hono, deps: ResolveDeps): void {
         return {
           id: providerId,
           sources: srcs.map((s, i) => ({
-            ...(s.manifest ? publicSource(s.manifest) : fallbackSource(s.id)),
+            ...(s.manifest ? publicSource(s.manifest, deps.sites?.lookup) : fallbackSource(s.id)),
             health: s.health,
             active: isExclusive && firstHealthyIdx >= 0 && i === firstHealthyIdx,
           })),

@@ -12,7 +12,10 @@ import { loadPlugins } from '../plugins/loader.ts'
 import { identityOf, setPackageIdentities } from '../providers/identities.ts'
 import { downloadPageKind as downloadPageKindImpl } from '../video/resolve.ts'
 import { settableRecognizer } from '../links/recognizer.fixture.ts'
-import { refererForUrl, setServingPolicySource } from '../media/serving.ts'
+import { Serving } from '../media/serving.ts'
+
+const serving = new Serving(() => [])
+const refererForUrl = serving.refererFor.bind(serving)
 import { SearchSeeds } from '../search/seeds.ts'
 import type { SearchSourceDeclaration as SeedDecl } from '../packages/descriptor.ts'
 const { links: testLinks, setTable: setLinkDeclarationSource } = settableRecognizer()
@@ -139,13 +142,13 @@ describe('资源站的包声明（真实 packages/）', () => {
   // 搬家等价：豆瓣图床的 Referer 以前在 image-fetch.ts / poster-similarity.ts 各写一遍，现在由 rsshub
   // 包的 serving 声明、两处同问 refererForUrl。
   it('影视榜单海报图床的 Referer 由 rsshub 包声明（与搬前相同）；别的图床不带', () => {
-    setServingPolicySource(() => servingPoliciesOf(pkgs))
+    const serving = new Serving(() => servingPoliciesOf(pkgs))
     try {
-      expect(refererForUrl('https://img1.doubanio.com/view/photo/p2895.jpg')).toBe('https://movie.douban.com/')
-      expect(refererForUrl('https://doubanio.com/x.jpg')).toBe('https://movie.douban.com/')
-      expect(refererForUrl('https://sns-webpic-qc.xhscdn.com/a.jpg')).toBeUndefined()
-      expect(refererForUrl('https://image.tmdb.org/t/p/original/a.jpg')).toBeUndefined()
-    } finally { setServingPolicySource(() => []) }
+      expect(serving.refererFor('https://img1.doubanio.com/view/photo/p2895.jpg')).toBe('https://movie.douban.com/')
+      expect(serving.refererFor('https://doubanio.com/x.jpg')).toBe('https://movie.douban.com/')
+      expect(serving.refererFor('https://sns-webpic-qc.xhscdn.com/a.jpg')).toBeUndefined()
+      expect(serving.refererFor('https://image.tmdb.org/t/p/original/a.jpg')).toBeUndefined()
+    } finally { serving.stats.clear() }
   })
 
   it('下载中转页文法由 BT 影视包声明：磁力页认领为 magnet、网盘页在册为 unknown、别家不认', () => {

@@ -254,6 +254,7 @@ export const schedulingPlugin = {
       scheduler,
       plugins,
       channels,
+      sites: ctx.sources.sites,
       // canonical-id enable predicate reading the live overlay map (hot: a toggle shows up without
       // rebuilding StreamService). Unknown id → enabled (don't hide sources over a lookup miss).
       pluginEnabled: (id) => {

@@ -308,7 +308,7 @@ async function main() {
       // agent 修复会话给 agent 的那条 MCP 线：**口和 token 只有这儿知道**（口就是本进程绑的那个，
       // 两个数一分家，agent 就会去敲一个没人应答的地址）。
       mcpEndpoint: () => ({ url: `http://127.0.0.1:${PORT}/api/mcp`, token: stream.secrets.apiToken }),
-      onItem: (item, type) => hub.broadcast({ type: 'item', item_type: type, item: toClientItem({ ...item, type }) }),
+      onItem: (item, type) => hub.broadcast({ type: 'item', item_type: type, item: toClientItem({ ...item, type }, sources.itemProjection()) }),
       onDebug: recordDebug,
       broadcast: (msg) => hub.broadcast(msg),
       track,
@@ -871,6 +871,7 @@ async function main() {
     const packageFor = (sourceId: string) => sources.recipePackages().list.find((p) => p.sources.some((m) => m.id === sourceId))
     const index = new SourceHealthIndex({
       manifest: quietManifest,
+      site: (e) => sources.sites.lookup(e),
       health: (id) => stores.sourceHealth.get(id),
       healthIds: () => Object.keys(stores.sourceHealth.snapshot()),
       ledger: (id) => ledger.get(id),

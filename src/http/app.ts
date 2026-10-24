@@ -37,7 +37,7 @@ import { revertPersonNaming } from '../voiceprint/unname.ts'
 import { probeStreams, extractStream } from '../media/extract.ts'
 import { matchSiblingSubtitles, siblingToVtt, decodeSubtitleText } from '../media/sibling-subtitles.ts'
 import { isLikelyDanmaku } from '../media/subtitle-lang.ts'
-import { servingPolicyFor, serveWithPolicy } from '../media/serving.ts'
+import type { Serving } from '../media/serving.ts'
 import {
   searchSubtitles,
   labelScrapeCandidates,
@@ -235,6 +235,12 @@ export interface HttpDeps {
   renormalizeItems?: (filter: RenormalizeFilter) => RenormalizeResult
   /** 本实例的链接认领（`ctx.sources.links`）：`/api/links/recognize`、贴链接派发、曲目视图都吃它。缺席 = 一条都不认。 */
   links?: import('../links/recognize.ts').LinkRecognizer
+  /** 本实例的送字节策略（`ctx.sources.serving`）：音频回落直链的代理/冷却。缺席 = 一律 302 直发。 */
+  serving?: Serving
+  /** 本实例的「源 → 站点」查表（`ctx.sources.sites`）：源目录/插件目录的 site 格。缺席 = 不带这一格。 */
+  sites?: import('../packages/item-projection.ts').SourceSites
+  /** 本实例的条目投影源（`ctx.sources.itemProjection`）：列表出线与 item 广播用。缺席 = 不投影。 */
+  itemProjection?: () => import('../packages/item-projection.ts').ItemProjectionSource
   /** npm recipe 包安装(preview→install 两步;confirm=tarball integrity,preview 发放)。absent → 503。 */
   /**
    * 跑一条动作 recipe（`POST /api/recipes/action`）。**必须是 MCP 那侧用的同一个闭包**
@@ -997,7 +1003,7 @@ function providerView(deps: HttpDeps, record: import('../store/types.ts').Provid
     return {
       name: m.name,
       priority: i + 1,
-      source: manifest ? publicSource(manifest) : fallbackSource(m.sourceId),
+      source: manifest ? publicSource(manifest, deps.sites?.lookup) : fallbackSource(m.sourceId),
       health,
       ...(healthError ? { healthError } : {}),
       ...(keyState ? { keyState } : {}),
@@ -1013,7 +1019,7 @@ function providerView(deps: HttpDeps, record: import('../store/types.ts').Provid
     callSites: callSitesOf(record.id),
     referencedBy: deps.providerBindings?.references(record.id) ?? [],
     resolvedMembers,
-    ...(defaultManifest ? { defaultSource: publicSource(defaultManifest) } : {}),
+    ...(defaultManifest ? { defaultSource: publicSource(defaultManifest, deps.sites?.lookup) } : {}),
     calls: deps.providers!.stats.of(record.id),
     // 顶层投影：前端槽位候选过滤靠它,别让前端下钻 options.parked。
     parked: isParked(record),
@@ -2041,7 +2047,7 @@ export function createHttpApp(deps: HttpDeps): Hono {
         // verbatim under `source` — same object the plugin catalog serves. Binding-specific
         // fields (params/health/active) sit alongside it, never flattened into it. Do NOT
         // hand-pick or rename projection fields here: that is what diverged the two surfaces.
-        const source = manifest ? publicSource(manifest) : fallbackSource(sourceId)
+        const source = manifest ? publicSource(manifest, deps.sites?.lookup) : fallbackSource(sourceId)
         // health only for resolvable bindings: the ledger tracks FETCH outcomes, and a
         // member whose manifest is gone never fetches — its ledger entry (if any) is a
         // stale pre-deletion "healthy". Reporting nothing beats lying green.
@@ -2357,7 +2363,7 @@ export function createHttpApp(deps: HttpDeps): Hono {
     const next_cursor = after.length > pageLimit && last ? encodeCursor(sortKeyOf(last), last.id) : undefined
     // 同质内容归堆的标记（`src/story-fold/`）：**成员条照发不隐藏**——折不折是前端的事。
     // 在这里少发一条就等于替用户决定了他看不到什么，而且分页数会跟着对不上。
-    const items = attachStoryGroups(page.map(toClientItem), deps.storyFold)
+    const items = attachStoryGroups(page.map((it) => toClientItem(it, deps.itemProjection?.())), deps.storyFold)
     // 信封一次性切换（Design D2）：不带 cursor 的请求也返回 { items, next_cursor? }，不留两种形状
     return c.json(next_cursor ? { items, next_cursor } : { items })
   })
@@ -2673,7 +2679,7 @@ export function createHttpApp(deps: HttpDeps): Hono {
     })
     // 归堆标记同样挂上（和 `/api/channels/:id/items` 一处口径）——两条列表路由都要带，
     // 否则同一条 item 在两个入口一个有折叠一个没有，前端会渲染出两种样子。
-    return c.json(attachStoryGroups(projected.map(toClientItem), deps.storyFold))
+    return c.json(attachStoryGroups(projected.map((it) => toClientItem(it, deps.itemProjection?.())), deps.storyFold))
   })
 
   // Item mutation surface. `label` is the read-time manual ad label: 广告/抽奖 mute the
@@ -2869,7 +2875,7 @@ export function createHttpApp(deps: HttpDeps): Hono {
       // "manifest has a normalizer" — so music's normalized catalog rows are never touched.
       const normalizeItem = deps.normalizeSearchItem
       const normalized = normalizeItem
-        ? items.flatMap((raw) => { const src = sourceOf(raw); return src ? [toClientItem(normalizeItem(src, raw))] : [] })
+        ? items.flatMap((raw) => { const src = sourceOf(raw); return src ? [toClientItem(normalizeItem(src, raw), deps.itemProjection?.())] : [] })
         : items
       return c.json({ items: normalized, warnings, timings })
     }
@@ -3468,7 +3474,7 @@ export function createHttpApp(deps: HttpDeps): Hono {
           // image CDN (sns-webpic-qc.xhscdn.com) rejects with 403. This proxy's whole point is to
           // fetch hotlink-protected covers with NO Referer, so it must bypass that wrapper. (The
           // rest of the app keeps the wrapped fetch — it wants the proxy/UA rewriting.)
-          upstream = await getImageNoReferer(url, ac.signal)
+          upstream = await getImageNoReferer(url, ac.signal, 3, deps.serving)
         } finally {
           clearTimeout(timer)
         }
@@ -3991,6 +3997,7 @@ export function createHttpApp(deps: HttpDeps): Hono {
         audioArchive: deps.audioArchive,
         netdisk: deps.netdisk,
         providers: deps.providers,
+        serving: deps.serving,
         // 这是个**按平台 dispatch** 的调用点：从绑定的候选里挑一条 serves 得上当前 platform 的行。
         // `fallback:false` = 不许兜底行顶上——不守这道门就会拿「音乐取流」那条梯子去跑播客，
         // 整条跑完全 declined 才回落，每次白烧 ~6.8s。
@@ -4030,9 +4037,9 @@ export function createHttpApp(deps: HttpDeps): Hono {
         // 只预缓冲前 278 秒就 defer、跳到第 70 分钟只取那附近 210 秒）。是为了**看得见**：302 一
         // 发出去 Stream 就退出字节路径,上游的 403 到了 <audio> 只剩一个裸的 SRC_NOT_SUPPORTED,
         // 播放器静默转圈,用户读成「加载好久」。见 spec 2026-08-04-audio-fallback-serving-policy。
-        const policy = servingPolicyFor(src.url)
-        if (!policy) return c.redirect(src.url, 302)
-        return serveWithPolicy(src.url, policy, c.req.header('Range'))
+        const policy = deps.serving?.policyFor(src.url)
+        if (!policy || !deps.serving) return c.redirect(src.url, 302)
+        return deps.serving.serve(src.url, policy, c.req.header('Range'))
       }
       case 'unavailable':
         return c.json(errorBody('unavailable', src.detail), 503)

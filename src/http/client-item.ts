@@ -11,17 +11,11 @@ export type ClientItem = Omit<StoredItem, 'raw' | '__shape'> & { note_id?: strin
 
 /**
  * 包声明的条目投影（`stream.item` + 源目录 → `author_enrich` / `actions` / `source_label` /
- * `source_site`）的数据源，由 sources 域在 registry 建好后挂进来。**thunk，每次序列化现取**：
- * 热装 / 升级的包下一次读列表就生效；存结果 = 新装的包永远没有按钮，且不报错。
- * 没挂（单测、sources 域没起）→ 不投影，原样出线。
+ * `source_site`）。**一个实例一张**（`ctx.sources.itemProjection`，`src/kernel/plugins/sources.ts`
+ * 装配），**thunk，每次序列化现取**：热装 / 升级的包下一次读列表就生效；存结果 = 新装的包
+ * 永远没有按钮，且不报错。调用方不传（单测、sources 域没起）→ 不投影，原样出线。
  */
-let projectionSource: (() => ItemProjectionSource) | null = null
-export function setItemProjectionSource(source: (() => ItemProjectionSource) | null): void {
-  projectionSource = source
-}
-
-/** 收存储条目或播放投影的产物都行——序列化对两者一视同仁；判断"库里存了什么"不在这一层。 */
-export function toClientItem(it: StoredItem | PresentedItem): ClientItem {
+export function toClientItem(it: StoredItem | PresentedItem, projection?: ItemProjectionSource): ClientItem {
   const { raw, ...rest } = it
   let out: ClientItem = rest
   if (raw && typeof raw === 'object') {
@@ -29,7 +23,7 @@ export function toClientItem(it: StoredItem | PresentedItem): ClientItem {
     if (typeof r.noteId === 'string' && r.noteId) out.note_id = r.noteId // 笔记类源的原生 id
     if (typeof r.guid === 'string' && r.guid) out.source_guid = r.guid // 讨论站 "<storyId>[-<count>]"
   }
-  if (projectionSource) out = projectItem(out, projectionSource())
+  if (projection) out = projectItem(out, projection)
   return out
 }
 

@@ -13,7 +13,13 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createHttpApp } from './app.ts'
 import { SlotBrokenError } from '../providers/bindings.ts'
-import { rejectionCooldown, hostStats, setServingPolicySource } from '../media/serving.ts'
+import { Serving } from '../media/serving.ts'
+
+// 本实例的送字节策略：测试自己注入它假定的那条（包声明在真机上由 sources 域接）。
+const serving = new Serving(() => [{
+  match: '.lizhi.fm', label: '荔枝 FM',
+  hosts: ['cdn101.lizhi.fm', 'cdn102.lizhi.fm', 'cdn.gzlzfm.com', 'cdn101.gzlzfm.com'],
+}])
 import type { DebugEntry } from './debug-log.ts'
 
 let dir: string
@@ -33,6 +39,7 @@ function invokeResult(value: unknown, opts: { via?: string; misses?: Array<{ mem
 function makeApp(over: Record<string, unknown> = {}) {
   return createHttpApp({
     debug: { record: (e: DebugEntry) => entries.push(e), recent: () => [], clear: () => {} },
+    serving,
     ...over,
   } as never)
 }
@@ -42,8 +49,8 @@ const field = (e: DebugEntry, label: string) => (e.fields ?? []).find((f) => f.l
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'trackresolve-'))
   entries = []
-  rejectionCooldown.clear()
-  hostStats.clear()
+  serving.cooldown.clear()
+  serving.stats.clear()
 })
 afterEach(() => { vi.restoreAllMocks(); rmSync(dir, { recursive: true, force: true }) })
 
@@ -203,12 +210,6 @@ describe('第 3 档 官方 provider 梯子', () => {
 
 describe('第 4 档 回落原始直链 / 全无', () => {
   // 策略表来自包声明（spec 2026-09-18），测试自己注入它假定的那条。
-  beforeAll(() => setServingPolicySource(() => [{
-    match: '.lizhi.fm', label: '荔枝 FM',
-    hosts: ['cdn101.lizhi.fm', 'cdn102.lizhi.fm', 'cdn.gzlzfm.com', 'cdn101.gzlzfm.com'],
-  }]))
-  afterAll(() => setServingPolicySource(() => []))
-
   it('梯子无结果 + fallback 未命中服务策略 → 302 原样', async () => {
     const app = makeApp({ providers: { executor: { invoke: async () => invokeResult(null) } } })
     const res = await app.request('/api/media/tracks/resolve?platform=lizhi&id=9&fallback=' + encodeURIComponent('https://plain.example/a.mp3'))

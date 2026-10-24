@@ -12,6 +12,7 @@ import type { ChannelPresent } from '../store/types.ts'
 import { streamToStreamRecord } from '../store/compat.ts'
 import { pluginIdForDescriptor } from '../registry/seal.ts'
 import { publicSource, publicSourceDetail, type SourceDetail, type SourceSummary } from '../registry/public.ts'
+import type { SourceSites } from '../packages/item-projection.ts'
 
 export type { SourceSummary, SourceDetail } from '../registry/public.ts'
 
@@ -24,6 +25,8 @@ export interface StreamServiceDeps {
    *  it reflects the settings overlay hot (a toggle shows up without a StreamService rebuild).
    *  Absent → everything enabled (MCP/test contexts that don't wire plugin toggling). */
   pluginEnabled?: (pluginId: string) => boolean
+  /** 本实例的「源 → 站点」查表（ctx.sources.sites）。缺 = 摘要里不带 site 格（老形状）。 */
+  sites?: SourceSites
 }
 
 export interface StreamSummary {
@@ -281,7 +284,7 @@ export class StreamService implements StreamServiceLike {
   plugins(): PluginSummary[] {
     const groups = new Map<string, SourceSummary[]>()
     for (const manifest of this.deps.registry.all()) {
-      const summary = publicSource(manifest)
+      const summary = publicSource(manifest, this.deps.sites?.lookup)
       groups.set(summary.pluginId, [...(groups.get(summary.pluginId) ?? []), summary])
     }
     const descriptors = this.deps.plugins ?? []
@@ -373,7 +376,7 @@ export class StreamService implements StreamServiceLike {
         all = all.filter((source) => ((resolveSourceGroup(source, pluginDescriptor) as Facility | undefined)?.key ?? '') === groupKey)
       }
     }
-    const summaries = all.map(publicSource)
+    const summaries = all.map((m) => publicSource(m, this.deps.sites?.lookup))
     const facets = {
       categories: facetCounts(all.flatMap((source) => source.categories ?? [])),
       capabilities: facetCounts(all.flatMap((source) => source.capabilities)),
@@ -409,7 +412,7 @@ export class StreamService implements StreamServiceLike {
       )
     }
 
-    const summaries = all.map(publicSource)
+    const summaries = all.map((m) => publicSource(m, this.deps.sites?.lookup))
     const pluginCounts = new Map<string, number>()
     for (const s of summaries) pluginCounts.set(s.pluginId, (pluginCounts.get(s.pluginId) ?? 0) + 1)
     const plugins = [...pluginCounts.entries()]
@@ -429,7 +432,7 @@ export class StreamService implements StreamServiceLike {
   pluginSourceDetail(pluginId: string, sourceId: string): SourceDetail | undefined {
     const manifest = this.deps.registry.get(sourceId)
     if (!manifest || (manifest.pluginId ?? 'custom') !== pluginId) return undefined
-    return publicSourceDetail(manifest)
+    return publicSourceDetail(manifest, this.deps.sites?.lookup)
   }
 
   /** Navigate to sources. The AI narrows by `category` (its own judgment) and/or

@@ -10,14 +10,10 @@ import type { SourceSiteView } from '../../shared/item/actions.ts'
 /**
  * 「这条源是哪个站」——由认领它的包说（`stream.homepage` 的主机 + 包名，见
  * `src/packages/item-projection.ts` 的 `siteOf`）。前端拿它画图标、写站名，不再按 id 前缀猜站。
- * 由 sources 域挂进来，**每次现取**（热装的包立刻生效）；没挂 / 没有包认领 → 不带这一格，
- * 前端退回按 RSSHub 命名空间查它自己那张生成的目录表。
+ * **一个实例一张**（`ctx.sources.sites`，`src/kernel/plugins/sources.ts` 装配），每次现取
+ * （热装的包立刻生效）；没包认领 → 不带这一格，前端退回按 RSSHub 命名空间查它自己那张生成的目录表。
  */
-type SiteLookup = (entry: { id: string; facility?: Facility }) => SourceSiteView | undefined
-let siteSource: (() => SiteLookup) | null = null
-export function setSourceSiteSource(source: (() => SiteLookup) | null): void {
-  siteSource = source
-}
+export type SiteLookup = (entry: { id: string; facility?: Facility }) => SourceSiteView | undefined
 
 export interface SourceSummary {
   id: string
@@ -57,14 +53,14 @@ function sourceDocsUrl(m: SourceManifest): string | undefined {
   return ns ? `https://docs.rsshub.app/routes/${ns}` : 'https://docs.rsshub.app/routes/'
 }
 
-export function publicSource(m: SourceManifest): SourceSummary {
+export function publicSource(m: SourceManifest, site?: SiteLookup): SourceSummary {
   const badges = [
     m.nsfw ? 'nsfw' : undefined,
     m.requireConfig ? 'needs_config' : undefined,
   ].filter(Boolean) as string[]
-  const site = siteSource?.()({ id: m.id, facility: m.facility })
+  const site_ = site?.({ id: m.id, facility: m.facility })
   return {
-    ...(site ? { site } : {}),
+    ...(site_ ? { site: site_ } : {}),
     id: m.id,
     pluginId: m.pluginId ?? 'custom',
     pluginName: m.pluginName ?? m.pluginId ?? 'custom',
@@ -90,9 +86,9 @@ export function fallbackSource(id: string): SourceSummary {
   }
 }
 
-export function publicSourceDetail(m: SourceManifest): SourceDetail {
+export function publicSourceDetail(m: SourceManifest, site?: SiteLookup): SourceDetail {
   const detail: SourceDetail = {
-    ...publicSource(m),
+    ...publicSource(m, site),
     paramsSchema: m.params_schema,
     runtimeConfig: m.runtime_config,
   }

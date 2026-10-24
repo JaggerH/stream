@@ -25,13 +25,10 @@ import {
 import { LinkRecognizer } from '../../links/recognize.ts'
 import { Normalizers } from '../../content/normalize.ts'
 import { trackRefFromUrl } from '../../audio/track-url.ts'
-import { setServingPolicySource } from '../../media/serving.ts'
+import { Serving } from '../../media/serving.ts'
 import { setPackageIdentities } from '../../providers/identities.ts'
 import { SearchSeeds } from '../../search/seeds.ts'
-import { setPackageCookieEnvSource } from '../../credentials/cookie-provider.ts'
-import { setItemProjectionSource } from '../../http/client-item.ts'
-import { setSourceSiteSource } from '../../registry/public.ts'
-import { sourceSitesOf } from '../../packages/item-projection.ts'
+import { SourceSites, sourceSitesOf, type ItemProjectionSource } from '../../packages/item-projection.ts'
 import type { Recipe } from '../../replay/recipe.ts'
 import { provisionedConfigSlot } from '../../replay/recipe-provisioner.ts'
 import { watchTree } from '../../replay/watch-tree.ts'
@@ -163,6 +160,12 @@ export interface SourcesService {
   links: LinkRecognizer
   /** 本实例的归一化（具名 normalizer 来自本实例激活的包）。 */
   normalizers: Normalizers
+  /** 本实例的送字节策略（`stream.serving` 声明 + 冷却 + 主机实测，现取）。 */
+  serving: Serving
+  /** 本实例的「源 → 站点」查表（包的 homepage 声明，现取）。 */
+  sites: SourceSites
+  /** 本实例的条目投影源（包的 `stream.item` 声明 + 本实例 registry，现取）。 */
+  itemProjection: () => ItemProjectionSource
   /** 已加载的包声明的退役目录路由（id → 理由）。**调用时现取**：热装一个包之后表就变了。
    *  与 catalog 解析吃的是同一份表（`retiredRoutesOf`）；provider 域拿它判「系统行上指向
    *  被包顶掉的目录路由的成员」是死成员（`pruneDeadMembers`）。 */
@@ -298,8 +301,9 @@ export const sourcesPlugin = {
     //   ① 活体 FacilityRateLimiter ② install 的钳制源 recipeInstallDeps.facilityRateLimit ③ 分享导入去重表。
     const recipePackagesRef = { current: mergeRecipePackagesByFacility(recipesBuiltinDir, recipesUserDir, skipPackage, layerOptions) }
     // 送字节策略表：所有 recipe 包的 stream.serving 并成一张，thunk 现取（reloadRecipePackages 重建
-    // current 后自动跟上；存结果 = 新装的包永远不走代理，且不报错）。
-    setServingPolicySource(() => servingPoliciesOf(recipePackagesRef.current.list))
+    // current 后自动跟上；存结果 = 新装的包永远不走代理，且不报错）。**本实例一份**：冷却与主机
+    // 实测都是这一台 Stream 的记忆，同进程的另一个实例互读只会互相污染。
+    const serving = new Serving(() => servingPoliciesOf(recipePackagesRef.current.list))
     // 包声明的 Provider 行并进身份表。**装配期一次，不是 thunk**（理由见 identities.ts 头注：
     // 下游 ensureSystemRows 会按表建行/删行）。provider 域 inject 了 'sources'，所以这一行
     // 必然早于 ensureSystemRows 跑。被拒的行要出声——静默丢一条 = 用户装了包却没有那个能力。
@@ -334,10 +338,9 @@ export const sourcesPlugin = {
     // 资源搜索源元数据（展示键 / 标签 / 查询参数 / 形状）：同链接认领表，thunk 现取。本实例一张（ctx.sources.searchSeeds）。
     const searchSeeds = new SearchSeeds(() => searchSourcesOf(recipePackagesRef.current.list))
     // RSSHub 要的 cookie 环境变量名由包声明（`stream.rsshubCookieEnv`）。同 serving / 链接认领表，
-    // thunk 现取：热装的包下一次取凭证就生效。本域不持有 cookieProvider（它在
-    // ctx.credentials.cookieProvider），接的是模块级 thunk——不用拿到实例，这正是选 thunk 而不是
-    // 构造参数的原因。
-    setPackageCookieEnvSource(() => rsshubCookieEnvOf(recipePackagesRef.current.list))
+    // thunk 现取：热装的包下一次取凭证就生效。CookieProvider 在 credentials 域（每实例一个，
+    // 本域 inject 了它），模板源直接接在那份实例上——同进程的另一个实例接它自己的包表。
+    ctx.credentials.cookieProvider.setCookieEnvSource(() => rsshubCookieEnvOf(recipePackagesRef.current.list))
     // 退役表来自包声明；catalog 在包快照之后解析才拿得到它。**边界**：目录只在启动与
     // applyRsshubCatalog 刷新时解析，新装一个带 retires 的包要到下一次刷新/重启才生效（记进 PACKAGE.md）。
     const retiredRoutes = () => retiredRoutesOf(recipePackagesRef.current.list)
@@ -414,11 +417,12 @@ export const sourcesPlugin = {
     // thunk 现取，同 serving / trackUrl——热装的包下一次读列表就生效。registry 查源吃存量的
     // 任何 id 形状（全名 / 裸名 / `plugin:` 前缀）；裸名歧义会抛，这里当查不到（不投影），
     // 列表读口不该因为一条 item 的源名二义就整页 500。
-    setItemProjectionSource(() => ({
+    const itemProjection = (): ItemProjectionSource => ({
       packages: recipePackagesRef.current.list,
       lookup: (id) => { try { return registry.get(id) } catch { return undefined } },
-    }))
-    setSourceSiteSource(() => sourceSitesOf(recipePackagesRef.current.list))
+    })
+    // 「这条源是哪个站」：包的 homepage 主机 + 包名。同上，本实例一张（ctx.sources.sites）。
+    const sites = new SourceSites(() => sourceSitesOf(recipePackagesRef.current.list))
 
     // 源 runtime_config 的 row family（spec config-rows-slice3）：row id = `source:<ref>`。
     // schema 由 manifest 字段现场翻译、存储绑 runtimeConfigs[ref]——manifest 每次现查，
@@ -657,6 +661,9 @@ export const sourcesPlugin = {
       searchSeeds,
       links,
       normalizers,
+      serving,
+      sites,
+      itemProjection,
       retiredRoutes,
       applyRsshubCatalog: (raw) => {
         const next = sealManifests(

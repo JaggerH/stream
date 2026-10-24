@@ -14,7 +14,13 @@ import { ProviderExecutor } from '../providers/executor.ts'
 import { ProviderBindings } from '../providers/bindings.ts'
 import { ProviderDirectory } from '../providers/directory.ts'
 import { SYSTEM_IDENTITIES } from '../providers/system/index.ts'
-import { rejectionCooldown, setServingPolicySource } from '../media/serving.ts'
+import { Serving } from '../media/serving.ts'
+
+// 本实例的送字节策略：测试自己注入它假定的那条。
+const serving = new Serving(() => [{
+  match: '.lizhi.fm', label: '荔枝 FM',
+  hosts: ['cdn101.lizhi.fm', 'cdn102.lizhi.fm', 'cdn.gzlzfm.com', 'cdn101.gzlzfm.com'],
+}])
 
 function makeProviders(dir: string, play: AudioResolver[]) {
   const store = new UserStore(join(dir, `prov-${Math.random()}.db`))
@@ -184,20 +190,13 @@ describe('audio resolve — fallback 档的服务策略（代理 + 拒绝可见 
     const providers = makeProviders(dir, [catalogResolver]) // 只服务 netease → lizhi 必然落到回落档
     const netdisk = { lookup: vi.fn(() => undefined), resolveUrl: vi.fn(), markError: vi.fn() }
     return createHttpApp({
-      itemStore: { get: () => undefined, recent: () => [] }, audioArchive: archive, providers, netdisk,
+      itemStore: { get: () => undefined, recent: () => [] }, audioArchive: archive, providers, netdisk, serving,
     } as any)
   }
   const ask = (app: ReturnType<typeof createHttpApp>, id: string, init?: RequestInit) =>
     app.request(`/api/media/tracks/resolve?platform=lizhi&id=${id}&fallback=${encodeURIComponent(FB)}`, init)
 
-  // 策略表来自包声明（spec 2026-09-18），测试自己注入它假定的那条。
-  beforeAll(() => setServingPolicySource(() => [{
-    match: '.lizhi.fm', label: '荔枝 FM',
-    hosts: ['cdn101.lizhi.fm', 'cdn102.lizhi.fm', 'cdn.gzlzfm.com', 'cdn101.gzlzfm.com'],
-  }]))
-  afterAll(() => setServingPolicySource(() => []))
-
-  beforeEach(() => rejectionCooldown.clear())
+  beforeEach(() => serving.cooldown.clear())
 
   it('上游放行 → 字节透传,Range 原样带给上游（懒加载不受影响）', async () => {
     const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(

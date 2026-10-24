@@ -673,7 +673,7 @@ describe('HTTP API', () => {
       expect(r.status).toBe(200)
       expect(await r.text()).toBe('image-bytes')
       expect(r.headers.get('content-type')).toBe('image/png')
-      expect(getSpy).toHaveBeenCalledWith('https://example.com/pic.png', expect.any(AbortSignal))
+      expect(getSpy).toHaveBeenCalledWith('https://example.com/pic.png', expect.any(AbortSignal), 3, undefined)
       getSpy.mockRestore()
     })
 

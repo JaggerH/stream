@@ -5,6 +5,7 @@ import type { RepairState } from '../replay/repair-ledger.ts'
 import type { Stream, StreamMember } from '../streams/types.ts'
 import type { ChannelRecord } from '../store/types.ts'
 import { publicSource, fallbackSource, type SourceSummary } from '../registry/public.ts'
+import type { SiteLookup } from '../registry/public.ts'
 import { localNameOf } from '../registry/source-id.ts'
 import { canonicalJson } from './canonical.ts'
 import { parseUnrepairable } from './task-book.ts'
@@ -192,6 +193,8 @@ export function pendingPermissionOf(events: RunEvent[]): PendingPermission | und
 }
 
 export interface SourceHealthDeps {
+  /** 本实例的「源 → 站点」查表（ctx.sources.sites）。缺席 = 不带 site 格。 */
+  site?: SiteLookup
   /** 静默版 `Registry.get`（裸名歧义时回 undefined，别让一次投影 500）。 */
   manifest: (sourceId: string) => SourceManifest | undefined
   health: (sourceId: string) => SourceHealth | undefined
@@ -280,7 +283,7 @@ export class SourceHealthIndex {
     const status = classifySource({ health, ledger, run, pendingProposal: pending !== undefined })
     const affected = ledger?.affectedSources?.length ? ledger.affectedSources : [canonicalId]
     return {
-      source: m ? publicSource(m) : fallbackSource(sourceId),
+      source: m ? publicSource(m, d.site) : fallbackSource(sourceId),
       status,
       health: {
         state: health?.state ?? 'healthy',

@@ -12,7 +12,7 @@
 //
 // 这里**不认识 HTTP**：不产 Response、不产 302，只回答「去哪儿取」+ 一份观测元数据。
 import { existsSync } from 'node:fs'
-import { servingPolicyFor } from '../media/serving.ts'
+import type { Serving } from '../media/serving.ts'
 import { resolveRungs, type ResolveRung } from '../providers/ladder-trace.ts'
 import type { InvokeResult, InvokeMiss } from '../providers/executor.ts'
 import type { PlayableHit } from '../netdisk/types.ts'
@@ -69,6 +69,8 @@ export interface TrackSourceDeps {
   /** 这个 platform 该用哪个 Provider（频道槽位优先）。抛 `SlotBrokenError` 由调用方处置
    *  （播放侧 422）——**别在这里吞**：槽位废是显式错误，不是回落理由。缺省 = 裸 platform 键。 */
   providerFor?: (platform: string) => string | { category: 'resolve'; key: string } | null
+  /** 本实例的送字节策略（判回落直链该代理还是 302）。缺 = 一律直发。 */
+  serving?: Serving
 }
 
 export interface TrackSourceOpts {
@@ -194,7 +196,7 @@ export async function resolveTrackSource(
         source: { kind: 'fallback', url: fallback },
         debug: {
           platform, id, outcome: 'resolved', via: 'fallback',
-          streamMode: servingPolicyFor(fallback) ? 'proxy' : 'redirect',
+          streamMode: deps.serving?.policyFor(fallback) ? 'proxy' : 'redirect',
           urlHost: hostOf(fallback), rungs, totalResolveMs, archive: probe, misses: res?.misses,
         },
       }

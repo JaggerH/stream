@@ -6,15 +6,19 @@
 //   cdn102.lizhi.fm  → 206, 997 B/s（180s 拉不完 4MB）
 // 差一万三千倍。荔枝 App 自己每次播放前都用 /audio_cover/cesu_hd.mp3 挨个测速挑主机。
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { hostStats, rejectionCooldown, serveWithPolicy, servingPolicyFor, setServingPolicySource } from './serving.ts'
+import { Serving } from './serving.ts'
 
-const P = '/audio/2026/07/26/3225196661670744070_hd.mp3'
-const ORIGIN = `http://cdn5.lizhi.fm${P}`
-
-setServingPolicySource(() => [{
+const serving = new Serving(() => [{
   match: '.lizhi.fm', label: '荔枝 FM',
   hosts: ['cdn101.lizhi.fm', 'cdn102.lizhi.fm', 'cdn.gzlzfm.com', 'cdn101.gzlzfm.com'],
 }])
+const hostStats = serving.stats
+const rejectionCooldown = serving.cooldown
+const serveWithPolicy = serving.serve.bind(serving)
+const servingPolicyFor = serving.policyFor.bind(serving)
+
+const P = '/audio/2026/07/26/3225196661670744070_hd.mp3'
+const ORIGIN = `http://cdn5.lizhi.fm${P}`
 
 const ok = (body = 'bytes') =>
   new Response(body, { status: 206, headers: { 'content-type': 'audio/mpeg', 'content-range': `bytes 0-4/9` } })

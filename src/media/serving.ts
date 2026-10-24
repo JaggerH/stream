@@ -46,33 +46,108 @@ export interface ServingPolicy {
   referer?: string
 }
 
-/** 策略表的数据源。默认空表：没接线 = 没有任何站走代理，一律 302（老行为）。 */
-let policySource: () => ServingPolicy[] = () => []
+/** 策略表的数据源。缺省空表：没接线 = 没有任何站走代理，一律 302（老行为）。
+ *
+ *  **一个实例一份**（`ctx.sources.serving`，`src/kernel/plugins/sources.ts` 装配）：策略 thunk、
+ *  拒绝冷却、主机实测统计都是这一台 Stream 的记忆——同进程跑两个实例时互读对方的状态
+ *  （冷却、测速）只会互相污染。消费者经 `ctx.sources.serving`（HTTP 层）或显式传参
+ *  （转写、曲目回落这些拿不到 ctx 的深层调用）取。 */
+export class Serving {
+  private policySource: () => ServingPolicy[]
+  /** 上游拒绝的负缓存（见 RejectionCooldown）。 */
+  readonly cooldown = new RejectionCooldown()
+  /** 「哪台主机现在好用」的记忆（见 HostStats）。 */
+  readonly stats = new HostStats()
 
-/** 装配层把「所有 recipe 包的 serving 声明」以 thunk 挂进来（`src/kernel/plugins/sources.ts`）。 */
-export function setServingPolicySource(source: () => ServingPolicy[]): void {
-  policySource = source
-}
-
-/** 这条 url 命中哪条服务策略；没命中 = 保持调用方的现状（302 直发给浏览器）。 */
-export function servingPolicyFor(url: string): ServingPolicy | undefined {
-  let host: string
-  try {
-    host = new URL(url).hostname.toLowerCase()
-  } catch {
-    return undefined
+  constructor(policySource: () => ServingPolicy[] = () => []) {
+    this.policySource = policySource
   }
-  return policySource().find((p) =>
-    p.match.startsWith('.')
-      ? host === p.match.slice(1) || host.endsWith(p.match)
-      : host === p.match,
-  )
+
+  /** 这条 url 命中哪条服务策略；没命中 = 保持调用方的现状（302 直发给浏览器）。 */
+  policyFor(url: string): ServingPolicy | undefined {
+    let host: string
+    try {
+      host = new URL(url).hostname.toLowerCase()
+    } catch {
+      return undefined
+    }
+    return this.policySource().find((p) =>
+      p.match.startsWith('.')
+        ? host === p.match.slice(1) || host.endsWith(p.match)
+        : host === p.match,
+    )
+  }
+
+  /** 替这条 url 取字节时该带的 Referer（包 serving 声明的 `referer`）；没声明 → undefined（不带）。 */
+  refererFor(url: string): string | undefined {
+    return this.policyFor(url)?.referer
+  }
+
+  /**
+   * 按策略把一条上游直链送出去：能放行就原样透传字节（**Range 照传**，懒加载仍归浏览器），
+   * 候选主机挨个试，全被拒才变成一条说人话的 502 并进入冷却。
+   *
+   * 冷却按**原始 url**记（= 这条资源整轮都没成功），先于出站检查——失败恰恰是请求最容易翻倍的时刻
+   * （媒体栈重试 + 前端诊断二次拉取 + 用户手点）。
+   */
+  async serve(url: string, policy: ServingPolicy, range?: string): Promise<Response> {
+    const cooled = this.cooldown.get(url)
+    if (cooled !== undefined) return rejected(policy, cooled)
+    let lastStatus = UNREACHABLE
+    for (const host of this.candidateHosts(url, policy)) {
+      let upstream: Response
+      try {
+        upstream = await proxyRangedStream(withHost(url, host), policy.referer ? { Referer: policy.referer } : undefined, range)
+      } catch {
+        this.stats.fail(host)
+        continue
+      }
+      if (upstream.status >= 400) {
+        upstream.body?.cancel().catch(() => {}) // 丢弃拒绝页的 body,别泄连接
+        this.stats.fail(host)
+        lastStatus = upstream.status
+        continue
+      }
+      return this.meter(upstream, host)
+    }
+    this.cooldown.remember(url, lastStatus)
+    return rejected(policy, lastStatus)
+  }
+
+  /** 这条 url 该按什么顺序试哪些主机。没声明候选 = 只有原主机。 */
+  private candidateHosts(url: string, policy: ServingPolicy): string[] {
+    let origin: string
+    try { origin = new URL(url).host } catch { return [] }
+    if (!policy.hosts?.length) return [origin]
+    return this.stats.rank([origin, ...policy.hosts.filter((h) => h !== origin)])
+  }
+
+  /**
+   * 透传字节的同时量速度。**不缓冲**——只在流经的时候数字节和计时，读完才落一条记录。
+   * 太小的响应（探测性的几百字节）不作数：算出来的 B/s 全是握手噪声。
+   */
+  private meter(upstream: Response, host: string): Response {
+    if (!upstream.body) return upstream
+    const stats = this.stats
+    // 用 performance.now()（亚毫秒）而不是 Date.now()：本地/近端的响应可能在同一毫秒内流完，
+    // 那样 `ms` 会是 0，整条记录被静默丢掉——量到的永远是"没量到"。
+    const t0 = performance.now()
+    let bytes = 0
+    const tap = new TransformStream<Uint8Array, Uint8Array>({
+      transform(chunk, controller) { bytes += chunk.byteLength; controller.enqueue(chunk) },
+      flush() {
+        const ms = Math.max(performance.now() - t0, 0.001)
+        if (bytes >= MIN_METERED_BYTES) stats.note(host, Math.round((bytes * 1000) / ms))
+      },
+    })
+    return new Response(upstream.body.pipeThrough(tap), {
+      status: upstream.status, statusText: upstream.statusText, headers: upstream.headers,
+    })
+  }
 }
 
-/** 替这条 url 取字节时该带的 Referer（包 serving 声明的 `referer`）；没声明 → undefined（不带）。 */
-export function refererForUrl(url: string): string | undefined {
-  return servingPolicyFor(url)?.referer
-}
+/** 探测性的小响应不作数（见 Serving.meter）。 */
+const MIN_METERED_BYTES = 64 * 1024
 
 /** 冷却窗口。够盖住三种连打：浏览器媒体栈自己的重试、前端失败后的诊断二次拉取、用户手动再点一次。 */
 const COOLDOWN_MS = 60_000
@@ -108,8 +183,6 @@ class RejectionCooldown {
     this.at.clear()
   }
 }
-
-export const rejectionCooldown = new RejectionCooldown()
 
 /** 上游连不上（DNS/超时/断连）时记的状态码。它是**数字 0**，所以读冷却一律用 `!== undefined`
  *  判在不在，别用真值判断——`if (cooled)` 会把这一档静默漏掉。 */
@@ -205,8 +278,6 @@ class HostStats {
   clear(): void { this.speed.clear(); this.failed.clear() }
 }
 
-export const hostStats = new HostStats()
-
 /** 只换 host，路径/查询串/协议一个字符不动。换不动（URL 不合法）就返回原样。 */
 function withHost(url: string, host: string): string {
   try {
@@ -216,66 +287,4 @@ function withHost(url: string, host: string): string {
   } catch {
     return url
   }
-}
-
-/** 这条 url 该按什么顺序试哪些主机。没声明候选 = 只有原主机。 */
-function candidateHosts(url: string, policy: ServingPolicy): string[] {
-  let origin: string
-  try { origin = new URL(url).host } catch { return [] }
-  if (!policy.hosts?.length) return [origin]
-  return hostStats.rank([origin, ...policy.hosts.filter((h) => h !== origin)])
-}
-
-/**
- * 透传字节的同时量速度。**不缓冲**——只在流经的时候数字节和计时，读完才落一条记录。
- * 太小的响应（探测性的几百字节）不作数：算出来的 B/s 全是握手噪声。
- */
-const MIN_METERED_BYTES = 64 * 1024
-function meter(upstream: Response, host: string): Response {
-  if (!upstream.body) return upstream
-  // 用 performance.now()（亚毫秒）而不是 Date.now()：本地/近端的响应可能在同一毫秒内流完，
-  // 那样 `ms` 会是 0，整条记录被静默丢掉——量到的永远是"没量到"。
-  const t0 = performance.now()
-  let bytes = 0
-  const tap = new TransformStream<Uint8Array, Uint8Array>({
-    transform(chunk, controller) { bytes += chunk.byteLength; controller.enqueue(chunk) },
-    flush() {
-      const ms = Math.max(performance.now() - t0, 0.001)
-      if (bytes >= MIN_METERED_BYTES) hostStats.note(host, Math.round((bytes * 1000) / ms))
-    },
-  })
-  return new Response(upstream.body.pipeThrough(tap), {
-    status: upstream.status, statusText: upstream.statusText, headers: upstream.headers,
-  })
-}
-
-/**
- * 按策略把一条上游直链送出去：能放行就原样透传字节（**Range 照传**，懒加载仍归浏览器），
- * 候选主机挨个试，全被拒才变成一条说人话的 502 并进入冷却。
- *
- * 冷却按**原始 url**记（= 这条资源整轮都没成功），先于出站检查——失败恰恰是请求最容易翻倍的时刻
- * （媒体栈重试 + 前端诊断二次拉取 + 用户手点）。
- */
-export async function serveWithPolicy(url: string, policy: ServingPolicy, range?: string): Promise<Response> {
-  const cooled = rejectionCooldown.get(url)
-  if (cooled !== undefined) return rejected(policy, cooled)
-  let lastStatus = UNREACHABLE
-  for (const host of candidateHosts(url, policy)) {
-    let upstream: Response
-    try {
-      upstream = await proxyRangedStream(withHost(url, host), policy.referer ? { Referer: policy.referer } : undefined, range)
-    } catch {
-      hostStats.fail(host)
-      continue
-    }
-    if (upstream.status >= 400) {
-      upstream.body?.cancel().catch(() => {}) // 丢弃拒绝页的 body,别泄连接
-      hostStats.fail(host)
-      lastStatus = upstream.status
-      continue
-    }
-    return meter(upstream, host)
-  }
-  rejectionCooldown.remember(url, lastStatus)
-  return rejected(policy, lastStatus)
 }

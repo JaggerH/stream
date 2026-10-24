@@ -2,7 +2,7 @@ import { describe, it, expect, afterEach } from 'vitest'
 import { createServer, type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { BROWSER_UA, getImageNoReferer, getNoReferer } from './image-fetch.ts'
-import { setServingPolicySource } from '../media/serving.ts'
+import { Serving } from '../media/serving.ts'
 
 let server: Server | undefined
 afterEach(() => server?.close())
@@ -45,14 +45,12 @@ describe('getNoReferer', () => {
   // 「这台主机的字节要带哪个 Referer」是包的 serving 声明（站点的图床脾气住它的包里，宿主不认识站）。
   it('serving 表里声明了 referer 的主机：自动带上；没声明的主机照旧不带', async () => {
     const { base, seen } = await refererEcho()
-    setServingPolicySource(() => [{ match: '127.0.0.1', label: '夹具', referer: 'https://site.example/' }])
-    try {
-      await getNoReferer(`${base}/pic.png`, AbortSignal.timeout(5000))
-      expect(seen[0]).toBe('https://site.example/')
-      setServingPolicySource(() => [{ match: 'other.example', label: '别家', referer: 'https://other.example/' }])
-      await getNoReferer(`${base}/pic.png`, AbortSignal.timeout(5000))
-      expect(seen[1]).toBeUndefined()
-    } finally { setServingPolicySource(() => []) }
+    const withSite = new Serving(() => [{ match: '127.0.0.1', label: '夹具', referer: 'https://site.example/' }])
+    await getNoReferer(`${base}/pic.png`, AbortSignal.timeout(5000), { serving: withSite })
+    expect(seen[0]).toBe('https://site.example/')
+    const other = new Serving(() => [{ match: 'other.example', label: '别家', referer: 'https://other.example/' }])
+    await getNoReferer(`${base}/pic.png`, AbortSignal.timeout(5000), { serving: other })
+    expect(seen[1]).toBeUndefined()
   })
 
   it('显式 opts.referer 透传', async () => {
