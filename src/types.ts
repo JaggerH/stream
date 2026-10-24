@@ -121,6 +121,9 @@ export interface AppConfig {
     scheduler?: boolean
     /** false = 不装配包更新检查任务（`STREAM_RECIPE_UPDATE_CHECK=0`）。 */
     recipe_update_check?: boolean
+    /** false = 空白实例不种缺省订阅（影视频道的排行榜流）。给嵌入方（别的进程拿
+     *  createStream 起自己的实例）用：开箱即空，一个订阅都没有。缺省开，行为不变。 */
+    seed_default_streams?: boolean
     /** 插件后端所在网络（`STREAM_PLUGIN_NETWORK`）：compose=容器 DNS 可直连；host=经宿主
      *  loopback 随机口；none=够不着，全关。缺省 none。 */
     plugin_network?: 'compose' | 'host' | 'none'

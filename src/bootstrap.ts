@@ -220,6 +220,7 @@ export function deploymentFromEnv(env: ConfigEnv): NonNullable<AppConfig['deploy
     ...(env.VOICEPRINT_URL ? { voiceprint_url: env.VOICEPRINT_URL } : {}),
     scheduler: env.STREAM_NO_SCHEDULER !== '1',
     recipe_update_check: env.STREAM_RECIPE_UPDATE_CHECK !== '0',
+    seed_default_streams: env.STREAM_SEED_DEFAULT_STREAMS !== '0',
     plugin_network: env.STREAM_PLUGIN_NETWORK === 'compose'
       ? 'compose'
       : env.STREAM_PLUGIN_NETWORK === 'host' ? 'host' : 'none',
@@ -454,6 +455,7 @@ export async function bootstrap(
     cacheDb,
     legacyItemDb: config.item_db,
     legacyDedupDb: config.dedup_db,
+    seedDefaultStreams: config.deployment?.seed_default_streams !== false,
     audioArchiveRoot: config.audio_archive_root,
     audioArchiveDb: config.audio_archive_db,
     log,

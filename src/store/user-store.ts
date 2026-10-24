@@ -39,6 +39,8 @@ export class UserStore {
     private readonly now: () => string = () => new Date().toISOString(),
     /** 某一列 JSON 读坏、这一行被降级读出来时喊一声。不传 = 只写日志（测试 / 单跑那一档）。 */
     private readonly onRowDegraded?: (info: RowDegradation) => void,
+    /** false = 空白实例不种缺省订阅（嵌入方开箱即空；缺省开，serve 部署行为不变）。 */
+    private readonly seedDefaultStreams: boolean = true,
   ) {
     mkdirSync(dirname(dbPath), { recursive: true })
     this.db = new Database(dbPath)
@@ -239,7 +241,7 @@ export class UserStore {
     }
     this.ensureDefaultSpace()
     this.ensureSystemChannels()
-    this.ensureVideoStreams()
+    if (this.seedDefaultStreams) this.ensureVideoStreams()
   }
 
   /** 默认空间必须始终存在：它是所有频道的兜底落点，删空间时成员往这儿挪。

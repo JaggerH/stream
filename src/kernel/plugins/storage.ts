@@ -61,6 +61,8 @@ export interface StorageConfig {
   legacyItemDb: string
   /** 旧 dedup 库，`DedupStore` 自己按表拷贝收编。 */
   legacyDedupDb: string
+  /** false = 空白实例不种缺省订阅（嵌入方的空白实例开箱即空）。缺席 = 开。 */
+  seedDefaultStreams?: boolean
   audioArchiveRoot: string
   audioArchiveDb: string
   log: (...args: unknown[]) => void
@@ -110,7 +112,7 @@ export function storagePlugin(ctx: Context, config: StorageConfig): void {
   const contentCache = own(new ContentCache(config.cacheDb))
   const audioArchive = own(new AudioArchive(config.streamDb, config.audioArchiveRoot, config.audioArchiveDb))
   const sourceHealth = new SourceHealthStore(join(config.dataDir, 'source-health.json'))
-  const channels = own(new UserStore(config.streamDb, undefined, config.onRowDegraded))
+  const channels = own(new UserStore(config.streamDb, undefined, config.onRowDegraded, config.seedDefaultStreams !== false))
   const seenStore = own(new StreamSeenStore(join(config.dataDir, 'stream-seen.db')))
   cleanOrphanDbs(config.dataDir)
   // 统一收藏(video「正在追」+ audio「我的喜欢」两个系统列表)。老的两张表(v1 collected_work、
