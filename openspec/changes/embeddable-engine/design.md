@@ -81,6 +81,21 @@ stream.tools.call(name, args, ctx): Promise<ToolResult>
   风险分类，只把已有的信息透出来。
 - `caller` 记进运行记录，便于调用方追溯是谁调的。
 
+**落地（任务 4）：**
+- 工具面的唯一一份是 `src/mcp/tool-registry.ts` 的 `toolSpecs(service, extras)`：目录（`tool-catalog.ts`）+ 原先就地写在
+  `server.ts` 的三个（`intent_dossier` / `stream_subscribe` / `subscribe_source`）+ 能力包工具，顺序即 `tools/list` 的顺序。
+  `createMcpServer` 只遍历它注册（zod shape 交 SDK 校验）并转调 `invoke`；两个资源（`stream://streams` / `topics`）仍是 MCP 独有。
+- `list()` 每项 `{name, description, inputSchema, annotations}`，`inputSchema` 用 SDK 自己的 zod → JSON-Schema 转换器生成，
+  与 `tools/list` 逐项相等（`src/mcp/tool-registry.test.ts`、`src/engine/tools.test.ts` 两条一致性用例）。
+- `call()` 回 `{content, isError?, value?}`：前两格与经 MCP 调用一字不差（校验失败 / 工具不存在 / 工具抛错都是 `isError`，
+  文本照抄 SDK），`value` 是工具返回的原值。每次 `list()` / `call()` 现建目录，能力包运行期上下线随之可见。
+- `ctx.caller` 经 AsyncLocalStorage（`src/tool-caller.ts`，值按调用走，同 `devices/run-context.ts`）带到
+  `SearchRunStore.create`，落 `agent-runs.db` 的新列 `caller`——覆盖 `search_agent` / `enumerate_candidates` /
+  `purchase_decide` / `run_action_recipe` 建的 run。经 MCP 端点的调用不记（不带 caller，输出不变）。
+- `ctx.signal` 透传到能力包的 `execute`；`ctx.onProgress` 经 MCP 接到 `notifications/progress`，今天还没有工具报进度。
+- `annotations`：每个工具显式给 `readOnlyHint`（类型必填 + 守卫测试），分类见附录 C。`cdp_act` 的逐次 `intent` /
+  `confirmed`、动作 recipe 的二次确认仍是调用期的闸；`annotations` 是工具级的静态提示，不替代它们。
+
 ### D4. `StreamRuntime`：进程级共享资源
 
 ```ts
@@ -140,6 +155,17 @@ createRuntime({ log }) → { rsshub, sandbox, chrome, signals, close() }
 - `@streamapp/engine`：`package.json#exports` 只列 `src/engine/index.ts`（构建产物同理）。类型也只从这里导出。
 - 守卫测试：`src/engine/index.ts` 的导出清单钉成快照，改动需要显式更新；`exports` 不出现内部路径。
 - 现有的 `@streamapp/*` recipe 包、`sdk/plugin-sdk`、`shared/*` 不受影响。
+
+**任务 6.1 现状与待定：** 导出清单守卫已有（`src/engine/exports.guard.test.ts`，按源码文本数、含类型导出、禁 `export *`）。
+`package.json#exports` **没加**——发布布局要先定下面几件事，不是改一行能完的：
+1. **包放哪。** 根包叫 `stream`、`private: true`，是应用本身；直接给它加 `exports` 会挡掉仓库里按路径的深引用，也不能改名发布。
+   倾向：新建工作区包 `engine/`（`@streamapp/engine`），只放 `package.json` + 构建产物，源码仍在 `src/`。
+2. **要不要构建。** 今天全仓 `.ts` 直跑（tsx）。发 npm 要么打包成 JS（`src/` 可达图很大，含 `shared/`、`capabilities/desktop`），
+   要么要求调用方也用 TS 加载器——后者不适合当公开包。倾向：rolldown/esbuild 打一个 ESM 入口 + `tsc` 出 `.d.ts`，依赖外置。
+3. **原生依赖与运行期资产。** `better-sqlite3`、`isolated-vm`、`sharp` 是原生依赖（peer 还是直接依赖）；内置 recipe 包目录
+   （`packages/`）、RSSHub worker、`sidequest.jobs.js` 是按路径加载的运行期文件，要么随包发，要么由调用方经 `config.packages_dir`
+   等给路径。
+4. **版本与发布节奏**：与应用同版本号还是独立 semver。
 
 ## Risks / Trade-offs
 
@@ -229,3 +255,27 @@ Context 4 那张表之外补上的：
 | 每次调用的上下文 | `devices/run-context.ts`、`http/host-relay.ts` 的 `AsyncLocalStorage` | 可共享：值按调用走，不按实例 |
 | 第三方单例：sidequest | `dependencyRegistry`（配置 + backend）、`ScheduledJobRegistry`（静态 cron 表）、`gracefulShutdown`（SIGINT/SIGTERM 监听，`close` 时 `removeAllListeners`）、`configureLogger` | 见 D5：绕开 `Engine`，只用实例化零件；日志归 runtime |
 | 第三方单例：RSSHub | 内嵌 RSSHub 的 request-rewriter 改写全局 `fetch` / `node:http` | 进程（D4 的 RSSHub worker） |
+
+## 附录 C：工具的 `readOnlyHint` 分类（任务 4.3）
+
+判据：**只读** = 不改用户能看见的状态、不在外部留下副作用（付费调用、内部缓存、在用户浏览器里开一个读完即关的页不算改）。
+非只读再分两档：`destructiveHint: false` = 写本地状态、追加式或可撤；`true` = 外部副作用 / 移动删除文件 / 覆盖已有配置 /
+在用户的浏览器或桌面上执行任意动作。**拿不准一律非只读。** 能力包工具没声明 `readOnlyHint` 的按 `false`。
+名单钉在 `src/mcp/tool-registry.test.ts`（改它 = 改嵌入方给无人值守调用方的放行面）。全集 66 个（目录 63 + 就地 3）：
+
+| 档 | 数 | 工具 |
+|---|---|---|
+| 只读 | 35 | `stream_list` `stream_search` `stream_sources` `stream_categories` `stream_status` `stream_read` `stream_fetch_url` `inbox_search` `content_search` `price_search` `web_search` `read_url` `video_search` `video_resolve` `get_conversions` `read_content` `list_person_appearances` `resolve_intent` `resolve` `list_sources` `netdisk_bindings` `netdisk_browse` `netdisk_residue` `netdisk_preview_spec` `netdisk_transcribe` `netdisk_share_verify` `reconcile_status` `harvest_capability` `capability_status` `cdp_shot` `graph_frontier` `get_agent_run` `intent_list` `intent_dossier` `get_events` |
+| 写、可撤（`destructiveHint:false`） | 14 | `purchase_decide` `search_agent` `enumerate_candidates` `extract` `identify_speakers` `note_unonboardable` `intent_create` `subscribe_source` `reconcile_decide` `netdisk_sync` `graph_record_state` `graph_back` `graph_mark_irrelevant` `recipe_debug_abort` |
+| 真动手（`destructiveHint:true`） | 17 | `run_action_recipe` `recipe_debug_start` `recipe_debug_next` `cdp_act` `cdp_look` `cdp_pages` `graph_act` `provision_capability_key` `stream_subscribe` `stream_unsubscribe` `netdisk_apply_spec` `netdisk_follow` `reconcile_open` `reconcile_execute` `reconcile_undo_run` `reconcile_adjudicate` `reconcile_revoke_adjudication` |
+
+拿不准、按保守判的几个：
+- `cdp_look` → 真动手：名字是「看」，但 `js` 是在用户已登录的 Chrome 里执行任意脚本、`url` 会开页，能做的事与 `cdp_act` 无异。
+- `cdp_pages` → 真动手：带 `close` 时关掉用户的标签页。
+- `extract` / `identify_speakers` → 写：起转换、落用户在卡片上看得见的记录，`rerun` 会覆盖旧记录。
+- `purchase_decide` / `search_agent` / `enumerate_candidates` → 写：只读外网，但起后台 run、落库、花模型额度。
+- `netdisk_sync` → 写：不动文件，但重算并持久化配对结果。
+- `stream_subscribe` → 真动手：同 id 再订会覆盖那条流；`subscribe_source` 是确定性 upsert，判写。
+- `reconcile_adjudicate` → 真动手：跑的过程中可能把追更候选转存进用户网盘。
+- 判只读的边界：`stream_read` / `content_search` / `web_search` 会经用户的浏览器取页（读完即关，不落库）；`read_url` 可能走付费回落；
+  `read_content` 长文会过一次摘要（写内部缓存）；`netdisk_transcribe` 花 ASR 钱、缓存结果——都不改用户可见状态。

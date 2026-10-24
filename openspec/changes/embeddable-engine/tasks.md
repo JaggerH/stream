@@ -43,9 +43,9 @@
 
 ## 4. 工具接口
 
-- [ ] 4.1 `stream.tools.list()` / `call()`，内容同 MCP（含能力包动态工具）
-- [ ] 4.2 `createMcpServer` 改为包在工具接口上；MCP 端点行为不变（现有 MCP 测试全过）
-- [ ] 4.3 `ctx.caller` 记入运行记录；`annotations` 透出已有的风险信息
+- [x] 4.1 `stream.tools.list()` / `call()`，内容同 MCP（含能力包动态工具）
+- [x] 4.2 `createMcpServer` 改为包在工具接口上；MCP 端点行为不变（现有 MCP 测试全过）
+- [x] 4.3 `ctx.caller` 记入运行记录；`annotations` 透出已有的风险信息
 
 ## 5. 双实例测试
 
@@ -56,5 +56,7 @@
 ## 6. 发布与文档
 
 - [ ] 6.1 `@streamapp/engine` 的 `package.json` 与 `exports`；导出清单快照守卫
+  - 已做：导出清单守卫 `src/engine/exports.guard.test.ts`。
+  - 剩下：`package.json#exports` 与发布布局——包放哪、要不要构建、原生依赖与运行期资产、版本节奏，待定项见 design D7。
 - [ ] 6.2 `docs/ARCHITECTURE.md` 加「作为库使用」一节；README 提一句
 - [ ] 6.3 真启动回归：`stream serve` + 面板 + 一次采集 + 一次 MCP 调用 + 一条定时任务
