@@ -7,8 +7,8 @@
 // 只管画：起 / 查 / 轮询 / 取消全在 `useExtractConversion` 那一份里，这里不碰 API。
 // 五个状态一状态一面（排队 / 运行 / 完成 / 失败 / 未启动），别合并「运行中」和「排队」：
 // 排队有位置号、没有阶段可言；运行有阶段进度、没有位置号——合了就只能画一个含混的 spinner。
-import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
+import type { TFunction } from 'i18next'
 import { FileText, RotateCcw, X } from 'lucide-react'
 import { segmentsIn, type TranscriptSegmentLike } from '@extract/transcript.ts'
 
@@ -46,7 +46,7 @@ function stageLabel(name: string): string {
   return STAGE_LABELS[name] ?? name
 }
 
-function QueuedFace({ rec, conv, t }: { rec: Conversion; conv: ExtractConversionState; t: (key: string, opts?: Record<string, unknown>) => string }) {
+function QueuedFace({ rec, conv, t }: { rec: Conversion; conv: ExtractConversionState; t: TFunction }) {
   return (
     <div className="flex flex-col items-start gap-3 py-8 text-sm text-muted-foreground">
       <div data-testid="transcript-queued">
@@ -61,7 +61,7 @@ function QueuedFace({ rec, conv, t }: { rec: Conversion; conv: ExtractConversion
   )
 }
 
-function RunningFace({ rec, conv, t }: { rec: Conversion; conv: ExtractConversionState; t: (key: string, opts?: Record<string, unknown>) => string }) {
+function RunningFace({ rec, conv, t }: { rec: Conversion; conv: ExtractConversionState; t: TFunction }) {
   const stages = rec.timing?.stages ?? []
   return (
     <div className="flex flex-col items-start gap-3 py-8 text-sm">
@@ -84,7 +84,7 @@ function RunningFace({ rec, conv, t }: { rec: Conversion; conv: ExtractConversio
   )
 }
 
-function SegmentsBlock({ rec, t }: { rec: Conversion; t: (key: string, opts?: Record<string, unknown>) => string }) {
+function SegmentsBlock({ rec, t }: { rec: Conversion; t: TFunction }) {
   const segs = segmentsIn(rec)
   if (segs === undefined) return null // 不是转写分支：没有时间轴这回事
   return (
@@ -106,7 +106,7 @@ function SegmentsBlock({ rec, t }: { rec: Conversion; t: (key: string, opts?: Re
   )
 }
 
-function DoneFace({ rec, conv, t }: { rec: Conversion; conv: ExtractConversionState; t: (key: string, opts?: Record<string, unknown>) => string }) {
+function DoneFace({ rec, conv, t }: { rec: Conversion; conv: ExtractConversionState; t: TFunction }) {
   const r = (rec.result ?? {}) as ExtractResult
   const branch = r.branch ? (BRANCH_LABELS[r.branch] ?? r.branch) : undefined
   return (
@@ -135,7 +135,7 @@ function DoneFace({ rec, conv, t }: { rec: Conversion; conv: ExtractConversionSt
   )
 }
 
-function ErrorFace({ message, conv, t }: { message: string; conv: ExtractConversionState; t: (key: string, opts?: Record<string, unknown>) => string }) {
+function ErrorFace({ message, conv, t }: { message: string; conv: ExtractConversionState; t: TFunction }) {
   return (
     <div className="flex flex-col items-start gap-3 py-8 text-sm" data-testid="transcript-error">
       <div className="text-destructive">{t('transcript.failed')}：{message}</div>

@@ -1100,7 +1100,15 @@ export const api = {
         `/api/conversions?item=${encodeURIComponent(item)}${opts?.expandResult ? '&expand=result' : ''}`
       ),
     /** 某个 item 某种 kind 的最新一条；没有就是 null（不再有 `status:'none'` 那种伪状态）。 */
-    latest: async (c: Connection, item: string, kind: ConversionKind, opts?: { expandResult?: boolean }) => {
+    // 返回类型必须显式写 `Conversion | null`：`items[0]` 的索引访问在不开
+    // noUncheckedIndexedAccess 时是非可空的 `Conversion`，TS 会把 `?? null` 的右分支
+    // 从推断里剪掉——不写注解，mockResolvedValue(null) 的测试全红。
+    latest: async (
+      c: Connection,
+      item: string,
+      kind: ConversionKind,
+      opts?: { expandResult?: boolean },
+    ): Promise<Conversion | null> => {
       const res = await get<{ items: Conversion[] }>(
         c,
         `/api/conversions?item=${encodeURIComponent(item)}&kind=${kind}${opts?.expandResult ? '&expand=result' : ''}`
