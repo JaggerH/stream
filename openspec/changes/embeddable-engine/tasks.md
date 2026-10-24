@@ -37,9 +37,8 @@
 ## 3. 模块级状态归实例
 
 - [x] 3.1 调度中心（按 0.2 的结论 B，每实例一份）：`tasks/center.ts`、`tasks/deps.ts`、`tasks/registry.ts`（`652ddfd`）
-- [ ] 3.2 来源钩子：`search/seeds`、`links/recognize`、`media/serving`、`registry/public`、`http/client-item`、`providers/identities`、`credentials/cookie-provider`、`plugins/plugin-target`、`plugins/standby/hook`
-  - 已做：`search/seeds`、`links/recognize`（`642aab8`，各带两内核用例）。
-  - 剩下：`media/serving`、`registry/public`、`http/client-item`、`credentials/cookie-provider`（serving policies / source sites / item projection / cookie env 归实例，原计划由救回 `2798deb` 覆盖——该提交已丢失，按同样的做完标准重做）；`providers/identities`、`plugins/plugin-target`、`plugins/standby/hook`。
+- [x] 3.2 来源钩子：`search/seeds`、`links/recognize`、`media/serving`、`registry/public`、`http/client-item`、`providers/identities`、`credentials/cookie-provider`、`plugins/plugin-target`、`plugins/standby/hook`
+  - `search/seeds`、`links/recognize`、normalizer 注册表（`642aab8`）；serving / sites / projection / cookie env（`12555f1`，原 `2798deb` 已丢失、按同样标准重做）；plugin-target 与 standby（`155698f`，`ctx.packages.targets` / `ctx.packages.standby`，`STREAM_PLUGIN_NETWORK` 收进 deployment）；providers/identities（`031ef7f`，`ProviderIdentityTable` 于 ctx.sources，seed/bindings/callsite/UserStore 均按实例表）。
 - [ ] 3.3 内容缓存：`content/extract`、`adapters/favicon`；normalizer 注册表；`devices/fetch` 的 `impl`
   - 已做：normalizer 注册表（`642aab8`）。
   - 剩下：`content/extract`、`adapters/favicon` 的缓存句柄、`devices/fetch` 的 `impl`。
