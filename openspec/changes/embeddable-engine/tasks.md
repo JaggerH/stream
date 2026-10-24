@@ -30,15 +30,19 @@
 
 ## 2. 进程级共享资源
 
-- [ ] 2.1 `createRuntime()`：RSSHub worker、isolated-vm、Chrome 发现、进程信号
-- [ ] 2.2 `rsshub-adapter.ts`、`replay/author/facility-lock.ts` 改从 runtime 取
-- [ ] 2.3 只读可共享的模块级状态加注释说明
+- [x] 2.1 `createRuntime()`：RSSHub worker、isolated-vm、Chrome 发现、进程信号（`cd15e09`：进程兜底网、全局 fetch 拦截等进程级资源都在 runtime 上）
+- [x] 2.2 `rsshub-adapter.ts`、`replay/author/facility-lock.ts` 改从 runtime 取（`cd15e09`）
+- [x] 2.3 只读可共享的模块级状态加注释说明（`cd15e09`、`642aab8`）
 
 ## 3. 模块级状态归实例
 
-- [ ] 3.1 调度中心（按 0.2 的结论）：`tasks/center.ts`、`tasks/deps.ts`、`tasks/registry.ts`
+- [x] 3.1 调度中心（按 0.2 的结论 B，每实例一份）：`tasks/center.ts`、`tasks/deps.ts`、`tasks/registry.ts`（`652ddfd`）
 - [ ] 3.2 来源钩子：`search/seeds`、`links/recognize`、`media/serving`、`registry/public`、`http/client-item`、`providers/identities`、`credentials/cookie-provider`、`plugins/plugin-target`、`plugins/standby/hook`
+  - 已做：`search/seeds`、`links/recognize`（`642aab8`，各带两内核用例）。
+  - 剩下：`media/serving`、`registry/public`、`http/client-item`、`credentials/cookie-provider`（serving policies / source sites / item projection / cookie env 归实例，原计划由救回 `2798deb` 覆盖——该提交已丢失，按同样的做完标准重做）；`providers/identities`、`plugins/plugin-target`、`plugins/standby/hook`。
 - [ ] 3.3 内容缓存：`content/extract`、`adapters/favicon`；normalizer 注册表；`devices/fetch` 的 `impl`
+  - 已做：normalizer 注册表（`642aab8`）。
+  - 剩下：`content/extract`、`adapters/favicon` 的缓存句柄、`devices/fetch` 的 `impl`。
 - [ ] 3.4 每处补「两个内核互相读不到」的用例
 
 ## 4. 工具接口
