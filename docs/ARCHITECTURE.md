@@ -2042,6 +2042,11 @@ Stream's backend can be embedded into another process instead of being run as
 - **`stream.tools`** (`src/engine/tools.ts`) — the in-process tool interface
   the MCP endpoint is built on: `stream.tools.list()` / `stream.tools.call()`
   return the same results the MCP client sees.
+- **`hooks`** (passed to `createStream`) — the instance pushes events out to
+  the embedder (`onItem`, `onDebug`, `broadcast`, `track`, ...).
+  `hooks.onTaskSettled` reports each scheduled-task run settlement in this
+  instance (`done`/`failed`, with the task id, label and timestamp); a throwing
+  callback is logged and ignored — observing a task never affects it.
 
 Lifecycle: `createRuntime` → `createStream` (per data dir) → [`routes` +
 `attachRelayServers` if you serve HTTP] → on shutdown `stream.close()` per

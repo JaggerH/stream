@@ -7,6 +7,21 @@ export interface TaskOutcome {
   detail?: unknown
 }
 
+/**
+ * 一次任务运行结束（成功或失败）的事实，交给实例的宿主回调（`onTaskSettled`）。
+ * 只报告，不参与调度：重试、补跑、互斥都不看它。
+ */
+export interface TaskSettledEvent {
+  taskId: string
+  /** 人话名字（label）。任务刚被删掉、注册表里查不到时缺席。 */
+  name?: string
+  status: 'done' | 'failed'
+  /** 运行结束的时刻（epoch ms）。 */
+  at: number
+  /** status='failed' 时的错误信息。 */
+  error?: string
+}
+
 /** bootstrap 完成接线后注入的依赖切面。字段全部 optional——各任务运行时自查所需依赖，
  *  缺了就抛（记 failed），不做启动期硬校验（cookieProvider 等本来就是条件装配的）。 */
 export interface TaskDeps {

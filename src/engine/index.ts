@@ -18,6 +18,7 @@ import { createRuntime, type StreamRuntime } from './runtime.ts'
 import { openDevices, type StreamDevices } from './devices.ts'
 import { createCapabilities, loadOptional, provideBrowserCookies, type StreamCapabilities } from './capabilities.ts'
 import { TaskCenter } from '../tasks/center.ts'
+import type { TaskSettledEvent } from '../tasks/types.ts'
 import { lazyNotify, type EventsService } from '../events/service.ts'
 import type { StandbyManager } from '../plugins/standby/manager.ts'
 import { startBackground } from './background.ts'
@@ -29,11 +30,14 @@ export type { StreamCapabilities } from './capabilities.ts'
 export type { StreamTools, ToolAnnotations, ToolCallContext, ToolDescriptor, ToolProgress, ToolResult } from './tools.ts'
 import { createTools, type StreamTools } from './tools.ts'
 
-/** 宿主层递进来的回调：实例往外推东西（ws 广播、调试总线、归因）只经这几个口，自己不持有任何连接。 */
+/** 宿主层递进来的回调：实例往外推东西（ws 广播、调试总线、归因、任务结果）只经这几个口，自己不持有任何连接。 */
 export type StreamHostHooks = Pick<
   BootOptions,
   'onItem' | 'onDebug' | 'broadcast' | 'track' | 'trackSync' | 'mcpEndpoint'
->
+> & {
+  /** 这个实例里每条调度任务每次运行结束（成功/失败）时调用。回调抛错只记日志，不影响任务。 */
+  onTaskSettled?: (e: TaskSettledEvent) => void
+}
 
 export interface CreateStreamOptions {
   /** 实例的根目录（与 `STREAM_DATA_DIR` 同义：`config.yaml` 在它下面，可写状态在它的 `data/` 下）。 */
@@ -103,6 +107,8 @@ export async function createStream(opts: CreateStreamOptions): Promise<Stream> {
   let devices: StreamDevices
   let capabilities: StreamCapabilities
   const tasks = new TaskCenter()
+  // 宿主想知道任务结果：job 运行时经路由表够到本实例，运行结束的事实从那儿折回（见 center.emitSettled）。
+  tasks.onTaskSettled = opts.hooks?.onTaskSettled
   // standby 管理器共享槽：后台接线写，实例关停（close）读。
   const standby: { current: StandbyManager | null } = { current: null }
   let closing: Promise<void> | undefined

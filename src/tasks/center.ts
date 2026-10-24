@@ -12,7 +12,7 @@ import { dirname, resolve } from 'node:path'
 // 只有 `whenBusy: 'skip'` 那一档要自己持节拍器：sidequest 的 `b.schedule()` 到点直接落账，
 // 中间没有任何钩子，而"这一班到底跑不跑"必须在**入队之前**决定（见 buildCron）。
 import nodeCron from 'node-cron'
-import type { ScheduledTask, TaskDeps } from './types.ts'
+import type { ScheduledTask, TaskDeps, TaskSettledEvent } from './types.ts'
 import type { TaskStore, UserTaskRow } from './task-store.ts'
 import type { RunLedger } from './run-history.ts'
 import type { PackageAction } from './package-actions.ts'
@@ -325,6 +325,12 @@ export class TaskCenter {
   private queueAlive: ((queue: string) => boolean) | undefined
   /** 中心这一代的日志出口（`start` 的 opts.log）。跳过一班要留痕，得有地方写。 */
   private centerLog: (msg: string) => void = () => {}
+  /**
+   * 实例的宿主回调：想知道这个实例里每条任务**每次运行结束**（成功/失败）的结果。嵌入方接线
+   * （`src/engine/index.ts` 的 `StreamHostHooks.onTaskSettled`），实例装配时写进来。只报告，
+   * 不参与调度——重试、补跑、互斥都不看它；回调抛错只记一行日志，绝不影响任务落账。
+   */
+  onTaskSettled: ((e: TaskSettledEvent) => void) | undefined
   /** 这一代账本的路径（`start` 的 opts.dbPath）。`runningTasks` 只读它；中心没起 / 已停 = undefined。 */
   private ledgerPath: string | undefined
   /** taskId → 它当前那条 cron 的句柄。改排期 = destroy 旧的 + 注册新的。 */
@@ -441,6 +447,17 @@ export class TaskCenter {
   }
 
   /**
+   * 宿主回调的安全出口。回调是嵌入方递进来的代码，抛错只记一行日志——任务已经落完账了，
+   * 观察者的问题不能倒过来变成任务的问题。
+   */
+  private emitSettled(e: TaskSettledEvent): void {
+    if (!this.onTaskSettled) return
+    try { this.onTaskSettled(e) } catch (err) {
+      this.centerLog(`[tasks] onTaskSettled 回调抛错（已忽略）：${err instanceof Error ? err.message : String(err)}`)
+    }
+  }
+
+  /**
    * 跳过一班要**留得下痕**：一条有硬时间窗的任务这一班没跑，如果只是"什么都没发生"，
    * 那和"它跑了、没事可做"在界面上长得一模一样。所以一行后端日志 + 一条 warn 事件
    * （事件面板看得见）。事件层没接上时只剩日志，不该因此把这一次跳过变成一次崩溃。
@@ -550,7 +567,11 @@ export class TaskCenter {
       // 先登记路由再起引擎：上一个进程留下的 waiting job 会在 start 后立刻被派发器捡起来跑，
       // 那时路由表里必须已经有本实例。同一个账本被两个中心同时占着 → 这里就抛（数据目录锁之外的第二道闸）。
       this.unroute?.()
-      this.unroute = bindTaskRoute(key, { task: (id) => this.registry.get(id), deps: () => this.getDeps() })
+      this.unroute = bindTaskRoute(key, {
+        task: (id) => this.registry.get(id),
+        deps: () => this.getDeps(),
+        settled: (e) => this.emitSettled(e),
+      })
       let facade = opts.sidequest
       let jobClass = opts.jobClass
       if (!facade) {

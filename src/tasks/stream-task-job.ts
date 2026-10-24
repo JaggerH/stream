@@ -18,7 +18,10 @@ export class StreamTaskJob extends Job {
     const task = route.task(taskId)
     if (!task) throw new Error(`unknown task: ${taskId}`)
     try {
-      return await task.run(deps)
+      const outcome = await task.run(deps)
+      // 运行结束的事实交给实例（宿主回调）；回调抛错由路由那一侧兜住，不影响落账。
+      route.settled?.({ taskId, name: task.label, status: 'done', at: Date.now() })
+      return outcome
     } catch (e) {
       const msg = (e as Error).message
       deps.log(`[tasks] ${task.id} failed: ${msg}`)
@@ -29,6 +32,7 @@ export class StreamTaskJob extends Job {
           dedupeKey: `task-failed:${task.id}`,
         })
       } catch { /* 通知失败不遮蔽原始错误 */ }
+      route.settled?.({ taskId, name: task.label, status: 'failed', at: Date.now(), error: msg })
       // 可能已经有动作发出去了（设备中途失联、用户按了中止）——再跑一遍就是重复下单。
       // 记 failed 但不进重试，见 src/devices/errors.ts 头注。
       if (failureDisposition(e) === 'final') return this.fail(e as Error) as unknown as TaskOutcome

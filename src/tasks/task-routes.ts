@@ -7,12 +7,14 @@
  * **这是有意的进程级状态**：它只是「键 → 实例」的索引，本身不装任何实例的数据；两个实例各登记各的键，
  * 互不可见。
  */
-import type { ScheduledTask, TaskDeps } from './types.ts'
+import type { ScheduledTask, TaskDeps, TaskSettledEvent } from './types.ts'
 
 export interface TaskRoute {
   task: (id: string) => ScheduledTask | undefined
   /** 未接上就抛（防静默空跑）。 */
   deps: () => TaskDeps
+  /** 一次运行结束（成功/失败）的事实交给实例。缺席 = 这个实例没人订阅运行结果。 */
+  settled?: (e: TaskSettledEvent) => void
 }
 
 const routes = new Map<string, TaskRoute>()
