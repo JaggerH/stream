@@ -113,6 +113,8 @@ export interface RouteIo {
   track: TrackFn
   trackSync: TrackSyncFn
   port: number
+  /** sidequest 面板的口（面板进程随 routes 起并只绑 127.0.0.1；缺省 8678）。 */
+  dashboardPort?: number
   restart: NonNullable<import('../http/app.ts').HttpDeps['restart']>
 }
 
@@ -639,9 +641,13 @@ export async function routes(io: RouteIo): Promise<Hono> {
   // 是资源目录的上两级（不存在），于是 `/panel/*` 恒 404 —— 工作台里报「bundle 加载失败」，
   // 而那句话给的两个猜测（后端没起 / 没 build:panel）都不是真因。同扩展目录那一处，见 `shippedRoot`。
   mountPanelAssets(app, { root: join(shippedRoot('app/dist-panel'), 'app', 'dist-panel') })
-  // Sidequest 面板：经 /_p/sidequest 整路透传到容器内 loopback:8678。必须先于
+  // Sidequest 面板：经 /_p/sidequest 整路透传到本机回环的面板口。必须先于
   // mountPluginGateway 注册，因为两者都处理 /_p/* 路由，更具体的规则需要优先匹配。
-  mountTaskDashboard(app, { port: 8678 })
+  // 面板进程**在这里起、也只在这里起**（design D1 附注）：它是 HTTP 面，不挂路由的嵌入方
+  // 不多一个端口；只绑 127.0.0.1（原状是随 tasks.start 起且绑全部网卡，同进程第二实例必撞口）。
+  const dashboardPort = io.dashboardPort ?? 8678
+  mountTaskDashboard(app, { port: dashboardPort })
+  await stream.tasks.startDashboard(dashboardPort, (m) => console.log(m))
   // /_p 插件网关：与 mountMcp 同样直接挂在 app 上（不进 HttpDeps，避开三处接线陷阱——见
   // src/http/plugin-gateway.ts 头注）。descriptors 用包域加载后的那份描述符
   // （PluginDescriptor[]，sharing.plugins 已用同一字段）；mode 读

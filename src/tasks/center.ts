@@ -47,6 +47,9 @@ interface SidequestFacade {
   start: (config: unknown) => Promise<unknown>
   /** 运行期建一个队列（幂等：已存在就当成功）。缺席 = 这个门面建不了队列，见 `ensureQueue`。 */
   createQueue?: (name: string, concurrency: number) => Promise<void>
+  /** 起 sidequest 面板（HTTP 面的事，routes() 经 `startDashboard` 调）。缺席 = 门面不支持（单测假门面）。
+   *  面板不随 `start` 起：它是 HTTP 面，实例不该在没人挂路由时开端口。 */
+  startDashboard?: (port: number) => Promise<void>
   build: (jobClass: unknown) => {
     queue: (q: string) => unknown
     maxAttempts: (n: number) => unknown
@@ -60,14 +63,14 @@ interface SidequestFacade {
   stop: () => Promise<void>
 }
 
-/** 传给门面 `start` 的那份配置（形状沿用 `Sidequest.start` 的，单测按它断言）。 */
+/** 传给门面 `start` 的那份配置（形状沿用 `Sidequest.start` 的，单测按它断言）。面板不在这份
+ *  配置里——它由 `startDashboard` 单独起（HTTP 面，routes() 决定）。 */
 interface StartConfig {
   backend: { driver: string; config: string }
   queues: { name: string; concurrency: number }[]
   logger?: { level: string }
   manualJobResolution?: boolean
   jobsFilePath?: string
-  dashboard?: { enabled: boolean; port: number; basePath?: string }
 }
 
 /**
@@ -151,11 +154,6 @@ async function realFacade(key: string): Promise<{ facade: SidequestFacade; jobCl
           for (const q of conf.queues) await sq.grantQueueConfig(backend, q as never, conf.queueDefaults as never, true)
           runtime = new sq.WorkerRuntime(backend, conf as never)
           await runtime.start()
-          const d = (c as StartConfig).dashboard
-          if (d?.enabled) {
-            dashboard = new sq.SidequestDashboard()
-            await dashboard.start({ ...d, backendConfig: conf.backend } as never)
-          }
           cfg = conf
         } catch (e) {
           await stop()
@@ -169,6 +167,28 @@ async function realFacade(key: string): Promise<{ facade: SidequestFacade; jobCl
         if (await backend.getQueue(name)) return
         try { await backend.createNewQueue({ name, concurrency } as never) }
         catch { if (!await backend.getQueue(name)) throw new Error(`建不出队列 ${name}`) }
+      },
+      // 面板单独起（routes() 调）：它是 HTTP 面，实例不该在没人挂路由时开端口。绑址只认
+      // 本机回环——库的 `listen()` 是 `app.listen(port)` 不带地址（绑全部网卡），这里在实例上
+      // 覆写同名方法，用同一个 express app、同一段启动逻辑，只换绑址。
+      startDashboard: async (port) => {
+        if (!backend || !cfg) throw new Error('Engine not configured')
+        const d = new sq.SidequestDashboard()
+        const box = d as unknown as {
+          config?: { port?: number }
+          app?: { listen: (port: number, host: string, cb: (error?: Error) => void) => unknown }
+          server?: unknown
+          listen: () => void
+        }
+        box.listen = () => {
+          const p = box.config?.port ?? port
+          box.server = box.app?.listen(p, '127.0.0.1', (error) => {
+            if (error) console.error('[tasks] Failed to start Sidequest Dashboard!', error)
+            else console.log(`[tasks] sidequest dashboard on http://127.0.0.1:${p} (basePath /_p/sidequest)`)
+          })
+        }
+        await d.start({ enabled: true, port, basePath: '/_p/sidequest', backendConfig: cfg.backend } as never)
+        dashboard = d
       },
       build: (j) => {
         if (!backend || !cfg) throw new Error('Engine not configured')
@@ -251,7 +271,6 @@ async function discardCron(h: CronHandle): Promise<void> {
 
 export interface TaskCenterStartOptions {
   dbPath: string
-  dashboardPort?: number
   log: (msg: string) => void
   /** 注入假门面供单测；生产缺省按实例组装真 sidequest */
   sidequest?: SidequestFacade
@@ -576,9 +595,6 @@ export class TaskCenter {
           { name: DEFAULT_QUEUE, concurrency: 4 },
           { name: 'serial', concurrency: 1 },
         ],
-        ...(opts.dashboardPort
-          ? { dashboard: { enabled: true, port: opts.dashboardPort, basePath: '/_p/sidequest' } }
-          : {}),
       })
       this.active = facade
       this.activeJobClass = jobClass
@@ -685,6 +701,19 @@ export class TaskCenter {
       opts.log(`[tasks] task center disabled — start failed: ${(e as Error).message}`)
       return { ok: false }
     }
+  }
+
+  /**
+   * 起 sidequest 面板。**HTTP 面的事，routes() 调**——面板不随实例 / `start()` 起：不挂路由的
+   * 嵌入方不该凭空多出一个端口（design D1 附注）。只绑本机回环（realFacade 里覆写了 listen）；
+   * 端口由调用方给（缺省 8678，见 routes 的 io.dashboardPort）。调度中心没起、门面不支持
+   * （单测假门面）、或绑定失败（端口被占）都只留一行日志——面板缺席不该掀翻路由装配。
+   */
+  async startDashboard(port: number, log: (msg: string) => void = console.log): Promise<void> {
+    if (!this.active) { log('[tasks] dashboard skipped — task center not running'); return }
+    if (!this.active.startDashboard) { log('[tasks] dashboard skipped — facade does not support it'); return }
+    try { await this.active.startDashboard(port) }
+    catch (e) { log(`[tasks] dashboard disabled — start failed: ${(e as Error).message}`) }
   }
 
   /**
