@@ -388,7 +388,7 @@ export class UnsupportedOpError extends Error {
  * shape of each op and how a reply is unwrapped — Stream Desktop's Rust process implements the
  * matching op handlers.
  */
-export function makeDesktopDriver(raw: HostRelay, ops: ReadonlySet<string> = DESKTOP_OPS): DesktopDriver {
+export function makeDesktopDriver(raw: HostRelay, ops: ReadonlySet<string> = DESKTOP_OPS, opts: { seeTrace?: boolean } = {}): DesktopDriver {
   /**
    * **每一次 op 的往返耗时**，挂在已有的 `STREAM_DESKTOP_SEE_TRACE` 这一个开关下（不另立旋钮）。
    *
@@ -396,7 +396,7 @@ export function makeDesktopDriver(raw: HostRelay, ops: ReadonlySet<string> = DES
    * 截图 + 识别 + 模板三次往返，谁贵看不出来——只能靠猜，而猜过的两次都猜错了（先怪模型、
    * 再怪焦点）。**一条 op 一行，别在这里做聚合**：聚合要先假设哪些维度重要，而这正是还不知道的事。
    */
-  const traced: HostRelay = process.env.STREAM_DESKTOP_SEE_TRACE
+  const traced: HostRelay = opts.seeTrace
     ? {
         async send(op) {
           const t0 = Date.now()

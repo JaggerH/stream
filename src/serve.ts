@@ -239,11 +239,11 @@ function releaseLock(): void {
  *  无条件构造),不受本标记影响。返回是否已启动,便于调用方/测试断言。 */
 export function maybeStartScheduler(
   scheduler: { start(): void },
-  env: NodeJS.ProcessEnv = process.env,
+  enabled: boolean,
   log: (msg: string) => void = console.log,
 ): boolean {
-  if (env.STREAM_NO_SCHEDULER === '1') {
-    log('[stream] scheduler disabled (STREAM_NO_SCHEDULER=1) — query-only backend, no standing harvest')
+  if (!enabled) {
+    log('[stream] scheduler disabled — query-only backend, no standing harvest')
     return false
   }
   scheduler.start()
@@ -1146,7 +1146,7 @@ async function main() {
   // scheduler.start() runs each stream's initial harvest itself (staggered) — no
   // manual tick loop here, which previously double-ran every stream at boot.
   // 查询档(STREAM_NO_SCHEDULER=1,stdio MCP spawn 的即用即回收后端)跳过采集,只服务查询。
-  maybeStartScheduler(scheduling.scheduler)
+  maybeStartScheduler(scheduling.scheduler, config.deployment?.scheduler !== false)
   // The scheduler is the only standing harvest engine (ARCHITECTURE.md Data Scheduling,
   // invariant 4). Standing resolution goals are expressed as exclusive Streams, harvested
   // here — not by any parallel subscription loop.
@@ -1157,7 +1157,7 @@ async function main() {
   // 日志，不掀翻服务器。
   // 查询档(STREAM_NO_SCHEDULER=1)跳过采集调度中心，与上面 maybeStartScheduler 同一开关——
   // 查询型即用即回收后端不该常驻定时任务（cookie-refresh/jobs-sweep/standby-reaper/netdisk-autosync）。
-  if (process.env.STREAM_NO_SCHEDULER !== '1') {
+  if (config.deployment?.scheduler !== false) {
     // 用户定义的定时任务（spec 2026-08-28 §3.1）：定义住 stream.db，跑起来和 builtin 无差别。
     // store/ledger/taskLogDir 已经在路由挂载之前无条件构造好了（见上面那段头注），这里直接读
     // 同一份绑定——不重新声明、不重新 new。
@@ -1193,9 +1193,9 @@ async function main() {
               runSessionExports(boot.config.session_exports!, boot.kernel.credentials.cookieProvider),
           }
         : {}),
-      // 包更新检查（`recipe-update-check`）：`STREAM_RECIPE_UPDATE_CHECK=0` 关掉 = 整格不装配，
+      // 包更新检查（`recipe-update-check`）：deployment.recipe_update_check=false 关掉 = 整格不装配，
       // 任务表上就没有这条（与 sessionExports 同一种"没有就不出现"的写法，不是一条空跑的任务）。
-      ...(process.env.STREAM_RECIPE_UPDATE_CHECK !== '0'
+      ...(config.deployment?.recipe_update_check !== false
         ? { recipePackageOps: { updates: () => sources.recipePackageOps.updates() } }
         : {}),
     }
@@ -1224,7 +1224,7 @@ async function main() {
     ],
     degraded: [
       ...(standbyMgr ? [] : ['standby']),
-      ...(process.env.STREAM_NO_SCHEDULER === '1' ? ['taskDeps'] : []),
+      ...(config.deployment?.scheduler === false ? ['taskDeps'] : []),
     ],
   })
 

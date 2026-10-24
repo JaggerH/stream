@@ -80,7 +80,7 @@ export function makeContainerOps(deps: ContainerOpsDeps): ContainerOps {
   > {
     const p = deps.descriptors().find((d) => d.id === pkgId)
     if (!p?.backend) return { ok: false, code: 'no_container' }
-    const ep = (deps.resolveEndpoint ?? (() => resolveDockerEndpoint(process.env, process.platform)))()
+    const ep = (deps.resolveEndpoint ?? (() => resolveDockerEndpoint({} as NodeJS.ProcessEnv, process.platform)))()
     if (!ep) return { ok: false, code: 'unavailable' }
     const docker = (deps.makeClient ?? makeDockerClient)(ep)
     if (!(await docker.ping().catch(() => false))) return { ok: false, code: 'unavailable' }

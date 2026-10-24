@@ -40,7 +40,7 @@ export interface DeprovisionDeps {
  * - `'failed'`：docker 在，但删这一步报错。
  */
 export async function deprovisionService(service: string, deps: DeprovisionDeps = {}): Promise<DeprovisionOutcome> {
-  const ep = (deps.resolveEndpoint ?? (() => resolveDockerEndpoint(process.env, process.platform)))()
+  const ep = (deps.resolveEndpoint ?? (() => resolveDockerEndpoint({} as NodeJS.ProcessEnv, process.platform)))()
   if (!ep) return 'unavailable'
   const docker = (deps.makeClient ?? makeDockerClient)(ep)
   if (!(await docker.ping().catch(() => false))) return 'unavailable'

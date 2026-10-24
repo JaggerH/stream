@@ -24,7 +24,8 @@
  * network) — those go through `resolvePluginTarget` / the host-mode standby origin cache in
  * `plugin-target.ts`, not this file.
  */
-export const GATEWAY_PORT = Number(process.env.STREAM_GATEWAY_PORT ?? 8900)
+/** 网关口由调用方给（cli 从 STREAM_GATEWAY_PORT 翻译；缺省 8900 = 后端唯一的对外口）。 */
+export const DEFAULT_GATEWAY_PORT = 8900
 export const GATEWAY_PREFIX = '/_p'
 
 /** 给客户端（浏览器/前端）的插件 URL：一律根相对、同源 `/_p/<service>`。谁持有入口谁解析——

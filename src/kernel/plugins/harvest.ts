@@ -28,7 +28,7 @@ import { resolveTransport, type Transport } from '../../replay/transport.ts'
 import { RecipeSessionManager } from '../../replay/session-manager.ts'
 import { SessionRecipeExecutor } from '../../replay/session-recipe-executor.ts'
 import { RecipeRunner } from '../../replay/recipe-runner.ts'
-import { RunProbe, recipeProbeEnabled } from '../../replay/recipe-probe.ts'
+import { RunProbe } from '../../replay/recipe-probe.ts'
 import { FeedLedger } from '../../replay/feed-ledger.ts'
 import { FacilityRateLimiter } from '../../replay/facility-rate-limit.ts'
 import { FacilityCooldown } from '../../replay/facility-cooldown.ts'
@@ -113,6 +113,12 @@ export interface HarvestService {
 }
 
 export interface HarvestConfig {
+  /** true = 视觉识别逐 op 记耗时（deployment.desktop_see_trace）。缺省关。 */
+  desktopSeeTrace?: boolean
+  /** false = 不往桌面接管指示条写步骤状态（deployment.desktop_status）。缺省开。 */
+  desktopStatus?: boolean
+  /** false = 不跑 recipe 探针（deployment.recipe_probe）。缺省开。 */
+  recipeProbe?: boolean
   /** 本机 Chrome 的发现（runtime 的那份，进程级：它读 PATH）。缺省 = 按真进程环境现找。 */
   discoverChrome?: () => Promise<import('../../browser/discover-chrome.ts').ChromeCandidate[]>
   /** 可写状态根目录（能力缓存 / 撞墙台账 / 失败现场截图都落在它下面）。 */
@@ -244,13 +250,14 @@ export const harvestPlugin = {
     // 共用它。两处各建一份会让"有没有桌面设备"出现两个答案。
     const desktopDriver = () => {
       const dev = hostRelays.deviceFor('desktop')
-      return dev ? makeDesktopDriver(dev.relay, dev.ops) : undefined
+      return dev ? makeDesktopDriver(dev.relay, dev.ops, { seeTrace: config.desktopSeeTrace === true }) : undefined
     }
     // 识别层的**唯一构造点**，和上面那个 driver 同一个理由：两个调用方（采集 adapter 与
     // run_action_recipe）各建一份，缓存目录和 model 预算就会出现两个答案。
     const makeSee = (driver: DesktopDriver, sourceId: string): SeeResolver =>
       makeSeeResolver(driver, sourceId, {
         cacheDir: join(dataDir, 'desktop-see'),
+        trace: config.desktopSeeTrace === true,
         // **每次调用现从 config 上取，不在这儿把那个函数捞出来存着**：捞出来就等于把
         // 「打给谁」冻在建实例那一刻，而 model 段可能几分钟后才第一次跑到（"装配期取的值
         // = 冻住的答案"，见 AGENTS.md）。在场判定同样是每次现判——没配 LLM 网关时这一格
@@ -371,7 +378,7 @@ export const harvestPlugin = {
       // off the resolved Transport instead of its own ext-cdp/cloak if/else.
       transportFor,
       new RecipeRunner(
-        (id) => new RunProbe(id, recipeProbeEnabled()),
+        (id) => new RunProbe(id, config.recipeProbe !== false),
         liveHarvestSink,
         (sourceId) => config.broadcast?.({ type: 'harvest-done', sourceId }),
         // Every recipe run (detail included) posts its per-phase breakdown to the DebugBox — so
@@ -551,7 +558,7 @@ export const harvestPlugin = {
       if (extRelay.connected) return
       const dev = hostRelays.deviceFor('desktop')
       if (dev) {
-        const driver = makeDesktopDriver(dev.relay, dev.ops)
+        const driver = makeDesktopDriver(dev.relay, dev.ops, { seeTrace: config.desktopSeeTrace === true })
         const spec = harvestBrowserSpec()
         // 等扩展自己连上来（onStartup → startExtCdp）。给足一次冷启动，但不无限等：等不到就按
         // "这一轮没跑"处理，比挂在这里好——挂住会拖垮整个调度轮次。

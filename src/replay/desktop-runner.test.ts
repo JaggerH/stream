@@ -633,20 +633,14 @@ describe('runDesktopRecipe', () => {
     expect(statuses.at(-1)).toBeNull()
   })
 
-  /** `STREAM_DESKTOP_STATUS=0`：一条都不发，连结尾的清除也不发（关掉就是关掉）。 */
-  it('STREAM_DESKTOP_STATUS=0 时一条 status 都不发', async () => {
-    const prev = process.env.STREAM_DESKTOP_STATUS
-    process.env.STREAM_DESKTOP_STATUS = '0'
-    try {
-      const { driver, statuses, calls } = fakeDriver({ reads: [[{ id: 'a' }]] })
-      const out = await runDesktopRecipe(recipe(), { q: 'x' }, driver)
-      expect(out.outcome).toBe('ok')
-      expect(statuses).toEqual([])
-      expect(calls.map((c) => c.m)).toContain('invoke') // 关掉的只是提示，recipe 照跑
-    } finally {
-      if (prev === undefined) delete process.env.STREAM_DESKTOP_STATUS
-      else process.env.STREAM_DESKTOP_STATUS = prev
-    }
+  /** deployment.desktop_status=false（`STREAM_DESKTOP_STATUS=0` 翻译进来）：一条都不发，
+   *  连结尾的清除也不发（关掉就是关掉）。 */
+  it('statusEnabled:false 时一条 status 都不发', async () => {
+    const { driver, statuses, calls } = fakeDriver({ reads: [[{ id: 'a' }]] })
+    const out = await runDesktopRecipe(recipe(), { q: 'x' }, driver, { statusEnabled: false })
+    expect(out.outcome).toBe('ok')
+    expect(statuses).toEqual([])
+    expect(calls.map((c) => c.m)).toContain('invoke') // 关掉的只是提示，recipe 照跑
   })
 })
 

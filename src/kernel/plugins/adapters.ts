@@ -39,6 +39,8 @@ export interface AdaptersConfig {
   dataDir: string
   /** 进程级共享的 RSSHub worker（runtime 的那份）。缺省 = 进程缺省那一个。 */
   rsshub?: import('../../rsshub-adapter.ts').RsshubWorker
+  /** RSSHub 本地 checkout（deployment.rsshub_pkg）：开发档先于安装目录解析。 */
+  rsshubCheckoutPath?: string
   log: (...args: unknown[]) => void
   /**
    * 「这个 source 跑起来时该拿到哪份配置」——`BuiltinAdapter` 唯一的构造参数。
@@ -110,7 +112,7 @@ export const adaptersPlugin = {
       // dataDir 是 RSSHub 的落点：发行安装不带 RSSHub，第一次跑到这类源时由 adapter 现装
       // 到 `<dataDir>/rsshub/`（`src/rsshub-install.ts` 写着为什么不能当 npm 依赖装）。
       ['rsshub', new RssHubAdapter({
-        resolveDeps: { dataDir },
+        resolveDeps: { dataDir, ...(config.rsshubCheckoutPath ? { checkoutPath: config.rsshubCheckoutPath } : {}) },
         // 进程级共享的那个 worker（runtime 递进来，D4）：共用 runtime 的实例共用一个 RSSHub。
         ...(config.rsshub ? { worker: config.rsshub } : {}),
         log,

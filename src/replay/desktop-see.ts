@@ -442,7 +442,7 @@ export const SEE_CALLSITE = 'desktop.see'
 export const POINT_CALLSITE = 'desktop.point'
 
 export interface SeeHit { rect: Rect; via: SeeVia; cacheKey: string | null; a11yRef?: string }
-export interface SeeResolverDeps { cacheDir: string; llm?: LlmForTask }
+export interface SeeResolverDeps { cacheDir: string; llm?: LlmForTask; /** true = 逐 op 记耗时到 cacheDir 下的 trace 文件（deployment.desktop_see_trace）。 */ trace?: boolean }
 export interface SeeResolver {
   /** `mode` 没有默认值：每个调用点都得说清这一次是动作还是判据（见 `SeeMode`）。 */
   /** `label` 只进排查记录（`SeeTrace`），不参与任何判断——一条记录说不清是哪一步的就没用。 */
@@ -484,7 +484,7 @@ export function makeSeeResolver(driver: DesktopDriver, sourceId: string, deps: S
    * （2026-09-13 活体）。别把它留在常驻服务的环境里——排查完就关。排查点错时它是唯一能把
    * "选错了候选"和"选对了候选但坐标算错"分开的东西。
    */
-  const traceDir = process.env.STREAM_DESKTOP_SEE_TRACE ? join(deps.cacheDir, sourceId, 'trace') : null
+  const traceDir = deps.trace ? join(deps.cacheDir, sourceId, 'trace') : null
   let traceSeq = 0
   const trace = async (
     see: See,

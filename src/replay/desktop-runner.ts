@@ -248,15 +248,6 @@ class ForegroundRefused extends Error {}
 export const HARD_SEE_ERRORS = ['no-scope:', 'no-capture:', 'no-window-match:', 'ocr-missing:', 'ort-missing:', 'bad-region:', 'bad-template:']
 
 /**
- * 要不要往接管指示条上写"现在在做第几步"（`DesktopDriver.status`）。默认开；
- * `STREAM_DESKTOP_STATUS=0` 关。和 `STREAM_DESKTOP_SEE_TRACE` 一样直接读环境变量——
- * 一个布尔不值得一套配置体系。关掉时 runner 一条 status 都不发（连结尾的清除也不发）。
- */
-export function desktopStatusEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
-  return env.STREAM_DESKTOP_STATUS !== '0'
-}
-
-/**
  * 条子上那两行的形状（overlay 按 `\n` 拆成第一、二行；热键说明画在第一行末尾，"AI 正在操作你的电脑"由屏幕四边的七彩描边表达）：
  *
  *     <meta.title ?? recipe id>[ · <meta.purpose 填参>]
@@ -356,6 +347,8 @@ export async function runDesktopRecipe(
   params: Record<string, string>,
   driver: DesktopDriver,
   opts?: {
+    /** false = 不往接管指示条写步骤状态（deployment.desktop_status 翻进来）。 */
+    statusEnabled?: boolean
     waitMs?: number
     see?: (driver: DesktopDriver) => SeeResolver
     /** 读时钟的那一下（默认 `Date.now`）。`expect` 的超时是**墙钟**，而测试里的假 driver 一觉
@@ -392,13 +385,14 @@ export async function runDesktopRecipe(
       return await runDesktopRecipeLocked(recipe, params, driver, opts?.see, opts?.now, opts?.repairRunner, opts?.facility, {
         ...(opts?.stepGate ? { stepGate: opts.stepGate } : {}),
         ...(opts?.onProbe ? { onProbe: opts.onProbe } : {}),
+        ...(opts?.statusEnabled === false ? { statusEnabled: false } : {}),
         ...(opts?.overrides ? { overrides: opts.overrides } : {}),
         ...(opts?.packageInfo ? { packageInfo: opts.packageInfo } : {}),
       })
     } finally {
       // 清不掉（WS 已断、abort 后中继拒收）不许盖过正在抛的那个原因——finally 里再抛，
       // 人看到的就是"status 失败"而不是真正让这趟停下来的那句话。
-      if (desktopStatusEnabled()) await driver.status(null).catch(() => {})
+      if (opts?.statusEnabled !== false) await driver.status(null).catch(() => {})
     }
   }
   const out = driver.withSession ? await driver.withSession(run, opts) : await run()
@@ -460,7 +454,7 @@ async function runDesktopRecipeLocked(
   /** 见 `runDesktopRecipe` 的 `opts.facility` 头注：只透传，不在这里推导。 */
   facility?: string,
   /** 见 `runDesktopRecipe` 的 `opts.stepGate` / `opts.onProbe`。 */
-  debug: { stepGate?: StepGate; onProbe?: (msg: string) => void; overrides?: OverrideSource; packageInfo?: { name: string; version: string } } = {},
+  debug: { stepGate?: StepGate; onProbe?: (msg: string) => void; overrides?: OverrideSource; packageInfo?: { name: string; version: string }; statusEnabled?: boolean } = {},
 ): Promise<DesktopRunOutcome> {
   let typedVia: DesktopRunOutcome['typedVia']
   /** 这一趟里**任何**一次 find 报回来的「树可能还没建」。记住它，因为报旗的那次 find 常常
@@ -1369,7 +1363,7 @@ async function runDesktopRecipeLocked(
     }
     // 条子上写"到第几步了"（见 `stepStatusText`：两行，参数只经 meta.purpose 上屏）。发在动作之前，
     // 用户看着指针滑过去的时候，条子上已经是这一步的名字。
-    if (desktopStatusEnabled()) await driver.status(stepStatusText(recipe, params, i, step))
+    if (debug.statusEnabled !== false) await driver.status(stepStatusText(recipe, params, i, step))
     // 分支只评一次，不做恒真检查、不调模型（同 require）；不成立就当没这一步。
     if (step.kind === 'branch') {
       // 参数分支不读屏：只看调用方给的参数（已经是字符串，见 `DesktopParamCondition`）。

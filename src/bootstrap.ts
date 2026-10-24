@@ -5,7 +5,6 @@ import { requiredCookieDomains } from './credentials/required-domains.ts'
 import { validateSessionExport, type SessionExportSpec } from './credentials/session-export.ts'
 import { DeviceFetch } from './devices/fetch.ts'
 import { wireOcrImageCache } from './content/images/ocr-cache.ts'
-import { RSSHUB_CHECKOUT_PKG } from './rsshub-client.ts'
 
 import { basename, dirname, join, resolve } from 'node:path'
 import { makeRuntimeConfigResolver, runtimeConfigPlugin } from './kernel/plugins/runtime-config.ts'
@@ -224,6 +223,13 @@ export function deploymentFromEnv(env: ConfigEnv): NonNullable<AppConfig['deploy
     plugin_network: env.STREAM_PLUGIN_NETWORK === 'compose'
       ? 'compose'
       : env.STREAM_PLUGIN_NETWORK === 'host' ? 'host' : 'none',
+    ...(env.MINERU_URL ? { mineru_url: env.MINERU_URL } : {}),
+    ...(env.STREAM_DESKTOP_SEE_TRACE ? { desktop_see_trace: true } : {}),
+    desktop_status: env.STREAM_DESKTOP_STATUS !== '0',
+    recipe_probe: env.RECIPE_PROBE !== '0',
+    ...(env.STREAM_NPM_REGISTRY ? { npm_registry: env.STREAM_NPM_REGISTRY } : {}),
+    ...(env.DOCKER_HOST ? { docker_host: env.DOCKER_HOST } : {}),
+    ...(env.RSSHUB_PKG ? { rsshub_pkg: env.RSSHUB_PKG } : {}),
   }
 }
 
@@ -255,7 +261,7 @@ export function readConfig(path: string, env: ConfigEnv = {}): AppConfig {
     // 「curated + recipe，无 catalog」——RSSHub 本体照跑，只是选源页没有那 3000 条长尾。
     // 路径从检出常量派生，别在这儿再写一遍那个机器本地路径。
     rsshub_catalog:
-      cfg.rsshub_catalog ?? (RSSHUB_CHECKOUT_PKG ? RSSHUB_CHECKOUT_PKG.replace(/\/lib\/pkg\.ts$/, '/assets/build/routes.json') : ''),
+      cfg.rsshub_catalog ?? (env.RSSHUB_PKG ? env.RSSHUB_PKG.replace(/\/lib\/pkg\.ts$/, '/assets/build/routes.json') : ''),
     api_token: cfg.api_token,
     ad_filter: cfg.ad_filter,
     audio_archive_db: cfg.audio_archive_db ?? join(dirname(itemDb), 'audio-archive.db'),
@@ -391,6 +397,7 @@ export async function bootstrap(
    * 这里只保留装配序上下游还要用的那几个引用。
    */
   await kernel.plugin(packagesPlugin, {
+    ...(deployment.docker_host ? { dockerHost: deployment.docker_host } : {}),
     packagesDir: config.packages_dir,
     dataDir,
     manageContainers: config.manage_containers === true,
@@ -413,6 +420,8 @@ export async function bootstrap(
    * 它 inject packages 域——curated 只收**启用**的包，判据从那边来。
    */
   await kernel.plugin(sourcesPlugin, {
+    ...(deployment.npm_registry ? { npmRegistry: deployment.npm_registry } : {}),
+    ...(deployment.docker_host ? { dockerHost: deployment.docker_host } : {}),
     builtinDir: config.packages_dir,
     dataDir,
     rsshubCatalog: config.rsshub_catalog,
@@ -509,6 +518,9 @@ export async function bootstrap(
   // 这件事，不再挂在下面 shutdown() 的手写清单上。
   const seeModelOff = deployment.desktop_see_model === false
   await kernel.plugin(harvestPlugin, {
+    desktopSeeTrace: deployment.desktop_see_trace ?? false,
+    desktopStatus: deployment.desktop_status ?? true,
+    recipeProbe: deployment.recipe_probe ?? true,
     dataDir,
     log,
     ...(opts.runtime && { discoverChrome: opts.runtime.chrome.discover }),
@@ -614,7 +626,8 @@ export async function bootstrap(
   // bootstrap 自己一格都不解：下游域经 inject 从 `ctx.adapters` 自取（进程内实现的注册面
   // `register()` 在 Provider 域里，采集调度域吃这张 Map）。
   // `intervention` 同 harvest 那处：经 config 递 thunk，从根 kernel 现取，不在插件里读 `ctx.intervention`。
-  await kernel.plugin(adaptersPlugin, { dataDir, deviceFetch, log, ...(opts.runtime && { rsshub: opts.runtime.rsshub }), runtimeConfigFor, onDebug: opts.onDebug, intervention: () => kernel.intervention, facilityDevices: opts.facilityDevices, identityRouter: () => kernel.identityRouter })
+  await kernel.plugin(adaptersPlugin, { dataDir, deviceFetch, log, ...(opts.runtime && { rsshub: opts.runtime.rsshub }),
+    ...(deployment.rsshub_pkg ? { rsshubCheckoutPath: deployment.rsshub_pkg } : {}), runtimeConfigFor, onDebug: opts.onDebug, intervention: () => kernel.intervention, facilityDevices: opts.facilityDevices, identityRouter: () => kernel.identityRouter })
 
   // ── Provider 执行面整域进内核 ──────────────────────────────────────────────
   // 解析面（resolveEngine / intentResolver / radarMatcher）+ 进程内成员的注册 + 读模型 /
@@ -624,7 +637,7 @@ export async function bootstrap(
     cacheDb,
     log,
     runtimeConfigFor,
-    mineruUrl: config.mineru_url,
+    mineruUrl: config.mineru_url ?? deployment.mineru_url,
     onDebug: opts.onDebug,
   })
   // 同上：Provider 执行面在 bootstrap 里也一格都不再解（最后两个消费者——mcpExtras 的解析面
@@ -728,7 +741,7 @@ export async function bootstrap(
     // prompt 得重启才算数，而没有一处会报错。
     summaryPrompt: () => (kernel.agent as AgentDomain | undefined)?.summaryPrompt(),
     // 与 provider 域注册 `ocr-mineru` 成员用的同一个显式 override；这里只拿它判 MinerU 可达性。
-    mineruUrl: config.mineru_url,
+    mineruUrl: config.mineru_url ?? deployment.mineru_url,
     onDebug: opts.onDebug,
   })
   // 归堆的后台工（`storyFoldWorker`）住本域。采集调度域比它早挂，那边的

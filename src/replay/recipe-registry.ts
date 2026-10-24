@@ -26,7 +26,7 @@ export const OFFICIAL_REGISTRY = 'https://registry.npmjs.org'
  *  校验和核对（见 `recipe-package.ts` 的 TRUST_SIDECAR 头注）；不是 → undefined，安装口一次
  *  官方源请求都不多发。只比主机名：同一个官方源写成带尾斜杠 / 大写也不算镜像。 */
 export function officialRegistryIfMirror(
-  base = process.env.STREAM_NPM_REGISTRY || OFFICIAL_REGISTRY,
+  base = OFFICIAL_REGISTRY,
   fetchImpl: typeof fetch = fetch,
 ): RegistryClient | undefined {
   let host: string
@@ -41,7 +41,7 @@ export function officialRegistryIfMirror(
 /** 直打 registry HTTP API——不经 npm 客户端,install scripts 无从执行(npm 只当运输层)。
  *  base 可指镜像(npmmirror);默认官方源。 */
 export function npmRegistryClient(
-  base = process.env.STREAM_NPM_REGISTRY || OFFICIAL_REGISTRY,
+  base = OFFICIAL_REGISTRY,
   fetchImpl: typeof fetch = fetch,
 ): RegistryClient {
   const root = base.replace(/\/$/, '')

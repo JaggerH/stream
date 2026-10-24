@@ -41,7 +41,7 @@ export interface DiarizeResult {
  *  必然答空，喊出来是噪音。**整个函数不能静音**——它同时被真实取数路径（`base` getter，在
  *  withAwake 回调里求值）调用，那一端答空是真故障，必须留着喊声。 */
 export function resolveVoiceprintUrl(explicit?: string, targets?: PluginTargets, opts?: PluginTargetOpts): string {
-  return (explicit ?? process.env.VOICEPRINT_URL ?? targets?.target('voiceprint', opts) ?? '').replace(/\/$/, '')
+  return (explicit ?? targets?.target('voiceprint', opts) ?? '').replace(/\/$/, '')
 }
 
 /** Thin client over the sherpa-onnx voiceprint serving image. `diarize` returns who-spoke-when

@@ -3,6 +3,9 @@ import { loadConfig } from '../config-env.ts'
 import { loadPlugins } from './loader.ts'
 import { generateCaddyfile, generateCompose, generateDevOverride, type ComposeOptions } from './compose.ts'
 
+// 进程入口：环境变量只在这里翻译（STREAM_GATEWAY_PORT → compose 的 gatewayPort）。
+const GATEWAY_PORT = Number(process.env.STREAM_GATEWAY_PORT ?? 8900)
+
 /**
  * 主路的 base services：**空的**——生成物里只有插件容器，一个基础设施容器都没有。
  *
@@ -52,7 +55,7 @@ function servicesFor(selfhost: boolean): ComposeOptions {
 export function buildCompose(configPath?: string, opts: { selfhost?: boolean } = {}): string {
   const config = loadConfig(configPath)
   const plugins = loadPlugins(config.packages_dir)
-  return generateCompose(plugins, servicesFor(!!opts.selfhost))
+  return generateCompose(plugins, { ...servicesFor(!!opts.selfhost), gatewayPort: GATEWAY_PORT })
 }
 
 /** Build the dev override (docker-compose.override.yml) for plugins declaring backend.dev. */
@@ -100,7 +103,7 @@ function main(): void {
     writeFileSync('./Caddyfile', generateCaddyfile(plugins, services))
     console.error('[plugins] wrote ./Caddyfile (selfhost gateway routes)')
   }
-  process.stdout.write(generateCompose(plugins, services))
+  process.stdout.write(generateCompose(plugins, { ...services, gatewayPort: GATEWAY_PORT }))
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) main()

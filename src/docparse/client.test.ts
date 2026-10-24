@@ -21,11 +21,6 @@ describe('resolveMineruUrl', () => {
     expect(resolveMineruUrl('https://relay.example.com/')).toBe('https://relay.example.com')
   })
 
-  it('falls back to MINERU_URL', () => {
-    process.env.MINERU_URL = 'https://relay.example.com'
-    expect(resolveMineruUrl()).toBe('https://relay.example.com')
-  })
-
   it('server-side base 未接线（mode:none，桌面无门）→ 空串，不再默认 gateway loopback', () => {
     expect(resolveMineruUrl()).toBe('')
   })

@@ -1,6 +1,6 @@
 import { stringify as stringifyYaml } from 'yaml'
 import type { PluginDescriptor } from './types.ts'
-import { GATEWAY_PORT, GATEWAY_PREFIX } from './gateway.ts'
+import { DEFAULT_GATEWAY_PORT, GATEWAY_PREFIX } from './gateway.ts'
 
 /** The shared network every Stream-managed container joins (same-network DNS). */
 const NETWORK = 'stream'
@@ -11,6 +11,8 @@ const NETWORK = 'stream'
 const STREAM_IMAGE = 'stream-backend'
 
 export interface ComposeOptions {
+  /** 自托管旁支里 gateway 容器对宿主暴露的口（默认 8900=后端口）。CLI 从 STREAM_GATEWAY_PORT 翻译。 */
+  gatewayPort?: number
   // **别在这里加"取登录态"用的基础服务。** 登录态由后端直接向用户的 Chrome 要，采集零容器；
   // 加一个这样的容器就把 docker 变成采集的硬依赖，而它一停的表现是全站游客态，没有一处会喊。
   /**
@@ -219,7 +221,7 @@ export function generateCompose(plugins: PluginDescriptor[], opts: ComposeOption
   if (opts.stream && backendNames.length > 0) {
     services.gateway = {
       image: 'caddy:2-alpine',
-      ports: [`127.0.0.1:${GATEWAY_PORT}:80`],
+      ports: [`127.0.0.1:${opts.gatewayPort ?? DEFAULT_GATEWAY_PORT}:80`],
       volumes: ['./Caddyfile:/etc/caddy/Caddyfile:ro', './Caddyfile.local:/etc/caddy/Caddyfile.local:ro'],
       networks: [NETWORK],
       depends_on: backendNames.slice().sort(),

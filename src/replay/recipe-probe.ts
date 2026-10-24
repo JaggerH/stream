@@ -62,4 +62,3 @@ export class RunProbe {
 }
 
 /** Dev-on by default; set RECIPE_PROBE=0 to silence (e.g. a noisy prod deployment). */
-export const recipeProbeEnabled = (): boolean => process.env.RECIPE_PROBE !== '0'

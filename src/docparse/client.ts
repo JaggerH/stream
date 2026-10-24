@@ -9,7 +9,7 @@ import type { PluginTargetOpts, PluginTargets } from '../plugins/plugin-target.t
  *  `/api/conversion-kinds` 都问一遍）：host 档容器睡着时答空是正确答案，喊出来是噪音。
  *  整个函数不能静音——`MineruClient.base` 在 withAwake 回调里求值，那一端答空是真故障。 */
 export function resolveMineruUrl(explicit?: string, targets?: PluginTargets, opts?: PluginTargetOpts): string {
-  return (explicit ?? process.env.MINERU_URL ?? targets?.target('mineru', opts) ?? '').replace(/\/$/, '')
+  return (explicit ?? targets?.target('mineru', opts) ?? '').replace(/\/$/, '')
 }
 
 /** A loopback host means the backend runs locally (behind the gateway); anything else

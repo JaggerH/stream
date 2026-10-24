@@ -47,7 +47,8 @@ export interface RsshubResolution {
 }
 
 /** 开发检出里 `lib/pkg.ts` 的位置。未设置时跳过检出，继续解析发行安装或 npm 包。 */
-export const RSSHUB_CHECKOUT_PKG = process.env.RSSHUB_PKG
+// RSSHUB_PKG（本地 checkout 档）不再在模块加载期读 env：装配方（serve→deployment.rsshub_pkg）
+// 经 deps.checkoutPath 递进来；bootstrap 的目录缺省在 readConfig 里用 env 参数现算。
 
 /** 注入点全给出来，好让解析顺序能被无文件系统地测（有牙的判据：换掉哪一个会翻车）。 */
 export interface RsshubResolveDeps {
@@ -86,7 +87,7 @@ function defaultResolvePackage(): string | null {
 
 /** 「这台机器上的 RSSHub 是哪一份」——三个来源都不在返回 null。 */
 export function resolveRsshubPkg(deps: RsshubResolveDeps = {}): RsshubResolution | null {
-  const checkoutPath = deps.checkoutPath ?? RSSHUB_CHECKOUT_PKG
+  const checkoutPath = deps.checkoutPath
   const exists = deps.exists ?? existsSync
   const hasTsx = deps.hasTsx ?? defaultHasTsx
   const resolvePackage = deps.resolvePackage ?? defaultResolvePackage
@@ -113,7 +114,7 @@ export function resolveRsshubPkg(deps: RsshubResolveDeps = {}): RsshubResolution
  */
 export function rsshubUnavailableReason(deps: RsshubResolveDeps = {}): string | null {
   if (resolveRsshubPkg(deps)) return null
-  const checkoutPath = deps.checkoutPath ?? RSSHUB_CHECKOUT_PKG
+  const checkoutPath = deps.checkoutPath
   const where = deps.dataDir ? `\`${deps.dataDir}/rsshub\` 里没装、` : ''
   const checkout = checkoutPath
     ? `开发检出不在（${checkoutPath}，或它在但没有 tsx）`

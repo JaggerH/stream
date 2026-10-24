@@ -24,21 +24,9 @@ const ENTRY = 'src/engine/index.ts'
 const OFFENDERS: Record<string, string> = {
   'packages/Douyin_TikTok_Download_API/adapter/adapter.ts': '包代码：DOUYIN_API_URL，应改走 ctx.backendUrl / runtime config',
   'packages/pansou/adapter.ts': '包代码：PANSOU_URL，同上',
-  'src/docparse/client.ts': '实例：MINERU_URL 回落，改由调用方传',
   'src/intervention/acp-client.ts': '进程：agent 子进程继承环境',
   'src/media/ffmpeg-bin.ts': '进程：ffmpeg 探测子进程继承环境',
-  'src/packages/container-ops.ts': '进程：DOCKER_HOST（resolveDockerEndpoint）',
-  'src/plugins/deprovision.ts': '进程：DOCKER_HOST（resolveDockerEndpoint）',
-  'src/plugins/provision-wire.ts': '进程：DOCKER_HOST（resolveDockerEndpoint）',
-  'src/plugins/gateway.ts': 'HTTP：STREAM_GATEWAY_PORT',
-  'src/replay/desktop-driver.ts': '实例：STREAM_DESKTOP_SEE_TRACE',
-  'src/replay/desktop-see.ts': '实例：STREAM_DESKTOP_SEE_TRACE',
-  'src/replay/desktop-runner.ts': '实例：desktopStatusEnabled 的缺省参数',
-  'src/replay/recipe-probe.ts': '实例：RECIPE_PROBE',
-  'src/replay/recipe-registry.ts': '实例：STREAM_NPM_REGISTRY',
-  'src/rsshub-client.ts': '进程：RSSHUB_PKG / CACHE_TYPE / worker 子进程环境（D4 的 RSSHub worker）',
-  'src/rsshub-worker-log.ts': '进程：RSSHUB_WORKER_LOG_PATH',
-  'src/voiceprint/engine-client.ts': '实例：VOICEPRINT_URL 回落，改由调用方传',
+  'src/rsshub-worker-log.ts': '进程：worker 子进程自身的日志路径（RSSHUB_WORKER_LOG_PATH，随环境继承）',
 }
 
 /** 运行期的模块说明符：`import … from`、`export … from`、裸 `import '…'`、`import('…')`。`import type` / `export type` 另判。 */

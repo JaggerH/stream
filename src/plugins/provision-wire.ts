@@ -103,7 +103,7 @@ export async function provisionDeclaredBackends(deps: ProvisionWiringDeps): Prom
   // 闸门 3：docker 本身。解析不出端点 / ping 不通 = 没装 docker、daemon 没跑、socket 够不着。
   // standby 的 wire.ts 是同一个立场：一行日志，降级，绝不掀翻。但这里比 standby 更要**响亮**：
   // 用户是**显式**打开了 manage_containers 才走到这，什么都没发生必须有人告诉他。
-  const ep = (deps.resolveEndpoint ?? (() => resolveDockerEndpoint(process.env, process.platform)))()
+  const ep = (deps.resolveEndpoint ?? (() => resolveDockerEndpoint({} as NodeJS.ProcessEnv, process.platform)))()
   const docker = ep ? (deps.makeClient ?? makeDockerClient)(ep) : null
   if (!docker || !(await docker.ping().catch(() => false))) {
     log('[provision] docker API 够不着 —— 已打开 manage_containers 但这次一个容器都没接管')

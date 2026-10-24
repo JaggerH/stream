@@ -124,6 +124,20 @@ export interface AppConfig {
     /** 插件后端所在网络（`STREAM_PLUGIN_NETWORK`）：compose=容器 DNS 可直连；host=经宿主
      *  loopback 随机口；none=够不着，全关。缺省 none。 */
     plugin_network?: 'compose' | 'host' | 'none'
+    /** MinerU 文档解析后端的显式地址（`MINERU_URL`，config.yaml 的 mineru_url 优先）。 */
+    mineru_url?: string
+    /** true = 桌面 recipe 的视觉识别逐 op 记耗时（`STREAM_DESKTOP_SEE_TRACE`）。 */
+    desktop_see_trace?: boolean
+    /** false = 不往桌面接管指示条写步骤状态（`STREAM_DESKTOP_STATUS=0`）。缺省开。 */
+    desktop_status?: boolean
+    /** false = 不跑 recipe 探针（`RECIPE_PROBE=0`）。缺省开。 */
+    recipe_probe?: boolean
+    /** npm 镜像源（`STREAM_NPM_REGISTRY`），包安装/更新走它。 */
+    npm_registry?: string
+    /** Docker 端点（`DOCKER_HOST`），容器接管用。 */
+    docker_host?: string
+    /** RSSHub 本地 checkout 的 pkg 路径（`RSSHUB_PKG`，开发档才用）。 */
+    rsshub_pkg?: string
   }
   /** base url of the MinerU document-parsing backend; unset → MINERU_URL env or the
    *  bootstrap-injected plugin target (compose mode: container DNS). A remote relay
