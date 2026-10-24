@@ -7,6 +7,7 @@ import { DeviceFetch } from './devices/fetch.ts'
 import { wireOcrImageCache } from './content/images/ocr-cache.ts'
 
 import { basename, dirname, join, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { makeRuntimeConfigResolver, runtimeConfigPlugin } from './kernel/plugins/runtime-config.ts'
 import { createKernel } from './kernel/context.ts'
 import { settingsPlugin } from './kernel/plugins/settings.ts'
@@ -236,13 +237,16 @@ export function deploymentFromEnv(env: ConfigEnv): NonNullable<AppConfig['deploy
 
 export function readConfig(path: string, env: ConfigEnv = {}): AppConfig {
   // Writable user state (vault/dedup/items) resolves under STREAM_DATA_DIR when set.
-  // Read-only assets (manifests/plugins/RSSHub catalog) resolve relative to the
-  // process cwd — the same in Docker and dev. The embedded-exe resource-dir
-  // reverse-derivation (STREAM_RESOURCE_DIR / argv[1]) was retired along with the
-  // node sidecar.
+  // Read-only assets (builtin packages) resolve relative to Stream's own install
+  // location (this file), never the caller's cwd — an embedder starts createStream
+  // from an unrelated directory and must still see the builtin sources.
   const dataDir = env.STREAM_DATA_DIR
   const underData = (rel: string) => (dataDir ? join(dataDir, rel.replace(/^\.\//, '')) : rel)
-  const underResource = (rel: string) => rel
+  // 只读资产（内置包目录等）跟着 Stream 自己的安装位置走，不随调用方的工作目录变：嵌入方在别的
+  // 进程里 createStream，它的工作目录与 Stream 装在哪无关——缺省路径若按 cwd 解析，嵌入方会一个
+  // 内置源都看不见、订阅了也采不了，而且没有任何报错。config.yaml 显式给的照旧优先；
+  // `stream serve` 从仓库根起时 cwd 就是这里，行为不变。
+  const underResource = (rel: string) => join(dirname(fileURLToPath(import.meta.url)), '..', rel.replace(/^\.\//, ''))
   const cfg = existsSync(path) ? (parseYaml(readFileSync(path, 'utf-8')) as RawConfig) : ({} as RawConfig)
   warnRetiredContainerUrlKeys(cfg)
   const itemDb = cfg.item_db ?? underData('./data/items.db')
