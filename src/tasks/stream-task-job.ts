@@ -1,15 +1,21 @@
-// 唯一的 Sidequest Job 类：所有 ScheduledTask 共用，taskId 是唯一序列化参数。
+// 唯一的 Sidequest Job 类：所有 ScheduledTask 共用，taskId 是唯一序列化参数；构造参数是实例键（落账，见 task-routes.ts）。
 // 失败路径：先发通知事件（带 dedupeKey 防刷屏），再 rethrow 让引擎记 failed + 按 maxAttempts 重试；可能已发出动作的失败（failureDisposition=final）记 failed 不重试。
 import { Job } from 'sidequest'
-import { taskRegistry } from './registry.ts'
-import { getTaskDeps } from './deps.ts'
+import { taskRouteFor } from './task-routes.ts'
 import type { TaskOutcome } from './types.ts'
 import { failureDisposition } from '../devices/errors.ts'
 
 export class StreamTaskJob extends Job {
+  private readonly instanceKey: string | undefined
+  constructor(instanceKey?: string) {
+    super()
+    this.instanceKey = instanceKey
+  }
+
   async run(taskId: string): Promise<TaskOutcome> {
-    const deps = getTaskDeps() // 未初始化 → 抛，记 failed（防静默空跑）
-    const task = taskRegistry.get(taskId)
+    const route = taskRouteFor(this.instanceKey)
+    const deps = route.deps() // 未初始化 → 抛，记 failed（防静默空跑）
+    const task = route.task(taskId)
     if (!task) throw new Error(`unknown task: ${taskId}`)
     try {
       return await task.run(deps)

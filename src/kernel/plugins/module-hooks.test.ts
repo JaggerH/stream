@@ -59,6 +59,6 @@ describe('reportUnboundHooks', () => {
   })
 
   it('名册钉住三个模块级全局——再加一个就得在这里加一行', () => {
-    expect(MODULE_HOOKS.map((p) => p.name)).toEqual(['pluginTarget', 'standby', 'taskDeps'])
+    expect(MODULE_HOOKS.map((p) => p.name)).toEqual(['pluginTarget', 'standby'])
   })
 })

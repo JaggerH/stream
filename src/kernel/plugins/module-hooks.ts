@@ -1,9 +1,9 @@
 /**
  * 模块级可变全局（「钩子」）的**登记与生命周期**。
  *
- * 有三个模块因为拿不到 bootstrap 的闭包而只能靠模块级变量接线：`plugin-target`（每个
- * `resolveXUrl` 都读它）、`standby/hook`（`withAwake` 读它）、`tasks/deps`（Job 类经动态
- * import 加载，闭包不到构造现场）。消费侧的 getter 一律不动——这里改的只有两件事：
+ * 有两个模块因为拿不到 bootstrap 的闭包而只能靠模块级变量接线：`plugin-target`（每个
+ * `resolveXUrl` 都读它）、`standby/hook`（`withAwake` 读它）。（调度中心的 deps 已归实例——
+ * `TaskCenter.depsBound()`，由调用方作为额外的探针递进 `reportUnboundHooks`。）消费侧的 getter 一律不动——这里改的只有两件事：
  *
  * 1. **登记随内核挂卸**：`bindModuleHook` 把 set 包进 `ctx.effect()`，`fiber.dispose()` 时复位
  *    为 null。过去这些全局从不复位，一个进程里跑两次 bootstrap（测试、将来的重启）会读到上一
@@ -15,7 +15,6 @@
 import type { Context } from 'cordis'
 import { isPluginTargetBound } from '../../plugins/plugin-target.ts'
 import { isStandbyBound } from '../../plugins/standby/hook.ts'
-import { isTaskDepsBound } from '../../tasks/deps.ts'
 
 /**
  * 把一次模块级全局的绑定登记成内核 effect：挂载时 `bind()`、销毁时 `unbind()`。
@@ -44,13 +43,12 @@ export interface HookProbe {
 }
 
 /**
- * 全仓模块级钩子的名册。**往这三个之外再加一个模块级全局，就得在这里加一行**——否则
+ * 全仓模块级钩子的名册。**往这两个之外再加一个模块级全局，就得在这里加一行**——否则
  * 「忘了接线」又会变回一个没人报的静默降级。
  */
 export const MODULE_HOOKS: readonly HookProbe[] = [
   { name: 'pluginTarget', bound: isPluginTargetBound },
   { name: 'standby', bound: isStandbyBound },
-  { name: 'taskDeps', bound: isTaskDepsBound },
 ]
 
 export interface UnboundHooksReport {

@@ -1,8 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { startTaskCenter, stopTaskCenter, queueOf, runSkipSlot, runningTasks } from './center.ts'
-import { taskRegistry } from './registry.ts'
-import { setTaskDeps, resetTaskDeps } from './deps.ts'
+import { TaskCenter, queueOf } from './center.ts'
 import type { ScheduledTask } from './types.ts'
+
+/** 每条用例一个新中心（一个实例一个，见 center.ts 头注）。 */
+let c = new TaskCenter()
+beforeEach(() => { c = new TaskCenter() })
 
 function fakeSidequest() {
   const calls: Record<string, unknown[]> = { schedule: [], createQueue: [], enqueue: [] }
@@ -31,22 +33,22 @@ const mkTask = (over: Partial<ScheduledTask>): ScheduledTask => ({
 })
 
 describe('startTaskCenter', () => {
-  beforeEach(() => taskRegistry.clear())
+  beforeEach(() => c.registry.clear())
   // 每条用例之后都要关停：`whenBusy: 'skip'` 那一档是我们自己持的 node-cron，
   // 不摘掉的话它带着真定时器活到下一条用例里（`destroyAllCrons` 头注说的正是这件事）。
-  afterEach(async () => { await stopTaskCenter() })
+  afterEach(async () => { await c.stop() })
 
   // sidequest 缺省会在 SIGINT/SIGTERM 上挂自己的「关引擎 → process.exit(0)」，跟宿主的优雅关竞速：
   // 它先退，宿主那条 quiesceKernel（关库、还标签、放数据目录锁）就没跑完。信号归宿主，sidequest 不许挂。
   it('不让 sidequest 自己挂进程信号（gracefulShutdown: false）', async () => {
     const { facade } = fakeSidequest()
-    await startTaskCenter([mkTask({})], { dbPath: '/tmp/x.sqlite', log: () => {}, sidequest: facade as never })
+    await c.start([mkTask({})], { dbPath: '/tmp/x.sqlite', log: () => {}, sidequest: facade as never })
     expect(facade.start).toHaveBeenCalledWith(expect.objectContaining({ gracefulShutdown: false }))
   })
 
   it('starts engine with inline no-fork sqlite and schedules each task', async () => {
     const { facade, builder, calls } = fakeSidequest()
-    const r = await startTaskCenter([mkTask({}), mkTask({ id: 't2', serial: true })], {
+    const r = await c.start([mkTask({}), mkTask({ id: 't2', serial: true })], {
       dbPath: '/tmp/x.sqlite', log: () => {}, sidequest: facade as never,
     })
     expect(r.ok).toBe(true)
@@ -74,28 +76,28 @@ describe('startTaskCenter', () => {
     const log = vi.fn()
     const { facade } = fakeSidequest()
     facade.start.mockRejectedValueOnce(new Error('port taken'))
-    const r = await startTaskCenter([mkTask({})], { dbPath: '/tmp/x.sqlite', log, sidequest: facade as never })
+    const r = await c.start([mkTask({})], { dbPath: '/tmp/x.sqlite', log, sidequest: facade as never })
     expect(r.ok).toBe(false)
     expect(log).toHaveBeenCalledWith(expect.stringContaining('task center disabled'))
   })
 
-  it('注册进 taskRegistry，重复启动前先清旧表', async () => {
+  it('注册进 c.registry，重复启动前先清旧表', async () => {
     const { facade } = fakeSidequest()
-    await startTaskCenter([mkTask({})], { dbPath: '/tmp/x.sqlite', log: () => {}, sidequest: facade as never })
-    expect(taskRegistry.has('t1')).toBe(true)
+    await c.start([mkTask({})], { dbPath: '/tmp/x.sqlite', log: () => {}, sidequest: facade as never })
+    expect(c.registry.has('t1')).toBe(true)
   })
 
   it('一行撞 id 的任务只丢它自己，其余照常起——不因一行坏的拖垮整个中心', async () => {
     const log = vi.fn()
     const { facade, calls } = fakeSidequest()
-    const r = await startTaskCenter(
+    const r = await c.start(
       [mkTask({ id: 'cookie-refresh' }), mkTask({ id: 'cookie-refresh', label: '撞名的用户行' }), mkTask({ id: 't2' })],
       { dbPath: '/tmp/x.sqlite', log, sidequest: facade as never },
     )
     expect(r.ok).toBe(true)
     // 先出现的那条（builtin，按调用方约定排在前面）保留、排上期；后来者被丢弃、不排期
     expect(calls.schedule).toEqual([['0 */5 * * * *', 'cookie-refresh'], ['0 */5 * * * *', 't2']])
-    expect(taskRegistry.get('cookie-refresh')?.label).toBe('T1')
+    expect(c.registry.get('cookie-refresh')?.label).toBe('T1')
     expect(log).toHaveBeenCalledWith(expect.stringContaining('丢弃重名任务 "cookie-refresh"'))
   })
 
@@ -103,7 +105,7 @@ describe('startTaskCenter', () => {
     const log = vi.fn()
     const { facade, builder } = fakeSidequest()
     builder.schedule.mockRejectedValueOnce(new Error('bad cron'))
-    const r = await startTaskCenter([mkTask({})], {
+    const r = await c.start([mkTask({})], {
       dbPath: '/tmp/x.sqlite', log, sidequest: facade as never,
     })
     expect(r.ok).toBe(false)
@@ -113,8 +115,8 @@ describe('startTaskCenter', () => {
 })
 
 describe('互斥组 → 队列', () => {
-  beforeEach(() => taskRegistry.clear())
-  afterEach(async () => { await stopTaskCenter() })
+  beforeEach(() => c.registry.clear())
+  afterEach(async () => { await c.stop() })
 
   it('队列名只由 exclusiveOn 定：有 → x:<组名>，没有 → default', () => {
     expect(queueOf({ exclusiveOn: 'netdisk' })).toBe('x:netdisk')
@@ -126,7 +128,7 @@ describe('互斥组 → 队列', () => {
 
   it('serial 不再决定队列：标了 serial、没写互斥组的任务进 default', async () => {
     const { facade, builder } = fakeSidequest()
-    await startTaskCenter([mkTask({ serial: true })], {
+    await c.start([mkTask({ serial: true })], {
       dbPath: '/tmp/x.sqlite', log: () => {}, sidequest: facade as never,
     })
     expect(builder.queue).toHaveBeenCalledWith('default')
@@ -135,7 +137,7 @@ describe('互斥组 → 队列', () => {
 
   it('有互斥组 → 运行期把 concurrency 1 的队列建出来，任务排进去', async () => {
     const { facade, builder, calls } = fakeSidequest()
-    const r = await startTaskCenter(
+    const r = await c.start(
       [mkTask({ id: 'a', exclusiveOn: 'netdisk' }), mkTask({ id: 'b', exclusiveOn: 'netdisk' })],
       { dbPath: '/tmp/x.sqlite', log: () => {}, sidequest: facade as never },
     )
@@ -150,7 +152,7 @@ describe('互斥组 → 队列', () => {
     const log = vi.fn()
     const { facade, calls } = fakeSidequest()
     facade.createQueue.mockRejectedValueOnce(new Error('backend down'))
-    const r = await startTaskCenter([mkTask({ exclusiveOn: 'jq-bridge' })], {
+    const r = await c.start([mkTask({ exclusiveOn: 'jq-bridge' })], {
       dbPath: '/tmp/x.sqlite', log, sidequest: facade as never,
     })
     expect(r.ok).toBe(true) // 一条排不上不该带走整个中心
@@ -160,21 +162,21 @@ describe('互斥组 → 队列', () => {
 })
 
 describe('whenBusy', () => {
-  beforeEach(() => taskRegistry.clear())
-  afterEach(async () => { await stopTaskCenter(); resetTaskDeps() })
+  beforeEach(() => c.registry.clear())
+  afterEach(async () => { await c.stop(); c.resetDeps() })
 
   const skipTask = mkTask({ id: 'ipo', exclusiveOn: 'broker', whenBusy: 'skip', schedule: '0 45 9 * * *' })
 
   it("skip：组忙时这一班不入队，且留痕（日志 + 事件）", async () => {
     const log = vi.fn()
     const append = vi.fn()
-    setTaskDeps({ log: () => {}, events: { append } })
+    c.setDeps({ log: () => {}, events: { append } })
     const { facade, calls } = fakeSidequest()
-    await startTaskCenter([skipTask], {
+    await c.start([skipTask], {
       dbPath: '/tmp/x.sqlite', log, sidequest: facade as never,
       queueAlive: (q) => q === 'x:broker',
     })
-    await runSkipSlot(skipTask, 'x:broker')
+    await c.runSkipSlot(skipTask, 'x:broker')
     expect(calls.enqueue).toEqual([])
     expect(log).toHaveBeenCalledWith(expect.stringContaining('这一班不跑'))
     expect(append).toHaveBeenCalledWith(expect.objectContaining({ type: 'task.skipped', severity: 'warn' }))
@@ -182,17 +184,17 @@ describe('whenBusy', () => {
 
   it('skip：组不忙时照常入队', async () => {
     const { facade, calls } = fakeSidequest()
-    await startTaskCenter([skipTask], {
+    await c.start([skipTask], {
       dbPath: '/tmp/x.sqlite', log: () => {}, sidequest: facade as never,
       queueAlive: () => false,
     })
-    await runSkipSlot(skipTask, 'x:broker')
+    await c.runSkipSlot(skipTask, 'x:broker')
     expect(calls.enqueue).toEqual(['ipo'])
   })
 
   it('skip 的节拍器是我们自己持的，不走 sidequest 的 schedule', async () => {
     const { facade, calls } = fakeSidequest()
-    await startTaskCenter([skipTask, mkTask({ id: 'backfill', exclusiveOn: 'broker' })], {
+    await c.start([skipTask, mkTask({ id: 'backfill', exclusiveOn: 'broker' })], {
       dbPath: '/tmp/x.sqlite', log: () => {}, sidequest: facade as never, queueAlive: () => false,
     })
     // 默认的 queue 档仍走 sidequest 的 schedule；skip 档不在里面（它到点要先问一句忙不忙）
@@ -202,7 +204,7 @@ describe('whenBusy', () => {
   it('queue（缺省）：组忙也照常入队——排着就是它要的行为', async () => {
     const { facade, calls } = fakeSidequest()
     const queued = mkTask({ id: 'backfill', exclusiveOn: 'broker' })
-    await startTaskCenter([queued], {
+    await c.start([queued], {
       dbPath: '/tmp/x.sqlite', log: () => {}, sidequest: facade as never,
       queueAlive: () => true, // 组一直忙
     })
@@ -213,10 +215,10 @@ describe('whenBusy', () => {
   it('读不到账本时按"组不忙"处理：宁可照常入队，也不让一条任务安静地再也不跑', async () => {
     const log = vi.fn()
     const { facade, calls } = fakeSidequest()
-    await startTaskCenter([skipTask], {
+    await c.start([skipTask], {
       dbPath: '/definitely/not/a/real/path.sqlite', log, sidequest: facade as never,
     })
-    await runSkipSlot(skipTask, 'x:broker')
+    await c.runSkipSlot(skipTask, 'x:broker')
     expect(calls.enqueue).toEqual(['ipo'])
     expect(log).toHaveBeenCalledWith(expect.stringContaining('读不到账本'))
   })
@@ -234,7 +236,7 @@ describe('whenBusy', () => {
     db.close()
     const log = vi.fn()
     const { facade } = fakeSidequest()
-    await startTaskCenter([mkTask({})], { dbPath, log, sidequest: facade as never })
+    await c.start([mkTask({})], { dbPath, log, sidequest: facade as never })
     expect(log).toHaveBeenCalledWith(expect.stringContaining('1 条已结束的执行还带着 unique_digest'))
     const after = new Database(dbPath, { readonly: true })
     expect(after.prepare('SELECT unique_digest FROM sidequest_jobs').get()).toEqual({ unique_digest: null })
@@ -246,13 +248,13 @@ describe('whenBusy', () => {
     const { mkdtempSync } = await import('node:fs')
     const { tmpdir } = await import('node:os')
     const { join } = await import('node:path')
-    expect(await runningTasks()).toEqual([])   // 中心没起：没有可打断的东西
+    expect(await c.runningTasks()).toEqual([])   // 中心没起：没有可打断的东西
     const dbPath = join(mkdtempSync(join(tmpdir(), 'center-running-')), 'sq.sqlite')
     const db = new Database(dbPath)
     db.exec(`CREATE TABLE sidequest_jobs (id INTEGER PRIMARY KEY AUTOINCREMENT, args TEXT NOT NULL,
       state TEXT NOT NULL, inserted_at INTEGER NOT NULL, errors TEXT, failed_at INTEGER, unique_digest TEXT)`)
     const { facade } = fakeSidequest()
-    await startTaskCenter([mkTask({ id: 't1', label: '东财登录' })], { dbPath, log: vi.fn(), sidequest: facade as never, watchdog: false })
+    await c.start([mkTask({ id: 't1', label: '东财登录' })], { dbPath, log: vi.fn(), sidequest: facade as never, watchdog: false })
     // 行在 start **之后**才落：启动巡检会把上一进程遗留的 running 行判成孤儿收掉，
     // 开机那一刻本来就没有"真在跑"的东西。
     db.prepare("INSERT INTO sidequest_jobs (args, state, inserted_at) VALUES ('[\"t1\"]', 'running', 1)").run()
@@ -260,8 +262,8 @@ describe('whenBusy', () => {
     db.prepare("INSERT INTO sidequest_jobs (args, state, inserted_at) VALUES ('[\"t1\"]', 'completed', 3)").run()
     db.close()
     // 账本里的 id 不在 registry（已被删的任务）→ label 退化成 id，不丢行
-    expect(await runningTasks()).toEqual([{ id: 't1', label: '东财登录' }, { id: 'ghost', label: 'ghost' }])
-    await stopTaskCenter()
-    expect(await runningTasks()).toEqual([])
+    expect(await c.runningTasks()).toEqual([{ id: 't1', label: '东财登录' }, { id: 'ghost', label: 'ghost' }])
+    await c.stop()
+    expect(await c.runningTasks()).toEqual([])
   })
 })

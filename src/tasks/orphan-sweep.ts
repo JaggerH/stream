@@ -108,6 +108,37 @@ export async function ensureLedgerIndexes(dbPath: string): Promise<boolean> {
  * 兜底巡检：终态行（completed / failed / canceled）还带着 `unique_digest` 的一律清掉，返回清了几条。
  * 正常情况下永远是 0；非零说明有谁绕过 sidequest 改了状态（历史版本的本文件就是一例）。
  */
+/**
+ * 把还活着（waiting / claimed / running）的行认到本实例名下：`constructor_args` 改成本实例的键，带去重的行按
+ * sidequest 自己的规则重算 `unique_digest`（digest 吃 `constructor_args`，不重算就和新落账的同一任务对不上，
+ * serial 的「上轮没完就跳过」会在升级那一刻漏掉一次）。返回改了几条。
+ *
+ * 一个账本只属于一个实例（数据目录锁），所以账本里任何活着的行都是本实例的：旧版本落的（没有键）、或库被挪过
+ * （键是按路径算的）都在这里归位。`digest` 由调用方递（本文件不认识 sidequest）。
+ */
+export async function adoptAliveRows(
+  dbPath: string,
+  constructorArgs: unknown[],
+  digest: (row: { class: string; args: unknown[]; constructor_args: unknown[]; state: string }, uniqueness: unknown) => string | null,
+): Promise<number> {
+  const ctor = JSON.stringify(constructorArgs)
+  const n = await withJobsTable(dbPath, (db) => {
+    const rows = db.prepare(
+      "SELECT id, class, args, state, uniqueness_config FROM sidequest_jobs WHERE state IN ('waiting','claimed','running') AND constructor_args <> ?",
+    ).all(ctor) as { id: number; class: string; args: string; state: string; uniqueness_config: string | null }[]
+    const upd = db.prepare('UPDATE sidequest_jobs SET constructor_args = ?, unique_digest = ? WHERE id = ?')
+    db.transaction(() => {
+      for (const r of rows) {
+        const u = r.uniqueness_config ? JSON.parse(r.uniqueness_config) as unknown : null
+        const d = u ? digest({ class: r.class, args: JSON.parse(r.args) as unknown[], constructor_args: constructorArgs, state: r.state }, u) : null
+        upd.run(ctor, d, r.id)
+      }
+    })()
+    return rows.length
+  })
+  return n ?? 0
+}
+
 export async function releaseStaleDigests(dbPath: string): Promise<number> {
   const n = await withJobsTable(dbPath, (db) =>
     db.prepare(

@@ -89,9 +89,7 @@ import { type StandbyManager } from './plugins/standby/manager.ts'
 import { wireStandby } from './plugins/standby/wire.ts'
 import { standbyInertNotification } from './plugins/standby/inert-notice.ts'
 import { setStandbyManager, setStandbyInertReason } from './plugins/standby/hook.ts'
-import { setTaskDeps, resetTaskDeps } from './tasks/deps.ts'
 import type { TaskDeps } from './tasks/types.ts'
-import { startTaskCenter, stopTaskCenter, addTask, removeTask, runTaskNow, runningTasks } from './tasks/center.ts'
 import { builtinTasks } from './tasks/builtin.ts'
 import { TaskStore } from './tasks/task-store.ts'
 import { RunLedger } from './tasks/run-history.ts'
@@ -108,7 +106,7 @@ import type { InterventionService } from './kernel/plugins/intervention.ts'
 import { errText } from './err-text.ts'
 import { ImportRunStore } from './sharing/import-run-store.ts'
 import { createKernel } from './kernel/context.ts'
-import { bindModuleHook, reportUnboundHooks } from './kernel/plugins/module-hooks.ts'
+import { bindModuleHook, reportUnboundHooks, MODULE_HOOKS } from './kernel/plugins/module-hooks.ts'
 
 /** 后端自己就是那扇门，默认口 = 唯一的对外口 8900（`DEFAULT_BACKEND_URL`、`GATEWAY_PORT`
  *  都是这个数）。曾经默认 4555 是容器时代的遗留：门在 Caddy 上，
@@ -454,7 +452,7 @@ async function main() {
   // 进程以 1 退出）。所以这里是一个显式的 `undefined` 槽 + 现取，不是前向引用。
   let shutdown: Shutdown | undefined
   const restart: NonNullable<HttpDeps['restart']> = {
-    running: () => runningTasks(),
+    running: () => stream.tasks.runningTasks(),
     trigger: makeRestartTrigger({ mode: classifyLauncher(process.env), shutdown: () => shutdown }),
   }
 
@@ -869,9 +867,9 @@ async function main() {
         ...(t.whenBusy === undefined ? {} : { whenBusy: t.whenBusy }),
       })),
       actions: () => [...packageActions.keys()],
-      apply: (row) => addTask(compileUserTask(row, compileOpts())),
-      unapply: async (id) => { await removeTask(id) },
-      runNow: (id) => runTaskNow(id),
+      apply: (row) => stream.tasks.addTask(compileUserTask(row, compileOpts())),
+      unapply: async (id) => { await stream.tasks.removeTask(id) },
+      runNow: (id) => stream.tasks.runTaskNow(id),
     })
   }
   // 源健康：三本账合成一个词（spec 2026-09-12）。介入域缺席时 run / 提议两格永远空，状态词最多到 quarantined。
@@ -1118,7 +1116,7 @@ async function main() {
     )
     const drain = makeDrain({
       mapToTask: (ev) => EVENT_SOURCE_TASK_MAP[ev.source] ?? null,
-      runTaskNow,
+      runTaskNow: (id) => stream.tasks.runTaskNow(id),
       log: (line) => console.log(line),
     })
     const cookiesFeed = wireCookiesFeed(esRelay, {
@@ -1208,8 +1206,8 @@ async function main() {
         ? { recipePackageOps: { updates: () => sources.recipePackageOps.updates() } }
         : {}),
     }
-    bindModuleHook(kernel, () => setTaskDeps(taskDeps!), () => resetTaskDeps())
-    void startTaskCenter(
+    bindModuleHook(kernel, () => stream.tasks.setDeps(taskDeps!), () => stream.tasks.resetDeps())
+    void stream.tasks.start(
       [
         ...builtinTasks(taskDeps),
         // taskStore 开不起来时用户定义任务面整体缺席，只用内置任务照常起——见上面 try/catch 头注。
@@ -1225,6 +1223,7 @@ async function main() {
   // （STREAM_NO_SCHEDULER=1）根本不起调度中心，taskDeps 没人要。掺进常态 = 第一天就变噪音。
   reportUnboundHooks({
     log: (m) => console.log(m),
+    probes: [...MODULE_HOOKS, { name: 'taskDeps', bound: () => stream.tasks.depsBound() }],
     degraded: [
       ...(standbyMgr ? [] : ['standby']),
       ...(process.env.STREAM_NO_SCHEDULER === '1' ? ['taskDeps'] : []),
@@ -1238,7 +1237,7 @@ async function main() {
     if (shuttingDown) return
     shuttingDown = true
     console.log(`\n[stream] ${label} → shutting down...`)
-    await stopTaskCenter()
+    await stream.tasks.stop()
     if (standbyMgr) await standbyMgr.shutdown().catch(() => {})
     // 采集的两步关停（先 `scheduler.stop()` 不再派新班，再 `shutdownAdapters()` 杀掉 adapter
     // 名下的 chrome 子进程）已经是采集调度域的两个 effect，由下面 quiesceKernel 按注册反序

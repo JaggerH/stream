@@ -17,6 +17,7 @@ import { loadOrCreateApiToken, loadOrCreateExtToken } from '../http/secrets.ts'
 import { createRuntime, type StreamRuntime } from './runtime.ts'
 import { openDevices, type StreamDevices } from './devices.ts'
 import { createCapabilities, loadOptional, provideBrowserCookies, type StreamCapabilities } from './capabilities.ts'
+import { TaskCenter } from '../tasks/center.ts'
 
 export type { StreamRuntime } from './runtime.ts'
 export { createRuntime } from './runtime.ts'
@@ -59,6 +60,8 @@ export interface Stream {
   readonly capabilities: StreamCapabilities
   /** 工具目录的进程内接口（D3）：与 MCP 端点同一份工具、同一套结果。 */
   readonly tools: StreamTools
+  /** 这份实例的调度中心（账本在可写状态目录下的 `sidequest.sqlite`）。`close()` 先停它。 */
+  readonly tasks: TaskCenter
   /** 撤掉内核上的全部 effect（库句柄、定时器、子进程、采集标签的归还），放掉数据目录锁。幂等。 */
   close(): Promise<void>
 }
@@ -119,6 +122,7 @@ export async function createStream(opts: CreateStreamOptions): Promise<Stream> {
     if (ownsRuntime) await runtime.close().catch(() => {})
     throw e
   }
+  const tasks = new TaskCenter()
   let closing: Promise<void> | undefined
   return {
     kernel,
@@ -129,8 +133,11 @@ export async function createStream(opts: CreateStreamOptions): Promise<Stream> {
     secrets,
     capabilities,
     tools: createTools(kernel, capabilities),
+    tasks,
     close: () => closing ??= (async () => {
       try {
+        // 先停调度中心：它的 job 读内核上的服务，内核撤完再跑就是对着关掉的库干活。
+        await tasks.stop()
         await quiesceKernel(kernel)
       } finally {
         release()
