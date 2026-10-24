@@ -6,7 +6,7 @@
 import { flatParser } from './parsers/flat.ts'
 import { pairedParser } from './parsers/paired.ts'
 import { digestParser } from './parsers/digest.ts'
-import type { ContentParser, DownloadRow, RawDownloadItem } from './types.ts'
+import type { ContentParser, DownloadRow, ParseContext, RawDownloadItem } from './types.ts'
 
 /** Order is irrelevant to correctness (max score wins); flat is the floor. */
 export const PARSERS: ContentParser[] = [pairedParser, digestParser, flatParser]
@@ -27,6 +27,6 @@ export function route(item: RawDownloadItem, parsers: ContentParser[] = PARSERS)
 }
 
 /** Parse one raw item into normalized download rows via the auto-detected parser. */
-export function parseItem(item: RawDownloadItem, parsers: ContentParser[] = PARSERS): DownloadRow[] {
-  return route(item, parsers).parser.parse(item)
+export function parseItem(item: RawDownloadItem, parsers: ContentParser[] = PARSERS, ctx?: ParseContext): DownloadRow[] {
+  return route(item, parsers).parser.parse(item, ctx)
 }

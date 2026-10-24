@@ -7,7 +7,7 @@
  *  稳定 id 的“歌”进不了归档、对不上网盘、收藏不了，留着只是噪音。 */
 
 import { albumFromText } from '../../shared/music/album.ts'
-import { trackRefFromUrl, type TrackRef } from './track-url.ts'
+import type { TrackRef } from './track-url.ts'
 
 export interface MusicSearchTrack {
   id: string
@@ -52,7 +52,8 @@ function durationSeconds(raw: string | undefined): number | undefined {
 
 export function rsshubItemsToTracks(
   items: unknown[],
-  trackRef: (url: string) => TrackRef | null = trackRefFromUrl
+  /** 实例的曲目视图（`trackRefFromUrl(url, ctx.sources.links.sync)`）。缺省 = 一条都不认（没有包）。 */
+  trackRef: (url: string) => TrackRef | null = () => null
 ): MusicSearchTrack[] {
   const out: MusicSearchTrack[] = []
   const seen = new Set<string>()

@@ -4,14 +4,14 @@
  * **源码不认识任何站**：文法来自包的 `package.json#stream.links.patterns`（kind `track`，命名组 `id`；
  * 老写法 `stream.trackUrl` 装载时翻译进来）。`platform` 由认领它的包声明（缺省 = 包的 facility），
  * 一个平台只归一个包（撞了装载期拒）——所以一个包不能把曲目挂进别家的 `platform:id` 空间。
- * spec 2026-09-26-link-recognition-design。
+ * spec 2026-09-26-link-recognition-design。认领表归实例，所以认领函数由调用方递（`ctx.sources.links.sync`）。
  */
-import { recognizeLinkSync } from '../links/recognize.ts'
+import type { LinkRef } from '../links/recognize.ts'
 
 export interface TrackRef { platform: string; track_id: string }
 
 /** 命中某包的 track pattern → `{platform, track_id}`，否则 null。 */
-export function trackRefFromUrl(url: string): TrackRef | null {
-  const r = recognizeLinkSync(url)
+export function trackRefFromUrl(url: string, recognize: (url: string) => LinkRef | null): TrackRef | null {
+  const r = recognize(url)
   return r?.kind === 'track' && r.id ? { platform: r.platform, track_id: r.id } : null
 }

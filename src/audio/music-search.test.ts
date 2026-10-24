@@ -1,6 +1,12 @@
 import { describe, it, expect, afterEach } from 'vitest'
-import { rsshubItemsToTracks } from './music-search.ts'
-import { setLinkDeclarationSource } from '../links/recognize.ts'
+import { rsshubItemsToTracks as rsshubItemsToTracksImpl } from './music-search.ts'
+import { trackRefFromUrl } from './track-url.ts'
+import { settableRecognizer } from '../links/recognizer.fixture.ts'
+// 认领表归实例：这里一份测试用的认领，setter 只换它的来源。
+const { links: testLinks, setTable: setLinkDeclarationSource, setDebug: setLinkDebugSink } = settableRecognizer()
+void setLinkDebugSink
+const rsshubItemsToTracks = (items: unknown[], ref?: Parameters<typeof rsshubItemsToTracksImpl>[1]) =>
+  rsshubItemsToTracksImpl(items, ref ?? ((u) => trackRefFromUrl(u, testLinks.sync)))
 
 const trackRef = (url: string) => {
   const m = url.match(/pkgsite\.com\/song\/(\d+)/)

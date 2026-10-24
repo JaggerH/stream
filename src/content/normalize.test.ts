@@ -1,9 +1,14 @@
 import { describe, it, expect } from 'vitest'
-import { normalize, defaultNormalizer, registerNormalizer, hasNormalizer, type RawItem } from './normalize.ts'
+import { Normalizers, defaultNormalizer, type Normalizer, type RawItem } from './normalize.ts'
 import type { SourceManifest } from '../manifest/types.ts'
 
 // 各站自己的 normalizer 测试住各自的包里（如 packages/bilibili/normalizer.test.ts）；这里只测宿主的
 // 默认 normalizer 与注册表本身。宿主静态表是空的——所有具名 normalizer 都由包的 activate 交出。
+// 具名 normalizer 表归实例（包在 activate 里交出、`ctx.sources.normalizers` 持有）。这里一张测试自己的表。
+const table = new Map<string, Normalizer>()
+const { normalize } = new Normalizers(table)
+const registerNormalizer = (key: string, n: Normalizer) => { table.set(key, n) }
+
 const named: SourceManifest = {
   schema_version: 1, id: 'rsshub:demo/list', adapter: 'rsshub', type: 'post',
   description: 't', topics: [], example_queries: [], capabilities: ['timeline'],
@@ -212,11 +217,12 @@ describe('registerNormalizer', () => {
     expect(out.text).toBe('from p2-demo')
   })
 
-  it('refuses to overwrite an existing key', () => {
-    registerNormalizer('p2-dupe', (raw) => ({ archetype: 'text', title: '', text: 'first' }))
-    expect(() => registerNormalizer('p2-dupe', (raw) => ({ archetype: 'text', title: '', text: 'second' }))).toThrow(
-      /p2-dupe/,
-    )
+  it('表归实例：A 的具名 normalizer，B 那张表里没有（B 落到默认）', () => {
+    const a = new Normalizers(new Map([['inst-only', (() => ({ archetype: 'text', text: 'from A' })) as Normalizer]]))
+    const b = new Normalizers(new Map())
+    const m: SourceManifest = { ...named, id: 'inst-only-manifest', normalizer: 'inst-only' }
+    expect(a.normalize({ title: 'x' }, m).text).toBe('from A')
+    expect(b.normalize({ title: 'x' }, m).text).not.toBe('from A')
   })
 
   it('passes a normalizer-declared `enrich` through normalize() untouched', () => {
@@ -233,14 +239,7 @@ describe('registerNormalizer', () => {
     expect(paid.enrich).toEqual({ source: 'demo-detail', params: { id: 'n1', token: 'T' } })
   })
 
-  it('refuses to overwrite an already-registered key', () => {
-    registerNormalizer('owned-once', () => ({ archetype: 'text', title: '', text: 'first' }))
-    expect(() => registerNormalizer('owned-once', () => ({ archetype: 'text', title: '', text: 'hijacked' }))).toThrow(
-      /owned-once/,
-    )
-  })
-
   it('the host registers no named normalizer of its own (they all come from packages)', () => {
-    expect(hasNormalizer('movie')).toBe(false)
+    expect(new Normalizers().has('movie')).toBe(false)
   })
 })

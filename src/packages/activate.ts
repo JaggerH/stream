@@ -1,7 +1,7 @@
 import { resolve, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import type { Adapter } from '../adapters/types.ts'
-import { hasNormalizer, registerNormalizer, type Normalizer } from '../content/normalize.ts'
+import type { Normalizer } from '../content/normalize.ts'
 import type { StreamPackage } from './scan.ts'
 import { assignedServiceName } from './container-policy.ts'
 import { fillsPluginSlot, type PluginSlotFields } from '../plugins/loader.ts'
@@ -283,6 +283,8 @@ export interface ActivateResult {
   enrichers: Map<string, Enricher>
   /** 包交出来的一键订阅（键 = 域名）。 */
   connect: Map<string, ConnectFn>
+  /** 包交出来的具名 normalizer（撞名在第一段已经拒过了）。归这次激活——即这个实例——所有。 */
+  normalizers: Map<string, Normalizer>
 }
 
 /**
@@ -431,12 +433,6 @@ export function activatePackages(
           `Stream packages "${prev}" and "${pkg.id}" both declare normalizer "${name}" — refusing to activate either`,
         )
       }
-      if (hasNormalizer(name)) {
-        throw new Error(
-          `Stream package "${pkg.id}" declares normalizer "${name}", which is already registered — ` +
-          `refusing to activate (a package must not shadow another's normalizer)`,
-        )
-      }
       normalizerOwner.set(name, pkg.id)
     }
     for (const name of pkg.code!.enrichers ?? []) {
@@ -535,6 +531,7 @@ async function runPlans(
   const actions: PackageActionEntry[] = []
   const enrichers = new Map<string, Enricher>()
   const connect = new Map<string, ConnectFn>()
+  const normalizers = new Map<string, Normalizer>()
   for (const plan of plans) {
     const pkg = plan.pkg
     try {
@@ -548,7 +545,7 @@ async function runPlans(
       // 缺席的那个动作会让引用它的任务行永远报"没有这个动作"，而其余照跑，看起来只是"某条坏了"。
       assertPackageActions(pkg.id, produced.actions ?? {})
       for (const [name, adapter] of Object.entries(produced.adapters ?? {})) adapters.set(name, adapter)
-      for (const [name, normalizer] of Object.entries(produced.normalizers ?? {})) registerNormalizer(name, normalizer)
+      for (const [name, normalizer] of Object.entries(produced.normalizers ?? {})) normalizers.set(name, normalizer)
       for (const [local, run] of Object.entries(produced.actions ?? {})) actions.push({ pkgId: pkg.id, local, run })
       for (const [name, fn] of Object.entries(produced.enrichers ?? {})) enrichers.set(name, sanitizeEnricher(fn))
       for (const [domain, fn] of Object.entries(produced.connect ?? {})) connect.set(domain.toLowerCase(), fn)
@@ -560,5 +557,5 @@ async function runPlans(
       console.error(`[stream] package "${pkg.id}" failed to activate — 这个包这次不生效：${error.message}`)
     }
   }
-  return { adapters, failures, actions, enrichers, connect }
+  return { adapters, failures, actions, enrichers, connect, normalizers }
 }

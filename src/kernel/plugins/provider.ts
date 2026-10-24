@@ -22,6 +22,7 @@ import { VideoDetailService } from '../../video/detail-service.ts'
 import { VideoEnrichQueue } from '../../video/enrich-queue.ts'
 import { tmdbEpisodeIndex } from '../../video/episode-index.ts'
 import { resolveDownloads, type DownloadOption } from '../../video/resolve.ts'
+import { trackRefFromUrl } from '../../audio/track-url.ts'
 import { fetchUrl } from '../../http/fetch-url.ts'
 import { fetchArticleText } from '../../content/article-text.ts'
 import { makeOpenAiSttFn } from '../../transcribe/sources.ts'
@@ -173,8 +174,8 @@ export const providerPlugin = {
     })
     // candidates = the live resolve ladder (Provider row's expanded members, incl. matches-catalog
     // sources), not just provides-declaring manifests — so the intent view mirrors what resolve() runs.
-    // 曲目 URL 的识别走 `trackRefFromUrl` 的默认实参——文法来自包声明（`stream.links.patterns`，kind track）。
-    const intentResolver = new IntentResolver(registry, DEFAULT_RULES, (tt) => resolveEngine.resolveLadder(tt).map((m) => m.id))
+    // 曲目 URL 的识别：本实例的认领表（文法来自包声明 `stream.links.patterns`，kind track）。
+    const intentResolver = new IntentResolver(registry, DEFAULT_RULES, (tt) => resolveEngine.resolveLadder(tt).map((m) => m.id), (url) => trackRefFromUrl(url, ctx.sources.links.sync))
     // Radar: URL → concrete candidate sources over the shared registry (RSSHub catalog + native
     // plugins). Additive alongside the targetType classifier above; feeds /api/intents + subscribe.
     const radarMatcher = new RadarMatcher(registry)
@@ -186,7 +187,7 @@ export const providerPlugin = {
     // 不再有 content-search-aggregate / resource-search-aggregate builtin 聚合器。
     // 成员返回契约见 download-resolve 行：[{url,type,password?,name?}]；不认识的 URL 抛
     // 'unsupported url' = decline。
-    builtinAdapter.register('magnet', async (input) => resolveDownloads(String(input)))
+    builtinAdapter.register('magnet', async (input) => resolveDownloads(String(input), ctx.sources.links.sync))
     // 视频播放解析源不在这里：每平台一行 resolve Provider 的成员住各自的包里
     // （`packages/<facility>/`，`package.json#stream.providers` 声明行、manifest 声明成员），
     // 分发由 provider serves-key 完成，宿主不认识任何平台。

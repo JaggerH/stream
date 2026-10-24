@@ -1,10 +1,15 @@
 import { describe, it, expect, afterEach } from 'vitest'
-import { normalize } from './normalize.ts'
+import { Normalizers } from './normalize.ts'
+import { trackRefFromUrl } from '../audio/track-url.ts'
 import { extractTrackRef } from '../audio/ref.ts'
-import { setLinkDeclarationSource } from '../links/recognize.ts'
 import type { LinkTableEntry } from '../replay/recipe-package.ts'
 import type { SourceManifest } from '../manifest/types.ts'
 import type { Item } from './types.ts'
+import { settableRecognizer } from '../links/recognizer.fixture.ts'
+// 认领表归实例：这里一份测试用的认领，setter 只换它的来源。
+const { links: testLinks, setTable: setLinkDeclarationSource, setDebug: setLinkDebugSink } = settableRecognizer()
+void setLinkDebugSink
+const { normalize } = new Normalizers(new Map(), { trackRefFromUrl: (u) => trackRefFromUrl(u, testLinks.sync) })
 
 // 镜像站的歌单条目：recipe 映射没给 track_id，但每条的链接指向**另一个平台**的歌曲页。
 // 曲目身份必须从链接认领里补上——否则下载一律报 "Item has no track reference"

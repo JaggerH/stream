@@ -22,10 +22,12 @@ import {
   type LinkTableEntry,
   type RecipePackage,
 } from '../../replay/recipe-package.ts'
-import { setLinkDebugSink, setLinkDeclarationSource } from '../../links/recognize.ts'
+import { LinkRecognizer } from '../../links/recognize.ts'
+import { Normalizers } from '../../content/normalize.ts'
+import { trackRefFromUrl } from '../../audio/track-url.ts'
 import { setServingPolicySource } from '../../media/serving.ts'
 import { setPackageIdentities } from '../../providers/identities.ts'
-import { setPackageSearchSources } from '../../search/seeds.ts'
+import { SearchSeeds } from '../../search/seeds.ts'
 import { setPackageCookieEnvSource } from '../../credentials/cookie-provider.ts'
 import { setItemProjectionSource } from '../../http/client-item.ts'
 import { setSourceSiteSource } from '../../registry/public.ts'
@@ -155,6 +157,12 @@ export interface SourcesService {
   keyState: (sourceId: string, memberParams?: Record<string, unknown>) => 'stored' | 'env' | 'missing' | null
   /** 「RSSHub 长尾目录该重取了吗」——没缓存或缓存过期。取它的时机由 adapter 定（见下）。 */
   rsshubCatalogNeedsRefresh: () => boolean
+  /** 本实例的资源搜索源元数据表（来自包的 `searchSources` 声明，现取）。 */
+  searchSeeds: SearchSeeds
+  /** 本实例的链接认领（认领表来自本实例的包，现取）。 */
+  links: LinkRecognizer
+  /** 本实例的归一化（具名 normalizer 来自本实例激活的包）。 */
+  normalizers: Normalizers
   /** 已加载的包声明的退役目录路由（id → 理由）。**调用时现取**：热装一个包之后表就变了。
    *  与 catalog 解析吃的是同一份表（`retiredRoutesOf`）；provider 域拿它判「系统行上指向
    *  被包顶掉的目录路由的成员」是死成员（`pruneDeadMembers`）。 */
@@ -302,7 +310,7 @@ export const sourcesPlugin = {
     // 并表结果按「这一份包列表」缓存——reloadRecipePackages 换掉 current 才重算，撞主机 / 撞平台
     // 被拒的包也只在重算那一次出声（每次认领都喊一遍就成了噪音，没人会看）。
     let linkMemo: { list: RecipePackage[]; entries: LinkTableEntry[] } | null = null
-    setLinkDeclarationSource(() => {
+    const links = new LinkRecognizer(() => {
       const list = recipePackagesRef.current.list
       if (linkMemo?.list === list) return linkMemo.entries
       const table = linkTableOf(list)
@@ -315,13 +323,16 @@ export const sourcesPlugin = {
       }
       linkMemo = { list, entries: table.entries }
       return table.entries
-    })
-    setLinkDebugSink((e) => {
+    }, (e) => {
       const at = Date.now()
       config.onDebug?.({ id: `links:${e.key}@${at}`, at, channel: 'links', key: e.key, title: e.title, summary: e.summary, ok: e.ok, fields: [] })
     })
-    // 资源搜索源元数据（展示键 / 标签 / 查询参数 / 形状）：同链接认领表，thunk 现取。
-    setPackageSearchSources(() => searchSourcesOf(recipePackagesRef.current.list))
+    // 归一化：包交出来的具名 normalizer（本实例 activate 的那批）+ 条目链接 → 曲目（本实例的认领表）。
+    const normalizers = new Normalizers(ctx.packages.activated.normalizers, {
+      trackRefFromUrl: (url) => trackRefFromUrl(url, links.sync),
+    })
+    // 资源搜索源元数据（展示键 / 标签 / 查询参数 / 形状）：同链接认领表，thunk 现取。本实例一张（ctx.sources.searchSeeds）。
+    const searchSeeds = new SearchSeeds(() => searchSourcesOf(recipePackagesRef.current.list))
     // RSSHub 要的 cookie 环境变量名由包声明（`stream.rsshubCookieEnv`）。同 serving / 链接认领表，
     // thunk 现取：热装的包下一次取凭证就生效。本域不持有 cookieProvider（它在
     // ctx.credentials.cookieProvider），接的是模块级 thunk——不用拿到实例，这正是选 thunk 而不是
@@ -643,6 +654,9 @@ export const sourcesPlugin = {
       reloadRecipePackages,
       mountFailures,
       rsshubCatalogNeedsRefresh: () => catalogNeedsRefresh(config.dataDir),
+      searchSeeds,
+      links,
+      normalizers,
       retiredRoutes,
       applyRsshubCatalog: (raw) => {
         const next = sealManifests(

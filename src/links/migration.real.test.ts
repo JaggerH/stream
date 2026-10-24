@@ -4,10 +4,17 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { linkTableOf, mergeRecipePackagesByFacility, providerDeclarationsOf } from '../replay/recipe-package.ts'
-import { recognizeLinkSync, setLinkDeclarationSource } from './recognize.ts'
-import { linkDispatchKeyOf } from '../http/fetch-url.ts'
-import { trackRefFromUrl } from '../audio/track-url.ts'
-import { downloadPageKind } from '../video/resolve.ts'
+import { linkDispatchKeyOf as linkDispatchKeyOfImpl } from '../http/fetch-url.ts'
+import { trackRefFromUrl as trackRefFromUrlImpl } from '../audio/track-url.ts'
+import { downloadPageKind as downloadPageKindImpl } from '../video/resolve.ts'
+import { settableRecognizer } from './recognizer.fixture.ts'
+// 认领表归实例：这里一份测试用的认领，setter 只换它的来源。
+const { links: testLinks, setTable: setLinkDeclarationSource, setDebug: setLinkDebugSink } = settableRecognizer()
+void setLinkDebugSink
+const recognizeLinkSync = testLinks.sync
+const linkDispatchKeyOf = (u: string) => linkDispatchKeyOfImpl(u, testLinks)
+const trackRefFromUrl = (u: string) => trackRefFromUrlImpl(u, testLinks.sync)
+const downloadPageKind = (u: string) => downloadPageKindImpl(u, testLinks.sync)
 
 /**
  * 迁移等价（spec 2026-09-26-link-recognition §8）：真实出货的 `packages/` 改成声明 `stream.links`、派发键改成

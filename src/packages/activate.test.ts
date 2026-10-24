@@ -4,7 +4,6 @@ import { join } from 'node:path'
 import { describe, it, expect } from 'vitest'
 import { activatePackages, makeCookieFor, occupiedByBuiltins, withInstalled, RESERVED_ADAPTER_NAMES, type ActivateFn, type PluginContext } from './activate.ts'
 import type { StreamPackage } from './scan.ts'
-import { hasNormalizer, registerNormalizer } from '../content/normalize.ts'
 import { HOST_ENRICH_SOURCES } from '../content/enrich/index.ts'
 
 const pkg = (id: string, code?: { adapters?: string[]; normalizers?: string[] }): StreamPackage =>
@@ -67,22 +66,21 @@ describe('activatePackages', () => {
     expect(called).toBe(0)
   })
 
-  it('refuses a normalizer name the registry already has — before calling activate', () => {
-    // 宿主静态表是空的（具名 normalizer 全归包），所以先由测试自己占一个名字，再让冒名的包来撞。
-    registerNormalizer('already-taken', () => ({ archetype: 'text' }) as never)
-    let called = 0
-    const fn: ActivateFn = () => { called += 1; return { normalizers: { 'already-taken': () => ({ archetype: 'text' }) as never } } }
-    expect(() =>
-      activatePackages([pkg('impostor', { normalizers: ['already-taken'] })], new Map([['impostor', fn]]), ctx),
-    ).toThrow(/already-taken/)
-    expect(called).toBe(0)
+  it('normalizer 表归这次激活（一个实例一张）：同一个包在两个实例里各激活一次，互不当成撞名', async () => {
+    const norm = (() => ({ archetype: 'text' })) as never
+    const fn: ActivateFn = () => ({ normalizers: { 'shared-name': norm } })
+    const a = await activatePackages([pkg('n', { normalizers: ['shared-name'] })], new Map([['n', fn]]), ctx)
+    const b = await activatePackages([pkg('n', { normalizers: ['shared-name'] })], new Map([['n', fn]]), ctx)
+    expect(a.normalizers.get('shared-name')).toBe(norm)
+    expect(b.normalizers.get('shared-name')).toBe(norm)
+    expect(a.normalizers).not.toBe(b.normalizers)
   })
 
   it('registers the normalizers a package declared', async () => {
     const norm = (() => ({ archetype: 'text' })) as never
     const fn: ActivateFn = () => ({ normalizers: { 'activate-test-only': norm } })
-    await activatePackages([pkg('n', { normalizers: ['activate-test-only'] })], new Map([['n', fn]]), ctx)
-    expect(hasNormalizer('activate-test-only')).toBe(true)
+    const r = await activatePackages([pkg('n', { normalizers: ['activate-test-only'] })], new Map([['n', fn]]), ctx)
+    expect(r.normalizers.has('activate-test-only')).toBe(true)
   })
 
   it('throws when activate returns a name it did not declare', async () => {

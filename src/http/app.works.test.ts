@@ -24,7 +24,10 @@ import { ItemStore } from '../item-store.ts'
 import { createHttpApiFixture, fake, health, item, manifests, mk, stream, type HttpApiFixture } from './__fixtures__/app-harness.ts'
 import { WatchProgressStore } from '../watch-progress-store.ts'
 import type { ProviderBindings } from '../providers/bindings.ts'
-import { setLinkDeclarationSource } from '../links/recognize.ts'
+import { settableRecognizer } from '../links/recognizer.fixture.ts'
+// 认领表归实例：这里一份测试用的认领，setter 只换它的来源。
+const { links: testLinks, setTable: setLinkDeclarationSource, setDebug: setLinkDebugSink } = settableRecognizer()
+void setLinkDebugSink
 
 let fixture: HttpApiFixture
 let dir: string, dedup: DedupStore, store: ItemStore, build: HttpApiFixture['build']
@@ -574,7 +577,7 @@ it('GET /api/search?scope=music maps recipe items to track shape and dedups by s
       { title: '稻香 - 周杰伦', link: 'https://music.163.com/song?id=185868', author: '周杰伦', image: 'https://img/2.jpg', itunes_duration: '3:43', description: '专辑：魔杰座' },
     ],
   })
-  const app = createHttpApp({ service, itemStore: store, health, providers: { executor, stats } })
+  const app = createHttpApp({ service, itemStore: store, health, providers: { executor, stats }, links: testLinks })
 
   const res = await app.request('/api/search?scope=music&q=%E5%91%A8%E6%9D%B0%E4%BC%A6')
   expect(res.status).toBe(200)

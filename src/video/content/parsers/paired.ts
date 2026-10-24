@@ -4,10 +4,9 @@
  * desc is the identity; the url is a page resolved to a magnet lazily.
  */
 import { parseTitle } from '../../parse.ts'
-import { downloadPageKind } from '../../resolve.ts'
 import { classifyNetdisk } from '../classify.ts'
 import { cleanName } from '../text.ts'
-import type { ContentParser, DownloadRow, NetdiskKind, RawDownloadItem } from '../types.ts'
+import type { ContentParser, DownloadRow, NetdiskKind, ParseContext, RawDownloadItem } from '../types.ts'
 
 /** How many of the item's links carry a usable per-link description. */
 function pairedRatio(item: RawDownloadItem): number {
@@ -19,10 +18,10 @@ function pairedRatio(item: RawDownloadItem): number {
 
 /** Resolve a link's kind. 直接可用的链接按 host 分类；下载站中转页（认领判据与解析实现
  *  同住 `src/video/resolve.ts`，别在这里加站点正则）打 needsResolve 标。 */
-function kindOf(url: string): { netdisk: NetdiskKind; needsResolve: boolean } {
+function kindOf(url: string, ctx: ParseContext | undefined): { netdisk: NetdiskKind; needsResolve: boolean } {
   const direct = classifyNetdisk(url)
   if (direct !== 'unknown') return { netdisk: direct, needsResolve: false }
-  const page = downloadPageKind(url)
+  const page = ctx?.downloadPage?.(url) ?? null
   if (page) return { netdisk: page, needsResolve: true }
   return { netdisk: 'unknown', needsResolve: false }
 }
@@ -33,7 +32,7 @@ export const pairedParser: ContentParser = {
     // its shape: links[] present AND at least half carry a desc
     return pairedRatio(item) >= 0.5 ? 0.9 : 0
   },
-  parse(item: RawDownloadItem): DownloadRow[] {
+  parse(item: RawDownloadItem, ctx?: ParseContext): DownloadRow[] {
     const links = item.links ?? []
     const rows: DownloadRow[] = []
     for (const l of links) {
@@ -42,7 +41,7 @@ export const pairedParser: ContentParser = {
       const name = cleanName(desc) || desc
       if (!name) continue // a paired link with no desc is not a usable row
       const f = parseTitle(desc)
-      const { netdisk, needsResolve } = kindOf(l.url)
+      const { netdisk, needsResolve } = kindOf(l.url, ctx)
       rows.push({
         source: item.source,
         name,

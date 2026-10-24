@@ -1,13 +1,16 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import { Hono } from 'hono'
 import { registerLinkRoutes } from './links-routes.ts'
-import { setLinkDeclarationSource } from '../links/recognize.ts'
+import { settableRecognizer } from '../links/recognizer.fixture.ts'
+// 认领表归实例：这里一份测试用的认领，setter 只换它的来源。
+const { links: testLinks, setTable: setLinkDeclarationSource, setDebug: setLinkDebugSink } = settableRecognizer()
+void setLinkDebugSink
 
 afterEach(() => setLinkDeclarationSource(() => []))
 
 function app() {
   const a = new Hono()
-  registerLinkRoutes(a)
+  registerLinkRoutes(a, { recognize: testLinks.recognize })
   return a
 }
 

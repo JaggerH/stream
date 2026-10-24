@@ -5,11 +5,11 @@ import { sourceOf } from '../../providers/executor.ts'
 import { type RawVideoItem } from '../../video/extract.ts'
 import { buildResult } from '../../video/aggregate.ts'
 import { facetOneSource } from '../../video/facet-source.ts'
+import { downloadPageKind } from '../../video/resolve.ts'
 import { Deduper } from '../../video/dedupe.ts'
 import type { VideoPart, VideoSearchEvent, VideoSearchResult, VideoSourceTiming } from '../../video/types.ts'
 import { resourceSearchGroups as planResourceSearchGroups, type SearchGroup } from '../../video/search-groups.ts'
 import { videoSearchStream as streamVideoSearch, type SourceOutcome } from '../../video/search-stream.ts'
-import { searchMetaBySourceId, missTimings } from '../../search/seeds.ts'
 
 declare module 'cordis' {
   interface Context {
@@ -91,6 +91,9 @@ export const searchFanoutPlugin = {
     const { log } = config
     const { itemStore, channels, discoveredChannels } = ctx.stores
     const registry = ctx.sources.registry
+    // 资源搜索源元数据：本实例的包声明（不是进程里谁最后挂上的那份）。
+    const { bySourceId: searchMetaBySourceId, missTimings } = ctx.sources.searchSeeds
+    const downloadPage = (url: string) => downloadPageKind(url, ctx.sources.links.sync)
     /** 执行器**每次现取**：provider 域先挂（inject 保证），但照域插件惯例不把它解构成快照。 */
     const executor = () => ctx.provider.providerExecutor
 
@@ -99,7 +102,7 @@ export const searchFanoutPlugin = {
     // (concurrent), then normalize each raw item through ITS producing source (provenance → sourceOf →
     // scheduler.normalizeRaw), reproducing the ingest normalization. Ephemeral, not persisted.
     const normalizeSearchItem = (sourceId: string, raw: unknown): StoredItem => config.normalizeRaw(sourceId, raw)
-    const renormalizeItems = (filter: RenormalizeFilter) => renormalizeStoredItems(itemStore, registry, filter)
+    const renormalizeItems = (filter: RenormalizeFilter) => renormalizeStoredItems(itemStore, registry, filter, ctx.sources.normalizers.normalize)
     const contentSearchDetailed = async (q: string): Promise<{ items: StoredItem[]; warnings: Array<{ member: string; reason: string }> }> => {
       const r = await executor().invoke('content-search', q)
       if (!r || r.strategy !== 'concurrent') return { items: [], warnings: [] }
@@ -185,6 +188,8 @@ export const searchFanoutPlugin = {
           registry.get(group.source_id)?.member_timeout_ms ?? VIDEO_SOURCE_TIMEOUT_MS, label,
         )) as RawVideoItem[]
         const f = facetOneSource(group.source_id, rawAll, q, {
+          searchMeta: searchMetaBySourceId,
+          downloadPage,
           recordChannels: (sid, chans) => discoveredChannels.record(sid, chans),
           log,
           deduper,
@@ -233,6 +238,8 @@ export const searchFanoutPlugin = {
       for (const [sourceId, rawAll] of bySource) {
         const t0 = Date.now()
         const f = facetOneSource(sourceId, rawAll, q, {
+          searchMeta: searchMetaBySourceId,
+          downloadPage,
           recordChannels: (sid, chans) => discoveredChannels.record(sid, chans),
           log,
           deduper,

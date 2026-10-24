@@ -1,8 +1,16 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { facetOneSource, MAX_RAW_ITEMS } from './facet-source.ts'
-import { setPackageSearchSources } from '../search/seeds.ts'
+import { facetOneSource as facetOneSourceImpl, MAX_RAW_ITEMS } from './facet-source.ts'
 import { Deduper } from './dedupe.ts'
 import type { RawVideoItem } from './extract.ts'
+import { SearchSeeds } from '../search/seeds.ts'
+import type { SearchSourceDeclaration as SeedDecl } from '../packages/descriptor.ts'
+
+// 资源搜索元数据表归实例（ctx.sources.searchSeeds）；这里一份测试用的表，setter 只换它的来源。
+let seedSource: () => SeedDecl[] = () => []
+const seeds = new SearchSeeds(() => seedSource())
+const setPackageSearchSources = (f: () => SeedDecl[]) => { seedSource = f }
+const facetOneSource = (...[id, raw, q, deps]: Parameters<typeof facetOneSourceImpl>) =>
+  facetOneSourceImpl(id, raw, q, { searchMeta: seeds.bySourceId, ...deps })
 
 // 真实 source_id（`nyaa` 只是 key）——searchMetaBySourceId 按 source_id 查，
 // 传 key 会落空退到「未知源」分支，那就测不到 flat 这条路了。

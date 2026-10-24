@@ -133,7 +133,7 @@ describe('agentPlugin', () => {
    * （下面第二个断言会红）；改了常量而没改这里，这一行会红。两边都得动，谁也漏不掉。
    */
   it('mcpExtras 的转发表格数与 MCP_EXTRAS_DEP_COUNT 一致，且装配期自检通过', async () => {
-    expect(MCP_EXTRAS_DEP_COUNT).toBe(47)
+    expect(MCP_EXTRAS_DEP_COUNT).toBe(48)
     const { kernel, dataDir } = await mountUpstream()
     // 装配没抛 = 表里的实际格数与登记的数字对得上（自检在 agent.ts 的 apply 里）。
     await expect(mountAgent(kernel, dataDir)).resolves.toBeUndefined()

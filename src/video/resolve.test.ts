@@ -1,7 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { downloadPageKind, resolveDownloads } from './resolve.ts'
-import { setLinkDeclarationSource } from '../links/recognize.ts'
+import { downloadPageKind as downloadPageKindImpl, resolveDownloads as resolveDownloadsImpl } from './resolve.ts'
 import type { LinkTableEntry } from '../replay/recipe-package.ts'
+import { settableRecognizer } from '../links/recognizer.fixture.ts'
+// 认领表归实例：这里一份测试用的认领，setter 只换它的来源。
+const { links: testLinks, setTable: setLinkDeclarationSource, setDebug: setLinkDebugSink } = settableRecognizer()
+void setLinkDebugSink
+const downloadPageKind = (u: string) => downloadPageKindImpl(u, testLinks.sync)
+const resolveDownloads = (u: string) => resolveDownloadsImpl(u, testLinks.sync)
 
 // 声明表来自包的 links.patterns（真实包的声明由 src/packages/resource-sites.real.test.ts 钉着）；
 // 这里挂一份夹具，测的是机制本身。

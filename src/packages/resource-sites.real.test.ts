@@ -10,10 +10,19 @@ import {
 } from '../replay/recipe-package.ts'
 import { loadPlugins } from '../plugins/loader.ts'
 import { identityOf, setPackageIdentities } from '../providers/identities.ts'
-import { downloadPageKind } from '../video/resolve.ts'
-import { setLinkDeclarationSource } from '../links/recognize.ts'
-import { searchMetaBySourceId, setPackageSearchSources } from '../search/seeds.ts'
+import { downloadPageKind as downloadPageKindImpl } from '../video/resolve.ts'
+import { settableRecognizer } from '../links/recognizer.fixture.ts'
 import { refererForUrl, setServingPolicySource } from '../media/serving.ts'
+import { SearchSeeds } from '../search/seeds.ts'
+import type { SearchSourceDeclaration as SeedDecl } from '../packages/descriptor.ts'
+const { links: testLinks, setTable: setLinkDeclarationSource } = settableRecognizer()
+const downloadPageKind = (u: string) => downloadPageKindImpl(u, testLinks.sync)
+
+// 资源搜索元数据表归实例（ctx.sources.searchSeeds）；这里一份测试用的表，setter 只换它的来源。
+let seedSource: () => SeedDecl[] = () => []
+const seeds = new SearchSeeds(() => seedSource())
+const setPackageSearchSources = (f: () => SeedDecl[]) => { seedSource = f }
+const searchMetaBySourceId = seeds.bySourceId
 
 /**
  * 资源站（BT 影视 / 盘搜 / BT 之家）的站点知识住在各自的包里，宿主只剩机制。这里对**真实出货的

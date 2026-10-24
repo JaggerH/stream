@@ -1,7 +1,11 @@
 import { describe, it, expect, afterEach } from 'vitest'
-import { trackRefFromUrl } from './track-url.ts'
-import { setLinkDeclarationSource } from '../links/recognize.ts'
+import { trackRefFromUrl as trackRefFromUrlImpl } from './track-url.ts'
 import type { LinkTableEntry } from '../replay/recipe-package.ts'
+import { settableRecognizer } from '../links/recognizer.fixture.ts'
+// 认领表归实例：这里一份测试用的认领，setter 只换它的来源。
+const { links: testLinks, setTable: setLinkDeclarationSource, setDebug: setLinkDebugSink } = settableRecognizer()
+void setLinkDebugSink
+const trackRefFromUrl = (u: string) => trackRefFromUrlImpl(u, testLinks.sync)
 
 // 曲目文法来自包的 links.patterns（kind track，命名组 id）；认领函数在 src/links/recognize.ts。
 const entry = (pkg: string, platform: string, ...patterns: string[]): LinkTableEntry => ({

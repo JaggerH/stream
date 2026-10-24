@@ -87,10 +87,15 @@ export interface DownloadRow {
 
 /** A pluggable content parser. `detect` votes on whether an item is its shape;
  *  the registry runs all detectors and routes to the highest scorer. */
+/** 解析时可用的实例上下文：哪些链接是某个包认领的下载中转页（认领表归实例）。缺省 = 没有中转页。 */
+export interface ParseContext {
+  downloadPage?: (url: string) => NetdiskKind | null
+}
+
 export interface ContentParser {
   id: string
   /** 0 = not my shape, 1 = definitely mine. Detection keys on item SHAPE, not
    *  source id, so a new source of a known shape auto-routes. */
   detect(item: RawDownloadItem): number
-  parse(item: RawDownloadItem): DownloadRow[]
+  parse(item: RawDownloadItem, ctx?: ParseContext): DownloadRow[]
 }

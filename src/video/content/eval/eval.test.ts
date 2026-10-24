@@ -6,13 +6,18 @@
  */
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
-import { parseItem, route } from '../registry.ts'
+import { parseItem as parseItemImpl, route, PARSERS } from '../registry.ts'
+import { downloadPageKind } from '../../resolve.ts'
 import type { RawDownloadItem } from '../types.ts'
 import { GOLD_CASES } from './gold.ts'
 import { reportCorpus, scoreItem, isValidLink, nameIsUrl } from './metrics.ts'
-import { setLinkDeclarationSource } from '../../../links/recognize.ts'
 import { linkTableOf } from '../../../replay/recipe-package.ts'
 import { parseStreamDescriptor } from '../../../packages/descriptor.ts'
+import { settableRecognizer } from '../../../links/recognizer.fixture.ts'
+// 认领表归实例：这里一份测试用的认领，setter 只换它的来源。
+const { links: testLinks, setTable: setLinkDeclarationSource, setDebug: setLinkDebugSink } = settableRecognizer()
+void setLinkDebugSink
+const parseItem = (item: RawDownloadItem) => parseItemImpl(item, PARSERS, { downloadPage: (u) => downloadPageKind(u, testLinks.sync) })
 
 // 语料里有下载站中转页（paired 行要打 needsResolve / 类型标）：哪些 URL 是中转页由那个站的包声明，
 // 所以这里挂上**真实包**的声明——语料和声明一起改才对得上。放在模块顶层：语料扫描在 describe

@@ -1,8 +1,13 @@
 import { describe, it, expect, afterEach } from 'vitest'
 import { IntentResolver, DEFAULT_RULES } from './intent.ts'
-import { setLinkDeclarationSource } from '../links/recognize.ts'
+import { trackRefFromUrl } from '../audio/track-url.ts'
 import { Registry } from '../registry/registry.ts'
 import type { SourceManifest } from '../manifest/types.ts'
+import { settableRecognizer } from '../links/recognizer.fixture.ts'
+// 认领表归实例：这里一份测试用的认领，setter 只换它的来源。
+const { links: testLinks, setTable: setLinkDeclarationSource, setDebug: setLinkDebugSink } = settableRecognizer()
+void setLinkDebugSink
+const testTrackRef = (u: string) => trackRefFromUrl(u, testLinks.sync)
 
 function mk(id: string, provides: string[], priority = 1): SourceManifest {
   return {
@@ -39,7 +44,7 @@ describe('IntentResolver', () => {
   // 静默落 generic-url。这条不注入，钉住真正接在包声明表上的那条缝。
   it('不注入时走默认的 trackRefFromUrl —— 包声明的文法真的接上了', () => {
     setLinkDeclarationSource(() => [{ package: 'p', hosts: [], shortHosts: [], patterns: [{ kind: 'track', platform: 'p', pattern: '^https?://x\\.test/song/(?<id>\\d+)' }] }])
-    const r = new IntentResolver(registry, DEFAULT_RULES).resolve('https://x.test/song/77')
+    const r = new IntentResolver(registry, DEFAULT_RULES, undefined, testTrackRef).resolve('https://x.test/song/77')
     expect(r).toMatchObject({ targetType: 'p', key: '77' })
   })
 

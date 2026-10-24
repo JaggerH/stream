@@ -122,6 +122,8 @@ export type McpExtrasDeps = Pick<AgentDomain, 'searchAgent' | 'webSearch' | 'int
   // `providerBindings` / `providerExecutor`：stream_fetch_url 的 `resolveByLink`（content.enrich
   // 按 `<platform>-link` 派发）骑它们——与 HTTP `/api/media/from-url` 同一份 `makeResolveByLink`。
   & Pick<ProviderService, 'radarMatcher' | 'intentResolver' | 'resolveEngine' | 'resolveDownloads' | 'providerBindings' | 'providerExecutor'>
+  // 链接认领归实例（`ctx.sources.links`）：stream_fetch_url 的派发键要它。
+  & { links: import('../links/recognize.ts').LinkRecognizer }
   // 网盘住内核的 netdisk 域（`ctx.netdisk`）——netdisk_* 四个 MCP 工具骑它。两格本来就可为
   // undefined（没配 AList），语义与从 Boot Pick 时一字不差。
   & Pick<NetdiskDomain, 'netdisk' | 'netdiskRoutes'>
@@ -811,7 +813,7 @@ export function buildMcpExtras(boot: McpExtrasDeps): McpExtras {
     // 会在展开那一刻被拍成死值（`identify_speakers` 那一格为此红过一次）。
     // 「这条链接有没有具名行认领」：闭包在每次调用时才认领、才问 bindings.dispatch，装/卸包、改绑定
     // 都跟得上——这里只是把两个句柄递进去，不在装配期求任何值。
-    resolveByLink: makeResolveByLink(boot.providerBindings, boot.providerExecutor, undefined),
+    resolveByLink: makeResolveByLink(boot.providerBindings, boot.providerExecutor, undefined, boot.links),
     /**
      * 转成文字 / 补说话人的**注册门**：`hasKind` 问的是"这个 kind 此刻配好了没"，而这份 extras
      * 是装配期只建一次的——写成普通字段就等于把答案冻在开机那一刻。

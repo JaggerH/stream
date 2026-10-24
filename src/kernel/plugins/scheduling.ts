@@ -106,6 +106,7 @@ export const schedulingPlugin = {
     // scheduled streams come from stream.db (referencedStreamIds below); no file-based sources.
     const scheduler = new Scheduler({
       registry,
+      normalize: ctx.sources.normalizers.normalize,
       streams: [],
       adapters,
       health: sourceHealth,

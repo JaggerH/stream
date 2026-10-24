@@ -1,7 +1,7 @@
 import type { RawVideoItem } from './extract.ts'
 import { parseSourceItems } from './content/to-release.ts'
 import { aggregate } from './aggregate.ts'
-import { searchMetaBySourceId } from '../search/seeds.ts'
+import type { SearchSourceMeta } from '../search/seeds.ts'
 import type { Deduper } from './dedupe.ts'
 import type { VideoPart } from './types.ts'
 
@@ -12,6 +12,10 @@ export const MAX_LOOSE = 200
 export const MAX_SHOWS = 80
 
 export interface FacetSourceDeps {
+  /** 源的展示元数据（本实例的 `ctx.sources.searchSeeds.bySourceId`）。不传 = 全按裸键展示。 */
+  searchMeta?: (sourceId: string) => SearchSourceMeta | undefined
+  /** 哪些链接是某个包认领的下载中转页（本实例的认领表）。不传 = 没有中转页。 */
+  downloadPage?: (url: string) => import('./content/types.ts').NetdiskKind | null
   /** 观测到的 pansou 频道名 → 发现池（可读性） */
   recordChannels?: (sourceId: string, channels: string[]) => void
   log?: (msg: string) => void
@@ -41,14 +45,14 @@ export function facetOneSource(
   q: string,
   deps: FacetSourceDeps = {},
 ): FacetedSource {
-  const meta = searchMetaBySourceId(sourceId)
+  const meta = deps.searchMeta?.(sourceId)
   const key = meta?.key ?? sourceId
   const label = meta?.label ?? sourceId
   const raw = rawAll.length > MAX_RAW_ITEMS ? rawAll.slice(0, MAX_RAW_ITEMS) : rawAll
   // content 解析器层:每条 raw item → 归一 DownloadRow[] → Release(全 loose)。按 item 形态
   // 自动检测(flat/paired/digest),把源差异吸收在解析器里。digest(pansou 合集)按 query 去噪。
   // 见 docs/superpowers/specs/2026-07-18-content-parser-abstraction-design.md。
-  const grouped = parseSourceItems(key, raw, q)
+  const grouped = parseSourceItems(key, raw, q, deps.downloadPage ? { downloadPage: deps.downloadPage } : undefined)
   const { kept, dropped } = deps.deduper ? deps.deduper.admit(grouped) : { kept: grouped, dropped: 0 }
   // 纯扁平模型:所有 release 都是 loose(show:null),aggregate 只做去重后的收束,shows[] 恒空。
   const part = aggregate(kept, { minGroupSize: 2 })

@@ -1,6 +1,12 @@
 import { describe, it, expect, afterEach, vi } from 'vitest'
-import { recognizeLink, recognizeLinkSync, setLinkDeclarationSource, setLinkDebugSink, type LinkDebug } from './recognize.ts'
+import { LinkRecognizer, type LinkDebug } from './recognize.ts'
 import type { LinkTableEntry } from '../replay/recipe-package.ts'
+import { settableRecognizer } from './recognizer.fixture.ts'
+// 认领表归实例：这里一份测试用的认领，setter 只换它的来源。
+const { links: testLinks, setTable: setLinkDeclarationSource, setDebug: setLinkDebugSink } = settableRecognizer()
+void setLinkDebugSink
+const recognizeLinkSync = testLinks.sync
+const recognizeLink = testLinks.recognize
 
 const PKG: LinkTableEntry = {
   package: '@x/pkg',
@@ -131,5 +137,15 @@ describe('recognizeLink —— 短链先展开', () => {
     setLinkDeclarationSource(() => [PKG])
     const f = vi.fn(async () => new Response('ok', { status: 200 }))
     expect(await recognizeLink('https://sho.rt/a', { fetch: f as never })).toMatchObject({ url: 'https://sho.rt/a' })
+  })
+})
+
+describe('一个实例一张认领表', () => {
+  it('两个实例各认各的包：A 认领的链接 B 不认识', () => {
+    const a = new LinkRecognizer(() => [PKG])
+    const b = new LinkRecognizer(() => [])
+    const url = 'https://pkgsite.com/song/7'
+    expect(a.sync(url)?.package).toBeTruthy()
+    expect(b.sync(url)).toBeNull()
   })
 })

@@ -13,7 +13,7 @@
 import type { SourceManifest } from '../manifest/types.ts'
 import type { Content, Media } from './types.ts'
 import { extractImages, extractLinks, stripImages, toText } from './html.ts'
-import { trackRefFromUrl } from '../audio/track-url.ts'
+import type { TrackRef } from '../audio/track-url.ts'
 
 /** Loose shape of a raw RSSHub item (what adapters return). */
 export interface RawItem {
@@ -26,7 +26,15 @@ export interface RawItem {
   [k: string]: unknown
 }
 
-export type Normalizer = (raw: RawItem, manifest: SourceManifest) => Content
+/**
+ * 归一化时可用的实例上下文（第三个参数，可选）。今天只有一样：条目链接 → 曲目引用（认领表归实例）。
+ * 包自己的 normalizer 回落到 `defaultNormalizer` 时把它原样递下去。
+ */
+export interface NormalizeContext {
+  trackRefFromUrl?: (url: string) => TrackRef | null
+}
+
+export type Normalizer = (raw: RawItem, manifest: SourceManifest, ctx?: NormalizeContext) => Content
 
 /** Human-readable byte size: 1234567 → "1.2 MB". Empty for missing/zero/garbage. */
 function formatSize(bytes: unknown): string {
@@ -54,7 +62,7 @@ function parseDuration(v: unknown): number | undefined {
 }
 
 /** Generic normalizer over RSSHub html — works for most flat sources. */
-export const defaultNormalizer: Normalizer = (raw, manifest) => {
+export const defaultNormalizer: Normalizer = (raw, manifest, ctx) => {
   const desc = String(raw.description ?? '')
   const title = raw.title ? String(raw.title) : undefined
 
@@ -132,7 +140,7 @@ export const defaultNormalizer: Normalizer = (raw, manifest) => {
   // 典型是镜像站歌单——条目是它产出的，歌却是另一个平台的。平台取**链接的主人**（认领表里一个平台只归
   // 一个包），不是产出条目的镜像站，所以「包不能把音轨挂进别家 platform:id 空间」这条不变量照样成立：
   // 文法是那个平台的包自己声明的。形状照平台包自己的 normalizer（只存引用，播放 / 下载时现解）。
-  const linkTrack = !trackRef && typeof raw.link === 'string' ? trackRefFromUrl(raw.link) : null
+  const linkTrack = !trackRef && typeof raw.link === 'string' ? (ctx?.trackRefFromUrl?.(raw.link) ?? null) : null
   if (linkTrack) {
     const topImage = typeof raw.image === 'string' && raw.image.trim() ? raw.image.trim() : undefined
     const audio: Media = {
@@ -195,28 +203,6 @@ export const defaultNormalizer: Normalizer = (raw, manifest) => {
   return { archetype: 'text', title, text: toText(desc) }
 }
 
-const registry = new Map<string, Normalizer>()
-
-/**
- * 往注册表里加一个 normalizer。**同名重复一律抛错，不覆盖**——允许覆盖就等于让一个包
- * 静默换掉另一个包的展示逻辑（spec §7 R1：代码撞名是供应链攻击面，与 recipe 数据的
- * 用户层覆盖语义不同）。
- */
-export function registerNormalizer(key: string, normalizer: Normalizer): void {
-  if (registry.has(key)) {
-    throw new Error(`normalizer "${key}" is already registered — refusing to overwrite (a package must not shadow another's normalizer)`)
-  }
-  registry.set(key, normalizer)
-}
-
-/**
- * 这个名字是不是已经被注册了。给装载器用：撞名必须在**调用包的 activate 之前**判掉，
- * 所以不能靠「先注册再看 registerNormalizer 抛不抛」——那时代码已经跑过了。
- */
-export function hasNormalizer(key: string): boolean {
-  return registry.has(key)
-}
-
 // 具名 normalizer 一律归包：带 `stream.code` 的包在 activate 里交出，由装载器注册——名单归包，
 // 宿主这里没有静态表（影视榜单的 `movie` 住 `packages/rsshub/`，它解析的是那几家站的文案）。
 
@@ -242,16 +228,33 @@ function withPaid(content: Content, raw: RawItem): Content {
   return Number.isFinite(price) && price > 0 ? { ...content, paid: true } : content
 }
 
-/** Normalize a raw item to Content using the manifest's normalizer (or default).
- *  `normalizer` is the current field; `presenter` is kept as a deprecated alias so
- *  existing manifests (including user data outside this repo) keep resolving. */
-export function normalize(raw: RawItem, manifest: SourceManifest): Content {
-  const key = manifest.normalizer ?? manifest.presenter
-  const p = (key && registry.get(key)) || defaultNormalizer
-  try {
-    return withPaid(p(raw, manifest), raw)
-  } catch {
-    // a broken normalizer must never drop the item — fall back to plain text
-    return { archetype: 'text', title: raw.title ? String(raw.title) : undefined, text: toText(String(raw.description ?? '')) }
+/**
+ * 一个实例的归一化：具名 normalizer 表（包在 activate 里交出，`ctx.packages.activated.normalizers`）+ 实例上下文。
+ * **表归实例**：两个实例各有各的包，同名 normalizer 互不相撞（曾经是进程级注册表，第二个实例激活同一个包时
+ * 被当成「撞名」拒掉）。
+ */
+export class Normalizers {
+  constructor(
+    private readonly table: ReadonlyMap<string, Normalizer> = new Map(),
+    private readonly ctx: NormalizeContext = {},
+  ) {}
+
+  has(key: string): boolean { return this.table.has(key) }
+
+  /** Normalize a raw item to Content using the manifest's normalizer (or default).
+   *  `normalizer` is the current field; `presenter` is kept as a deprecated alias so
+   *  existing manifests (including user data outside this repo) keep resolving. */
+  normalize = (raw: RawItem, manifest: SourceManifest): Content => {
+    const key = manifest.normalizer ?? manifest.presenter
+    const p = (key && this.table.get(key)) || defaultNormalizer
+    try {
+      return withPaid(p(raw, manifest, this.ctx), raw)
+    } catch {
+      // a broken normalizer must never drop the item — fall back to plain text
+      return { archetype: 'text', title: raw.title ? String(raw.title) : undefined, text: toText(String(raw.description ?? '')) }
+    }
   }
 }
+
+/** 没有任何包、没有实例上下文的那一份（单测与无装配的调用方）。 */
+export const hostNormalizers = new Normalizers()

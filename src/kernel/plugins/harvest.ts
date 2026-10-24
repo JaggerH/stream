@@ -35,7 +35,7 @@ import { FacilityCooldown } from '../../replay/facility-cooldown.ts'
 import { BlockEpisodeLog } from '../../replay/block-episodes.ts'
 import type { RecipeSessionSpec } from '../../replay/recipe.ts'
 import type { ActResult, ActionSpec } from '../../replay/interactive-gate.ts'
-import { normalize, type RawItem } from '../../content/normalize.ts'
+import type { RawItem } from '../../content/normalize.ts'
 
 declare module 'cordis' {
   interface Context {
@@ -347,7 +347,7 @@ export const harvestPlugin = {
             author_avatar: raw.author_avatar != null ? String(raw.author_avatar) : undefined,
             timestamp: raw.pubDate != null ? String(raw.pubDate) : now,
             fetched_at: now,
-            content: normalize(raw as RawItem, manifest),
+            content: ctx.sources.normalizers.normalize(raw as RawItem, manifest),
           },
         })
       }

@@ -88,6 +88,8 @@ export interface ActivatedPackages {
   enrichers: Map<string, import('../../packages/activate.ts').Enricher>
   /** 包交出来的一键订阅（键 = 域名）。 */
   connect: Map<string, import('../../packages/activate.ts').ConnectFn>
+  /** 包交出来的具名 normalizer（本实例一张，`ctx.sources.normalizers` 吃它）。 */
+  normalizers: Map<string, import('../../content/normalize.ts').Normalizer>
 }
 
 export interface PackagesService {
@@ -508,6 +510,7 @@ export const packagesPlugin = {
       actions: activatedResult.actions,
       enrichers: activatedResult.enrichers,
       connect: activatedResult.connect,
+      normalizers: activatedResult.normalizers,
     }
     log(`[stream] activated ${activated.adapters.size} package adapter(s): ${[...activated.adapters.keys()].join(', ') || '(none)'}`)
     // 第三方包**执行期**炸了（少打包一个依赖 / 顶层抛错 / 没导出 activate）不掀翻 bootstrap——

@@ -6,7 +6,8 @@
  * 这里只回答「给一条链接，回哪个包 / 哪个平台 / 什么类型 / id」；知道是什么之后交给谁做，是派发的事
  * （调用点按 `<platform>-<名词>` 查 Provider 行）。
  *
- * **每次查都现取**（同 `src/media/serving.ts`）：热装的包下一次认领就生效。正则对象按源串缓存。
+ * **一个实例一份**（`LinkRecognizer`，挂在 `ctx.sources.links`）：认领表来自这个实例装的包，两个实例互相读不到。
+ * **每次查都现取**（同 `src/media/serving.ts`）：热装的包下一次认领就生效。正则对象按源串缓存（进程共享，见 `compiled`）。
  *
  * 顺序：先 `patterns`（声明序，先声明先赢），命中给出 kind / id；没命中再按 `hosts`（label 边界的后缀
  * 匹配，最长后缀胜）只给 platform。
@@ -29,24 +30,8 @@ export interface LinkRef {
 
 export interface LinkDebug { key: string; title: string; summary: string; ok: boolean }
 
-let tableSource: () => LinkTableEntry[] = () => []
-let debugSink: (e: LinkDebug) => void = () => {}
+/** 编译好的正则，按「kind + 源串」缓存。**进程共享、只读**：同一个源串编出来的正则在哪个实例里都一样。 */
 const compiled = new Map<string, RegExp | null>()
-
-/** 装配层把「所有包的 links 并成的那张表」以 thunk 挂进来（`src/kernel/plugins/sources.ts`）。 */
-export function setLinkDeclarationSource(source: () => LinkTableEntry[]): void {
-  tableSource = source
-}
-
-/** 装配层把 debug bus 接进来（channel `links`）。 */
-export function setLinkDebugSink(sink: (e: LinkDebug) => void): void {
-  debugSink = sink
-}
-
-/** 往 debug bus 的 `links` 频道发一条（认领 / 展开 / 老写法兼容留痕都走它）。 */
-export function emitLinkDebug(e: LinkDebug): void {
-  try { debugSink(e) } catch { /* debug 不许打断认领 */ }
-}
 
 function regexOf(kind: LinkKind, pattern: string): RegExp | null {
   const key = `${kind}\u0000${pattern}`
@@ -83,65 +68,81 @@ function hostClaim(host: string, table: LinkTableEntry[]): { entry: LinkTableEnt
   return best
 }
 
-/** 不发网络请求：只看主机和 patterns。没人认领 / 不是 http(s) 链接 → null。 */
-export function recognizeLinkSync(url: string): LinkRef | null {
-  if (typeof url !== 'string' || !url) return null
-  const host = parseHost(url)
-  if (!host) return null
-  const table = tableSource()
-  for (const entry of table) {
-    for (const p of entry.patterns) {
-      const m = regexOf(p.kind, p.pattern)?.exec(url)
-      if (!m) continue
-      const id = m.groups?.id
-      if (p.kind === 'track' && !id) continue
-      return {
-        url, package: entry.package, platform: p.platform, kind: p.kind,
-        ...(id ? { id } : {}),
-        ...(p.yields ? { yields: p.yields } : {}),
-      }
-    }
-  }
-  const claim = hostClaim(host, table)
-  return claim ? { url, package: claim.entry.package, platform: claim.platform } : null
-}
-
 const MAX_HOPS = 3
 const HOP_TIMEOUT_MS = 5000
 
 /**
- * 命中某包 `shortHosts` 的链接先展开再认，其余等同 `recognizeLinkSync`。
- *
- * **只打包声明过的公网主机**（shortHosts 装载期过了 `servingHostProblem`），所以不是开放代理：
- * `redirect:'manual'` 一跳一跳地跟，最多 3 跳、每跳 5 秒；下一跳的主机不在任何包的 `hosts` 里就停，
- * 按停下前最后一个有人认领的地址认（不替陌生主机发请求）。展开失败按原链接认——至少还拿得到 platform
- * ——原因进 debug bus，不吞成「没人认领」。
+ * 一个实例的链接认领。`table`：这个实例所有包的 links 并成的那张表（装配层以 thunk 递，`src/kernel/plugins/sources.ts`）；
+ * `debug`：debug bus 的 `links` 频道。
  */
-export async function recognizeLink(url: string, opts: { fetch?: typeof fetch } = {}): Promise<LinkRef | null> {
-  const doFetch = opts.fetch ?? fetch
-  const table = tableSource()
-  const isShort = (u: string): boolean => {
-    const h = parseHost(u)
-    return !!h && table.some((e) => e.shortHosts.some((s) => covers(h, s)))
+export class LinkRecognizer {
+  constructor(
+    private readonly table: () => LinkTableEntry[] = () => [],
+    private readonly debug: (e: LinkDebug) => void = () => {},
+  ) {}
+
+  /** 往 debug bus 的 `links` 频道发一条（认领 / 展开 / 老写法兼容留痕都走它）。 */
+  emitDebug = (e: LinkDebug): void => {
+    try { this.debug(e) } catch { /* debug 不许打断认领 */ }
   }
-  if (!isShort(url)) return recognizeLinkSync(url)
-  let current = url
-  try {
-    for (let hop = 0; hop < MAX_HOPS && isShort(current); hop++) {
-      const res = await doFetch(current, { redirect: 'manual', signal: AbortSignal.timeout(HOP_TIMEOUT_MS) })
-      const location = res.status >= 300 && res.status < 400 ? res.headers.get('location') : null
-      if (!location) break
-      const next = new URL(location, current).toString()
-      const nextHost = parseHost(next)
-      if (!nextHost || !hostClaim(nextHost, table)) {
-        emitLinkDebug({ key: url, title: '短链展开停在无人认领的主机', summary: `${current} → ${next}：目标主机不归任何包，不跟，按 ${current} 认`, ok: true })
-        break
+
+  /** 不发网络请求：只看主机和 patterns。没人认领 / 不是 http(s) 链接 → null。 */
+  sync = (url: string): LinkRef | null => {
+    if (typeof url !== 'string' || !url) return null
+    const host = parseHost(url)
+    if (!host) return null
+    const table = this.table()
+    for (const entry of table) {
+      for (const p of entry.patterns) {
+        const m = regexOf(p.kind, p.pattern)?.exec(url)
+        if (!m) continue
+        const id = m.groups?.id
+        if (p.kind === 'track' && !id) continue
+        return {
+          url, package: entry.package, platform: p.platform, kind: p.kind,
+          ...(id ? { id } : {}),
+          ...(p.yields ? { yields: p.yields } : {}),
+        }
       }
-      current = next
     }
-  } catch (e) {
-    emitLinkDebug({ key: url, title: '短链展开失败', summary: `${current}：${(e as Error).message}；按原链接认`, ok: false })
-    return recognizeLinkSync(url)
+    const claim = hostClaim(host, table)
+    return claim ? { url, package: claim.entry.package, platform: claim.platform } : null
   }
-  return recognizeLinkSync(current)
+
+  /**
+   * 命中某包 `shortHosts` 的链接先展开再认，其余等同 `recognizeLinkSync`。
+   *
+   * **只打包声明过的公网主机**（shortHosts 装载期过了 `servingHostProblem`），所以不是开放代理：
+   * `redirect:'manual'` 一跳一跳地跟，最多 3 跳、每跳 5 秒；下一跳的主机不在任何包的 `hosts` 里就停，
+   * 按停下前最后一个有人认领的地址认（不替陌生主机发请求）。展开失败按原链接认——至少还拿得到 platform
+   * ——原因进 debug bus，不吞成「没人认领」。
+   */
+  recognize = async (url: string, opts: { fetch?: typeof fetch } = {}): Promise<LinkRef | null> => {
+    const doFetch = opts.fetch ?? fetch
+    const table = this.table()
+    const isShort = (u: string): boolean => {
+      const h = parseHost(u)
+      return !!h && table.some((e) => e.shortHosts.some((s) => covers(h, s)))
+    }
+    if (!isShort(url)) return this.sync(url)
+    let current = url
+    try {
+      for (let hop = 0; hop < MAX_HOPS && isShort(current); hop++) {
+        const res = await doFetch(current, { redirect: 'manual', signal: AbortSignal.timeout(HOP_TIMEOUT_MS) })
+        const location = res.status >= 300 && res.status < 400 ? res.headers.get('location') : null
+        if (!location) break
+        const next = new URL(location, current).toString()
+        const nextHost = parseHost(next)
+        if (!nextHost || !hostClaim(nextHost, table)) {
+          this.emitDebug({ key: url, title: '短链展开停在无人认领的主机', summary: `${current} → ${next}：目标主机不归任何包，不跟，按 ${current} 认`, ok: true })
+          break
+        }
+        current = next
+      }
+    } catch (e) {
+      this.emitDebug({ key: url, title: '短链展开失败', summary: `${current}：${(e as Error).message}；按原链接认`, ok: false })
+      return this.sync(url)
+    }
+    return this.sync(current)
+  }
 }

@@ -1,8 +1,15 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { fetchUrl, legacyHostKeysOf, linkDispatchKeyOf, makeResolveByLink } from './fetch-url.ts'
+import { fetchUrl, legacyHostKeysOf, linkDispatchKeyOf as linkDispatchKeyOfImpl, makeResolveByLink as makeResolveByLinkImpl } from './fetch-url.ts'
 import { SlotBrokenError } from '../providers/bindings.ts'
-import { setLinkDebugSink, setLinkDeclarationSource, type LinkDebug } from '../links/recognize.ts'
+import type { LinkDebug } from '../links/recognize.ts'
 import type { LinkTableEntry } from '../replay/recipe-package.ts'
+import { settableRecognizer } from '../links/recognizer.fixture.ts'
+// 认领表归实例：这里一份测试用的认领，setter 只换它的来源。
+const { links: testLinks, setTable: setLinkDeclarationSource, setDebug: setLinkDebugSink } = settableRecognizer()
+void setLinkDebugSink
+const linkDispatchKeyOf = (u: string) => linkDispatchKeyOfImpl(u, testLinks)
+const makeResolveByLink = (b: Parameters<typeof makeResolveByLinkImpl>[0], e: Parameters<typeof makeResolveByLinkImpl>[1], c: Parameters<typeof makeResolveByLinkImpl>[2]) =>
+  makeResolveByLinkImpl(b, e, c, testLinks)
 
 const SITE: LinkTableEntry = { package: '@x/site', hosts: [{ host: 'site.test', platform: 'somesite' }], shortHosts: [], patterns: [] }
 

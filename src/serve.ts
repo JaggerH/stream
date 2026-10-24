@@ -502,6 +502,7 @@ async function main() {
     pageShot: harvest.pageShot,
     normalizeSearchItem: search.normalizeSearchItem,
     renormalizeItems: search.renormalizeItems,
+    links: sources.links,
     recipePackageOps: sources.recipePackageOps,
     videoSearch: search.videoSearch,
     videoSearchStream: search.videoSearchStream,

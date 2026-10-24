@@ -11,7 +11,8 @@ import type { StreamItem } from './types.ts'
 import type { SourceHealthStore } from './source-health-store.ts'
 import { classifyError, isEnvironmentUnavailable, type FailureCategory } from './failure.ts'
 import { persistItems, makeStreamItem } from './stream-pipeline.ts'
-import { normalize, type RawItem } from './content/normalize.ts'
+import { hostNormalizers, type RawItem } from './content/normalize.ts'
+import type { Content } from './content/types.ts'
 import { videoItemReference } from './video/item-identity.ts'
 import { parseSourceId, canonicalSourceId } from './streams/store.ts'
 import { mergeAdRules } from './content/ad-rules.default.ts'
@@ -44,6 +45,8 @@ export function computeFirstFire(args: {
 
 export interface SchedulerOpts {
   registry: Registry
+  /** 本实例的归一化（`ctx.sources.normalizers.normalize`）。缺省 = 只有宿主的默认 normalizer。 */
+  normalize?: (raw: RawItem, manifest: SourceManifest) => Content
   streams: Stream[]
   adapters: Map<string, Adapter>
   resolveCreds: CredentialResolveFn
@@ -348,7 +351,10 @@ export class Scheduler {
   /** collection 替换防线的 armed 位（注入的持久实现，或进程内缺省） */
   private readonly collectionGuard: CollectionGuardStore
 
+  private readonly normalize: (raw: RawItem, manifest: SourceManifest) => Content
+
   constructor(private readonly opts: SchedulerOpts) {
+    this.normalize = opts.normalize ?? hostNormalizers.normalize
     for (const s of opts.streams) this.streams.set(s.id, s)
     this.cache = opts.cacheLayer ?? new CacheLayer()
     this.reprobeCadence = opts.reprobeCadence ?? 6
@@ -604,7 +610,7 @@ export class Scheduler {
     if (this.modeOf(streamId) === 'collection' && this.opts.itemStore) {
       const ordered = sync(`normalize:${sourceId}`, () => items.map((raw) => {
         const it = makeStreamItem(streamId, route, raw, adRules, sourceId, stream.title_include, src.season)
-        it.content = normalize(it.raw as RawItem, manifest)
+        it.content = this.normalize(it.raw as RawItem, manifest)
         if (manifest.categories?.includes('video')) it.videoRef = videoItemReference(it)
         return it
       }))
@@ -666,7 +672,7 @@ export class Scheduler {
         probe?.mark('dedup/vault')
         sync(`normalize:${sourceId}`, () => {
           for (const it of fresh) {
-            it.content = normalize(it.raw as RawItem, manifest)
+            it.content = this.normalize(it.raw as RawItem, manifest)
             if (manifest.categories?.includes('video')) it.videoRef = videoItemReference(it)
           }
         })
@@ -968,7 +974,7 @@ export class Scheduler {
     if (!manifest) throw new Error(`Unknown source: ${sourceId}`)
     // 第 5 参 = 产源：出线投影按它找归属包（按钮 / 源名 / 站点），缺了就整条静默不投影。
     const it = makeStreamItem(sourceId, route ?? manifest.route ?? manifest.id, raw, undefined, sourceId)
-    it.content = normalize(it.raw as RawItem, manifest)
+    it.content = this.normalize(it.raw as RawItem, manifest)
     if (manifest.categories?.includes('video')) it.videoRef = videoItemReference(it)
     return { ...it, type: manifest.type }
   }

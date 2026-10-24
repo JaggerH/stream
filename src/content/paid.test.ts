@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest'
-import { normalize } from './normalize.ts'
+import { hostNormalizers } from './normalize.ts'
+
+const { normalize } = hostNormalizers
 import type { SourceManifest } from '../manifest/types.ts'
 
 const M = {} as SourceManifest

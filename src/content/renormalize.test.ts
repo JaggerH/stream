@@ -6,7 +6,11 @@ import { ItemStore } from '../item-store.ts'
 import { Registry } from '../registry/registry.ts'
 import type { SourceManifest } from '../manifest/types.ts'
 import type { StreamItem } from '../types.ts'
-import { renormalizeStoredItems, RenormalizeNotFoundError } from './renormalize.ts'
+import { renormalizeStoredItems as renormalizeImpl, RenormalizeNotFoundError } from './renormalize.ts'
+import { hostNormalizers } from './normalize.ts'
+
+const renormalizeStoredItems = (...[st, reg, f]: [Parameters<typeof renormalizeImpl>[0], Parameters<typeof renormalizeImpl>[1], Parameters<typeof renormalizeImpl>[2]?]) =>
+  renormalizeImpl(st, reg, f, hostNormalizers.normalize)
 
 function mk(partial: Partial<SourceManifest> & { id: string }): SourceManifest {
   return {

@@ -3,10 +3,17 @@ import { describe, expect, it } from 'vitest'
 import { parseSourceItems } from './content/to-release.ts'
 import { applyMap } from '../replay/desktop-runner.ts'
 import { fileURLToPath } from 'node:url'
-import { searchMetaBySourceId, setPackageSearchSources } from '../search/seeds.ts'
 import { BUILTIN_LAYER_SCAN, loadRecipePackages, searchSourcesOf } from '../replay/recipe-package.ts'
 import { recipeToManifest } from '../replay/recipe-manifest.ts'
 import { DEFAULT_BUDGET_MS } from './search-stream.ts'
+import { SearchSeeds } from '../search/seeds.ts'
+import type { SearchSourceDeclaration as SeedDecl } from '../packages/descriptor.ts'
+
+// 资源搜索元数据表归实例（ctx.sources.searchSeeds）；这里一份测试用的表，setter 只换它的来源。
+let seedSource: () => SeedDecl[] = () => []
+const seeds = new SearchSeeds(() => seedSource())
+const setPackageSearchSources = (f: () => SeedDecl[]) => { seedSource = f }
+const searchMetaBySourceId = seeds.bySourceId
 
 /**
  * Telegram 资源频道 → 搜索结果行，**吃真实的 recipe 文件**。

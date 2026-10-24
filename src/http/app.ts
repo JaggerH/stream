@@ -4,6 +4,8 @@ import type { CookieHealth } from '../credentials/pushed-cookie-store.ts'
 import { buildIdentity, type BuildIdentity } from './build-identity.ts'
 import { registerResolveRoutes } from './resolve-routes.ts'
 import { registerLinkRoutes } from './links-routes.ts'
+import { trackRefFromUrl } from '../audio/track-url.ts'
+import { LinkRecognizer } from '../links/recognize.ts'
 import { registerNetdiskRoutes } from './netdisk-routes.ts'
 import { registerSharingRoutes, type SharingDeps } from './sharing-routes.ts'
 import { registerOnboardRoutes, type OnboardDeps } from './onboard-routes.ts'
@@ -169,6 +171,8 @@ import { videoDiscoveryFallback } from '../video/discovery-fallback.ts'
 import type { VideoLookupIdentity, VideoReference, VideoWorkCandidate } from '../video/types.ts'
 import { videoDetailPreview, videoWorkLookupIdentity, videoTmdbLookupIdentity } from '../video/item-identity.ts'
 import { provisionConfigSlot } from '../credentials/provision-slot.ts'
+/** 没递认领表（最小装配）：一条都不认，派发只剩老主机键那一档。 */
+const NO_LINKS = new LinkRecognizer()
 
 export interface HealthInfo {
   /** 登录态快照：现在握着哪些 cookie 域（已归一）、上一次取回是什么时候。
@@ -229,6 +233,8 @@ export interface HttpDeps {
   /** 存量 content 重算（maintenance）：拿 item.raw 用当前 manifest 重跑 normalize 覆盖
    *  content。查无 scope 抛 RenormalizeNotFoundError（路由映射 404）。absent → 503。 */
   renormalizeItems?: (filter: RenormalizeFilter) => RenormalizeResult
+  /** 本实例的链接认领（`ctx.sources.links`）：`/api/links/recognize`、贴链接派发、曲目视图都吃它。缺席 = 一条都不认。 */
+  links?: import('../links/recognize.ts').LinkRecognizer
   /** npm recipe 包安装(preview→install 两步;confirm=tarball integrity,preview 发放)。absent → 503。 */
   /**
    * 跑一条动作 recipe（`POST /api/recipes/action`）。**必须是 MCP 那侧用的同一个闭包**
@@ -2857,7 +2863,7 @@ export function createHttpApp(deps: HttpDeps): Hono {
         .map((t) => ({ source: t.member, ms: t.ms, outcome: t.outcome }))
       // music members are package search recipes emitting raw feed-shaped items — map to the
       // track shape the music UI renders (and dedup the same song reported by several members).
-      if (scope === 'music') return c.json({ items: rsshubItemsToTracks(items), warnings, timings })
+      if (scope === 'music') return c.json({ items: rsshubItemsToTracks(items, deps.links ? (u) => trackRefFromUrl(u, deps.links!.sync) : undefined), warnings, timings })
       // content: normalize each raw item via ITS producing source's manifest (provenance from the
       // executor, read back with sourceOf). Normalization is chosen per-scope here — NOT by
       // "manifest has a normalizer" — so music's normalized catalog rows are never touched.
@@ -3544,7 +3550,7 @@ export function createHttpApp(deps: HttpDeps): Hono {
     // resolveByLink：providers / bindings 都在（生产装配）才给；最小装配缺席 → fetchUrl 只走宿主分支。
     const fetchDeps: FetchUrlDeps = {
       resolveByLink: deps.providers && deps.providerBindings
-        ? makeResolveByLink(deps.providerBindings, deps.providers.executor, slotCtx(c))
+        ? makeResolveByLink(deps.providerBindings, deps.providers.executor, slotCtx(c), deps.links ?? NO_LINKS)
         : undefined,
     }
     try {
@@ -4901,7 +4907,7 @@ export function createHttpApp(deps: HttpDeps): Hono {
 
   if (deps.resolve) registerResolveRoutes(app, deps.resolve)
   // 链接认领的只读口：认领表是模块级 thunk（sources 域挂的），没有 deps，无条件挂。
-  registerLinkRoutes(app)
+  registerLinkRoutes(app, deps.links ? { recognize: deps.links.recognize } : {})
   if (deps.netdiskRoutes) registerNetdiskRoutes(app, deps.netdiskRoutes)
   if (deps.sharing) registerSharingRoutes(app, { ...deps.sharing, onChannelsChanged: deps.onChannelsChanged })
   if (deps.onboard) registerOnboardRoutes(app, deps.onboard)

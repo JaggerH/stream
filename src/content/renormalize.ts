@@ -1,6 +1,8 @@
 import type { ItemStore } from '../item-store.ts'
 import type { Registry } from '../registry/registry.ts'
-import { normalize, type RawItem } from './normalize.ts'
+import type { RawItem } from './normalize.ts'
+import type { SourceManifest } from '../manifest/types.ts'
+import type { Content } from './types.ts'
 
 export type RenormalizeFilter = { streamId?: string; sourceId?: string }
 
@@ -32,7 +34,9 @@ export class RenormalizeNotFoundError extends Error {
 export function renormalizeStoredItems(
   itemStore: ItemStore,
   registry: Registry,
-  filter: RenormalizeFilter = {}
+  filter: RenormalizeFilter = {},
+  /** 本实例的归一化（`ctx.sources.normalizers.normalize`）。 */
+  normalize: (raw: RawItem, manifest: SourceManifest) => Content,
 ): RenormalizeResult {
   if (filter.streamId && itemStore.maxSeq(filter.streamId) === 0) {
     throw new RenormalizeNotFoundError('stream', `no stored items for stream ${filter.streamId}`)

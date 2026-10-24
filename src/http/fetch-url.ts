@@ -13,7 +13,7 @@
  * 直链分支。
  */
 
-import { emitLinkDebug, recognizeLinkSync } from '../links/recognize.ts'
+import type { LinkRecognizer } from '../links/recognize.ts'
 
 import { SlotBrokenError, type ProviderBindings, type SlotContext } from '../providers/bindings.ts'
 import type { ProviderExecutor } from '../providers/executor.ts'
@@ -78,8 +78,8 @@ async function fetchDirectVideo(url: string): Promise<FetchUrlResult> {
 // ─── Public entry ─────────────────────────────────────────────────
 
 /** `content.enrich` 的派发键：`<platform>-link`，平台来自认领函数。没人认领 → null。 */
-export function linkDispatchKeyOf(url: string): string | null {
-  const ref = recognizeLinkSync(url)
+export function linkDispatchKeyOf(url: string, links: Pick<LinkRecognizer, 'sync'>): string | null {
+  const ref = links.sync(url)
   return ref ? `${ref.platform}-link` : null
 }
 
@@ -124,6 +124,8 @@ export function makeResolveByLink(
   bindings: Pick<ProviderBindings, 'dispatch'>,
   executor: Pick<ProviderExecutor, 'invoke'>,
   ctx: SlotContext | undefined,
+  /** 本实例的链接认领（`ctx.sources.links`）。 */
+  links: Pick<LinkRecognizer, 'sync' | 'emitDebug'>,
 ): NonNullable<FetchUrlDeps['resolveByLink']> {
   /** 交给一条已派发到的行。交出结果 → 它；认领了却一个成员都没交出结果 → 抛成员原话；什么都没说 → null。 */
   const runRow = async (providerId: string, url: string): Promise<FetchUrlResult | null> => {
@@ -140,13 +142,13 @@ export function makeResolveByLink(
     return null
   }
   return async (url) => {
-    const key = linkDispatchKeyOf(url)
+    const key = linkDispatchKeyOf(url, links)
     const providerId = key ? bindings.dispatch('content.enrich', key, ctx, { fallback: false }) : null
     if (providerId) return runRow(providerId, url)
     for (const legacy of legacyHostKeysOf(url)) {
       const legacyRow = bindings.dispatch('content.enrich', legacy, ctx, { fallback: false })
       if (!legacyRow) continue
-      emitLinkDebug({
+      links.emitDebug({
         key: legacyRow,
         title: '按老主机键派发',
         summary: `行 ${legacyRow} 仍按主机键 ${legacy} 认领 ${url}——声明它的包该发一个带 stream.links 的新版（键改成 <platform>-link）`,

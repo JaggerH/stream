@@ -177,7 +177,7 @@ export interface AgentConfig {
  * 所以这个数字有两道闸门：装配期的自检（对不上直接 throw，见 `apply` 里那段）+ `agent.test.ts`
  * 里钉住它的断言。往表里加一格 → 两处都得改，任一处没改都是当场红。
  */
-export const MCP_EXTRAS_DEP_COUNT = 47
+export const MCP_EXTRAS_DEP_COUNT = 48
 
 export const agentPlugin = {
   name: 'agent',
@@ -692,6 +692,7 @@ export const agentPlugin = {
       // stream_fetch_url 的 resolveByLink：content.enrich 按 <platform>-link 派发（与 GET /api/media/from-url 共用）
       providerBindings: ctx.provider.providerBindings,
       providerExecutor: ctx.provider.providerExecutor,
+      links: ctx.sources.links,
       // ctx.sources（Source 目录）：list_sources
       registry: ctx.sources.registry,
       // capability_status / provision_capability_key 的两条腿：「这一格配了没」（只报层）

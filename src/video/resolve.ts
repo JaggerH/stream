@@ -20,7 +20,10 @@
  * 在装载期已被要求整串锚定（`^https…$`）、主机段只指名本包声明过的字面域名、没有越界通配。
  */
 import type { NetdiskKind } from './content/types.ts'
-import { recognizeLinkSync } from '../links/recognize.ts'
+import type { LinkRef } from '../links/recognize.ts'
+
+/** 认领函数（实例的 `ctx.sources.links.sync`）。 */
+export type Recognize = (url: string) => LinkRef | null
 import type { DownloadYield } from '../packages/links.ts'
 
 /** download-resolve Provider 行的成员返回契约（行级文档见
@@ -34,8 +37,8 @@ export interface DownloadOption {
 }
 
 /** 这条 URL 命中的 download-page 声明解开后是什么；不是中转页 → null。 */
-function claimOf(url: string): DownloadYield | null {
-  const r = recognizeLinkSync(url)
+function claimOf(url: string, recognize: Recognize): DownloadYield | null {
+  const r = recognize(url)
   return r?.kind === 'download-page' ? (r.yields ?? 'unknown') : null
 }
 
@@ -43,8 +46,8 @@ function claimOf(url: string): DownloadYield | null {
  * 这个 URL 是不是已知下载站的中转页？是 → 解开后的类型（'unknown' = 是中转页但类型要
  * 解开才知道，如网盘中转页）；不是 → null。
  */
-export function downloadPageKind(url: string): NetdiskKind | null {
-  return claimOf(url)
+export function downloadPageKind(url: string, recognize: Recognize): NetdiskKind | null {
+  return claimOf(url, recognize)
 }
 
 /**
@@ -52,8 +55,8 @@ export function downloadPageKind(url: string): NetdiskKind | null {
  * （Provider 行语义：decline，梯子落到下一档成员；端点报 400）。今天只有 `magnet` 有通用解法：
  * 抓页面、取第一条 `magnet:` 链接。
  */
-export async function resolveDownloads(url: string): Promise<DownloadOption[]> {
-  if (claimOf(url) !== 'magnet') throw new Error('unsupported url')
+export async function resolveDownloads(url: string, recognize: Recognize): Promise<DownloadOption[]> {
+  if (claimOf(url, recognize) !== 'magnet') throw new Error('unsupported url')
   const res = await fetch(url, { headers: { 'user-agent': 'Mozilla/5.0' } })
   const html = await res.text()
   const m = html.match(/magnet:\?[^"'\s<]+/)

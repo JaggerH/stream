@@ -2,7 +2,7 @@ import { describe, it, expect, afterEach, beforeEach } from 'vitest'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { searchMetaBySourceId, searchMetaByMemberKey, missTimings, setPackageSearchSources } from './seeds.ts'
+import { SearchSeeds } from './seeds.ts'
 import type { SearchSourceDeclaration } from '../packages/descriptor.ts'
 import { UserStore } from '../store/user-store.ts'
 import { Registry } from '../registry/registry.ts'
@@ -29,8 +29,22 @@ const PKG_DECLS: SearchSourceDeclaration[] = [
   { source: 'rsshub:nyaa/search/:query?', key: 'nyaa', label: 'Nyaa', param: 'query', kind: 'flat' },
   { source: 'rsshub:nyaa/sukebei/search/:query?', key: 'nyaa-r18', label: 'Nyaa(R18)', param: 'query', kind: 'flat', nsfw: true },
 ]
-beforeEach(() => setPackageSearchSources(() => PKG_DECLS))
-afterEach(() => setPackageSearchSources(() => []))
+let decls: SearchSourceDeclaration[] = []
+const seeds = new SearchSeeds(() => decls)
+const searchMetaBySourceId = seeds.bySourceId
+const searchMetaByMemberKey = seeds.byMemberKey
+const missTimings = seeds.missTimings
+beforeEach(() => { decls = PKG_DECLS })
+afterEach(() => { decls = [] })
+
+describe('一个实例一张表', () => {
+  it('两个实例各按自己的包声明查，互相读不到', () => {
+    const a = new SearchSeeds(() => [PKG_DECLS[1]!])
+    const b = new SearchSeeds(() => [])
+    expect(a.bySourceId('@t/pansou/pansou-search')?.key).toBe('pansou')
+    expect(b.bySourceId('@t/pansou/pansou-search')).toBeUndefined()
+  })
+})
 
 describe('searchMetaBySourceId', () => {
   it('包声明的组合体行：source_id = 行 id，searchUrl 模板把 {q} 换成编码后的查询词', () => {
@@ -43,13 +57,13 @@ describe('searchMetaBySourceId', () => {
   it('目录路由按 source_id 精确查；宿主自己没有一行（装配层没挂 = 全查不中）', () => {
     expect(searchMetaBySourceId('rsshub:nyaa/search/:query?')).toMatchObject({ key: 'nyaa', nsfw: false })
     expect(searchMetaBySourceId('nope')).toBeUndefined()
-    setPackageSearchSources(() => [])
+    decls = []
     expect(searchMetaBySourceId('rsshub:nyaa/search/:query?')).toBeUndefined()
   })
 
   it('包声明的源按全名查得中；装配层没挂（包没装）就查不中', () => {
     expect(searchMetaBySourceId('@t/pansou/pansou-search')?.label).toBe('盘搜')
-    setPackageSearchSources(() => [])
+    decls = []
     expect(searchMetaBySourceId('@t/pansou/pansou-search')).toBeUndefined()
   })
 

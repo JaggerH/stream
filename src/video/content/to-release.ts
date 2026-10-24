@@ -9,7 +9,7 @@ import type { GroupedRelease } from '../aggregate.ts'
 import type { Release } from '../types.ts'
 import { NETDISK_LABEL, toSourceType } from './classify.ts'
 import { route } from './registry.ts'
-import type { DownloadRow, RawDownloadItem, RawLink } from './types.ts'
+import type { DownloadRow, RawDownloadItem, RawLink, ParseContext } from './types.ts'
 
 /** Adapt a pipeline RawVideoItem (any source shape) into the parser's normalized input. */
 export function adaptRawItem(source: string, it: RawVideoItem): RawDownloadItem {
@@ -92,13 +92,13 @@ function norm(s: string): string {
  * they pass through untouched — gating them on a CN substring would wrongly drop
  * romaji/EN-titled matches.
  */
-export function parseSourceItems(source: string, rawAll: RawVideoItem[], q: string): GroupedRelease[] {
+export function parseSourceItems(source: string, rawAll: RawVideoItem[], q: string, ctx?: ParseContext): GroupedRelease[] {
   const nq = q ? norm(q) : ''
   const out: GroupedRelease[] = []
   for (const it of rawAll) {
     const item = adaptRawItem(source, it)
     const routed = route(item)
-    let rows = routed.parser.parse(item)
+    let rows = routed.parser.parse(item, ctx)
     if (routed.parser.id === 'digest' && nq) {
       rows = rows.filter((r) => norm(r.name).includes(nq)) // loose search → keep only real hits
     }
