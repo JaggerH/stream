@@ -47,7 +47,7 @@ import { cookieSlot } from './credentials/cookie-slot.ts'
 import { mountIdentityRoutes } from './http/identity-routes.ts'
 import { assertDeviceReady, facilityTarget, placeRun } from './devices/placement.ts'
 import { LOCAL_TARGET, taskTarget } from './devices/target.ts'
-import { installFetchFor, makeFetchFor } from './devices/fetch.ts'
+import { makeFetchFor } from './devices/fetch.ts'
 import { type RunPlacement } from './devices/run-context.ts'
 import type { UserTaskRow } from './tasks/task-store.ts'
 import { attachEnrichCommands } from './http/enrich-ws.ts'
@@ -349,9 +349,9 @@ async function main() {
   // WS hub 的两条命令、TaskDeps 的 reapIdle），漏改任一处都是静默的：extRelay 那次的形状是
   // 「扩展 popup 显示已连、后端 status() 恒 disconnected、采集每轮只报『环境没就绪』」。
   const harvest = kernel.harvest
-  // 出站唯一入口接上设备目录。之前（装配早期）的 fetchFor 对非 local 一律报离线，这一步之后才能派到设备。
-  // 必须早于调度中心 / 任务中心开始派活（它们在本函数更靠后才启动）。
-  installFetchFor(makeFetchFor({ directory: harvest.hostRelays, debug: recordDebug }))
+  // 出站唯一入口接上设备目录（装进本实例的 ctx.deviceFetch）。装配早期 send 对非 local 一律
+  // 报离线，这一步之后才能派到设备。必须早于调度中心 / 任务中心开始派活（更靠后才启动）。
+  kernel.deviceFetch.install(makeFetchFor({ directory: harvest.hostRelays, debug: recordDebug }))
   // 授权健康住 `ctx.auth`（横幅 / 对账 / 重登）。`focusLoginTab` 不在这儿——它是 lane 的薄壳，
   // 归 harvest 域。
   const auth = kernel.auth
@@ -445,6 +445,8 @@ async function main() {
   const app = createHttpApp({
     service: scheduling.service,
     restart,
+    articles: stores.articles,
+    favicons: stores.favicons,
     // 每条改动「流—频道」关系 / 频道 present / 流成员表的写入路径都调它一次——
     // 与 `applyCollectionPolicy` 是同一个接缝的两边，见 live/research-watchers.ts 头注。
     onChannelsChanged: () => researchWatchers?.sync(),

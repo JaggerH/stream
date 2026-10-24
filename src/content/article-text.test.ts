@@ -1,7 +1,9 @@
 import { describe, expect, it, vi } from 'vitest'
 
+// ArticleCache 是实例类：mock 它的 extract 方法，测试里递一个装了 mock 的实例。
 const extractArticle = vi.hoisted(() => vi.fn())
-vi.mock('./extract.ts', () => ({ extractArticle }))
+vi.mock('./extract.ts', () => ({ ArticleCache: class { extract = extractArticle } }))
+const articles = { extract: extractArticle } as never
 
 import { MIN_ARTICLE_CHARS, fetchArticleText, htmlToMarkdown } from './article-text.ts'
 
@@ -63,23 +65,23 @@ describe('fetchArticleText', () => {
   // 谁要是改回去读 `article.text`，这条当场红。
   it('正文从 html 现抽，不读那个从没被填过的 text 字段', async () => {
     extractArticle.mockResolvedValue({ sourceUrl: 'u', title: '标题', html: `<p>${LONG_ZH}</p>` })
-    await expect(fetchArticleText('u')).resolves.toEqual({ text: LONG_ZH, title: '标题' })
+    await expect(fetchArticleText('u', articles)).resolves.toEqual({ text: LONG_ZH, title: '标题' })
   })
 
   it('抓不到 / 抽空 → null（调用方据此 decline，把机会让给梯子上的下一个成员）', async () => {
     extractArticle.mockResolvedValue(null)
-    await expect(fetchArticleText('u')).resolves.toBeNull()
+    await expect(fetchArticleText('u', articles)).resolves.toBeNull()
     extractArticle.mockResolvedValue({ sourceUrl: 'u', html: '' })
-    await expect(fetchArticleText('u')).resolves.toBeNull()
+    await expect(fetchArticleText('u', articles)).resolves.toBeNull()
     extractArticle.mockResolvedValue({ sourceUrl: 'u', html: '<div>   </div>' })
-    await expect(fetchArticleText('u')).resolves.toBeNull()
+    await expect(fetchArticleText('u', articles)).resolves.toBeNull()
   })
 
   // 降级判据的两条支点（spec：firecrawl-article-fallback §4）——
   // 支点一：SPA 空壳**不是**空的，也**不是**非 200。按 HTTP 状态或"html 是否为空"判会永远不降级。
   it('200 空壳（只剩导航页脚）→ null，梯子才落得到跑 JS 的降级档', async () => {
     extractArticle.mockResolvedValue({ sourceUrl: 'u', html: '<nav>首页 关于 联系</nav><footer>© 2026</footer>' })
-    await expect(fetchArticleText('u')).resolves.toBeNull()
+    await expect(fetchArticleText('u', articles)).resolves.toBeNull()
   })
 
   // 支点二：wordCount 陷阱。中文正文整段没有空格，按空格切词只算出 1 个 word——
@@ -87,12 +89,12 @@ describe('fetchArticleText', () => {
   it('纯中文长正文（无空格）不得被判成空壳', async () => {
     expect(LONG_ZH.split(/\s+/).filter(Boolean)).toHaveLength(1) // wordCount 会算成 1
     extractArticle.mockResolvedValue({ sourceUrl: 'u', html: `<p>${LONG_ZH}</p>` })
-    await expect(fetchArticleText('u')).resolves.not.toBeNull()
+    await expect(fetchArticleText('u', articles)).resolves.not.toBeNull()
   })
 
   it('图片标记的字符不计入正文长度——一张长 URL 的图撑不过阈值', async () => {
     const longUrl = `https://e.com/${'x'.repeat(MIN_ARTICLE_CHARS)}.png`
     extractArticle.mockResolvedValue({ sourceUrl: 'u', html: `<p>短文</p><img src="${longUrl}">` })
-    await expect(fetchArticleText('u')).resolves.toBeNull()
+    await expect(fetchArticleText('u', articles)).resolves.toBeNull()
   })
 })

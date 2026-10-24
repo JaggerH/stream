@@ -12,35 +12,40 @@ import type { Article } from './types.ts'
 import type { ContentCache } from '../content-cache.ts'
 
 const TTL_MS = 24 * 60 * 60 * 1000
-const cache = new Map<string, { at: number; article: Article | null }>()
 
-let content: ContentCache | null = null
-
-/** Wire the persistent ContentCache (bootstrap). The namespace spec lives here, next to
- *  the value it describes: extracted articles are stable facts (30d), dead/unextractable
- *  urls are negative-cached a day so list renders don't re-hit them. Unwired (tests,
- *  standalone) falls back to the in-process map below.
+/**
+ * 一个实例的文章抽取缓存（`ctx.stores.articles`，存储域建并接线）。持久层（ContentCache）
+ * 没接（单测 / stdio）时退回实例内的内存 Map——过去那张 Map 是模块级的，同进程第二个内核
+ * 会读到第一个的缓存；现在每实例各一张。
  *
- *  **返回一份撤销**：这个模块级指针活得比任何一次装配都长，而 `cacheLayer` 是随装配生灭的
- *  sqlite 句柄。不撤销的话，同进程里第二次 bootstrap（测试、将来的重启）之后它仍指着**上一份
- *  已经关掉的库**——表现是转成文字时突然抛 sqlite "database is closed"，离案发点十万八千里。 */
-export function wireArticleCache(cacheLayer: ContentCache): () => void {
-  cacheLayer.register('article', { ttlMs: 30 * 24 * 60 * 60 * 1000, negativeTtlMs: TTL_MS })
-  const prev = content
-  content = cacheLayer
-  return () => {
-    if (content === cacheLayer) content = prev
-  }
-}
+ * wire 返回一份撤销：撤销序可能交错，只在指针仍指自己时回滚（同 wireArticleCache 时代的
+ * 语义）。持久句柄随装配生灭，实例上的指针必须跟着撤，否则第二次装配后仍指着已关的库。
+ */
+export class ArticleCache {
+  private content: ContentCache | null = null
+  private readonly mem = new Map<string, { at: number; article: Article | null }>()
 
-/** Extract a reader article from a page url. Cached per url (persistent when wired). */
-export async function extractArticle(url: string): Promise<Article | null> {
-  if (content) return content.tryGet<Article>('article', url, () => doExtract(url))
-  const hit = cache.get(url)
-  if (hit && Date.now() - hit.at < TTL_MS) return hit.article
-  const article = await doExtract(url)
-  cache.set(url, { at: Date.now(), article })
-  return article
+  /** Wire the persistent ContentCache (storage domain). The namespace spec lives here, next to
+   *  the value it describes: extracted articles are stable facts (30d), dead/unextractable
+   *  urls are negative-cached a day so list renders don't re-hit them. */
+  wire(cacheLayer: ContentCache): () => void {
+    cacheLayer.register('article', { ttlMs: 30 * 24 * 60 * 60 * 1000, negativeTtlMs: TTL_MS })
+    const prev = this.content
+    this.content = cacheLayer
+    return () => {
+      if (this.content === cacheLayer) this.content = prev
+    }
+  }
+
+  /** Extract a reader article from a page url. Cached per url (persistent when wired). */
+  async extract(url: string): Promise<Article | null> {
+    if (this.content) return this.content.tryGet<Article>('article', url, () => doExtract(url))
+    const hit = this.mem.get(url)
+    if (hit && Date.now() - hit.at < TTL_MS) return hit.article
+    const article = await doExtract(url)
+    this.mem.set(url, { at: Date.now(), article })
+    return article
+  }
 }
 
 async function doExtract(url: string): Promise<Article | null> {

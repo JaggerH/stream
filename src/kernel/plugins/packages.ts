@@ -18,7 +18,7 @@ import { provisionDeclaredBackends, type ProvisionNotice } from '../../plugins/p
 import { aggregatePluginStatus, type PluginStatus } from '../../plugins/status.ts'
 import { activatePackages, makeCookieFor, type ActivateFn, type PackageActivationFailure } from '../../packages/activate.ts'
 import { packageNetwork } from '../../packages/network-index.ts'
-import { fetchFor } from '../../devices/fetch.ts'
+
 import type { PackageNetwork } from '../../devices/placement.ts'
 import { applyLayerPick, pickCodeLayer, type LayerPick } from '../../packages/pick-layer.ts'
 import { makePackageReadSource, type ReadSourceImpl } from '../../packages/read-source.ts'
@@ -37,7 +37,7 @@ import type { Adapter } from '../../adapters/types.ts'
 import type { PluginSummary } from '../../mcp/tools.ts'
 import type { TrackFn } from '../../op-track.ts'
 import { basename, join } from 'node:path'
-import { extractArticle } from '../../content/extract.ts'
+
 import { NETDISK_BASE_PACKAGE_ID } from '../../netdisk/base-package.ts'
 
 declare module 'cordis' {
@@ -169,6 +169,11 @@ export interface PackagesConfig {
   packagesDir: string
   /** 容器取址档（`AppConfig.deployment.plugin_network`，bootstrap 从 env 翻译进来）。 */
   netMode: PluginNetMode
+  /** 本实例的文章抽取缓存。**thunk**：本域挂载早于存储域，取值必须等它起来之后
+   *  （bootstrap 传 `() => kernel.stores.articles`，readArticle 调用时才解）。 */
+  articles: () => import('../../content/extract.ts').ArticleCache
+  /** 本实例的设备出站 fetch（bootstrap provide 后传实例进来；测试传 `new DeviceFetch()`）。 */
+  deviceFetch: import('../../devices/fetch.ts').DeviceFetch
   /** 可写状态根目录——第三方包装在 `<dataDir>/recipes`。 */
   dataDir: string
   /** `config.manage_containers`：要不要替用户建容器。默认 false。 */
@@ -494,7 +499,7 @@ export const packagesPlugin = {
         backendUrl: (service) => targets.target(service ?? pkg.backend?.service ?? pkg.id) ?? undefined,
         withAwake: (service, fn) => standby.withAwake(service, fn),
         cookieFor: makeCookieFor(pkg, (domain) => ctx.credentials.cookieProvider.cookieString(domain)),
-        fetch: fetchFor,
+        fetch: config.deviceFetch.send,
         // 转发到上面那个共用入口——它每次现读回填变量。**别在这儿抓快照**：实现由下游的
         // auth 域在自己起来之后才回填（`setFacilityLogin`，理由见那一格头注：sources/harvest
         // 在装载序上排在本域后面，本域 inject 它俩就是环），抓快照就是 AGENTS.md 记的
@@ -504,7 +509,7 @@ export const packagesPlugin = {
         readSource: makePackageReadSource(pkg, () => readSourceImpl),
         // 宿主那一份正文抽取（`/api/enrich?source=link` 同一个实现、同一份缓存）。无状态、无登录态，
         // 直接借函数本身，没有回填这回事。
-        readArticle: (url) => extractArticle(url),
+        readArticle: (url) => config.articles().extract(url),
         log: (msg) => log(`[${pkg.id}] ${msg}`),
         config: configForPackage(pkg.id),
       }),

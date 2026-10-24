@@ -6,6 +6,8 @@ import { createKernel, quiesceKernel } from '../context.ts'
 import { settingsPlugin } from './settings.ts'
 import { credentialsPlugin } from './credentials.ts'
 import { packagesPlugin } from './packages.ts'
+import { DeviceFetch } from '../../devices/fetch.ts'
+import { ArticleCache } from '../../content/extract.ts'
 import { sourcesPlugin } from './sources.ts'
 import { storagePlugin } from './storage.ts'
 import { eventsPlugin } from './events.ts'
@@ -29,6 +31,8 @@ async function mountUpToProvider() {
   await kernel.plugin(settingsPlugin, { path: join(dataDir, 'settings.json') })
   await kernel.plugin(credentialsPlugin, { dataDir, log: () => {}, requiredDomains: () => [] })
   await kernel.plugin(packagesPlugin, {
+    deviceFetch: new DeviceFetch(),
+    articles: () => new ArticleCache(),
     netMode: 'none' as const,
     packagesDir, dataDir, manageContainers: false, log: () => {},
     catalogSummary: (id) => ({ id } as unknown as PluginSummary),
@@ -58,7 +62,8 @@ async function mountUpToProvider() {
   // authPlugin 现在 inject 'runtimeConfig'（见 auth.test.ts 同一行的注释）。
   await kernel.plugin(runtimeConfigPlugin)
   await kernel.plugin(authPlugin, { dataDir, log: () => {}, requiredCookieDomains: () => [] })
-  await kernel.plugin(adaptersPlugin, { dataDir, log: () => {}, runtimeConfigFor: () => ({}) })
+  await kernel.plugin(adaptersPlugin, {
+      deviceFetch: new DeviceFetch(), dataDir, log: () => {}, runtimeConfigFor: () => ({}) })
   await kernel.plugin(providerPlugin, {
     cacheDb: join(dataDir, 'cache.db'), log: () => {}, runtimeConfigFor: () => ({}),
   })

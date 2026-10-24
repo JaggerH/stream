@@ -6,6 +6,8 @@ import { createKernel, quiesceKernel } from '../context.ts'
 import { settingsPlugin } from './settings.ts'
 import { credentialsPlugin } from './credentials.ts'
 import { packagesPlugin } from './packages.ts'
+import { DeviceFetch } from '../../devices/fetch.ts'
+import { ArticleCache } from '../../content/extract.ts'
 import { sourcesPlugin } from './sources.ts'
 import type { PluginSummary } from '../../mcp/tools.ts'
 
@@ -75,6 +77,8 @@ async function mount(opts: {
   await kernel.plugin(settingsPlugin, { path: join(dataDir, 'settings.json') })
   await kernel.plugin(credentialsPlugin, { dataDir, log: () => {}, requiredDomains: () => [] })
   await kernel.plugin(packagesPlugin, {
+    deviceFetch: new DeviceFetch(),
+    articles: () => new ArticleCache(),
     netMode: 'none' as const,
     packagesDir: builtinDir,
     dataDir,

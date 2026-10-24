@@ -195,7 +195,7 @@ export const providerPlugin = {
     //（保留 `![alt](url)`）。降级判据在 fetchArticleText 里（正文太短 = SPA 空壳 → null）——
     // 成员自己 decline，梯子落到下一档，走法进 ladder；分支层不做第二次判断。
     builtinAdapter.register('article-defuddle', async (_input, params) => {
-      const got = await fetchArticleText(String((params as { url?: unknown } | undefined)?.url ?? _input))
+      const got = await fetchArticleText(String((params as { url?: unknown } | undefined)?.url ?? _input), ctx.stores.articles)
       return got ? [got] : []   // 空 = decline，把机会让给梯子上的下一个成员
     })
     // content.enrich 的兜底行：只认直链图片 / 视频（包认领的站在派发那一步就被接走了）。

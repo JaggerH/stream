@@ -6,6 +6,7 @@
  * 不会改在主实例上发。这是 spec device-execution「绝不回落到 local」的实现本身，不是约定。
  * 权威设计：openspec/changes/device-execution/design.md D5、D6、D9。
  */
+import type { Context } from 'cordis'
 import { ownedFetch } from '../http/owned-outbound.ts'
 import {
   HostFetchQueueTimeout, HostOpError, HostRelayDisconnected, HostRelayTimeout,
@@ -167,17 +168,36 @@ export function makeFetchFor(deps: FetchForDeps): typeof fetch {
   }
 }
 
-/** 未接线时的缺省：local 照常，非 local 一律离线——宁可报错，不可在本机悄悄发出去。 */
-let impl: typeof fetch = async (input, init) => {
+/**
+ * 一个实例的出站 fetch（`ctx.deviceFetch`，bootstrap 建于任何域之前，serve 在采集域起来后
+ * `install` 真正带设备目录的实现）。过去 impl 是模块级变量——同进程第二个内核会读到第一个
+ * 装进去的实现；现在每实例一份。未 install 时 `send` 就是 `offlineFetch`（local 照常、
+ * 非 local 一律离线）。
+ */
+export class DeviceFetch {
+  private impl: typeof fetch = offlineFetch
+
+  /** serve 装配时调用一次，把带设备目录的实现装进来。 */
+  install(f: typeof fetch): void {
+    this.impl = f
+  }
+
+  /** 调用点拿它当普通 fetch 用；现取本实例的 impl。 */
+  readonly send: typeof fetch = (input, init) => this.impl(input, init)
+}
+
+/** 未接线时的缺省：local 照常，非 local 一律离线——宁可报错，不可在本机悄悄发出去。
+ *  也是 replay/http-fetch / html-fetch 在没显式传 fetch 时的 fail-closed 默认。 */
+export const offlineFetch: typeof fetch = async (input, init) => {
   const p = currentPlacement()
   if (p.deviceId === LOCAL_DEVICE) return ownedFetch(input, init)
   throw new DeviceOffline(p.deviceId)
 }
 
-/** serve 装配时调用一次，把带设备目录的实现装进来。 */
-export function installFetchFor(f: typeof fetch): void {
-  impl = f
+declare module 'cordis' {
+  interface Context {
+    /** 本实例的设备出站 fetch（bootstrap 直接 provide，早于全部域）。 */
+    deviceFetch: DeviceFetch
+  }
 }
-
-/** 模块级委托：调用点不需要接线就能 import，现取 `impl`。 */
-export const fetchFor: typeof fetch = (input, init) => impl(input, init)
+void (null as unknown as Context | undefined)

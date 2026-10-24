@@ -33,6 +33,8 @@ declare module 'cordis' {
 }
 
 export interface AdaptersConfig {
+  /** 本实例的设备出站 fetch（replay adapter 的 http/html 档用它派到设备）。 */
+  deviceFetch: import('../../devices/fetch.ts').DeviceFetch
   /** 可写状态根目录（修复账本落在它下面）。 */
   dataDir: string
   /** 进程级共享的 RSSHub worker（runtime 的那份）。缺省 = 进程缺省那一个。 */
@@ -139,6 +141,7 @@ export const adaptersPlugin = {
         },
       })],
       ['replay', new ReplayAdapter({
+        fetch: config.deviceFetch.send,
         // 分层查找:包内 recipe(builtin+user, user 覆盖)优先,miss 落回 legacy 平铺 <sourceId>.json。
         recipes: makeRecipePackageStore(() => liveRecipes.current, makeFileRecipeStore(recipesBuiltinDir)),
         // legacy(fetch/browser) recipe 的采集前置：canonical recipe 在 sessionFetch 里已经调过

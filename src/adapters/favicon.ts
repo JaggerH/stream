@@ -26,8 +26,6 @@ interface Entry {
   ts: number
 }
 
-const cache = new Map<string, Entry>()
-
 /** ContentCache values must be JSON — icon bytes ride as base64 (favicons are tiny). */
 interface IconDto {
   contentType: string
@@ -43,48 +41,53 @@ function fromDto(dto: IconDto): Icon {
   return { contentType: dto.contentType, body: buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) }
 }
 
-let content: ContentCache | null = null
+/**
+ * 一个实例的 favicon 缓存（`ctx.stores.favicons`，存储域建并接线）。持久层（ContentCache）
+ * 没接（单测 / stdio）时退回实例内的内存 Map——过去那张 Map 是模块级的，同进程第二个内核
+ * 会读到第一个的缓存；现在每实例各一张。
+ */
+export class FaviconCache {
+  private content: ContentCache | null = null
+  private readonly mem = new Map<string, Entry>()
 
-/** Wire the persistent ContentCache (bootstrap). Icon bytes are stable facts (30d);
- *  dead domains are negative-cached a day so lists don't re-hit them per row.
- *  Unwired (tests, standalone) falls back to the in-process map.
- *
- *  返回一份撤销，理由同 `wireArticleCache`：模块级指针比装配活得长，不撤就会指着一份
- *  已经关掉的 sqlite 句柄。 */
-export function wireFaviconCache(cacheLayer: ContentCache): () => void {
-  cacheLayer.register('favicon', { ttlMs: 30 * 24 * 60 * 60 * 1000, negativeTtlMs: TTL_MS })
-  const prev = content
-  content = cacheLayer
-  return () => {
-    if (content === cacheLayer) content = prev
+  /** Wire the persistent ContentCache (storage domain). Icon bytes are stable facts (30d);
+   *  dead domains are negative-cached a day so lists don't re-hit them per row.
+   *  返回一份撤销：只在指针仍指自己时回滚，撤销序交错也不会抹掉别人刚接的那份。 */
+  wire(cacheLayer: ContentCache): () => void {
+    cacheLayer.register('favicon', { ttlMs: 30 * 24 * 60 * 60 * 1000, negativeTtlMs: TTL_MS })
+    const prev = this.content
+    this.content = cacheLayer
+    return () => {
+      if (this.content === cacheLayer) this.content = prev
+    }
   }
-}
 
-/** Resolve a favicon for the given page/site url. Cached per host (persistent when wired). */
-export async function resolveFavicon(rawUrl: string): Promise<Icon | null> {
-  let origin: string
-  let host: string
-  try {
-    const u = new URL(rawUrl)
-    if (u.protocol !== 'http:' && u.protocol !== 'https:') return null
-    if (isPrivateHost(u.hostname)) return null
-    origin = u.origin
-    host = u.hostname
-  } catch {
-    return null
+  /** Resolve a favicon for the given page/site url. Cached per host (persistent when wired). */
+  async resolve(rawUrl: string): Promise<Icon | null> {
+    let origin: string
+    let host: string
+    try {
+      const u = new URL(rawUrl)
+      if (u.protocol !== 'http:' && u.protocol !== 'https:') return null
+      if (isPrivateHost(u.hostname)) return null
+      origin = u.origin
+      host = u.hostname
+    } catch {
+      return null
+    }
+    if (this.content) {
+      const dto = await this.content.tryGet<IconDto>('favicon', host, async () => {
+        const icon = await fetchIcon(origin)
+        return icon ? toDto(icon) : null
+      })
+      return dto ? fromDto(dto) : null
+    }
+    const hit = this.mem.get(host)
+    if (hit && Date.now() - hit.ts < TTL_MS) return hit.icon
+    const icon = await fetchIcon(origin)
+    this.mem.set(host, { icon, ts: Date.now() })
+    return icon
   }
-  if (content) {
-    const dto = await content.tryGet<IconDto>('favicon', host, async () => {
-      const icon = await fetchIcon(origin)
-      return icon ? toDto(icon) : null
-    })
-    return dto ? fromDto(dto) : null
-  }
-  const hit = cache.get(host)
-  if (hit && Date.now() - hit.ts < TTL_MS) return hit.icon
-  const icon = await fetchIcon(origin)
-  cache.set(host, { icon, ts: Date.now() })
-  return icon
 }
 
 async function fetchIcon(origin: string): Promise<Icon | null> {

@@ -29,8 +29,8 @@ import { isValidationError } from '../packages/activate.ts'
 import { GATEWAY_PREFIX } from '../plugins/gateway.ts'
 import { mergeCapabilityTools, mergePackageRuntime } from '../packages/inventory.ts'
 import type { PluginStatus } from '../plugins/status.ts'
-import { resolveFavicon } from '../adapters/favicon.ts'
-import { enrich, type EnrichRequest } from '../content/enrich/index.ts'
+import { enrich } from '../content/enrich/index.ts'
+import type { EnrichRequest } from '../content/enrich/index.ts'
 import { RenormalizeNotFoundError, type RenormalizeFilter, type RenormalizeResult } from '../content/renormalize.ts'
 import { mergePersonSpans, filterBlocksByDuration } from '../voiceprint/resolve.ts'
 import { revertPersonNaming } from '../voiceprint/unname.ts'
@@ -243,6 +243,10 @@ export interface HttpDeps {
   itemProjection?: () => import('../packages/item-projection.ts').ItemProjectionSource
   /** 本实例的合并身份表（`ctx.sources.identities`）：provider 行的系统身份判定用。缺席 = 无包行。 */
   identities?: import('../providers/identities.ts').ProviderIdentityTable
+  /** 本实例的文章抽取缓存（ctx.stores.articles）：/api/enrich 用。 */
+  articles?: import('../content/extract.ts').ArticleCache
+  /** 本实例的 favicon 缓存（ctx.stores.favicons）：favicon 路由用。 */
+  favicons?: import('../adapters/favicon.ts').FaviconCache
   /** npm recipe 包安装(preview→install 两步;confirm=tarball integrity,preview 发放)。absent → 503。 */
   /**
    * 跑一条动作 recipe（`POST /api/recipes/action`）。**必须是 MCP 那侧用的同一个闭包**
@@ -3537,7 +3541,8 @@ export function createHttpApp(deps: HttpDeps): Hono {
       if (parsedSite.protocol !== 'http:' && parsedSite.protocol !== 'https:') {
         return c.json(errorBody('validation_error', 'site must be an http(s) url'), 400)
       }
-      const icon = await resolveFavicon(site)
+      if (!deps.favicons) return c.json(errorBody('unavailable', 'favicon cache not configured'), 503)
+      const icon = await deps.favicons.resolve(site)
       if (!icon) return c.body(null, 404)
       return new Response(icon.body, {
         headers: { 'Content-Type': icon.contentType, 'Cache-Control': 'public, max-age=86400' },
@@ -3601,7 +3606,8 @@ export function createHttpApp(deps: HttpDeps): Hono {
         if (url) req = { source: 'link', url }
       }
       if (!req) return c.json(errorBody('validation_error', 'bad enrich request'), 400)
-      return c.json(await enrich(req))
+      if (!deps.articles) return c.json(errorBody('unavailable', 'article cache not configured'), 503)
+      return c.json(await enrich(req, deps.articles))
     } catch (e) {
       if (e instanceof SlotBrokenError) return slotBroken422(c, e)
       // 鸭子判：包 bundle 里的 ValidationError 是另一份类，instanceof 判不出会把 400 变 502。

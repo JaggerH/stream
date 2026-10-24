@@ -7,6 +7,7 @@ import { runFetchRecipe } from '../../replay/browser-fetch.ts'
 import { runBrowserRecipe } from '../../replay/browser-drive.ts'
 import { interpret, interpretObject, ReplayDriftError, ReplayThrottledError, type MappedItem } from '../../replay/interpret.ts'
 import { makeHttpFetch } from '../../replay/http-fetch.ts'
+import { offlineFetch } from '../../devices/fetch.ts'
 import { interpretHtml } from '../../replay/interpret-html.ts'
 import { makeHtmlFetch } from '../../replay/html-fetch.ts'
 import type { HttpRecipe, HtmlRecipe, Recipe } from '../../replay/recipe.ts'
@@ -194,6 +195,9 @@ export interface ReplayAdapterDeps {
   runDesktop?: typeof runDesktopRecipe
   /** optional: resolve a Cookie header for the recipe's domain (broker wiring is a later plan) */
   cookieFor?: (domain: string) => Promise<string | undefined>
+  /** 本实例的设备出站 fetch（ctx.deviceFetch.send）。缺（测试替身）= offlineFetch：local 照常、
+   *  非 local 一律离线——http/html recipe 的取数不许有第三种默认。 */
+  fetch?: typeof fetch
   /** optional: which cookie NAMES a domain currently has in the user's Chrome (never values).
    *  Drives the login-detect fast path — see `sessionPrecheck`. Absent → the fast path is
    *  skipped and detection happens on the page, as before. */
@@ -346,7 +350,7 @@ export class ReplayAdapter implements Adapter {
     manifest: SourceManifest,
   ): Promise<unknown[]> {
     try {
-      const fetchInPage = makeHttpFetch(recipe, this.deps.cookieFor)
+      const fetchInPage = makeHttpFetch(recipe, this.deps.cookieFor, this.deps.fetch)
       if (recipe.output === 'object') {
         // 探针/解析器：decode 的返回值就是判决对象。Adapter 契约是数组，单个判决以 [obj]
         // 承载（null decline → []）；执行器缝上按 manifest.output 解包回对象。
@@ -374,7 +378,7 @@ export class ReplayAdapter implements Adapter {
     manifest: SourceManifest,
   ): Promise<unknown[] | AdapterFetchResult> {
     try {
-      const { items } = await interpretHtml(recipe, { fetchHtml: makeHtmlFetch(recipe, this.deps.cookieFor) }, params)
+      const { items } = await interpretHtml(recipe, { fetchHtml: makeHtmlFetch(recipe, this.deps.cookieFor, this.deps.fetch) }, params)
       this.deps.ledger?.recordSuccess(manifest.id)
       return items.map((item) => toDataItem(item))
     } catch (e) {

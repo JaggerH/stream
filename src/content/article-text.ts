@@ -7,7 +7,7 @@
 // `FetchUrlResult.text` 的注释写着「extracted plain text」，赋值 0 次，害我写出一条
 // 恒空的分支还配了绿测试。所以这里**从 html 现抽**，不信字段名。
 import { parseHTML } from 'linkedom'
-import { extractArticle } from './extract.ts'
+import type { ArticleCache } from './extract.ts'
 
 /** 低于这个纯文本字符数就当「这一档没拿到正文」→ decline，把机会让给梯子上跑 JS 的降级档。
  *  空壳页不是全空的——SPA 常剩导航和页脚，所以阈值不能是 0。初值 200，按活体数据再调。
@@ -61,8 +61,8 @@ function proseLength(markdown: string): number {
  *
  *  复用 `extractArticle()`——**同一份实现、同一份缓存**（article 30d / 死链负缓存 1d），
  *  阅读器那条路（`/api/enrich?source=link`）和这里共享，不各抓一遍。 */
-export async function fetchArticleText(url: string): Promise<{ text: string; title?: string } | null> {
-  const article = await extractArticle(url)
+export async function fetchArticleText(url: string, articles: Pick<ArticleCache, 'extract'>): Promise<{ text: string; title?: string } | null> {
+  const article = await articles.extract(url)
   if (!article?.html) return null
   const text = htmlToMarkdown(article.html)
   if (proseLength(text) < MIN_ARTICLE_CHARS) return null

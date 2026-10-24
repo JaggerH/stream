@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { makeFetchFor, fetchFor, MAX_DEVICE_BODY } from './fetch.ts'
+import { makeFetchFor, DeviceFetch, MAX_DEVICE_BODY } from './fetch.ts'
 import { runOnDevice } from './run-context.ts'
 import { failureDisposition, DeviceIncapable,DeviceLost, DeviceOffline, DeviceRefused, HostNotAllowed } from './errors.ts'
 import { HostAbortedByUser, HostOpError, HostRelayDisconnected, WsHostRelay, type FetchOpOptions, type HttpFetchArgs } from '../http/host-relay.ts'
@@ -198,7 +198,20 @@ describe('fetchFor', () => {
     expect(entry).not.toContain('hunter2')
   })
 
-  it('未接线的模块级 fetchFor：非 local 一律 DeviceOffline（fail-closed）', async () => {
-    await expect(runOnDevice(NAS, () => fetchFor('https://jywg.eastmoneysec.com/'))).rejects.toBeInstanceOf(DeviceOffline)
+  it('未 install 的实例：非 local 一律 DeviceOffline（fail-closed）', async () => {
+    const d = new DeviceFetch()
+    await expect(runOnDevice(NAS, () => d.send('https://jywg.eastmoneysec.com/'))).rejects.toBeInstanceOf(DeviceOffline)
+  })
+})
+
+describe('一个实例一份 DeviceFetch', () => {
+  it('A install 了真实现、B 仍 fail-closed；A 的 send 现取 A 的 impl', async () => {
+    const a = new DeviceFetch()
+    const b = new DeviceFetch()
+    const calls: string[] = []
+    a.install(async (input) => { calls.push(String(input)); return new Response('from-a') })
+    await expect(runOnDevice(NAS, () => b.send('https://x.example/'))).rejects.toBeInstanceOf(DeviceOffline)
+    await expect(runOnDevice(NAS, () => a.send('https://x.example/'))).resolves.toBeInstanceOf(Response)
+    expect(calls).toEqual(['https://x.example/'])
   })
 })

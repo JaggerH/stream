@@ -678,12 +678,15 @@ describe('HTTP API', () => {
     })
 
     it('resolves site favicon successfully (mimicking /api/favicon)', async () => {
-      const app = build()
-      const faviconModule = await import('../adapters/favicon.ts')
-      const resolveSpy = vi.spyOn(faviconModule, 'resolveFavicon').mockResolvedValue({
-        body: new TextEncoder().encode('icon-bytes').buffer,
-        contentType: 'image/x-icon',
-      })
+      // favicon 路由现在打 deps.favicons（实例）；直接给 build() 塞一个假实例。
+      const fakeFavicons = {
+        resolve: vi.fn(async () => ({
+          body: new TextEncoder().encode('icon-bytes').buffer,
+          contentType: 'image/x-icon',
+        })),
+      }
+      const app = build(undefined, { favicons: fakeFavicons as never })
+      const resolveSpy = fakeFavicons.resolve
 
       const r = await app.request('/api/media/image?site=https://example.com')
       expect(r.status).toBe(200)

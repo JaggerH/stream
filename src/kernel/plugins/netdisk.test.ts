@@ -7,6 +7,8 @@ import { createKernel, quiesceKernel } from '../context.ts'
 import { settingsPlugin } from './settings.ts'
 import { credentialsPlugin } from './credentials.ts'
 import { packagesPlugin } from './packages.ts'
+import { DeviceFetch } from '../../devices/fetch.ts'
+import { ArticleCache } from '../../content/extract.ts'
 import { sourcesPlugin } from './sources.ts'
 import { harvestPlugin } from './harvest.ts'
 import { adaptersPlugin } from './adapters.ts'
@@ -38,6 +40,8 @@ async function mountUpToProvider(opts: { alistToken?: string; alistPackage?: boo
   // token 只有一个来源：接管序列存进 settings 的那一份。测试里就照它的写法先存好。
   if (opts.alistToken) kernel.settings.setAlistCredentials({ password: 'pw', token: opts.alistToken })
   await kernel.plugin(packagesPlugin, {
+    deviceFetch: new DeviceFetch(),
+    articles: () => new ArticleCache(),
     netMode: 'none' as const,
     packagesDir, dataDir, manageContainers: false, log: () => {},
     catalogSummary: (id) => ({ id } as unknown as PluginSummary),
@@ -64,7 +68,8 @@ async function mountUpToProvider(opts: { alistToken?: string; alistPackage?: boo
     }),
   })
   await kernel.plugin(eventsPlugin, { path: join(dataDir, 'events.json') })
-  await kernel.plugin(adaptersPlugin, { dataDir, log: () => {}, runtimeConfigFor: () => ({}) })
+  await kernel.plugin(adaptersPlugin, {
+      deviceFetch: new DeviceFetch(), dataDir, log: () => {}, runtimeConfigFor: () => ({}) })
   await kernel.plugin(providerPlugin, {
     cacheDb: join(dataDir, 'cache.db'), log: () => {}, runtimeConfigFor: () => ({}),
   })

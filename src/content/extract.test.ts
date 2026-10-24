@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { extractArticle } from './extract.ts'
+import { ArticleCache } from './extract.ts'
+
+const articles = new ArticleCache()
 import { ownedFetch } from '../http/owned-outbound.ts'
 
 // safe-fetch（extractArticle 的取数器）现在走 ownedFetch —— 一条被内嵌 RSSHub rewriter 够不着的
@@ -23,7 +25,7 @@ function mockPage(html: string, contentType = 'text/html') {
 
 afterEach(() => vi.clearAllMocks())
 
-describe('extractArticle', () => {
+describe('articles.extract（实例缓存）', () => {
   it('extracts the main content and strips scripts/handlers', async () => {
     mockPage(`<!DOCTYPE html><html><head><title>Hello World</title>
       <meta property="og:image" content="https://example.com/cover.jpg"></head>
@@ -35,7 +37,7 @@ describe('extractArticle', () => {
       <p onclick="evil()">handler para</p></article>
       <footer>footer junk</footer></body></html>`)
 
-    const a = await extractArticle('https://example.com/unique-1')
+    const a = await articles.extract('https://example.com/unique-1')
     expect(a).not.toBeNull()
     expect(a!.title).toBe('Hello World')
     expect(a!.html).toBeTruthy()
@@ -47,11 +49,34 @@ describe('extractArticle', () => {
 
   it('returns null for a non-html response', async () => {
     mockPage('', 'application/json')
-    expect(await extractArticle('https://example.com/unique-2')).toBeNull()
+    expect(await articles.extract('https://example.com/unique-2')).toBeNull()
   })
 
   it('refuses private/loopback hosts (SSRF guard)', async () => {
-    expect(await extractArticle('http://127.0.0.1/secret')).toBeNull()
-    expect(await extractArticle('http://localhost:8080/x')).toBeNull()
+    expect(await articles.extract('http://127.0.0.1/secret')).toBeNull()
+    expect(await articles.extract('http://localhost:8080/x')).toBeNull()
+  })
+})
+
+describe('一个实例一张缓存', () => {
+  it('A 命中内存缓存不再出网；B 看不到 A 的缓存，各自出网', async () => {
+    const a = new ArticleCache()
+    const b = new ArticleCache()
+    let hits = 0
+    vi.mocked(ownedFetch).mockImplementation((url) => {
+      hits++
+      return Promise.resolve({
+        ok: true,
+        url: String(url),
+        headers: { get: () => 'text/html' },
+        arrayBuffer: async () => new TextEncoder().encode(
+          '<html><head><title>T</title></head><body><article><p>正文内容正文内容正文内容</p></article></body></html>',
+        ).buffer,
+      } as unknown as Response)
+    })
+    await a.extract('https://one.example/page')
+    await a.extract('https://one.example/page')   // A 第二次：内存缓存命中，不出网
+    await b.extract('https://one.example/page')   // B 没有这份缓存：再出网一次
+    expect(hits).toBe(2)
   })
 })

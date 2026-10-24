@@ -4,7 +4,7 @@
  *  站点自己的评论/详情/作者查询一律归包（`activate()` 的 `enrichers`），宿主只剩不属于任何
  *  一家站的那一条：任意网页的正文（`link`）。 */
 
-import { extractArticle } from '../extract.ts'
+import type { ArticleCache } from '../extract.ts'
 import type { Enrichment } from '../types.ts'
 
 export type EnrichRequest = { source: 'link'; url: string }
@@ -20,10 +20,10 @@ export type EnrichRequest = { source: 'link'; url: string }
 export const HOST_ENRICH_SOURCES: ReadonlySet<string> = new Set(['link'])
 
 /** 宿主这条分支是站外裸 HTTP，不骑登录态标签页。包要借同一份正文抽取，走 `ctx.readArticle`。 */
-export async function enrich(req: EnrichRequest): Promise<Enrichment> {
+export async function enrich(req: EnrichRequest, articles: Pick<ArticleCache, 'extract'>): Promise<Enrichment> {
   switch (req.source) {
     case 'link': {
-      const article = await extractArticle(req.url)
+      const article = await articles.extract(req.url)
       return { article: article ?? undefined }
     }
   }

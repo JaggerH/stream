@@ -7,6 +7,8 @@ import { settingsPlugin } from './settings.ts'
 import { runtimeConfigPlugin } from './runtime-config.ts'
 import { credentialsPlugin } from './credentials.ts'
 import { packagesPlugin } from './packages.ts'
+import { DeviceFetch } from '../../devices/fetch.ts'
+import { ArticleCache } from '../../content/extract.ts'
 import { sourcesPlugin } from './sources.ts'
 import { harvestPlugin } from './harvest.ts'
 import { adaptersPlugin } from './adapters.ts'
@@ -48,6 +50,8 @@ async function mountUpstream() {
   await kernel.plugin(runtimeConfigPlugin)
   await kernel.plugin(credentialsPlugin, { dataDir, log: () => {}, requiredDomains: () => [] })
   await kernel.plugin(packagesPlugin, {
+    deviceFetch: new DeviceFetch(),
+    articles: () => new ArticleCache(),
     netMode: 'none' as const,
     packagesDir, dataDir, manageContainers: false, log: () => {},
     catalogSummary: (id) => ({ id } as unknown as PluginSummary),
@@ -74,7 +78,8 @@ async function mountUpstream() {
     }),
   })
   await kernel.plugin(eventsPlugin, { path: join(dataDir, 'events.json') })
-  await kernel.plugin(adaptersPlugin, { dataDir, log: () => {}, runtimeConfigFor: () => ({}) })
+  await kernel.plugin(adaptersPlugin, {
+      deviceFetch: new DeviceFetch(), dataDir, log: () => {}, runtimeConfigFor: () => ({}) })
   await kernel.plugin(providerPlugin, {
     cacheDb: join(dataDir, 'cache.db'), log: () => {}, runtimeConfigFor: () => ({}),
   })

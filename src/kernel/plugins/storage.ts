@@ -3,6 +3,8 @@ import { DedupStore } from '../../dedup-store.ts'
 import { ItemStore } from '../../item-store.ts'
 import { StoryFoldStore } from '../../story-fold/store.ts'
 import { ContentCache } from '../../content-cache.ts'
+import { ArticleCache } from '../../content/extract.ts'
+import { FaviconCache } from '../../adapters/favicon.ts'
 import { AudioArchive, DownloadQueue, type QueueDeps } from '../../audio/index.ts'
 import { SourceHealthStore } from '../../source-health-store.ts'
 import { UserStore, type RowDegradation } from '../../store/user-store.ts'
@@ -32,6 +34,10 @@ export interface Stores {
   storyFold: StoryFoldStore
   /** 逐条内容的 enrich 缓存；消费模块在自己的 `wire*` 里注册命名空间。 */
   contentCache: ContentCache
+  /** 本实例的文章抽取缓存（wire 到 contentCache 的 'article' 命名空间）。 */
+  articles: ArticleCache
+  /** 本实例的 favicon 缓存（wire 到 contentCache 的 'favicon' 命名空间）。 */
+  favicons: FaviconCache
   audioArchive: AudioArchive
   downloadQueue: DownloadQueue
   /** 逐源健康账本——失败转移的选源依据 + doctor 报表。 */
@@ -128,10 +134,23 @@ export function storagePlugin(ctx: Context, config: StorageConfig): void {
   // making the black box legible (default pool + discovered = "what pansou can search").
   const discoveredChannels = own(new DiscoveredChannels(config.streamDb, join(config.dataDir, 'discovered.db')))
 
+  // 文章/favicon 的实例缓存（本域拥有 ContentCache 句柄，接线就放这儿——bootstrap 里那两行
+  // wire 随之删除）。命名空间规格住在各自类里；unwire 只在指针仍指自己时回滚。
+  const articles = new ArticleCache()
+  const favicons = new FaviconCache()
+  const unwireArticles = articles.wire(contentCache)
+  const unwireFavicons = favicons.wire(contentCache)
+  ctx.effect(() => () => {
+    unwireArticles()
+    unwireFavicons()
+  })
+
   ctx.provide('stores', {
     dedup,
     itemStore,
     storyFold,
+    articles,
+    favicons,
     contentCache,
     audioArchive,
     downloadQueue,

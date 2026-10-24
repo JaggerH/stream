@@ -3,9 +3,8 @@ import { parse as parseYaml } from 'yaml'
 import type { Context } from 'cordis'
 import { requiredCookieDomains } from './credentials/required-domains.ts'
 import { validateSessionExport, type SessionExportSpec } from './credentials/session-export.ts'
-import { wireArticleCache } from './content/extract.ts'
+import { DeviceFetch } from './devices/fetch.ts'
 import { wireOcrImageCache } from './content/images/ocr-cache.ts'
-import { wireFaviconCache } from './adapters/favicon.ts'
 import { RSSHUB_CHECKOUT_PKG } from './rsshub-client.ts'
 
 import { basename, dirname, join, resolve } from 'node:path'
@@ -378,6 +377,14 @@ export async function bootstrap(
    */
   const notifyDefect = lazyNotify(() => kernel.streamEvents as EventsService | undefined)
   /**
+   * 本实例的设备出站 fetch。provide 在全部域之前——packages/identity 的包激活闭包、replay
+   * 适配器都要拿 `ctx.deviceFetch.send`；serve 在采集域起来后 `install` 真实现，之前对非
+   * local 一律离线（fail-closed，与升级前「未接线」那一档同语义）。
+   */
+  const deviceFetch = new DeviceFetch()
+  kernel.provide('deviceFetch', deviceFetch)
+
+  /**
    * 包这一域整块进内核（`src/kernel/plugins/packages.ts`）：两层扫描 → 描述符投影 →
    * plugin-target 接线 → 容器接管 → AList 接管 → 包自己的 `activate()`。
    * **那几步的先后是有语义的**（AList 要排在 activate 之前等），全在插件内部保序，
@@ -388,6 +395,8 @@ export async function bootstrap(
     dataDir,
     manageContainers: config.manage_containers === true,
     netMode: deployment.plugin_network ?? 'none',
+    articles: () => kernel.stores.articles,
+    deviceFetch,
     log,
     // 前向引用的惰性 thunk：目录住在采集调度域的 `StreamService`（那一域晚挂），而这个只在
     // 翻开关那一刻才调。
@@ -487,16 +496,8 @@ export async function bootstrap(
   const { dedup, itemStore, storyFold: storyFoldStore, contentCache, audioArchive: archive,
     sourceHealth, channels, seenStore, collections, watchProgress, downloadQueue,
     discoveredChannels } = stores
-  // 消费模块在自己的 `wire*` 里注册命名空间——spec 挨着它描述的那份投影，所以接线留在这儿，
-  // 不进存储域（那一域只管建库和句柄）。
-  // 前两个把一个**模块级指针**指向这份句柄，所以要跟着装配一起撤销（disposer 只在指针还是
-  // 自己时才回滚，避免撤销序把别人刚接上的那份抹掉）。第三个只登记规格，随句柄自灭。
-  const unwireArticle = wireArticleCache(contentCache)
-  const unwireFavicon = wireFaviconCache(contentCache)
-  kernel.effect(() => () => {
-    unwireArticle()
-    unwireFavicon()
-  })
+  // 消费模块的持久缓存接线已收进存储域（ctx.stores.articles / favicons，随 ContentCache 生灭）。
+  // OCR 那份仍是模块级 wire（out of scope，见 openspec embeddable-engine 3.3 的记账）。
   wireOcrImageCache(contentCache)
   // 四个消费点（此处 + Scheduler + ResolveEngine + 分集索引）共用同一个引用——曾经是四份逐字
   // 相同的内联闭包，改一处漏三处的表现只是"部分路径吃旧默认"，不报错。
@@ -605,7 +606,7 @@ export async function bootstrap(
   // 站点身份（browser-identity 计划 3）：节点上各 facility 登着谁。建在 harvest / auth / packages / sources 之上，
   // 所以排在 auth 后面。表打不开就不挂——它不决定任何执行，只是少一张表。
   if (opts.identities) {
-    await kernel.plugin(identityPlugin, { store: opts.identities, ...(opts.nodes && { nodes: opts.nodes }), log })
+    await kernel.plugin(identityPlugin, { store: opts.identities, deviceFetch, ...(opts.nodes && { nodes: opts.nodes }), log })
   }
 
   // adapter 装配整域进内核：四个宿主 adapter（builtin/rsshub/browser/replay）手织 + 带 code
@@ -613,7 +614,7 @@ export async function bootstrap(
   // bootstrap 自己一格都不解：下游域经 inject 从 `ctx.adapters` 自取（进程内实现的注册面
   // `register()` 在 Provider 域里，采集调度域吃这张 Map）。
   // `intervention` 同 harvest 那处：经 config 递 thunk，从根 kernel 现取，不在插件里读 `ctx.intervention`。
-  await kernel.plugin(adaptersPlugin, { dataDir, log, ...(opts.runtime && { rsshub: opts.runtime.rsshub }), runtimeConfigFor, onDebug: opts.onDebug, intervention: () => kernel.intervention, facilityDevices: opts.facilityDevices, identityRouter: () => kernel.identityRouter })
+  await kernel.plugin(adaptersPlugin, { dataDir, deviceFetch, log, ...(opts.runtime && { rsshub: opts.runtime.rsshub }), runtimeConfigFor, onDebug: opts.onDebug, intervention: () => kernel.intervention, facilityDevices: opts.facilityDevices, identityRouter: () => kernel.identityRouter })
 
   // ── Provider 执行面整域进内核 ──────────────────────────────────────────────
   // 解析面（resolveEngine / intentResolver / radarMatcher）+ 进程内成员的注册 + 读模型 /

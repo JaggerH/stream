@@ -2,7 +2,6 @@ import type { Context } from 'cordis'
 import { createHash } from 'node:crypto'
 import { isSessionAuth, type SessionAuthSpec } from '../../manifest/types.ts'
 import { runOnDevice } from '../../devices/run-context.ts'
-import { fetchFor } from '../../devices/fetch.ts'
 import { findLoginRecipe } from '../../credentials/facility-login.ts'
 import { makeIdentityProber, makeNodeProbeIO, type ProbeNode } from '../../identity/prober.ts'
 import { makeIdentityService, type IdentityFacility, type IdentityService } from '../../identity/identity-service.ts'
@@ -23,6 +22,8 @@ declare module 'cordis' {
 }
 
 export interface IdentityConfig {
+  /** 本实例的设备出站 fetch（whoami 探测等出站走它）。 */
+  deviceFetch: import('../../devices/fetch.ts').DeviceFetch
   store: SiteIdentityStore
   /** 节点表：profile 名（「工作 上的账号」）、路由要的设备 / 绑定 / 环境。缺席 = 用节点 id 顶上，路由一个候选都没有。 */
   nodes?: { get(nodeId: string): BrowserNode | undefined; setWokenAt?(nodeId: string, at: number | null): void }
@@ -95,7 +96,7 @@ export const identityPlugin = {
 
     const prober = makeIdentityProber(makeNodeProbeIO({
       relay: (bindingId) => extRelays.relay(bindingId),
-      fetch: fetchFor,
+      fetch: config.deviceFetch.send,
       refreshCookies: freshSnapshot,
       cookieString: (domain) => cookieProvider.cookieString(domain),
       snapshotCovers: (domain) => ctx.auth.cookiePuller.covers(domain),

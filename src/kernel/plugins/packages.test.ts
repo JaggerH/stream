@@ -6,6 +6,8 @@ import { createKernel, quiesceKernel } from '../context.ts'
 import { settingsPlugin } from './settings.ts'
 import { credentialsPlugin } from './credentials.ts'
 import { packagesPlugin } from './packages.ts'
+import { DeviceFetch } from '../../devices/fetch.ts'
+import { ArticleCache } from '../../content/extract.ts'
 import type { ActivateFn } from '../../packages/activate.ts'
 import type { PluginSummary } from '../../mcp/tools.ts'
 
@@ -52,6 +54,8 @@ async function mount(opts: {
   if (opts.alistToken) kernel.settings.setAlistCredentials({ password: 'pw', token: opts.alistToken })
   await kernel.plugin(credentialsPlugin, { dataDir, log: () => {}, requiredDomains: () => [] })
   await kernel.plugin(packagesPlugin, {
+    deviceFetch: new DeviceFetch(),
+    articles: () => new ArticleCache(),
     netMode: 'none' as const,
     packagesDir,
     dataDir,

@@ -6,6 +6,8 @@ import { createKernel, quiesceKernel } from '../context.ts'
 import { settingsPlugin } from './settings.ts'
 import { credentialsPlugin } from './credentials.ts'
 import { packagesPlugin } from './packages.ts'
+import { DeviceFetch } from '../../devices/fetch.ts'
+import { ArticleCache } from '../../content/extract.ts'
 import { sourcesPlugin } from './sources.ts'
 import { harvestPlugin } from './harvest.ts'
 import { eventsPlugin } from './events.ts'
@@ -31,6 +33,8 @@ async function mountUpToAdapters() {
   await kernel.plugin(settingsPlugin, { path: join(dataDir, 'settings.json') })
   await kernel.plugin(credentialsPlugin, { dataDir, log: () => {}, requiredDomains: () => [] })
   await kernel.plugin(packagesPlugin, {
+    deviceFetch: new DeviceFetch(),
+    articles: () => new ArticleCache(),
     netMode: 'none' as const,
     packagesDir, dataDir, manageContainers: false, log: () => {},
     catalogSummary: (id) => ({ id } as unknown as PluginSummary),
@@ -76,7 +80,8 @@ async function mountProvider(kernel: Context, dataDir: string) {
 async function mountAll() {
   const { kernel, dataDir, root } = await mountUpToAdapters()
   await mountStorage(kernel, dataDir)
-  await kernel.plugin(adaptersPlugin, { dataDir, log: () => {}, runtimeConfigFor: () => ({}) })
+  await kernel.plugin(adaptersPlugin, {
+      deviceFetch: new DeviceFetch(), dataDir, log: () => {}, runtimeConfigFor: () => ({}) })
   await mountProvider(kernel, dataDir)
   return { kernel, dataDir, root }
 }
@@ -133,7 +138,8 @@ describe('providerPlugin', () => {
   it('provider 挂上后同一个队列能取到执行器', async () => {
     const { kernel, dataDir } = await mountUpToAdapters()
     await mountStorage(kernel, dataDir)
-    await kernel.plugin(adaptersPlugin, { dataDir, log: () => {}, runtimeConfigFor: () => ({}) })
+    await kernel.plugin(adaptersPlugin, {
+      deviceFetch: new DeviceFetch(), dataDir, log: () => {}, runtimeConfigFor: () => ({}) })
     await mountProvider(kernel, dataDir)
     const queue = kernel.stores.downloadQueue
     const id = queue.enqueue({ platform: 'netease', id: '424262' })
@@ -150,7 +156,8 @@ describe('providerPlugin', () => {
    */
   it('stores 不在树上时不激活（UserStore→providerDirectory 的依赖由 inject 表达）', async () => {
     const { kernel, dataDir } = await mountUpToAdapters()
-    await kernel.plugin(adaptersPlugin, { dataDir, log: () => {}, runtimeConfigFor: () => ({}) })
+    await kernel.plugin(adaptersPlugin, {
+      deviceFetch: new DeviceFetch(), dataDir, log: () => {}, runtimeConfigFor: () => ({}) })
     await mountProvider(kernel, dataDir)
     expect(kernel.provider).toBeUndefined()
     expect(kernel.providerDirectory).toBeUndefined()
@@ -192,7 +199,8 @@ describe('providerPlugin', () => {
     channels.putProvider({ id: 'legacy-seq', label: 'legacy-seq', description: '', category: 'metadata', strategy: 'sequential', members: [], contract: null, options: {}, serves: [] } as never)
     channels.putProviderBinding({ callsiteId: 'video.detail.metadata', providerIds: ['legacy-seq'] })
 
-    await kernel.plugin(adaptersPlugin, { dataDir, log: () => {}, runtimeConfigFor: () => ({}) })
+    await kernel.plugin(adaptersPlugin, {
+      deviceFetch: new DeviceFetch(), dataDir, log: () => {}, runtimeConfigFor: () => ({}) })
     await mountProvider(kernel, dataDir)
 
     expect(kernel.provider.providerBindings.fixed('video.detail.metadata')).toBe('video-metadata')

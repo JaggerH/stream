@@ -6,6 +6,8 @@ import { createKernel, quiesceKernel } from '../context.ts'
 import { settingsPlugin } from './settings.ts'
 import { credentialsPlugin } from './credentials.ts'
 import { packagesPlugin } from './packages.ts'
+import { DeviceFetch } from '../../devices/fetch.ts'
+import { ArticleCache } from '../../content/extract.ts'
 import { sourcesPlugin } from './sources.ts'
 import { harvestPlugin } from './harvest.ts'
 import { adaptersPlugin } from './adapters.ts'
@@ -23,6 +25,8 @@ async function mount() {
   await kernel.plugin(settingsPlugin, { path: join(dataDir, 'settings.json') })
   await kernel.plugin(credentialsPlugin, { dataDir, log: () => {}, requiredDomains: () => [] })
   await kernel.plugin(packagesPlugin, {
+    deviceFetch: new DeviceFetch(),
+    articles: () => new ArticleCache(),
     netMode: 'none' as const,
     packagesDir, dataDir, manageContainers: false, log: () => {},
     catalogSummary: (id) => ({ id } as unknown as PluginSummary),
@@ -37,7 +41,8 @@ async function mount() {
 describe('adaptersPlugin', () => {
   it('挂成 ctx.adapters：四个宿主 adapter 都在，dispose 后消失', async () => {
     const { kernel, dataDir } = await mount()
-    await kernel.plugin(adaptersPlugin, { dataDir, log: () => {}, runtimeConfigFor: () => ({}) })
+    await kernel.plugin(adaptersPlugin, {
+      deviceFetch: new DeviceFetch(), dataDir, log: () => {}, runtimeConfigFor: () => ({}) })
     const adapters = kernel.adapters
     expect(adapters).toBeInstanceOf(Map)
     for (const name of ['builtin', 'rsshub', 'browser', 'replay'] as const) {
@@ -56,7 +61,8 @@ describe('adaptersPlugin', () => {
     const { kernel, dataDir } = await mount()
     const fake = { fetch: async () => [] } as unknown as Adapter
     kernel.packages.activated.adapters.set('some-package', fake)
-    await kernel.plugin(adaptersPlugin, { dataDir, log: () => {}, runtimeConfigFor: () => ({}) })
+    await kernel.plugin(adaptersPlugin, {
+      deviceFetch: new DeviceFetch(), dataDir, log: () => {}, runtimeConfigFor: () => ({}) })
     expect(kernel.adapters.get('some-package')).toBe(fake)
     // 宿主件没有被包挤掉
     expect(kernel.adapters.get('builtin')).toBeDefined()
@@ -73,7 +79,8 @@ describe('adaptersPlugin', () => {
     const holder = kernel.sources.liveRecipes
     const inner = holder.current
     Object.defineProperty(holder, 'current', { get: () => { reads++; return inner }, configurable: true })
-    await kernel.plugin(adaptersPlugin, { dataDir, log: () => {}, runtimeConfigFor: () => ({}) })
+    await kernel.plugin(adaptersPlugin, {
+      deviceFetch: new DeviceFetch(), dataDir, log: () => {}, runtimeConfigFor: () => ({}) })
     expect(reads).toBe(0)
     await quiesceKernel(kernel)
   })
@@ -91,13 +98,16 @@ describe('adaptersPlugin', () => {
     await kernel.plugin(settingsPlugin, { path: join(dataDir, 'settings.json') })
     await kernel.plugin(credentialsPlugin, { dataDir, log: () => {}, requiredDomains: () => [] })
     await kernel.plugin(packagesPlugin, {
+    deviceFetch: new DeviceFetch(),
+    articles: () => new ArticleCache(),
       netMode: 'none' as const, packagesDir, dataDir, manageContainers: false, log: () => {},
       catalogSummary: (id) => ({ id } as unknown as PluginSummary),
     })
     await kernel.plugin(sourcesPlugin, {
       builtinDir: packagesDir, dataDir, rsshubCatalog: join(root, 'none.json'), log: () => {},
     })
-    await kernel.plugin(adaptersPlugin, { dataDir, log: () => {}, runtimeConfigFor: () => ({}) })
+    await kernel.plugin(adaptersPlugin, {
+      deviceFetch: new DeviceFetch(), dataDir, log: () => {}, runtimeConfigFor: () => ({}) })
     expect(kernel.adapters).toBeUndefined()
     await quiesceKernel(kernel)
   })

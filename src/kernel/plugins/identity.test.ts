@@ -6,6 +6,8 @@ import { createKernel, quiesceKernel } from '../context.ts'
 import { settingsPlugin } from './settings.ts'
 import { credentialsPlugin } from './credentials.ts'
 import { packagesPlugin } from './packages.ts'
+import { DeviceFetch } from '../../devices/fetch.ts'
+import { ArticleCache } from '../../content/extract.ts'
 import { sourcesPlugin } from './sources.ts'
 import { storagePlugin } from './storage.ts'
 import { eventsPlugin } from './events.ts'
@@ -28,6 +30,8 @@ async function mount() {
   await kernel.plugin(settingsPlugin, { path: join(dataDir, 'settings.json') })
   await kernel.plugin(credentialsPlugin, { dataDir, log: () => {}, requiredDomains: () => [] })
   await kernel.plugin(packagesPlugin, {
+    deviceFetch: new DeviceFetch(),
+    articles: () => new ArticleCache(),
     netMode: 'none' as const,
     packagesDir, dataDir, manageContainers: false, log: () => {},
     catalogSummary: (id) => ({ id } as unknown as PluginSummary),
@@ -63,7 +67,7 @@ async function mount() {
     requiredCookieDomains: () => [],
   })
   const store = new SiteIdentityStore(join(dataDir, 'stream.db'))
-  await kernel.plugin(identityPlugin, { store, log: () => {} })
+  await kernel.plugin(identityPlugin, { store, deviceFetch: new DeviceFetch(), log: () => {} })
   return { kernel, frames, dataDir, store }
 }
 
