@@ -182,4 +182,4 @@ listen(app, port); onSignal(() => stream.close().then(() => runtime.close()))
 | 6 | `serve.ts` 的 import 清单与行数；`routes()` 的测试；挂载顺序 |
 | 7 | 7 条场景逐条有断言；关 A 后 B 的定时确实触发（不是只断言「没报错」） |
 | 8 | 文档一节；交付报告里 6.3 每一步的结果 |
-| 全部 | 真启动记录；`src shared` 全量与 main 对照无新增失败；公开仓库无商业字样 |
+| 全部 | 真启动记录；`src shared` 全量与 main 对照无新增失败；提交与文档只写中性动机 |
