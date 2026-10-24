@@ -31,7 +31,6 @@ const OFFENDERS: Record<string, string> = {
   'src/plugins/deprovision.ts': '进程：DOCKER_HOST（resolveDockerEndpoint）',
   'src/plugins/provision-wire.ts': '进程：DOCKER_HOST（resolveDockerEndpoint）',
   'src/plugins/gateway.ts': 'HTTP：STREAM_GATEWAY_PORT',
-  'src/plugins/plugin-target.ts': '实例：STREAM_PLUGIN_NETWORK（pluginNetMode 的缺省参数）',
   'src/replay/desktop-driver.ts': '实例：STREAM_DESKTOP_SEE_TRACE',
   'src/replay/desktop-see.ts': '实例：STREAM_DESKTOP_SEE_TRACE',
   'src/replay/desktop-runner.ts': '实例：desktopStatusEnabled 的缺省参数',

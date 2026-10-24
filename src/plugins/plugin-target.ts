@@ -1,10 +1,12 @@
 import type { PluginDescriptor } from './types.ts'
+import type { StandbyHooks } from './standby/hook.ts'
 
 /** 后端所在网络形态：compose=与插件同 stream 内网、可直连容器 DNS；host=后端在宿主上、
- *  经 loopback 随机口进容器（「一扇门」，spec 2026-07-22-host-plugin-door）；none=够不着，全关。 */
+ *  经 loopback 随机口进容器（「一扇门」，spec 2026-07-22-host-plugin-door）；none=够不着，全关。
+ *  值来自 `AppConfig.deployment.plugin_network`（`STREAM_PLUGIN_NETWORK` 的翻译在 bootstrap），不读 env。 */
 export type PluginNetMode = 'compose' | 'host' | 'none'
 
-export function pluginNetMode(env: NodeJS.ProcessEnv = process.env): PluginNetMode {
+export function pluginNetMode(env: NodeJS.ProcessEnv): PluginNetMode {
   const v = env.STREAM_PLUGIN_NETWORK
   return v === 'compose' ? 'compose' : v === 'host' ? 'host' : 'none'
 }
@@ -17,7 +19,7 @@ export function resolvePluginTarget(
   opts: { descriptors: PluginDescriptor[]; mode: PluginNetMode },
 ): string | null {
   // host 档静态解析不可能:随机宿主口是容器 start 时才分配的,停着时不存在。
-  // 动态解析走 standby Cell 缓存(hook.ts standbyOrigin),bootstrap 按档选 resolver。
+  // 动态解析走 standby Cell 缓存(本文件 StandbyHooks.origin),bootstrap 按档选 resolver。
   if (opts.mode !== 'compose') return null
   const d = opts.descriptors.find((p) => (p.backend?.service ?? p.id) === service || p.id === service)
   if (!d?.backend) return null
@@ -28,27 +30,49 @@ export function resolvePluginTarget(
 // 「内置 + 第三方」的合并名单不住在这里：它是 `BackendDirectory`
 // （`src/kernel/plugins/backend-directory.ts`），全仓只合并一次、四个消费点共用同一份引用。
 
-let injectedResolver: ((service: string) => string | null) | null = null
-
-/** bootstrap() 在启动时、descriptors 加载完毕后调用一次，绑好 { descriptors, mode } 派生的
- *  resolver——之后每个 server-side base 解析器（resolveTranscribeUrl/resolveMineruUrl/
- *  resolveAlistUrl/pansou，以及递给包的 `ctx.backendUrl()` thunk）都读 pluginTarget()，不必
- *  给每个调用点单独穿 descriptors 参数（穿参的坑：漏一个调用点传 [] 就在 compose 形态下悄悄退化
- *  成空 base）。测试文件跑在独立模块实例里，不接线时 pluginTarget 一律 null，等价 mode=none。
+/**
+ * 一个实例的后端取址服务（`ctx.packages.targets`，`src/kernel/plugins/packages.ts` 装配）。
  *
- *  传 `null` 复位（内核销毁时 `bindModuleHook` 的 disposer 走这条，见
- *  `src/kernel/plugins/module-hooks.ts`）——过去这个全局从不复位，同进程里跑第二次
- *  bootstrap 会读到上一次的残留，而残留与"接对了"运行时无法区分。 */
-export function setPluginTargetResolver(resolver: ((service: string) => string | null) | null): void {
-  injectedResolver = resolver
-}
+ * 过去 resolver 与 miss reporter 住在模块级变量里，由 bootstrap 启动时绑一次——同进程跑第二个
+ * 实例时两个内核读写的是同一对全局，互相污染且无法区分「接对了」和「读到残留」。现在两个实例
+ * 各持一份：resolver / 喊声出口与 standby 钩子（`StandbyHooks`，host 档的动态取址与唤醒都在
+ * 里面）同生共死，随内核 dispose 复位为 null。
+ *
+ * 未接线（单测 / stdio / 内核还没装配完）时 `target()` 一律 null，等价 mode=none。
+ *
+ * 传 `null` 复位（内核销毁时 `bindModuleHook` 的 disposer 走这条）。
+ */
+export class PluginTargets {
+  private resolver: ((service: string) => string | null) | null = null
+  private missReporter: ((service: string) => void) | null = null
 
-/** 只读探测：现在接上了吗。给启动完成处的「hooks unbound」那一行用（module-hooks.ts）。 */
-export function isPluginTargetBound(): boolean {
-  return injectedResolver !== null
-}
+  constructor(readonly standby: StandbyHooks) {}
 
-let missReporter: ((service: string) => void) | null = null
+  /** packages 域在 descriptors 加载完毕后绑一次；内核 dispose 时经 bindModuleHook 复位。 */
+  bind(resolver: ((service: string) => string | null) | null, missReporter: ((service: string) => void) | null): void {
+    this.resolver = resolver
+    this.missReporter = missReporter
+  }
+
+  /** 只读探测：现在接上了吗。给启动完成处的「hooks unbound」那一行用（module-hooks.ts）。 */
+  get bound(): boolean {
+    return this.resolver !== null
+  }
+
+  /** 取址的两种意图。**只影响喊不喊，不影响答什么**。 */
+  target(service: string, opts?: { peek?: boolean }): string | null {
+    const target = this.resolver ? this.resolver(service) : null
+    if (!target && !opts?.peek && this.missReporter) {
+      // 观测出问题绝不能反过来打死主链路：reporter 抛什么都吞掉，照常返回 null。
+      try {
+        this.missReporter(service)
+      } catch {
+        /* 记录现场失败了就失败了,取址该答什么还答什么 */
+      }
+    }
+    return target
+  }
+}
 
 /**
  * 「答空了」的喊声出口（spec `2026-08-19-plugin-target-empty-observability-design.md`）。
@@ -59,15 +83,8 @@ let missReporter: ((service: string) => void) | null = null
  *
  * **这一层不收集事实**：它只知道自己接没接线，别的一概不知。事实收集在
  * `src/kernel/plugins/packages.ts`（那里同时握着 netMode / backendDirectory / standby hook），
- * 分类与渲染在 `src/plugins/target-miss.ts`。`bindModuleHook` 与 resolver 同生共死。
- *
- * 传 `null` 复位。未接（单测 / stdio）→ 完全 no-op，取址行为零变化。
+ * 分类与渲染在 `src/plugins/target-miss.ts`。与 resolver 同生共死。
  */
-export function setPluginTargetMissReporter(fn: ((service: string) => void) | null): void {
-  missReporter = fn
-}
-
-/** 取址的两种意图。**只影响喊不喊，不影响答什么**。 */
 export interface PluginTargetOpts {
   /**
    * 窥视：**只是问一句地址，并不打算用它**——状态面板逐个插件取址只为显示、`available()` /
@@ -98,20 +115,4 @@ export interface PluginTargetOpts {
    * `ctx.backendUrl` 现取），下一个要写的人照这个形状写、并给它一条钉顺序的测试。
    */
   peek?: boolean
-}
-
-/** 见 setPluginTargetResolver。未接线（如单测未调用 bootstrap）时一律 null。
- *  答空时顺手喊一声（见 setPluginTargetMissReporter）——**喊声绝不改变取址行为**；
- *  `{ peek: true }` 只掐掉这个喊声，返回值与普通档逐字相同（见 PluginTargetOpts.peek）。 */
-export function pluginTarget(service: string, opts?: PluginTargetOpts): string | null {
-  const target = injectedResolver ? injectedResolver(service) : null
-  if (!target && !opts?.peek && missReporter) {
-    // 观测出问题绝不能反过来打死主链路：reporter 抛什么都吞掉，照常返回 null。
-    try {
-      missReporter(service)
-    } catch {
-      /* 记录现场失败了就失败了,取址该答什么还答什么 */
-    }
-  }
-  return target
 }

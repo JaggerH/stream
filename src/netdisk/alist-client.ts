@@ -1,6 +1,5 @@
 import { GATEWAY_PREFIX } from '../plugins/gateway.ts'
-import { pluginTarget } from '../plugins/plugin-target.ts'
-import { withAwake } from '../plugins/standby/hook.ts'
+import type { PluginTargets } from '../plugins/plugin-target.ts'
 import { Agent, fetch as undiciFetch } from 'undici'
 import { AlistClient, type AlistClientOptions } from '../../shared/netdisk/alist-client.ts'
 
@@ -22,8 +21,8 @@ const PUT_AGENT = new Agent({ headersTimeout: 60 * 60_000, bodyTimeout: 60 * 60_
 /** server-side fetch base（NOT 客户端网关路径）：bootstrap 接线的 plugin target（compose 形态：
  *  容器 DNS；host 档醒着的容器 loopback；none：未设 → ''）。只有这一个来源——网盘底座是内置
  *  托管的，没有「指向别处」的显式地址。 */
-export function resolveAlistUrl(): string {
-  return pluginTarget(ALIST_SERVICE) ?? ''
+export function resolveAlistUrl(targets?: PluginTargets): string {
+  return targets?.target(ALIST_SERVICE) ?? ''
 }
 
 /**
@@ -35,15 +34,17 @@ export function resolveAlistUrl(): string {
 export function hostAlistClient(
   opts: Pick<AlistClientOptions, 'token' | 'refresh' | 'sleep'>,
   ttlMs?: number,
+  /** 本实例的后端取址 + standby 钩子（netdisk 域从 ctx.packages 递）。缺（单测）= 取址恒空、直跑。 */
+  targets?: PluginTargets,
 ): AlistClient {
   return new AlistClient({
-    baseUrl: () => resolveAlistUrl(),
+    baseUrl: () => resolveAlistUrl(targets),
     token: opts.token,
     ...(opts.refresh ? { refresh: opts.refresh } : {}),
     ...(opts.sleep ? { sleep: opts.sleep } : {}),
     // 唤醒包在请求外面、地址（上面那个 thunk）在它里面取。别把 withAwake 包回 fetchFn 里：那样
     // 地址在唤醒之前就拼好了，容器睡着时是空串，叫醒容器的那个请求自己必败。
-    around: (fn) => withAwake(ALIST_SERVICE, fn),
+    around: (fn) => (targets ? targets.standby.withAwake(ALIST_SERVICE, fn) : fn()),
     fetchFn: (input, init) => init?.method === 'PUT'
       ? undiciFetch(input as string, { ...init, dispatcher: PUT_AGENT } as Parameters<typeof undiciFetch>[1]) as unknown as Promise<Response>
       : fetch(input, init),

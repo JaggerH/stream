@@ -1,5 +1,4 @@
-import { pluginTarget, type PluginTargetOpts } from '../plugins/plugin-target.ts'
-import { withAwake } from '../plugins/standby/hook.ts'
+import type { PluginTargetOpts, PluginTargets } from '../plugins/plugin-target.ts'
 import type { DiarizedSegment } from './resolve.ts'
 
 /**
@@ -41,25 +40,34 @@ export interface DiarizeResult {
  *  `opts.peek` 只给**纯探测**的调用方（`configured()`，见下）：那种问法在 host 档容器睡着时
  *  必然答空，喊出来是噪音。**整个函数不能静音**——它同时被真实取数路径（`base` getter，在
  *  withAwake 回调里求值）调用，那一端答空是真故障，必须留着喊声。 */
-export function resolveVoiceprintUrl(explicit?: string, opts?: PluginTargetOpts): string {
-  return (explicit ?? process.env.VOICEPRINT_URL ?? pluginTarget('voiceprint', opts) ?? '').replace(/\/$/, '')
+export function resolveVoiceprintUrl(explicit?: string, targets?: PluginTargets, opts?: PluginTargetOpts): string {
+  return (explicit ?? process.env.VOICEPRINT_URL ?? targets?.target('voiceprint', opts) ?? '').replace(/\/$/, '')
 }
 
 /** Thin client over the sherpa-onnx voiceprint serving image. `diarize` returns who-spoke-when
  *  spans WITH each span's speaker embedding (one pass); `embed` embeds a single clip. Stateless
  *  — it knows no identities. */
 export class VoiceprintEngineClient {
-  constructor(private readonly explicitUrl?: string) {}
+  constructor(
+    private readonly explicitUrl?: string,
+    /** 本实例的后端取址 + standby 钩子（conversions 域从 ctx.packages 递）。缺（单测）= 取址恒空、直跑。 */
+    private readonly targets?: PluginTargets,
+  ) {}
+
+  /** withAwake 的实例版：没接钩子（单测）= 直跑。 */
+  private awake<T>(fn: () => Promise<T>): Promise<T> {
+    return this.targets ? this.targets.standby.withAwake('voiceprint', fn) : fn()
+  }
 
   /** 惰性:host 档下 origin 是容器醒着时才存在的(standby Cell 缓存),构造期快照必得空串。
    *  每次求值现解析;fetch 都在 withAwake 回调里,求值时容器已醒。compose 档恒定,无行为差。 */
   get base(): string {
-    return resolveVoiceprintUrl(this.explicitUrl)
+    return resolveVoiceprintUrl(this.explicitUrl, this.targets)
   }
   /** 「管不管得着」——纯探测（identifyReady → GET /api/conversion-kinds 每次都问一遍），
    *  不发请求、不唤醒。走窥视档：睡着时答空是正确答案，不进 `plugin-target` 故障频道。 */
   configured(): boolean {
-    return resolveVoiceprintUrl(this.explicitUrl, { peek: true }).length > 0
+    return resolveVoiceprintUrl(this.explicitUrl, this.targets, { peek: true }).length > 0
   }
 
   async diarize(
@@ -71,7 +79,7 @@ export class VoiceprintEngineClient {
     fd.append('file', new Blob([bytes as unknown as BlobPart], { type: mime }), 'audio')
     if (opts?.hint) fd.append('hint', opts.hint)
     // withAwake：diarize 单次调用可能跑很久，全程持引用防 reaper 中途停容器。
-    const r = await withAwake('voiceprint', () =>
+    const r = await this.awake(() =>
       fetch(`${this.base}/diarize`, { method: 'POST', body: fd, signal: opts?.signal })
     )
     if (!r.ok) throw new Error(`[voiceprint] diarize HTTP ${r.status}`)
@@ -115,7 +123,7 @@ export class VoiceprintEngineClient {
     const fd = new FormData()
     fd.append('file', new Blob([bytes as unknown as BlobPart], { type: mime }), 'audio')
     fd.append('intervals', JSON.stringify(intervals))
-    const r = await withAwake('voiceprint', () =>
+    const r = await this.awake(() =>
       fetch(`${this.base}/speech-frac`, { method: 'POST', body: fd, signal })
     )
     if (!r.ok) throw new Error(`[voiceprint] speech-frac HTTP ${r.status}`)
@@ -133,7 +141,7 @@ export class VoiceprintEngineClient {
   async embed(bytes: Uint8Array, mime: string, signal?: AbortSignal): Promise<{ modelVersion: string; embedding: number[] }> {
     const fd = new FormData()
     fd.append('file', new Blob([bytes as unknown as BlobPart], { type: mime }), 'audio')
-    const r = await withAwake('voiceprint', () => fetch(`${this.base}/embed`, { method: 'POST', body: fd, signal }))
+    const r = await this.awake(() => fetch(`${this.base}/embed`, { method: 'POST', body: fd, signal }))
     if (!r.ok) throw new Error(`[voiceprint] embed HTTP ${r.status}`)
     const j = (await r.json()) as { model_version?: string; embedding?: number[] }
     return { modelVersion: j.model_version ?? 'unknown', embedding: j.embedding ?? [] }

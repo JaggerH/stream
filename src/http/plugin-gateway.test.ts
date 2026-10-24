@@ -14,16 +14,17 @@ import { DedupStore } from '../dedup-store.ts'
 import { ItemStore } from '../item-store.ts'
 import { UserStore } from '../store/user-store.ts'
 import type { PluginDescriptor } from '../plugins/types.ts'
-import { setStandbyManager } from '../plugins/standby/hook.ts'
+import { StandbyHooks } from '../plugins/standby/hook.ts'
 import type { StandbyManager } from '../plugins/standby/manager.ts'
 
 const descs: PluginDescriptor[] = [
   { id: 'pansou', backend: { image: 'x', service: 'pansou', port: 8888 } } as PluginDescriptor,
 ]
 
-function appWith(fetchImpl: typeof fetch, mode: 'compose' | 'none' = 'compose') {
+function appWith(fetchImpl: typeof fetch, standby?: StandbyHooks) {
+  const mode: 'compose' | 'none' = 'compose'
   const app = new Hono()
-  mountPluginGateway(app, { descriptors: descs, mode, fetchImpl })
+  mountPluginGateway(app, { descriptors: descs, mode, fetchImpl, standby })
   return app
 }
 
@@ -96,7 +97,11 @@ describe('mountPluginGateway', () => {
 
   it('mode=none → 不注册路由（/_p/* 交给后续处理，返回 404 Not Found by Hono）', async () => {
     const fetchImpl = vi.fn() as unknown as typeof fetch
-    const app = appWith(fetchImpl, 'none')
+    const app = (() => {
+      const a = new Hono()
+      mountPluginGateway(a, { descriptors: descs, mode: 'none', fetchImpl })
+      return a
+    })()
     const res = await app.request('/_p/pansou/x')
     expect(res.status).toBe(404)
     expect(fetchImpl).not.toHaveBeenCalled()
@@ -117,10 +122,11 @@ describe('mountPluginGateway', () => {
   })
 
   describe('standby wake-on-request（注入假 manager）', () => {
+    const hooks = new StandbyHooks()
     afterEach(() => {
-      // 断言若中途抛出也不能让假 manager 漏到别的测试文件里 —— 必须在 afterEach 里回收，
+      // 断言若中途抛出也不能让假 manager 漏到别的用例 —— 必须在 afterEach 里回收，
       // 不能写成 try 块末尾的收尾语句。
-      setStandbyManager(null)
+      hooks.bind(null)
     })
 
     it('代理前先唤醒 service；withAwake 实际执行 fn，上游照常收到请求', async () => {
@@ -136,9 +142,9 @@ describe('mountPluginGateway', () => {
         managed: () => false,
         diagnose: async (s: string) => ({ service: s, managed: false, state: null, cachedOrigin: null, container: 'unknown' as const, containerId: null, hostPort: null }),
       }
-      setStandbyManager(fake)
+      hooks.bind(fake)
       const fetchImpl = vi.fn(async () => new Response('ok', { status: 200 })) as unknown as typeof fetch
-      const res = await appWith(fetchImpl).request('/_p/pansou/x')
+      const res = await appWith(fetchImpl, hooks).request('/_p/pansou/x')
       expect(woken).toContain('pansou')
       expect(res.status).toBe(200)
       expect(fetchImpl).toHaveBeenCalled()
@@ -156,9 +162,9 @@ describe('mountPluginGateway', () => {
         managed: () => false,
         diagnose: async (s: string) => ({ service: s, managed: false, state: null, cachedOrigin: null, container: 'unknown' as const, containerId: null, hostPort: null }),
       }
-      setStandbyManager(fake)
+      hooks.bind(fake)
       const fetchImpl = vi.fn() as unknown as typeof fetch
-      const res = await appWith(fetchImpl).request('/_p/pansou/x')
+      const res = await appWith(fetchImpl, hooks).request('/_p/pansou/x')
       expect(res.status).toBe(502)
       expect(await res.text()).toContain('standby wake timeout')
       expect(fetchImpl).not.toHaveBeenCalled()

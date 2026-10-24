@@ -3,7 +3,6 @@ import type { PluginNetMode } from '../plugin-target.ts'
 import { resolveDockerEndpoint, makeDockerClient, type DockerClient, type DockerEndpoint } from './docker-api.ts'
 import { makeStandbyManager, type StandbyManager, type StandbyManagerDeps } from './manager.ts'
 import { planStandbyServices, standbyManagingLabel } from './service-list.ts'
-import { setStandbyManager } from './hook.ts'
 
 /**
  * inert 的三条出口,**各自有名字**。
@@ -116,7 +115,8 @@ export async function wireStandby(deps: StandbyWiringDeps): Promise<StandbyWirin
   }
 
   const manager = (deps.makeManager ?? makeStandbyManager)({ docker, services: plan.services })
-  const setHook = deps.setHook ?? setStandbyManager
+  // setHook 由 serve 递（绑到本实例的 ctx.packages.standby 上）；wire 自己不再认识任何模块级全局。
+  const setHook = deps.setHook ?? (() => {})
   // hook 先接、再 adopt:adopt 要逐个查 Docker,期间到达的请求必须已经能看到管理器,
   // 否则它们会打在一个还没被收养、可能已停的容器上。
   setHook(manager)

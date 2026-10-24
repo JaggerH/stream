@@ -132,7 +132,7 @@ export const netdiskPlugin = {
         // **别摘掉这一行**：没有它，症状是「跑了两天之后所有网盘操作一起 401」，而 token
         // 明明能自动换发。底座包没启用时由 packages 域自己抛。
         refresh: () => alistFacet.refresh(),
-      })
+      }, undefined, ctx.packages.targets)
       // 订阅流那一支左侧的两个读法（绑定 / 归档权威）住在 src/netdisk/left-from-stream.ts；
       // 这里只把 ItemStore 包成它要的 deps。为什么是两支、差在哪 → 那份文件的头注。
       // 取数一律 newest-first + limit，再倒回入库顺序交给绑定支：`order:'asc'` 直接配 limit，丢的是

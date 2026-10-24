@@ -1,20 +1,15 @@
 /**
- * 模块级可变全局（「钩子」）的**登记与生命周期**。
+ * 实例钩子的**登记与生命周期**。
  *
- * 有两个模块因为拿不到 bootstrap 的闭包而只能靠模块级变量接线：`plugin-target`（每个
- * `resolveXUrl` 都读它）、`standby/hook`（`withAwake` 读它）。（调度中心的 deps 已归实例——
- * `TaskCenter.depsBound()`，由调用方作为额外的探针递进 `reportUnboundHooks`。）消费侧的 getter 一律不动——这里改的只有两件事：
+ * `plugin-target`（`ctx.packages.targets`）与 `standby`（`ctx.packages.standby`）如今都是
+ * 实例对象，`bindModuleHook` 只负责把「绑上 / 复位」登记进内核 effect：`fiber.dispose()` 时
+ * 复位，一个进程跑第二次 bootstrap 不会再读到上一次的残留。
  *
- * 1. **登记随内核挂卸**：`bindModuleHook` 把 set 包进 `ctx.effect()`，`fiber.dispose()` 时复位
- *    为 null。过去这些全局从不复位，一个进程里跑两次 bootstrap（测试、将来的重启）会读到上一
- *    次的残留，而残留和「正确接线」运行时完全无法区分。
- * 2. **未接线可观测**：`reportUnboundHooks` 在启动完成处报一行「谁还是 null」。
- *    降级档（没有 Docker、查询档不起调度中心）是**故意不接**，由调用方显式申报进 `degraded`，
- *    不进告警——否则这行日志第一天就变成噪音，然后没人再读它。
+ * **未接线可观测**：`reportUnboundHooks` 在启动完成处报一行「谁还是 null」。探针由调用方
+ * 递（实例上拿），降级档（没有 Docker、查询档不起调度中心）是**故意不接**，由调用方显式申报
+ * 进 `degraded`，不进告警——否则这行日志第一天就变成噪音，然后没人再读它。
  */
 import type { Context } from 'cordis'
-import { isPluginTargetBound } from '../../plugins/plugin-target.ts'
-import { isStandbyBound } from '../../plugins/standby/hook.ts'
 
 /**
  * 把一次模块级全局的绑定登记成内核 effect：挂载时 `bind()`、销毁时 `unbind()`。
@@ -42,15 +37,6 @@ export interface HookProbe {
   bound: () => boolean
 }
 
-/**
- * 全仓模块级钩子的名册。**往这两个之外再加一个模块级全局，就得在这里加一行**——否则
- * 「忘了接线」又会变回一个没人报的静默降级。
- */
-export const MODULE_HOOKS: readonly HookProbe[] = [
-  { name: 'pluginTarget', bound: isPluginTargetBound },
-  { name: 'standby', bound: isStandbyBound },
-]
-
 export interface UnboundHooksReport {
   /** 调用方显式申报的「这一档就是故意不接」，不进告警。 */
   degraded?: readonly string[]
@@ -64,7 +50,7 @@ export interface UnboundHooksReport {
  */
 export function reportUnboundHooks(opts: UnboundHooksReport): void {
   const degraded = new Set(opts.degraded ?? [])
-  const unbound = (opts.probes ?? MODULE_HOOKS).filter((p) => !p.bound()).map((p) => p.name)
+  const unbound = (opts.probes ?? []).filter((p) => !p.bound()).map((p) => p.name)
   const unexpected = unbound.filter((n) => !degraded.has(n))
   if (unexpected.length === 0) return
   const off = unbound.filter((n) => degraded.has(n))

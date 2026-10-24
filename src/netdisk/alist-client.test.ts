@@ -1,10 +1,21 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { setPluginTargetResolver } from '../plugins/plugin-target.ts'
+import { PluginTargets } from '../plugins/plugin-target.ts'
+import { StandbyHooks } from '../plugins/standby/hook.ts'
 
 const withAwakeMock = vi.fn(async (_service: string, fn: () => Promise<unknown>) => fn())
-vi.mock('../plugins/standby/hook.ts', () => ({ withAwake: (...args: [string, () => Promise<unknown>]) => withAwakeMock(...args) }))
+vi.mock('../plugins/standby/hook.ts', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../plugins/standby/hook.ts')>()),
+  // 只替 withAwake：hostAlistClient 的 around 走它；真实 StandbyHooks 类原样保留。
+  withAwake: (...args: [string, () => Promise<unknown>]) => withAwakeMock(...args),
+}))
 
 const { resolveAlistUrl, toGatewayAlistUrl, hostAlistClient } = await import('./alist-client.ts')
+
+const standbyHooks = new StandbyHooks()
+standbyHooks.bind({ withAwake: (...args: [string, () => Promise<unknown>]) => withAwakeMock(...args) } as never)
+const targets = new PluginTargets(standbyHooks)
+let resolver: (s: string) => string | null = () => null
+targets.bind((s) => resolver(s), null)
 
 describe('toGatewayAlistUrl', () => {
   it('re-serves an AList proxy link (internal host) through the same-origin gateway route', () => {
@@ -30,19 +41,19 @@ describe('toGatewayAlistUrl', () => {
 describe('resolveAlistUrl', () => {
   afterEach(() => {
     delete process.env.ALIST_URL
-    setPluginTargetResolver(() => null)
+    resolver = () => null
   })
   // 网盘底座是内置托管的：地址只有「宿主此刻给的容器地址」这一个来源。留着环境变量那一层，
   // 机器上碰巧设了 ALIST_URL 就会把所有网盘请求悄悄引到别处。
   it('只认 plugin target；ALIST_URL 环境变量不再生效', () => {
     process.env.ALIST_URL = 'http://from-env'
-    setPluginTargetResolver((s) => (s === 'alist' ? 'http://127.0.0.1:45001' : null))
-    expect(resolveAlistUrl()).toBe('http://127.0.0.1:45001')
+    resolver = (s) => (s === 'alist' ? 'http://127.0.0.1:45001' : null)
+    expect(resolveAlistUrl(targets)).toBe('http://127.0.0.1:45001')
   })
   it('没有容器地址（mode:none）→ 空串', () => {
     process.env.ALIST_URL = 'http://from-env'
-    setPluginTargetResolver(() => null)
-    expect(resolveAlistUrl()).toBe('')
+    resolver = () => null
+    expect(resolveAlistUrl(targets)).toBe('')
   })
 })
 
@@ -52,17 +63,17 @@ describe('hostAlistClient', () => {
     fetchMock = vi.fn()
     vi.stubGlobal('fetch', fetchMock)
     delete process.env.ALIST_URL
-    setPluginTargetResolver(() => null)
+    resolver = () => null
     withAwakeMock.mockClear()
   })
   afterEach(() => {
     vi.unstubAllGlobals()
-    setPluginTargetResolver(() => null) // 复位,别污染别的用例
+    resolver = () => null // 复位,别污染别的用例
   })
 
   it('base 是惰性的:构造期未接线,请求时读到后接线的 plugin target(host 档开机时容器睡着)', async () => {
-    const client = hostAlistClient({ token: 'tok' }) // 构造时 pluginTarget('alist') 还是 null
-    setPluginTargetResolver((s) => (s === 'alist' ? 'http://127.0.0.1:45001' : null))
+    const client = hostAlistClient({ token: 'tok' }, undefined, targets) // 构造时 pluginTarget('alist') 还是 null
+    resolver = (s) => (s === 'alist' ? 'http://127.0.0.1:45001' : null)
 
     fetchMock.mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ code: 200, data: { content: [] } }) } as Response)
     await client.listDir('/d')
@@ -78,17 +89,17 @@ describe('hostAlistClient', () => {
   // 同 adapter 那一条：host 档下 plugin target 只在容器醒着时有值，而唤醒发生在 withAwake 里。
   it('容器睡着（唤醒之前 plugin target 为空）时第一个请求也能成：地址在 withAwake 里面才取', async () => {
     let awake = false
-    setPluginTargetResolver((s) => (awake && s === 'alist' ? 'http://127.0.0.1:45001' : null))
+    resolver = (s) => (awake && s === 'alist' ? 'http://127.0.0.1:45001' : null)
     withAwakeMock.mockImplementationOnce(async (_service, fn) => { awake = true; try { return await fn() } finally { awake = false } })
-    const client = hostAlistClient({ token: 'tok' })
+    const client = hostAlistClient({ token: 'tok' }, undefined, targets)
     fetchMock.mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ code: 200, data: { content: [] } }) } as Response)
     await client.listDir('/d')
     expect(String(fetchMock.mock.calls[0][0])).toBe('http://127.0.0.1:45001/api/fs/list')
   })
 
   it('token 裸放 authorization 头', async () => {
-    setPluginTargetResolver(() => 'http://alist-target')
-    const client = hostAlistClient({ token: 'my-token' })
+    resolver = () => 'http://alist-target'
+    const client = hostAlistClient({ token: 'my-token' }, undefined, targets)
     fetchMock.mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ code: 200, data: { content: [] } }) } as Response)
     await client.listDir('/d')
     const [url, init] = fetchMock.mock.calls[0]

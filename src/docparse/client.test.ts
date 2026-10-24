@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest'
 import { resolveMineruUrl, mineruMode, MineruClient } from './client.ts'
-import { setPluginTargetResolver, resolvePluginTarget } from '../plugins/plugin-target.ts'
+import { PluginTargets, resolvePluginTarget } from '../plugins/plugin-target.ts'
+import { StandbyHooks } from '../plugins/standby/hook.ts'
 import type { PluginDescriptor } from '../plugins/types.ts'
 
 const ENV = { ...process.env }
@@ -10,12 +11,11 @@ afterEach(() => {
 })
 
 describe('resolveMineruUrl', () => {
+  // 未接线 = mode:none 的默认态：不传 targets 就是它。
   beforeEach(() => {
     delete process.env.MINERU_URL
     delete process.env.STREAM_PLUGIN_GATEWAY
-    setPluginTargetResolver(() => null) // 未接线 = mode:none 的默认态
   })
-  afterEach(() => setPluginTargetResolver(() => null))
 
   it('prefers an explicit url, stripping a trailing slash', () => {
     expect(resolveMineruUrl('https://relay.example.com/')).toBe('https://relay.example.com')
@@ -30,12 +30,13 @@ describe('resolveMineruUrl', () => {
     expect(resolveMineruUrl()).toBe('')
   })
 
-  it('bootstrap 接线后（compose 形态）→ 容器 DNS target，无需调用方自己穿 descriptors', () => {
+  it('接了实例 targets（compose 形态）→ 容器 DNS target，无需调用方自己穿 descriptors', () => {
     const descriptors: PluginDescriptor[] = [
       { id: 'mineru', backend: { image: 'x', port: 80 } } as PluginDescriptor,
     ]
-    setPluginTargetResolver((service) => resolvePluginTarget(service, { descriptors, mode: 'compose' }))
-    expect(resolveMineruUrl()).toBe('http://mineru:80')
+    const targets = new PluginTargets(new StandbyHooks())
+    targets.bind((service) => resolvePluginTarget(service, { descriptors, mode: 'compose' }), null)
+    expect(resolveMineruUrl(undefined, targets)).toBe('http://mineru:80')
   })
 })
 
@@ -85,7 +86,6 @@ describe('MineruClient.parse', () => {
 
   it('MinerU 缺席（base 为空）→ 报「未安装 + 装法」，一个 fetch 都不发', async () => {
     delete process.env.MINERU_URL
-    setPluginTargetResolver(() => null)
     const fetchMock = vi.fn(async () => new Response('', { status: 200 }))
     vi.stubGlobal('fetch', fetchMock)
     const c = new MineruClient()

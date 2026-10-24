@@ -1,7 +1,7 @@
 import type { Hono } from 'hono'
 import type { PluginDescriptor } from '../plugins/types.ts'
 import { resolvePluginTarget, type PluginNetMode } from '../plugins/plugin-target.ts'
-import { withAwake, standbyOrigin } from '../plugins/standby/hook.ts'
+import type { StandbyHooks } from '../plugins/standby/hook.ts'
 import { errText } from '../err-text.ts'
 
 /**
@@ -24,11 +24,13 @@ export function mountPluginGateway(
     descriptors: PluginDescriptor[]
     mode: PluginNetMode
     fetchImpl?: typeof fetch
-    /** host 档动态取址(默认 standbyOrigin);注入以便单测。 */
+    /** host 档动态取址(默认本实例的 standby 钩子);注入以便单测。 */
     resolveHostOrigin?: (service: string) => string | null
+    /** 本实例的 standby 钩子:代理请求整段持引用防 reaper 中途停容器。 */
+    standby?: StandbyHooks
   },
 ): void {
-  const resolveHostOrigin = opts.resolveHostOrigin ?? standbyOrigin
+  const resolveHostOrigin = opts.resolveHostOrigin ?? ((service: string) => opts.standby?.origin(service) ?? null)
   const hasTarget =
     opts.mode === 'compose'
       ? opts.descriptors.some(
@@ -91,16 +93,17 @@ export function mountPluginGateway(
     // 已知 caveat：流式 body 的请求撞上僵尸口触发 withAwake 内部恢复重试时，
     // body 流已被第一次 fetch 消费，重试会以 "body already used" 失败并落成 502——
     // 可接受，能力客户端走的是 FormData（非流式），不受影响。
+    const run = () => {
+      const target =
+        opts.mode === 'host'
+          ? resolveHostOrigin(service)
+          : resolvePluginTarget(service, { descriptors: opts.descriptors, mode: opts.mode })
+      if (!target) throw new Error(`no origin for plugin ${service} (container asleep and standby not wired?)`)
+      return doFetch(`${target}${rest}${url.search}`, init)
+    }
     let resp: Response
     try {
-      resp = await withAwake(service, () => {
-        const target =
-          opts.mode === 'host'
-            ? resolveHostOrigin(service)
-            : resolvePluginTarget(service, { descriptors: opts.descriptors, mode: opts.mode })
-        if (!target) throw new Error(`no origin for plugin ${service} (container asleep and standby not wired?)`)
-        return doFetch(`${target}${rest}${url.search}`, init)
-      })
+      resp = await (opts.standby ? opts.standby.withAwake(service, run) : run())
     } catch (e) {
       // errText(共享实现):`String((e as Error).message)` 对一个非 Error 抛出物会返回字面量
       // "undefined",把真正的失败原因整个吃掉——502 的 body 变成 {"error":"undefined"}。

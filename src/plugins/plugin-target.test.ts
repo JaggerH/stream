@@ -1,11 +1,6 @@
-import { afterEach, describe, expect, it } from 'vitest'
-import {
-  resolvePluginTarget,
-  pluginNetMode,
-  pluginTarget,
-  setPluginTargetResolver,
-  setPluginTargetMissReporter,
-} from './plugin-target.ts'
+import { describe, expect, it, vi } from 'vitest'
+import { PluginTargets, resolvePluginTarget, pluginNetMode } from './plugin-target.ts'
+import { StandbyHooks } from './standby/hook.ts'
 import type { PluginDescriptor } from './types.ts'
 
 const descs: PluginDescriptor[] = [
@@ -18,134 +13,113 @@ describe('resolvePluginTarget', () => {
   it('compose 形态：有 backend → http://<service>:<port>', () => {
     expect(resolvePluginTarget('pansou', { descriptors: descs, mode: 'compose' })).toBe('http://pansou:8888')
   })
-  it('service 缺省时回落到 plugin id', () => {
+  it('service 缺省用包 id', () => {
     expect(resolvePluginTarget('alist', { descriptors: descs, mode: 'compose' })).toBe('http://alist:5244')
   })
-  it('无 backend 的插件 → null', () => {
+  it('无 backend 的包 / 不认识的 service → null（none 形态一律 null）', () => {
     expect(resolvePluginTarget('builtin', { descriptors: descs, mode: 'compose' })).toBeNull()
-  })
-  it('未知插件 → null', () => {
     expect(resolvePluginTarget('nope', { descriptors: descs, mode: 'compose' })).toBeNull()
-  })
-  it('none 形态（桌面无门）：一律 null', () => {
     expect(resolvePluginTarget('pansou', { descriptors: descs, mode: 'none' })).toBeNull()
+    expect(resolvePluginTarget('pansou', { descriptors: descs, mode: 'host' })).toBeNull()
   })
 })
 
 describe('pluginNetMode', () => {
-  it('STREAM_PLUGIN_NETWORK=compose → compose', () => {
-    expect(pluginNetMode({ STREAM_PLUGIN_NETWORK: 'compose' })).toBe('compose')
-  })
-  it('缺省 → none', () => {
-    expect(pluginNetMode({})).toBe('none')
-  })
-})
-
-describe('pluginNetMode host 档', () => {
-  it('STREAM_PLUGIN_NETWORK=host → host', () => {
+  it('STREAM_PLUGIN_NETWORK 的三档', () => {
+    expect(pluginNetMode({ STREAM_PLUGIN_NETWORK: 'compose' } as NodeJS.ProcessEnv)).toBe('compose')
     expect(pluginNetMode({ STREAM_PLUGIN_NETWORK: 'host' } as NodeJS.ProcessEnv)).toBe('host')
-  })
-  it('resolvePluginTarget 在 host 档静态解析返回 null（动态解析走 standbyOrigin）', () => {
-    const descriptors = [
-      { id: 'mineru', backend: { image: 'x', port: 9000 } },
-    ] as unknown as PluginDescriptor[]
-    expect(resolvePluginTarget('mineru', { descriptors, mode: 'host' })).toBeNull()
+    expect(pluginNetMode({} as NodeJS.ProcessEnv)).toBe('none')
   })
 })
 
-// setPluginTargetResolver 让 bootstrap 在启动时把 {descriptors, mode} 绑好一次，之后每个
-// server-side base 解析器（resolveTranscribeUrl/resolveMineruUrl/resolveAlistUrl/pansou，以及
-// 递给包的 `ctx.backendUrl()` thunk）都读同一个注入点，不必给每个调用点单独穿 descriptors 参数。
-describe('setPluginTargetResolver / pluginTarget', () => {
-  afterEach(() => setPluginTargetResolver(() => null)) // 复位，别泄漏进下一个 test
-
-  it('未接线前（如独立跑某个 client 的单测）一律 null，等价 mode=none', () => {
-    expect(pluginTarget('mineru')).toBeNull()
+describe('PluginTargets（实例）', () => {
+  it('未接线 → 一律 null（等价 mode=none），peek 与否都一样', () => {
+    const t = new PluginTargets(new StandbyHooks())
+    expect(t.target('pansou')).toBeNull()
+    expect(t.target('pansou', { peek: true })).toBeNull()
   })
 
-  it('bootstrap 接线后，调用方免穿参就能拿到真实 target', () => {
-    setPluginTargetResolver((service) => resolvePluginTarget(service, { descriptors: descs, mode: 'compose' }))
-    expect(pluginTarget('pansou')).toBe('http://pansou:8888')
-    expect(pluginTarget('builtin')).toBeNull() // 无 backend 的插件仍是 null
-  })
-})
-
-// 答空时的现场记录（spec 2026-08-19-plugin-target-empty-observability）。这一层只负责「答空了就
-// 喊一声」，事实收集在 packages.ts、分类与渲染在 target-miss.ts —— 这里钉的是喊声本身。
-describe('setPluginTargetMissReporter', () => {
-  afterEach(() => {
-    setPluginTargetResolver(() => null)
-    setPluginTargetMissReporter(null)
+  it('接线后 resolver 生效；答空时喊一声（非 peek）', () => {
+    const t = new PluginTargets(new StandbyHooks())
+    const miss = vi.fn()
+    t.bind(() => null, miss)
+    expect(t.target('nope')).toBeNull()
+    expect(miss).toHaveBeenCalledWith('nope')
   })
 
-  it('答空 → reporter 收到 service;答出来 → 一声不吭', () => {
-    const seen: string[] = []
-    setPluginTargetResolver((service) => resolvePluginTarget(service, { descriptors: descs, mode: 'compose' }))
-    setPluginTargetMissReporter((s) => { seen.push(s) })
-    expect(pluginTarget('pansou')).toBe('http://pansou:8888')
-    expect(seen).toEqual([])
-    expect(pluginTarget('builtin')).toBeNull()
-    expect(seen).toEqual(['builtin'])
+  it('peek 只掐喊声，答什么不变；reporter 抛错不影响返回', () => {
+    const t = new PluginTargets(new StandbyHooks())
+    const miss = vi.fn(() => { throw new Error('reporter crashed') })
+    t.bind(() => null, miss)
+    expect(t.target('nope', { peek: true })).toBeNull()
+    expect(miss).not.toHaveBeenCalled()
+    expect(t.target('nope')).toBeNull() // reporter 抛了也不影响
+    expect(miss).toHaveBeenCalledTimes(1)
   })
 
-  it('resolver 未接线时答空也报（"钩子没接"本身就是要记的现场）', () => {
-    const seen: string[] = []
-    setPluginTargetResolver(null)
-    setPluginTargetMissReporter((s) => { seen.push(s) })
-    expect(pluginTarget('mineru')).toBeNull()
-    expect(seen).toEqual(['mineru'])
+  it('复位（内核 dispose）→ 回到未接线', () => {
+    const t = new PluginTargets(new StandbyHooks())
+    t.bind((s) => (s === 'pansou' ? 'http://pansou:8888' : null), null)
+    expect(t.bound).toBe(true)
+    expect(t.target('pansou')).toBe('http://pansou:8888')
+    t.bind(null, null)
+    expect(t.bound).toBe(false)
+    expect(t.target('pansou')).toBeNull()
   })
 
-  it('reporter 抛错不改变取址行为——观测绝不能反过来打死主链路', () => {
-    setPluginTargetResolver((service) => resolvePluginTarget(service, { descriptors: descs, mode: 'compose' }))
-    setPluginTargetMissReporter(() => { throw new Error('debug bus exploded') })
-    expect(() => pluginTarget('builtin')).not.toThrow()
-    expect(pluginTarget('builtin')).toBeNull()
-    expect(pluginTarget('pansou')).toBe('http://pansou:8888')
-  })
-
-  it('未接 reporter（单测/stdio）一律 no-op', () => {
-    setPluginTargetMissReporter(null)
-    expect(pluginTarget('nope')).toBeNull()
+  it('一个实例一份：A 接了 resolver，B 读不到（答空也不喊 A 的 reporter）', () => {
+    const a = new PluginTargets(new StandbyHooks())
+    const b = new PluginTargets(new StandbyHooks())
+    const missA = vi.fn()
+    a.bind((s) => (s === 'pansou' ? 'http://a:8888' : null), missA)
+    expect(a.target('pansou')).toBe('http://a:8888')
+    expect(b.target('pansou')).toBeNull()
+    expect(missA).not.toHaveBeenCalled() // B 的答空不经过 A 的 reporter
   })
 })
 
-// 窥视档：**只是问一句地址，不打算用它**（状态面板、`available()` 这类纯探测）。host 档下
-// standby 管着的容器闲置就 stop，停着时没有 loopback 宿主口 —— 答空是**正确答案**，喊出来只是
-// 噪音。实测 2026-08-24 起 777 条 `plugin-target` 现场里 777 条来自这类探测、0 条来自真正的
-// 消费路径（先 withAwake 再取址），频道被淹。这里钉的是「静音只静喊声，不动取址」。
-describe('pluginTarget 窥视档（peek）', () => {
-  afterEach(() => {
-    setPluginTargetResolver(() => null)
-    setPluginTargetMissReporter(null)
+describe('StandbyHooks（实例）', () => {
+  it('未接线：withAwake 直跑、origin/managed/diagnose 全空、inertReason 可读', async () => {
+    const h = new StandbyHooks()
+    h.setInertReason({ kind: 'no-docker' } as never)
+    expect(await h.withAwake('x', async () => 7)).toBe(7)
+    expect(h.origin('x')).toBeNull()
+    expect(h.managed('x')).toBe(false)
+    expect(await h.diagnose('x')).toBeNull()
+    expect(h.inertReason()).toEqual({ kind: 'no-docker' })
+    expect(h.bound).toBe(false)
   })
 
-  it('peek 答空 → reporter 不被调用；返回值与普通档逐字相同', () => {
-    const seen: string[] = []
-    setPluginTargetResolver((service) => resolvePluginTarget(service, { descriptors: descs, mode: 'compose' }))
-    setPluginTargetMissReporter((s) => { seen.push(s) })
-    const peeked = pluginTarget('builtin', { peek: true })
-    expect(peeked).toBeNull()
-    expect(seen).toEqual([]) // 窥视不喊
-    expect(peeked).toBe(pluginTarget('builtin')) // 取址行为零变化
-    expect(seen).toEqual(['builtin']) // 普通档照喊 —— 静音的只有窥视那一档
+  it('接线后 manager 生效、inertReason 归 null；复位又回来', async () => {
+    const h = new StandbyHooks()
+    h.setInertReason({ kind: 'no-docker' } as never)
+    const woken: string[] = []
+    const fake = {
+      withAwake: async (s: string, fn: () => Promise<number>) => { woken.push(s); return fn() },
+      ensureAwake: async () => {},
+      origin: (s: string) => `http://awake:${s}`,
+      managed: (s: string) => s === 'mineru',
+      snapshot: () => [],
+      diagnose: async (s: string) => ({ service: s }) as never,
+    } as never
+    h.bind(fake)
+    expect(h.bound).toBe(true)
+    expect(h.inertReason()).toBeNull()
+    expect(await h.withAwake('mineru', async () => 1)).toBe(1)
+    expect(woken).toEqual(['mineru'])
+    expect(h.origin('mineru')).toBe('http://awake:mineru')
+    expect(h.managed('mineru')).toBe(true)
+    h.bind(null)
+    expect(h.bound).toBe(false)
+    expect(h.inertReason()).toEqual({ kind: 'no-docker' })
   })
 
-  it('peek 答得出来时也与普通档逐字相同（两档只差一个喊声）', () => {
-    setPluginTargetResolver((service) => resolvePluginTarget(service, { descriptors: descs, mode: 'compose' }))
-    setPluginTargetMissReporter(() => { throw new Error('不该被调用') })
-    expect(pluginTarget('pansou', { peek: true })).toBe('http://pansou:8888')
-    expect(pluginTarget('alist', { peek: true })).toBe('http://alist:5244')
-  })
-
-  it('resolver 未接线时 peek 也不喊（探测本来就不关心钩子接没接）', () => {
-    const seen: string[] = []
-    setPluginTargetResolver(null)
-    setPluginTargetMissReporter((s) => { seen.push(s) })
-    expect(pluginTarget('mineru', { peek: true })).toBeNull()
-    expect(seen).toEqual([])
+  it('一个实例一份：A 的 manager B 看不见', () => {
+    const a = new StandbyHooks()
+    const b = new StandbyHooks()
+    a.bind({ managed: () => true, origin: () => 'http://a', snapshot: () => [] } as never)
+    expect(a.managed('x')).toBe(true)
+    expect(b.managed('x')).toBe(false)
+    expect(b.origin('x')).toBeNull()
   })
 })
-
-// 「内置 + 第三方」的合并名单已收进 BackendDirectory（src/kernel/plugins/backend-directory.ts），
-// 它自己的测试在 backend-directory.test.ts。

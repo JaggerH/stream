@@ -62,7 +62,16 @@ vi.mock('../../media/ffmpeg-bin.ts', async (importOriginal) => {
 const standby = { managed: false }
 vi.mock('../../plugins/standby/hook.ts', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../plugins/standby/hook.ts')>()
-  return { ...actual, standbyManaged: () => standby.managed }
+  return {
+    ...actual,
+    // 域内经 ctx.packages.standby（实例）问「管不管」；这里把 StandbyHooks.prototype.managed
+    // 一并替换，惰性场景（装配后才醒）用它观察。
+    StandbyHooks: class extends actual.StandbyHooks {
+      managed(service: string): boolean {
+        return service === 'voiceprint' || service === 'mineru' ? standby.managed : super.managed(service)
+      }
+    },
+  }
 })
 
 /** 装到 netdisk 域为止（conversions 域 inject 的六个上游全在这里备齐；packages 域是 sources 的上游，顺带在）。 */
@@ -88,6 +97,7 @@ async function mountUpstream() {
   await kernel.plugin(runtimeConfigPlugin, { env: process.env })
   await kernel.plugin(credentialsPlugin, { dataDir, log: () => {}, requiredDomains: () => [], env: process.env })
   await kernel.plugin(packagesPlugin, {
+    netMode: 'none' as const,
     packagesDir, dataDir, manageContainers: false, log: () => {},
     catalogSummary: (id) => ({ id } as unknown as PluginSummary),
   })

@@ -55,6 +55,7 @@ async function mountUpToProvider(seed?: (packagesDir: string) => void) {
   await kernel.plugin(settingsPlugin, { path: join(dataDir, 'settings.json') })
   await kernel.plugin(credentialsPlugin, { dataDir, log: () => {}, requiredDomains: () => [] })
   await kernel.plugin(packagesPlugin, {
+    netMode: 'none' as const,
     packagesDir, dataDir, manageContainers: false, log: () => {},
     catalogSummary: (id) => ({ id } as unknown as PluginSummary),
   })

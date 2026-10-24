@@ -82,11 +82,9 @@ import { mountStandalonePage } from './http/standalone-page.ts'
 import { repoRoot, shippedRoot } from './http/build-identity.ts'
 import { mountTaskDashboard } from './http/task-dashboard.ts'
 import { mountPluginGateway } from './http/plugin-gateway.ts'
-import { pluginNetMode } from './plugins/plugin-target.ts'
 import { type StandbyManager } from './plugins/standby/manager.ts'
 import { wireStandby } from './plugins/standby/wire.ts'
 import { standbyInertNotification } from './plugins/standby/inert-notice.ts'
-import { setStandbyManager, setStandbyInertReason } from './plugins/standby/hook.ts'
 import type { TaskDeps } from './tasks/types.ts'
 import { builtinTasks } from './tasks/builtin.ts'
 import { TaskStore } from './tasks/task-store.ts'
@@ -103,7 +101,7 @@ import { localNameOf } from './registry/source-id.ts'
 import type { InterventionService } from './kernel/plugins/intervention.ts'
 import { errText } from './err-text.ts'
 import { ImportRunStore } from './sharing/import-run-store.ts'
-import { bindModuleHook, reportUnboundHooks, MODULE_HOOKS } from './kernel/plugins/module-hooks.ts'
+import { bindModuleHook, reportUnboundHooks } from './kernel/plugins/module-hooks.ts'
 
 /** 后端自己就是那扇门，默认口 = 唯一的对外口 8900（`DEFAULT_BACKEND_URL`、`GATEWAY_PORT`
  *  都是这个数）。曾经默认 4555 是容器时代的遗留：门在 Caddy 上，
@@ -714,6 +712,7 @@ async function main() {
   // 递的 runAction / actionRun 和 `/api/recipes/action` 那两格是同一个闭包——它只是动作 recipe
   // 的另一件外衣，不另装配一份 deps。
   mountImageGenerationRoutes(app, {
+    targets: pkgs.targets,
     runAction: agentDomain.mcpExtras.runActionRecipe,
     actionRun,
     // 只有 canonical browser recipe 有 `output.targetCount`（一轮固定出几张）；模型 id = sourceId。
@@ -965,7 +964,8 @@ async function main() {
   // 而且一行日志都不会提（终审 Important 3）。同一份合并名单也喂给包域里的 target resolver。
   mountPluginGateway(app, {
     descriptors: pkgs.backendDirectory.all(),
-    mode: pluginNetMode(),
+    mode: config.deployment?.plugin_network ?? 'none',
+    standby: pkgs.standby,
   })
 
   // standby-manager：声明了 backend.standby 的插件闲置回收 + 按需唤醒。
@@ -987,15 +987,15 @@ async function main() {
       // `standby: { idleMinutes: 30 }` 写在安装确认页上，名册漏了第三方那层，那句承诺就是
       // 空话——容器建起来一直跑，没人收也没人说。
       descriptors: pkgs.backendDirectory.all(),
-      mode: pluginNetMode(),
+      mode: config.deployment?.plugin_network ?? 'none',
       isEnabled: (p) => pkgs.isPluginEnabled(p),
       // 接线经内核 effect 登记（bindModuleHook）：挂上时 set、quiesceKernel 时复位为 null。
       // 传 null 的那一路（adopt 半路抛的复位）保持直接 set——那是"撤销一个半成品"，
       // 不是一次新的绑定，包成 effect 只会往树上挂一个什么都不做的 disposer。
       setHook: (m) =>
         m
-          ? bindModuleHook(kernel, () => setStandbyManager(m), () => setStandbyManager(null))
-          : setStandbyManager(null),
+          ? bindModuleHook(kernel, () => pkgs.standby.bind(m), () => pkgs.standby.bind(null))
+          : pkgs.standby.bind(null),
     })
     standbyMgr = wiring.manager
     // inert 的原因要活过这次接线:取址答空时才有人能分出「够不着 Docker」(事故,该喊)
@@ -1003,8 +1003,8 @@ async function main() {
     // 同进程第二次 bootstrap 会读到上一次的残留,而残留和真事故长得一模一样。
     bindModuleHook(
       kernel,
-      () => setStandbyInertReason(wiring.inertReason ?? null),
-      () => setStandbyInertReason(null),
+      () => pkgs.standby.setInertReason(wiring.inertReason ?? null),
+      () => pkgs.standby.setInertReason(null),
     )
     // 降级不等于闭嘴:够不着 Docker 时所有带容器的插件一起失效,而它们的失败形状是
     // 「取址答空 → base 空串 → 一句 Failed to parse URL」,没有一处会说出真正的原因。
@@ -1015,7 +1015,7 @@ async function main() {
     // 降级清理：hook 若已指向一个半成品管理器，后续 withAwake 会打到它上面。
     // 只可能在异常前被设上，这里无条件复位。
     standbyMgr = null
-    setStandbyManager(null)
+    pkgs.standby.bind(null)
   }, undefined, (detail) => {
     streamEvents.emit({
       type: 'plugin.container', severity: 'error',
@@ -1213,7 +1213,12 @@ async function main() {
   // （STREAM_NO_SCHEDULER=1）根本不起调度中心，taskDeps 没人要。掺进常态 = 第一天就变噪音。
   reportUnboundHooks({
     log: (m) => console.log(m),
-    probes: [...MODULE_HOOKS, { name: 'taskDeps', bound: () => stream.tasks.depsBound() }],
+    probes: [
+      // 钩子都在实例上（ctx.packages），名册也跟着实例走——没有模块级全局可指了。
+      { name: 'pluginTarget', bound: () => pkgs.targets.bound },
+      { name: 'standby', bound: () => pkgs.standby.bound },
+      { name: 'taskDeps', bound: () => stream.tasks.depsBound() },
+    ],
     degraded: [
       ...(standbyMgr ? [] : ['standby']),
       ...(process.env.STREAM_NO_SCHEDULER === '1' ? ['taskDeps'] : []),

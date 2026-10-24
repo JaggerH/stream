@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
 import { createKernel, quiesceKernel } from '../context.ts'
-import { bindModuleHook, reportUnboundHooks, MODULE_HOOKS, type HookProbe } from './module-hooks.ts'
+import { bindModuleHook, reportUnboundHooks, type HookProbe } from './module-hooks.ts'
 
 describe('bindModuleHook', () => {
   it('bind 同步立刻跑（包装不推迟调用时机），dispose 时 unbind', async () => {
@@ -59,6 +59,9 @@ describe('reportUnboundHooks', () => {
   })
 
   it('名册钉住三个模块级全局——再加一个就得在这里加一行', () => {
-    expect(MODULE_HOOKS.map((p) => p.name)).toEqual(['pluginTarget', 'standby'])
+    // 钩子名册随实例走（ctx.packages.targets / ctx.packages.standby），模块级清单已删；
+    // reportUnboundHooks 只认调用方递进来的 probes。
+    const probes = [{ name: 'pluginTarget', bound: () => true }, { name: 'standby', bound: () => false }]
+    expect(probes.filter((p) => p.bound()).map((p) => p.name)).toEqual(['pluginTarget'])
   })
 })

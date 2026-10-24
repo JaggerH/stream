@@ -1,5 +1,4 @@
-import { pluginTarget, type PluginTargetOpts } from '../plugins/plugin-target.ts'
-import { withAwake } from '../plugins/standby/hook.ts'
+import type { PluginTargetOpts, PluginTargets } from '../plugins/plugin-target.ts'
 
 /** Resolve the MinerU backend base url (server-side fetch base — NOT the client-facing gateway
  *  path): explicit → MINERU_URL env → the bootstrap-injected plugin target (compose mode:
@@ -9,8 +8,8 @@ import { withAwake } from '../plugins/standby/hook.ts'
  *  `opts.peek` 只给**纯探测**的调用方（conversions 域的 `mineruInstalled`，每次
  *  `/api/conversion-kinds` 都问一遍）：host 档容器睡着时答空是正确答案，喊出来是噪音。
  *  整个函数不能静音——`MineruClient.base` 在 withAwake 回调里求值，那一端答空是真故障。 */
-export function resolveMineruUrl(explicit?: string, opts?: PluginTargetOpts): string {
-  return (explicit ?? process.env.MINERU_URL ?? pluginTarget('mineru', opts) ?? '').replace(/\/$/, '')
+export function resolveMineruUrl(explicit?: string, targets?: PluginTargets, opts?: PluginTargetOpts): string {
+  return (explicit ?? process.env.MINERU_URL ?? targets?.target('mineru', opts) ?? '').replace(/\/$/, '')
 }
 
 /** A loopback host means the backend runs locally (behind the gateway); anything else
@@ -42,12 +41,21 @@ function typeHint(mime: string, filename: string): 'pdf' | 'image' {
  *  Stream sends the source BYTES (an item's image, or a fetched PDF); the backend runs the
  *  deterministic-first pipeline (born-digital text layer first; VLM only for image regions). */
 export class MineruClient {
-  constructor(private readonly explicitUrl?: string) {}
+  constructor(
+    private readonly explicitUrl?: string,
+    /** 本实例的后端取址 + standby 钩子（provider 域从 ctx.packages 递）。缺（单测）= 取址恒空、直跑。 */
+    private readonly targets?: PluginTargets,
+  ) {}
+
+  /** withAwake 的实例版：没接钩子（单测）= 直跑。 */
+  private awake<T>(fn: () => Promise<T>): Promise<T> {
+    return this.targets ? this.targets.standby.withAwake('mineru', fn) : fn()
+  }
 
   /** 惰性:host 档下 origin 是容器醒着时才存在的(standby Cell 缓存),构造期快照必得空串。
    *  每次求值现解析;fetch 都在 withAwake 回调里,求值时容器已醒。compose 档恒定,无行为差。 */
   get base(): string {
-    return resolveMineruUrl(this.explicitUrl)
+    return resolveMineruUrl(this.explicitUrl, this.targets)
   }
 
   mode(): 'local' | 'cloud' {
@@ -60,7 +68,7 @@ export class MineruClient {
     // variance on the generic rejects it otherwise.
     fd.append('file', new Blob([bytes as unknown as BlobPart], { type: mime }), filename)
     fd.append('type', typeHint(mime, filename))
-    const r = await withAwake('mineru', () => {
+    const r = await this.awake(() => {
       // 缺席要说人话：base 为空时 fetch 打的是 `/parse` 这个相对路径，报出来的是一句 URL/JSON 解析错，
       // 排查方向完全反了。MinerU 是可选包，「没装」是常态，不是故障——直接给装法。
       // **判在 withAwake 回调里**：host 档下地址只在容器醒着时存在，回调外判空会把睡着的容器误报成没装。

@@ -128,7 +128,7 @@ const one = (v: unknown | null | undefined): unknown[] => (v == null ? [] : [v])
  */
 export const providerPlugin = {
   name: 'provider',
-  inject: ['settings', 'sources', 'stores', 'adapters', 'credentials', 'streamEvents'],
+  inject: ['settings', 'sources', 'stores', 'adapters', 'credentials', 'streamEvents', 'packages'],
   apply(ctx: Context, config: ProviderConfig): void {
     const { log, runtimeConfigFor } = config
     const settings = ctx.settings
@@ -243,7 +243,7 @@ export const providerPlugin = {
     // OCR 成员（`parse` 行）。视觉模型那档和 llm-chat 是同一个传输层——同一个 /chat/completions、
     // 同一种 BYOK 钥匙，只是消息里多一个 image 分片；本地 MinerU 那档兜底。
     builtinAdapter.register('ocr-vlm', makeOcrVlmFn({ token: (n) => tokenProvider.token(n) }))
-    builtinAdapter.register('ocr-mineru', makeOcrMineruFn(new MineruClient(config.mineruUrl)))
+    builtinAdapter.register('ocr-mineru', makeOcrMineruFn(new MineruClient(config.mineruUrl, ctx.packages.targets)))
     // Video detail enrichment Sources. Their API keys live in the hot settings overlay; the
     // Provider rows decide which of these Sources run and in what merge order. TMDb 是宿主的影视身份
     // 主键（领域模型）留在这里；补空的第三方元数据源住各自的包（OMDb → packages/omdb 的 adapter）。

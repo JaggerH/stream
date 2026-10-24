@@ -15,9 +15,7 @@
 // 这条口是程序消费者，和 CLI `--yes` 同一档；人的意图在客户端那次点击里。
 import type { Context, Hono } from 'hono'
 import { createHash } from 'node:crypto'
-import { pluginTarget } from '../plugins/plugin-target.ts'
 import { resolveBySourceId } from '../registry/source-id.ts'
-import { withAwake } from '../plugins/standby/hook.ts'
 
 /** recipe 在 `meta.produces` 里填这个值，就会出现在 `/v1/models` 里、能被 `model` 指到。 */
 export const PRODUCES_IMAGES = 'images'
@@ -62,6 +60,8 @@ export interface ImageGenerationRoutesDeps {
   models: () => ImageModel[]
   /** 下载一张图的字节。默认全局 fetch；测试注入。 */
   fetchBytes?: (url: string) => Promise<Uint8Array>
+  /** 本实例的后端取址 + standby 钩子（serve 从 pkgs.targets 递；测试可注入别的）。 */
+  targets?: import('../plugins/plugin-target.ts').PluginTargets
   /** 去水印：一张进一张出。默认打 `dewatermark` 容器；测试注入。 */
   dewatermark?: (png: Uint8Array) => Promise<Uint8Array>
   /** `dewatermark` 容器的地址。`dewatermark` 是可选包（stream-packages），装没装只有运行时才知道——
@@ -108,22 +108,22 @@ async function defaultFetchBytes(url: string): Promise<Uint8Array> {
 /** 打去水印容器。地址在 `withAwake` 里现解析——host 档的 loopback 口只在容器醒着时存在（call-service 头注）。
  *  `target` 现算而非装配期存：`dewatermark` 是可选包，装没装只有运行时才知道。地址解析不到 → 没装（503），
  *  别跟"装了但打不通"混（502）。 */
-function makeDefaultDewatermark(target: () => string | null): (png: Uint8Array) => Promise<Uint8Array> {
-  return async (png) =>
-    await withAwake(DEWATERMARK_SERVICE, async () => {
-      const base = target()
-      if (!base) throw new DewatermarkUnavailableError()
-      const form = new FormData()
-      const bytes = png.buffer.slice(png.byteOffset, png.byteOffset + png.byteLength) as ArrayBuffer
-      form.set('image', new Blob([bytes], { type: 'image/png' }), 'image.png')
-      const res = await fetch(`${base.replace(/\/$/, '')}/remove`, {
-        method: 'POST',
-        body: form,
-        signal: AbortSignal.timeout(DEWATERMARK_TIMEOUT_MS),
-      })
-      if (!res.ok) throw new Error(`去水印失败：${res.status} ${(await res.text().catch(() => '')).slice(0, 200)}`)
-      return new Uint8Array(await res.arrayBuffer())
+function makeDefaultDewatermark(target: () => string | null, targets?: import('../plugins/plugin-target.ts').PluginTargets): (png: Uint8Array) => Promise<Uint8Array> {
+  const run = async (png: Uint8Array): Promise<Uint8Array> => {
+    const base = target()
+    if (!base) throw new DewatermarkUnavailableError()
+    const form = new FormData()
+    const bytes = png.buffer.slice(png.byteOffset, png.byteOffset + png.byteLength) as ArrayBuffer
+    form.set('image', new Blob([bytes], { type: 'image/png' }), 'image.png')
+    const res = await fetch(`${base.replace(/\/$/, '')}/remove`, {
+      method: 'POST',
+      body: form,
+      signal: AbortSignal.timeout(DEWATERMARK_TIMEOUT_MS),
     })
+    if (!res.ok) throw new Error(`去水印失败：${res.status} ${(await res.text().catch(() => '')).slice(0, 200)}`)
+    return new Uint8Array(await res.arrayBuffer())
+  }
+  return (png) => (targets ? targets.standby.withAwake(DEWATERMARK_SERVICE, () => run(png)) : run(png))
 }
 
 /**
@@ -234,7 +234,11 @@ interface Batch {
 export function mountImageGenerationRoutes(app: Hono, deps: ImageGenerationRoutesDeps): void {
   const batches = new Map<string, Batch>()
   const fetchBytes = deps.fetchBytes ?? defaultFetchBytes
-  const dewatermark = deps.dewatermark ?? makeDefaultDewatermark(deps.dewatermarkTarget ?? (() => pluginTarget(DEWATERMARK_SERVICE)))
+  const instanceTargets = deps.targets
+  const dewatermark = deps.dewatermark ?? makeDefaultDewatermark(
+    deps.dewatermarkTarget ?? (instanceTargets ? () => instanceTargets.target(DEWATERMARK_SERVICE) : () => null),
+    instanceTargets,
+  )
   const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)))
   const now = deps.now ?? (() => Date.now())
 

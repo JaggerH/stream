@@ -48,6 +48,7 @@ async function mountUpstream() {
   await kernel.plugin(runtimeConfigPlugin)
   await kernel.plugin(credentialsPlugin, { dataDir, log: () => {}, requiredDomains: () => [] })
   await kernel.plugin(packagesPlugin, {
+    netMode: 'none' as const,
     packagesDir, dataDir, manageContainers: false, log: () => {},
     catalogSummary: (id) => ({ id } as unknown as PluginSummary),
   })

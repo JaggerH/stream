@@ -2,7 +2,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest'
 import { makeStandbyManager } from './manager.ts'
 import type { StandbyManagerDeps } from './manager.ts'
 import type { DockerClient, DockerContainer } from './docker-api.ts'
-import { setStandbyManager, withAwake as hookWithAwake, standbySnapshot } from './hook.ts'
+import { StandbyHooks } from './hook.ts'
 import { StandbyWakeTimeoutError } from './wake-error.ts'
 import { isRetryable } from '../../retryable.ts'
 
@@ -758,26 +758,24 @@ describe('diagnose（只读对质，不唤醒、不改状态）', () => {
 })
 
 describe('standby hook', () => {
-  afterEach(() => setStandbyManager(null)) // 断言抛出时也要还原,别把 fake 泄漏给别的测试
-
   // MINOR E:hook 曾经还导出过 ensureAwake,五个调用点全部走 withAwake 之后它没人用了,已删。
   // 这条测试原本一并覆盖它,现在只留 withAwake/snapshot 两条真在用的路。
   it('no-op when unwired; delegates when wired', async () => {
-    setStandbyManager(null)
-    expect(standbySnapshot()).toEqual([])
+    const hooks = new StandbyHooks()
+    expect(hooks.snapshot()).toEqual([])
     const calls: string[] = []
-    setStandbyManager({
+    hooks.bind({
       ensureAwake: async (s) => void calls.push(s),
       withAwake: async (s, fn) => { calls.push(`with:${s}`); return fn() },
       adopt: async () => {}, tick: async () => {}, shutdown: async () => {}, snapshot: () => [], origin: () => null,
       managed: () => false,
       diagnose: async (s) => ({ service: s, managed: false, state: null, cachedOrigin: null, container: 'unknown', containerId: null, hostPort: null }),
     })
-    await expect(hookWithAwake('voiceprint', async () => 7)).resolves.toBe(7)
+    await expect(hooks.withAwake('voiceprint', async () => 7)).resolves.toBe(7)
     expect(calls).toEqual(['with:voiceprint'])
   })
   it('withAwake on an unwired hook just runs fn', async () => {
-    setStandbyManager(null)
-    await expect(hookWithAwake('voiceprint', async () => 'ran')).resolves.toBe('ran')
+    const hooks = new StandbyHooks()
+    await expect(hooks.withAwake('voiceprint', async () => 'ran')).resolves.toBe('ran')
   })
 })

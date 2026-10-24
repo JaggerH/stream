@@ -31,6 +31,7 @@ async function mount(opts: {
   await kernel.plugin(settingsPlugin, { path: join(dataDir, 'settings.json') })
   await kernel.plugin(credentialsPlugin, { dataDir, log: () => {}, requiredDomains: () => [] })
   await kernel.plugin(packagesPlugin, {
+    netMode: 'none' as const,
     packagesDir, dataDir, manageContainers: false, log: () => {},
     catalogSummary: (id) => ({ id } as unknown as PluginSummary),
   })
@@ -159,7 +160,7 @@ describe('harvestPlugin', () => {
     await kernel.plugin(settingsPlugin, { path: join(dataDir, 'settings.json') })
     await kernel.plugin(credentialsPlugin, { dataDir, log: () => {}, requiredDomains: () => [] })
     await kernel.plugin(packagesPlugin, {
-      packagesDir, dataDir, manageContainers: false, log: () => {},
+      netMode: 'none' as const, packagesDir, dataDir, manageContainers: false, log: () => {},
       catalogSummary: (id) => ({ id } as unknown as PluginSummary),
     })
     await kernel.plugin(sourcesPlugin, {

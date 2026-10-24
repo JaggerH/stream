@@ -75,6 +75,7 @@ async function mount(opts: {
   await kernel.plugin(settingsPlugin, { path: join(dataDir, 'settings.json') })
   await kernel.plugin(credentialsPlugin, { dataDir, log: () => {}, requiredDomains: () => [] })
   await kernel.plugin(packagesPlugin, {
+    netMode: 'none' as const,
     packagesDir: builtinDir,
     dataDir,
     manageContainers: false,

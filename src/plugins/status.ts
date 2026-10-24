@@ -1,7 +1,5 @@
 import type { PluginDescriptor } from './types.ts'
-import { pluginTarget } from './plugin-target.ts'
 import { normalizeHealthPath } from './health-path.ts'
-import { standbySnapshot } from './standby/hook.ts'
 
 export interface PluginStatus {
   id: string
@@ -47,7 +45,9 @@ async function probe(base: string, healthPath: string): Promise<'ok' | 'down'> {
  */
 export async function aggregatePluginStatus(
   plugins: PluginDescriptor[],
-  resolveUrl: (p: PluginDescriptor) => string | undefined
+  resolveUrl: (p: PluginDescriptor) => string | undefined,
+  /** 本实例的后端取址 + standby 钩子（packages 域递）。缺（单测）= 不带 standby 格、取址恒空。 */
+  targets?: import('./plugin-target.ts').PluginTargets,
 ): Promise<PluginStatus[]> {
   return Promise.all(
     plugins.map(async (p): Promise<PluginStatus> => {
@@ -56,7 +56,7 @@ export async function aggregatePluginStatus(
       // 找理由(standby-manager 本就只认领声明了 backend.standby 的服务)。
       if (!p.backend) return { id: p.id, configured: true, health: 'unknown' }
       const serviceName = p.backend.service ?? p.id
-      const standbyEntry = standbySnapshot().find((s) => s.service === serviceName)
+      const standbyEntry = targets?.standby.snapshot().find((s) => s.service === serviceName)
       const standby = standbyEntry
         ? { state: standbyEntry.state, lastUsed: standbyEntry.lastUsed, lastWakeMs: standbyEntry.lastWakeMs }
         : undefined
@@ -66,7 +66,7 @@ export async function aggregatePluginStatus(
       // (a down-looking status would be misleading — it's unconfigured, not unreachable).
       // `{ peek: true }`：这一问**只为显示状态**，不唤醒、也不打算拿它发请求——host 档下睡着的
       // 容器必然答空，那是正确答案，不该进 `plugin-target` 故障频道（见 PluginTargetOpts.peek）。
-      const base = resolveUrl(p) ?? pluginTarget(p.backend.service ?? p.id, { peek: true }) ?? undefined
+      const base = resolveUrl(p) ?? targets?.target(p.backend.service ?? p.id, { peek: true }) ?? undefined
       if (!base) return { id: p.id, configured: true, health: 'unknown', ...(standby ? { standby } : {}) }
       // standby-managed backends self-heal on demand: ensureAwake wakes a sleeping (or crashed)
       // container the next time it's actually used, so a live HTTP probe here can't tell the

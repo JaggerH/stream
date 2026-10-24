@@ -6,7 +6,6 @@ import { createKernel, quiesceKernel } from '../context.ts'
 import { settingsPlugin } from './settings.ts'
 import { credentialsPlugin } from './credentials.ts'
 import { packagesPlugin } from './packages.ts'
-import { isPluginTargetBound } from '../../plugins/plugin-target.ts'
 import type { ActivateFn } from '../../packages/activate.ts'
 import type { PluginSummary } from '../../mcp/tools.ts'
 
@@ -53,6 +52,7 @@ async function mount(opts: {
   if (opts.alistToken) kernel.settings.setAlistCredentials({ password: 'pw', token: opts.alistToken })
   await kernel.plugin(credentialsPlugin, { dataDir, log: () => {}, requiredDomains: () => [] })
   await kernel.plugin(packagesPlugin, {
+    netMode: 'none' as const,
     packagesDir,
     dataDir,
     // 关着：这条线一个 docker 调用都不发（测试里没有 docker，也不该有）。
@@ -61,7 +61,7 @@ async function mount(opts: {
     catalogSummary: (id) => summaryOf(id),
     builtinActivations: opts.builtinActivations,
   })
-  return { kernel, root, packagesDir, dataDir }
+  return { kernel, ctx: kernel, root, packagesDir, dataDir }
 }
 
 afterEach(() => vi.useRealTimers())
@@ -138,11 +138,12 @@ describe('packagesPlugin', () => {
 
   // plugin-target 是模块级全局：挂载时接上、dispose 时复位。不复位的话，同一进程里跑第二次
   // 装配会读到上一次的残留，而残留和「正确接线」运行时完全无法区分。
-  it('plugin-target 接线随内核挂卸', async () => {
+  it('plugin-target 接线随内核挂卸（实例上的 targets）', async () => {
     const { kernel } = await mount()
-    expect(isPluginTargetBound()).toBe(true)
+    const targets = kernel.packages.targets
+    expect(targets.bound).toBe(true)
     await quiesceKernel(kernel)
-    expect(isPluginTargetBound()).toBe(false)
+    expect(targets.bound).toBe(false)
   })
 
   // 状态预热的 setTimeout 是本域唯一的句柄。没登记成 effect 的话，关停后它还会醒过来打一轮

@@ -1,48 +1,37 @@
-import { afterEach, describe, expect, it } from 'vitest'
-import { setStandbyManager, standbyOrigin, standbyManaged, standbyDiagnose } from './hook.ts'
-import type { StandbyDiagnosis, StandbyManager } from './manager.ts'
+import { describe, expect, it } from 'vitest'
+import { StandbyHooks } from './hook.ts'
+import type { StandbyManager } from './manager.ts'
 
-describe('standbyOrigin', () => {
-  afterEach(() => setStandbyManager(null)) // 断言抛出时也要还原,别把 fake 泄漏给别的测试(终审 Minor 5)
-
+describe('StandbyHooks.origin', () => {
   it('未接线 → null;接线后透传 manager.origin', () => {
-    expect(standbyOrigin('asr')).toBeNull()
+    const h = new StandbyHooks()
+    expect(h.origin('asr')).toBeNull()
     const fake = { origin: (s: string) => (s === 'asr' ? 'http://127.0.0.1:44728' : null) } as unknown as StandbyManager
-    setStandbyManager(fake)
-    expect(standbyOrigin('asr')).toBe('http://127.0.0.1:44728')
-    expect(standbyOrigin('nope')).toBeNull()
+    h.bind(fake)
+    expect(h.origin('asr')).toBe('http://127.0.0.1:44728')
+    expect(h.origin('nope')).toBeNull()
   })
 })
 
-describe('standbyManaged', () => {
-  afterEach(() => setStandbyManager(null))
-
+describe('StandbyHooks.managed', () => {
   it('未接线 → false', () => {
-    expect(standbyManaged('voiceprint')).toBe(false)
-  })
-
-  it('接线后透传 manager.managed(含别名命中)', () => {
-    const fake = { managed: (s: string) => s === 'voiceprint' || s === 'sherpa' } as unknown as StandbyManager
-    setStandbyManager(fake)
-    expect(standbyManaged('voiceprint')).toBe(true)
-    expect(standbyManaged('sherpa')).toBe(true)
-    expect(standbyManaged('nope')).toBe(false)
+    expect(new StandbyHooks().managed('asr')).toBe(false)
   })
 })
 
-describe('standbyDiagnose', () => {
-  afterEach(() => setStandbyManager(null))
-
-  it('未接线 → null（"standby 根本没接线"和"接了但查不到"是两回事，调用方要分得开）', async () => {
-    await expect(standbyDiagnose('asr')).resolves.toBeNull()
+describe('StandbyHooks.diagnose', () => {
+  it('未接线 → null（不是一份空 diagnosis）', async () => {
+    expect(await new StandbyHooks().diagnose('asr')).toBeNull()
   })
+})
 
-  it('接线后透传 manager.diagnose', async () => {
-    const d: StandbyDiagnosis = {
-      service: 'asr', managed: true, state: 'asleep', cachedOrigin: null,
-      container: 'running', containerId: 'c1', hostPort: 46192,
-    }
-    setStandbyManager({ diagnose: async () => d } as unknown as StandbyManager)
-    await expect(standbyDiagnose('asr')).resolves.toEqual(d)
+describe('一个实例一份', () => {
+  it('A 接了 manager，B 仍全空', () => {
+    const a = new StandbyHooks()
+    const b = new StandbyHooks()
+    a.bind({ origin: () => 'http://a', managed: () => true, snapshot: () => [] } as unknown as StandbyManager)
+    expect(a.managed('x')).toBe(true)
+    expect(b.managed('x')).toBe(false)
+    expect(b.origin('x')).toBeNull()
   })
 })

@@ -25,7 +25,7 @@ import { transcodeCandidatesFor } from '../../netdisk/transcode-candidates.ts'
 import { resolveVideoSource } from '../../media/video-source.ts'
 import { sampleFrames, planVideoFrames, frameAt } from '../../media/video-frames.ts'
 import { makeVideoResolver } from '../../video/resolve-video.ts'
-import { standbyManaged } from '../../plugins/standby/hook.ts'
+
 import { videoWorkLookupIdentity, videoTmdbLookupIdentity } from '../../video/item-identity.ts'
 import { ladderTrace, LadderError } from '../../providers/ladder-trace.ts'
 import { parseLadderLit } from '../../conversions/parse-availability.ts'
@@ -145,7 +145,7 @@ const mib = (n: number) => `${(n / 1024 / 1024).toFixed(1)}MiB`
  */
 export const conversionsPlugin = {
   name: 'conversions',
-  inject: ['stores', 'credentials', 'provider', 'llm', 'netdisk', 'streamEvents', 'sources', 'runtimeConfig'],
+  inject: ['stores', 'credentials', 'provider', 'llm', 'netdisk', 'streamEvents', 'sources', 'runtimeConfig', 'packages'],
   apply(ctx: Context, config: ConversionsConfig): void {
     const { dataDir, streamDb, log } = config
     const { channels, itemStore, storyFold: storyFoldStore, contentCache, audioArchive: archive } = ctx.stores
@@ -327,11 +327,11 @@ export const conversionsPlugin = {
       // 句柄清欠：voiceprint.db 上的这条连接过去从没人关。
       const registryHandle = speakerRegistry
       ctx.effect(() => () => registryHandle.close())
-      voiceprintEngine = new VoiceprintEngineClient(config.voiceprintUrl)
+      voiceprintEngine = new VoiceprintEngineClient(config.voiceprintUrl, ctx.packages.targets)
       // readiness 问的是"管不管得着",不是"现在醒着吗":显式 URL/env/compose DNS 配置了 → true
       // (原语义);host 档下 standby 管着 voiceprint(哪怕此刻睡着)→ 也 true —— 真调用时
       // withAwake 会把容器唤醒(见 engine-client.ts diarize/embed),睡着不该成为早退的理由。
-      const identifyReady = () => voiceprintEngine!.configured() || standbyManaged('voiceprint')
+      const identifyReady = () => voiceprintEngine!.configured() || ctx.packages.standby.managed('voiceprint')
       const identify = makeIdentifyFn({
         engine: voiceprintEngine,
         registry: speakerRegistry,
@@ -461,7 +461,7 @@ export const conversionsPlugin = {
     // MINERU_URL / compose DNS）；`peek` 掐掉 host 档睡着时的「取址落空」喊声——这是探测不是消费。
     // 必须是 thunk：host 档下装配那一刻容器多半没醒，冻结成 false 就是永远不亮，且没有一处会报错
     // （AGENTS.md「装配期取的值 = 冻住的答案」）。
-    const mineruInstalled = () => standbyManaged('mineru') || resolveMineruUrl(config.mineruUrl, { peek: true }) !== ''
+    const mineruInstalled = () => ctx.packages.standby.managed('mineru') || resolveMineruUrl(config.mineruUrl, ctx.packages.targets, { peek: true }) !== ''
     // 判据只有一份：src/conversions/parse-availability.ts 的 parseLadderLit（两个消费方共用）。
     const parseLadderAvailable = () =>
       parseLadderLit((channels.getProvider('parse')?.members ?? []) as ReadonlyArray<Record<string, unknown>>, { mineruInstalled: mineruInstalled() })

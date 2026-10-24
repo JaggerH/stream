@@ -15,8 +15,7 @@
  * 2. **解析不到就抛，不返回空。** 静默失败会让 `call` 那一步绑不上，而下一步会拿着字面量
  *    `{code}` 去填表——站点只回一句"验证码错"，排查时看起来像识别不准，实际是容器压根没起来。
  */
-import { pluginTarget } from '../plugins/plugin-target.ts'
-import { withAwake } from '../plugins/standby/hook.ts'
+import type { PluginTargets } from '../plugins/plugin-target.ts'
 
 /** 一发 call 的上限。OCR 这类端点按契约是**秒级、无状态、可重放**的
  *  （`docs/PACKAGE.md` §4.2），慢过这个数就是它病了，不是"再等等"。 */
@@ -27,10 +26,12 @@ export async function callPluginService(
   path: string,
   /** `image` 恒在；其余键来自 recipe 的 `call.options`（字面量，装载期已拒插值）。 */
   body: { image: string } & Record<string, string | number | boolean>,
+  /** 本实例的后端取址 + standby 钩子（harvest 域从 ctx.packages 递）。缺（单测）= 取址恒空。 */
+  targets?: PluginTargets,
 ): Promise<unknown> {
-  return await withAwake(service, async () => {
+  const run = async () => {
     // 现解析，不缓存——理由见头注第 1 条。
-    const base = pluginTarget(service)
+    const base = targets?.target(service)
     if (!base) {
       throw new Error(
         `call：服务 "${service}" 解析不到地址。要么没有包声明这个 stream.backend.service，` +
@@ -51,5 +52,6 @@ export async function callPluginService(
       throw new Error(`call ${service}${path} → ${res.status} ${said.slice(0, 200)}`)
     }
     return await res.json()
-  })
+  }
+  return targets ? targets.standby.withAwake(service, run) : run()
 }

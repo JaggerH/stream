@@ -121,6 +121,9 @@ export interface AppConfig {
     scheduler?: boolean
     /** false = 不装配包更新检查任务（`STREAM_RECIPE_UPDATE_CHECK=0`）。 */
     recipe_update_check?: boolean
+    /** 插件后端所在网络（`STREAM_PLUGIN_NETWORK`）：compose=容器 DNS 可直连；host=经宿主
+     *  loopback 随机口；none=够不着，全关。缺省 none。 */
+    plugin_network?: 'compose' | 'host' | 'none'
   }
   /** base url of the MinerU document-parsing backend; unset → MINERU_URL env or the
    *  bootstrap-injected plugin target (compose mode: container DNS). A remote relay

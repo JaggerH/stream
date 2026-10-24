@@ -8,16 +8,12 @@ import { pluginIdForDescriptor } from '../../registry/seal.ts'
 import { BackendDirectory, backendDirectoryPlugin } from './backend-directory.ts'
 import { bindModuleHook } from './module-hooks.ts'
 import {
-  isPluginTargetBound,
-  pluginNetMode,
-  pluginTarget,
+  PluginTargets,
   resolvePluginTarget,
-  setPluginTargetMissReporter,
-  setPluginTargetResolver,
   type PluginNetMode,
 } from '../../plugins/plugin-target.ts'
 import { makePluginTargetMissReporter } from '../../plugins/target-miss.ts'
-import { standbyDiagnose, standbyInertReason, standbyOrigin, withAwake } from '../../plugins/standby/hook.ts'
+import { StandbyHooks } from '../../plugins/standby/hook.ts'
 import { provisionDeclaredBackends, type ProvisionNotice } from '../../plugins/provision-wire.ts'
 import { aggregatePluginStatus, type PluginStatus } from '../../plugins/status.ts'
 import { activatePackages, makeCookieFor, type ActivateFn, type PackageActivationFailure } from '../../packages/activate.ts'
@@ -116,6 +112,10 @@ export interface PackagesService {
   backendDirectory: BackendDirectory
   /** 容器取址走哪个档（host loopback / compose 容器 DNS / 没有容器）。 */
   netMode: PluginNetMode
+  /** 本实例的后端取址服务（resolver + 答空喊声 + standby 钩子）。 */
+  targets: PluginTargets
+  /** 本实例的 standby 钩子（serve 的 wireStandby 接线到这份实例上）。 */
+  standby: StandbyHooks
   /** 启用开关的**活**判据（settings 支撑）——目录、状态探测、standby 名册共用这一个。 */
   isPluginEnabled: (p: PluginDescriptor) => boolean
   /** 翻一个插件的开关（落盘 + 刷新判据读的那张活 map）；required 的拒绝。 */
@@ -167,6 +167,8 @@ export interface PackagesService {
 export interface PackagesConfig {
   /** 内置包目录（`config.packages_dir`）。 */
   packagesDir: string
+  /** 容器取址档（`AppConfig.deployment.plugin_network`，bootstrap 从 env 翻译进来）。 */
+  netMode: PluginNetMode
   /** 可写状态根目录——第三方包装在 `<dataDir>/recipes`。 */
   dataDir: string
   /** `config.manage_containers`：要不要替用户建容器。默认 false。 */
@@ -279,7 +281,12 @@ export const packagesPlugin = {
       return diffLoadedVsDisk(loadedSnapshot, disk.map((p) => loadedFromPackage(p, hasRecipes(p.dir))))
     }
 
-    const netMode = pluginNetMode()
+    const netMode = config.netMode
+    // 本实例的两份钩子对象：resolver/喊声出口（targets）与 standby 管理器（standby）。
+    // serve.ts 的 wireStandby 经 ctx.packages.standby 接线；resolver 在本域 descriptors 齐了之后绑。
+    // 同进程跑第二个实例时各持各的，互不污染（过去是模块级全局，第二次 bootstrap 读到残留）。
+    const standby = new StandbyHooks()
+    const targets = new PluginTargets(standby)
     // descriptors 是**两层合并**（内置 + 第三方带 backend 的那些）：只给内置那层的话，第三方
     // 容器在 compose 档永远解不出 origin（`ctx.backendUrl()` 恒 undefined），容器建起来了却没人
     // 打得到它，而且没有任何日志会提。合并只发生在 BackendDirectory 里一次，`/_p` 网关、
@@ -299,15 +306,15 @@ export const packagesPlugin = {
     // 所以两个都绑在同一个 bindModuleHook 里、由同一个 disposer 复位。
     const reportMiss = makePluginTargetMissReporter({
       mode: netMode,
-      resolverBound: isPluginTargetBound,
+      resolverBound: () => targets.bound,
       // 「名册里有它且声明了 backend」——直接问静态解析器，别在这里复刻一遍 find 逻辑。
       backendDeclared: (service) =>
         resolvePluginTarget(service, { descriptors: backendDirectory.all(), mode: 'compose' }) !== null,
-      standbyDiagnose,
+      standbyDiagnose: (service) => standby.diagnose(service),
       // 上面那个答 null 时**为什么**——「够不着 Docker」(所有容器插件一起失效,该喊)和
       // 「按设计如此」(桌面档 / 没插件声明 standby)在 `standby === null` 这一格里长得一样,
       // 不带上原因就只能一律沉默,而那正是影响面最大的一种失败(2026-09-02 活体)。
-      standbyInertReason,
+      standbyInertReason: () => standby.inertReason(),
       emit: (entry) => config.onDebug?.(entry),
       // 真缺陷那两档另外进通知中心（判据 pluginTargetNotifiableDefect，spec §2.1）。
       notify: (input) => config.notify?.(input),
@@ -315,14 +322,14 @@ export const packagesPlugin = {
     bindModuleHook(
       ctx,
       () => {
-        setPluginTargetResolver((service) =>
-          netMode === 'host' ? standbyOrigin(service) : resolvePluginTarget(service, { descriptors: backendDirectory.all(), mode: netMode }),
+        targets.bind(
+          (service) =>
+            netMode === 'host' ? standby.origin(service) : resolvePluginTarget(service, { descriptors: backendDirectory.all(), mode: netMode }),
+          reportMiss,
         )
-        setPluginTargetMissReporter(reportMiss)
       },
       () => {
-        setPluginTargetResolver(null)
-        setPluginTargetMissReporter(null)
+        targets.bind(null, null)
       },
     )
 
@@ -372,7 +379,7 @@ export const packagesPlugin = {
     // 启动时这一次只是顺手：standby 管着的容器这时多半在睡（或刚被拉起、2s 内答不上），跳过是常态。
     // 兜底在 `alistRefresh`——消费方带着它装配，第一次真用到网盘时再接管。
     const alistProvisionDeps = () => ({
-      baseUrl: resolveAlistUrl(),
+      baseUrl: resolveAlistUrl(targets),
       getStored: () => ({
         password: settings.get().alist?.adminPassword, // 非 row 字段（bootstrap 内部凭证）
         token: alistCfg().token,
@@ -393,7 +400,7 @@ export const packagesPlugin = {
      */
     const alistRefresh = async (): Promise<string> => {
       if (!alistManaged()) throw new Error('[alist] 网盘底座包未启用，无法取 token')
-      return withAwake(ALIST_SERVICE, async () => {
+      return standby.withAwake(ALIST_SERVICE, async () => {
         alistToken = await provisionAlist(alistProvisionDeps())
         return alistToken
       })
@@ -484,8 +491,8 @@ export const packagesPlugin = {
       (pkg) => ({
         // 走 pluginTarget()（上面刚接线的那个 resolver），不是 resolvePluginTarget()——后者只解
         // compose 档的容器 DNS，host 档一律 null。两个档的取址差异归 resolver 管，包不该知道。
-        backendUrl: (service) => pluginTarget(service ?? pkg.backend?.service ?? pkg.id) ?? undefined,
-        withAwake: (service, fn) => withAwake(service, fn),
+        backendUrl: (service) => targets.target(service ?? pkg.backend?.service ?? pkg.id) ?? undefined,
+        withAwake: (service, fn) => standby.withAwake(service, fn),
         cookieFor: makeCookieFor(pkg, (domain) => ctx.credentials.cookieProvider.cookieString(domain)),
         fetch: fetchFor,
         // 转发到上面那个共用入口——它每次现读回填变量。**别在这儿抓快照**：实现由下游的
@@ -532,6 +539,7 @@ export const packagesPlugin = {
         // 包自己读的环境变量覆盖（如某包 README 写的 `<X>_URL`）只影响包的取数，不影响这里的探针——
         // 探的是宿主托管的那个容器，不是外部实例。
         () => undefined,
+        targets,
       )
 
     // Stale-while-revalidate cache around the probes. GET /api/plugins sits on the Plugins page's
@@ -668,7 +676,7 @@ export const packagesPlugin = {
       if (!token) return undefined
       if (!isJwtLike(token)) return token
       // 地址在 withAwake 里面取：容器睡着时它是空的（同 `hostAlistClient` 的 `around`）。
-      const read = (t: string) => withAwake(ALIST_SERVICE, () => fetchPermanentToken(resolveAlistUrl(), t))
+      const read = (t: string) => standby.withAwake(ALIST_SERVICE, () => fetchPermanentToken(resolveAlistUrl(targets), t))
       try {
         return await read(token)
       } catch (e) {
@@ -688,6 +696,8 @@ export const packagesPlugin = {
       whoamiForFacility: (f) => whoamiIndex.get(f),
       backendDirectory,
       netMode,
+      targets,
+      standby,
       isPluginEnabled,
       setPluginEnabled,
       packageInventory,

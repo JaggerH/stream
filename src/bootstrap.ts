@@ -222,6 +222,9 @@ export function deploymentFromEnv(env: ConfigEnv): NonNullable<AppConfig['deploy
     ...(env.VOICEPRINT_URL ? { voiceprint_url: env.VOICEPRINT_URL } : {}),
     scheduler: env.STREAM_NO_SCHEDULER !== '1',
     recipe_update_check: env.STREAM_RECIPE_UPDATE_CHECK !== '0',
+    plugin_network: env.STREAM_PLUGIN_NETWORK === 'compose'
+      ? 'compose'
+      : env.STREAM_PLUGIN_NETWORK === 'host' ? 'host' : 'none',
   }
 }
 
@@ -384,6 +387,7 @@ export async function bootstrap(
     packagesDir: config.packages_dir,
     dataDir,
     manageContainers: config.manage_containers === true,
+    netMode: deployment.plugin_network ?? 'none',
     log,
     // 前向引用的惰性 thunk：目录住在采集调度域的 `StreamService`（那一域晚挂），而这个只在
     // 翻开关那一刻才调。

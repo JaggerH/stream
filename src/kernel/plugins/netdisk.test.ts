@@ -38,6 +38,7 @@ async function mountUpToProvider(opts: { alistToken?: string; alistPackage?: boo
   // token 只有一个来源：接管序列存进 settings 的那一份。测试里就照它的写法先存好。
   if (opts.alistToken) kernel.settings.setAlistCredentials({ password: 'pw', token: opts.alistToken })
   await kernel.plugin(packagesPlugin, {
+    netMode: 'none' as const,
     packagesDir, dataDir, manageContainers: false, log: () => {},
     catalogSummary: (id) => ({ id } as unknown as PluginSummary),
   })

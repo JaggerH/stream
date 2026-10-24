@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { VoiceprintEngineClient } from './engine-client.ts'
-import { setPluginTargetMissReporter, setPluginTargetResolver } from '../plugins/plugin-target.ts'
+import { PluginTargets } from '../plugins/plugin-target.ts'
+import { StandbyHooks } from '../plugins/standby/hook.ts'
 
 const bytes = new Uint8Array([1, 2, 3])
 afterEach(() => vi.restoreAllMocks())
@@ -18,19 +19,15 @@ describe('VoiceprintEngineClient', () => {
   it('configured() 走窥视档：答空不进 plugin-target 故障频道', () => {
     vi.stubEnv('VOICEPRINT_URL', undefined as unknown as string)
     const seen: string[] = []
-    setPluginTargetResolver(() => null)
-    setPluginTargetMissReporter((s) => { seen.push(s) })
-    try {
-      expect(new VoiceprintEngineClient().configured()).toBe(false)
-      expect(seen).toEqual([])
-      // 同一个客户端的取数路径（base，在 withAwake 回调里求值）仍然照喊。
-      expect(new VoiceprintEngineClient().base).toBe('')
-      expect(seen).toEqual(['voiceprint'])
-    } finally {
-      setPluginTargetMissReporter(null)
-      setPluginTargetResolver(() => null)
-      vi.unstubAllEnvs()
-    }
+    const targets = new PluginTargets(new StandbyHooks())
+    targets.bind(() => null, (s) => { seen.push(s) })
+    const client = new VoiceprintEngineClient(undefined, targets)
+    expect(client.configured()).toBe(false)
+    expect(seen).toEqual([])
+    // 同一个客户端的取数路径（base，在 withAwake 回调里求值）仍然照喊。
+    expect(client.base).toBe('')
+    expect(seen).toEqual(['voiceprint'])
+    vi.unstubAllEnvs()
   })
 
   it('diarize posts multipart and maps the response', async () => {
