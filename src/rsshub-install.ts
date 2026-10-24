@@ -101,8 +101,11 @@ export function rsshubHostManifest(): string {
   )}\n`
 }
 
-/** 同一个进程里并发的两条源不该各装一次（40 秒 × 2、还会互相踩同一棵 node_modules）。 */
-let inflight: Promise<string> | null = null
+/**
+ * 同一个进程里并发的两条源不该各装一次（40 秒 × 2、还会互相踩同一棵 node_modules）。**按装到哪个目录分**：
+ * 同进程两个实例各有各的数据目录，A 正在装的那份不是 B 要的（进程级共享，但键是落点，所以不串）。
+ */
+const inflight = new Map<string, Promise<string>>()
 
 /**
  * 确保这台机器上有 RSSHub，返回它的入口路径。已经装好就直接返回，不碰网络。
@@ -112,15 +115,17 @@ let inflight: Promise<string> | null = null
 export async function ensureRsshubInstalled(opts: EnsureRsshubOptions): Promise<string> {
   const existing = installedRsshubEntry(opts.dataDir)
   if (existing) return existing
-  inflight ??= installRsshub(opts).finally(() => {
-    inflight = null
-  })
-  return inflight
+  let p = inflight.get(opts.dataDir)
+  if (!p) {
+    p = installRsshub(opts).finally(() => { inflight.delete(opts.dataDir) })
+    inflight.set(opts.dataDir, p)
+  }
+  return p
 }
 
 /** 只给测试用：清掉在途的那把锁。 */
 export function __resetRsshubInstallState(): void {
-  inflight = null
+  inflight.clear()
 }
 
 async function installRsshub(opts: EnsureRsshubOptions): Promise<string> {

@@ -141,8 +141,13 @@ export function parseWindowsMounts(procMounts: string): string[] {
   return [...byDrive.entries()].sort(([a], [b]) => (a < b ? -1 : 1)).map(([, mount]) => mount)
 }
 
-/** 真实环境的 {@link DiscoverFs}。所有"查不到"都收敛成空值，别让一次 ENOENT 变成异常。 */
-export const nodeDiscoverFs = (): DiscoverFs => ({
+/**
+ * 真实环境的 {@link DiscoverFs}。所有"查不到"都收敛成空值，别让一次 ENOENT 变成异常。
+ *
+ * `pathEnv`：`which` 去哪些目录找（进程的 `PATH`）。**显式递**：这是进程级的事实，由 runtime 在创建时从进程
+ * 环境拿一次（`createRuntime({ env })`），库入口可达的代码不直接读 `process.env`。缺省空 = `which` 一个都找不到。
+ */
+export const nodeDiscoverFs = (pathEnv = ''): DiscoverFs => ({
   async exists(path) {
     try {
       await access(path, constants.F_OK)
@@ -159,7 +164,7 @@ export const nodeDiscoverFs = (): DiscoverFs => ({
     }
   },
   async which(cmd) {
-    for (const dir of (process.env.PATH ?? '').split(':').filter(Boolean)) {
+    for (const dir of pathEnv.split(':').filter(Boolean)) {
       const p = `${trimTrailingSlash(dir)}/${cmd}`
       try {
         await access(p, constants.X_OK)

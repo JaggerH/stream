@@ -18,6 +18,7 @@ import { createRuntime, type StreamRuntime } from './runtime.ts'
 import { openDevices, type StreamDevices } from './devices.ts'
 import { createCapabilities, loadOptional, provideBrowserCookies, type StreamCapabilities } from './capabilities.ts'
 import { TaskCenter } from '../tasks/center.ts'
+import { lazyNotify, type EventsService } from '../events/service.ts'
 
 export type { StreamRuntime } from './runtime.ts'
 export { createRuntime } from './runtime.ts'
@@ -41,8 +42,6 @@ export interface CreateStreamOptions {
   /** 进程级共享资源（D4）。不传 = 自建一份，`close()` 时一起关。 */
   runtime?: StreamRuntime
   hooks?: StreamHostHooks
-  /** 搬迁期过渡口：`serve.ts` 还有装配块在 `createStream` 之前要用到内核时传它自己建的那棵。 */
-  kernel?: Context
 }
 
 export interface Stream {
@@ -94,7 +93,9 @@ export async function createStream(opts: CreateStreamOptions): Promise<Stream> {
   }
   const ownsRuntime = !opts.runtime
   const runtime = opts.runtime ?? createRuntime()
-  const kernel = opts.kernel ?? createKernel()
+  const kernel = createKernel()
+  // 进程兜底网（runtime 持有）接住的异常落成本实例的通知。现取事件层：它比这里晚装配。
+  const detachNotify = runtime.attachNotify(lazyNotify(() => kernel.streamEvents as EventsService | undefined))
   const log = opts.log ?? console.error
   const line = (l: string) => log(l)
   let devices: StreamDevices
@@ -105,6 +106,7 @@ export async function createStream(opts: CreateStreamOptions): Promise<Stream> {
     await bootstrap(config, log, {
       ...opts.hooks,
       kernel,
+      runtime,
       // 「该同步哪些 cookie 域」的第三个来源：已挂能力包自己申报的那些。**现取**——可选包在 bootstrap 之后才装载，
       // 取快照等于永远只认内置那半，而漏一个域的表现是那个包每次都拿到空 cookie，和"用户没登录"一字不差。
       extraCookieDomains: () => capabilities.host.credentialDomains(),
@@ -118,6 +120,7 @@ export async function createStream(opts: CreateStreamOptions): Promise<Stream> {
   } catch (e) {
     // 装到一半失败：已经挂上的那部分照样要撤，锁照样要放——否则同一个目录再也起不来。
     await quiesceKernel(kernel).catch(() => {})
+    detachNotify()
     release()
     if (ownsRuntime) await runtime.close().catch(() => {})
     throw e
@@ -140,6 +143,7 @@ export async function createStream(opts: CreateStreamOptions): Promise<Stream> {
         await tasks.stop()
         await quiesceKernel(kernel)
       } finally {
+        detachNotify()
         release()
         if (ownsRuntime) await runtime.close()
       }

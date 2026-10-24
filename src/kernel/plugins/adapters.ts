@@ -35,6 +35,8 @@ declare module 'cordis' {
 export interface AdaptersConfig {
   /** 可写状态根目录（修复账本落在它下面）。 */
   dataDir: string
+  /** 进程级共享的 RSSHub worker（runtime 的那份）。缺省 = 进程缺省那一个。 */
+  rsshub?: import('../../rsshub-adapter.ts').RsshubWorker
   log: (...args: unknown[]) => void
   /**
    * 「这个 source 跑起来时该拿到哪份配置」——`BuiltinAdapter` 唯一的构造参数。
@@ -107,6 +109,8 @@ export const adaptersPlugin = {
       // 到 `<dataDir>/rsshub/`（`src/rsshub-install.ts` 写着为什么不能当 npm 依赖装）。
       ['rsshub', new RssHubAdapter({
         resolveDeps: { dataDir },
+        // 进程级共享的那个 worker（runtime 递进来，D4）：共用 runtime 的实例共用一个 RSSHub。
+        ...(config.rsshub ? { worker: config.rsshub } : {}),
         log,
         // 长尾目录只在一次真的取数之后顺手刷（那时 worker 已经热着）——单独为它拉起 worker
         // 是 +168MB RSS 且不会自己退。理由全在 src/rsshub-catalog-cache.ts 的头注。

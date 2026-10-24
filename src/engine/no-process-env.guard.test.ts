@@ -24,7 +24,6 @@ const ENTRY = 'src/engine/index.ts'
 const OFFENDERS: Record<string, string> = {
   'packages/Douyin_TikTok_Download_API/adapter/adapter.ts': '包代码：DOUYIN_API_URL，应改走 ctx.backendUrl / runtime config',
   'packages/pansou/adapter.ts': '包代码：PANSOU_URL，同上',
-  'src/browser/discover-chrome.ts': '进程：PATH 里找 Chrome（D4 的 Chrome 发现）',
   'src/docparse/client.ts': '实例：MINERU_URL 回落，改由调用方传',
   'src/intervention/acp-client.ts': '进程：agent 子进程继承环境',
   'src/media/ffmpeg-bin.ts': '进程：ffmpeg 探测子进程继承环境',

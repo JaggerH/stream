@@ -108,6 +108,8 @@ export interface BootOptions {
    * 会话照跑（如实，不编）。
    */
   mcpEndpoint?: () => { url: string; token: string } | undefined
+  /** 进程级共享资源（`src/engine/runtime.ts`，D4）：RSSHub worker、Chrome 发现、退出收尾。缺省 = 各模块的进程缺省。 */
+  runtime?: import('./engine/runtime.ts').StreamRuntime
 }
 
 type RawConfig = Partial<AppConfig> & {
@@ -504,6 +506,7 @@ export async function bootstrap(
   await kernel.plugin(harvestPlugin, {
     dataDir,
     log,
+    ...(opts.runtime && { discoverChrome: opts.runtime.chrome.discover }),
     browserLanes: config.browser_lanes,
     harvestBrowser: config.harvest_browser,
     hostSessionWaitMs: config.desktop?.session_wait_ms,
@@ -581,6 +584,7 @@ export async function bootstrap(
   await kernel.plugin(authPlugin, {
     dataDir,
     log,
+    ...(opts.runtime && { exitHooks: opts.runtime.exitHooks }),
     onDebug: opts.onDebug,
     broadcast: opts.broadcast,
     requiredCookieDomains: requiredCookieDomainsNow,
@@ -605,7 +609,7 @@ export async function bootstrap(
   // bootstrap 自己一格都不解：下游域经 inject 从 `ctx.adapters` 自取（进程内实现的注册面
   // `register()` 在 Provider 域里，采集调度域吃这张 Map）。
   // `intervention` 同 harvest 那处：经 config 递 thunk，从根 kernel 现取，不在插件里读 `ctx.intervention`。
-  await kernel.plugin(adaptersPlugin, { dataDir, log, runtimeConfigFor, onDebug: opts.onDebug, intervention: () => kernel.intervention, facilityDevices: opts.facilityDevices, identityRouter: () => kernel.identityRouter })
+  await kernel.plugin(adaptersPlugin, { dataDir, log, ...(opts.runtime && { rsshub: opts.runtime.rsshub }), runtimeConfigFor, onDebug: opts.onDebug, intervention: () => kernel.intervention, facilityDevices: opts.facilityDevices, identityRouter: () => kernel.identityRouter })
 
   // ── Provider 执行面整域进内核 ──────────────────────────────────────────────
   // 解析面（resolveEngine / intentResolver / radarMatcher）+ 进程内成员的注册 + 读模型 /

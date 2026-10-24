@@ -54,6 +54,8 @@ export class ComputeError extends Error {
  * isolated-vm 是原生 addon，且 tier-0 boot **不**依赖它（desktop-packaging D-native）。首次 runCompute
  * 时才动态 import——这样一个不带 isolated-vm 的打包 core 仍能 boot；缺失时降级为清晰的 ComputeError，
  * 而非崩溃。加载失败会重置缓存的 promise，让下次重试（例如用户补装后无需重启）。
+ *
+ * 进程级共享、只读：缓存的只是原生模块本身；每次 runCompute 自建自毁一个 isolate，实例之间不共享任何沙箱状态。
  */
 let ivmPromise: Promise<typeof IvmModule> | undefined
 async function loadIvm(): Promise<typeof IvmModule> {

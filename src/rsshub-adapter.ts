@@ -20,35 +20,87 @@ export interface CatalogRefreshHooks {
   apply: (raw: Record<string, unknown>) => unknown
 }
 
-// One worker for the whole process. Lazy-spawns on first init/request; respawns if it crashes.
-//
-// 解析注入点（其中就有 `dataDir`）住在**一个稳定的对象**里，由第一个建出来的 adapter 填进去。
-// 传对象而不是传值，是因为这个 client 是模块级单例、可能比 adapter 先被 back-compat 助手碰到：
-// 那时若把当时的 deps 拷贝一份存下来，dataDir 就永远是空的，发行形态下每条源都跑不了
-// （client 每次 spawn 会重读这个对象，所以后填进来的一样算数）。
-const clientDeps: RsshubResolveDeps = {}
-let client: RsshubClient | null = null
-function getClient(): RsshubClient {
-  client ??= new RsshubClient({ resolveDeps: clientDeps })
-  return client
+/**
+ * 一个 RSSHub worker 线程及它的初始化状态。**进程级共享资源**（openspec `embeddable-engine` D4）：由
+ * `StreamRuntime` 持有一份、传给共用它的所有实例——一个进程里只该有一个 RSSHub（它改写的是 worker 自己的全局
+ * fetch / node:http，起一个 +168MB RSS）。懒起：第一次 init / request 才 spawn；崩了自己重起。
+ *
+ * **共用一个 worker = 共用一份 RSSHub 凭证环境**：RSSHub 只认它进程级的 config，cookie 按「最后一次 init 的值」生效。
+ * 要两个实例的 RSSHub 登录态互不相干，就给它们各自的 runtime（各一个 worker）。
+ */
+export class RsshubWorker {
+  // 解析注入点（其中就有 `dataDir`）住在**一个稳定的对象**里，由第一个用到它的 adapter 填进去。
+  // 传对象而不是传值：client 每次 spawn 会重读这个对象，后填进来的一样算数（否则发行形态下 dataDir 永远是空的，
+  // 每条源都跑不了）。
+  readonly deps: RsshubResolveDeps = {}
+  private client: RsshubClient | null = null
+  private initialized = false
+  // Cookie env we've already handed the worker. RSSHub snapshots its config once and never re-reads
+  // env on its own, so a cookie that first arrives AFTER init (e.g. some facility, when an earlier fetch
+  // was a public/cookieless route) would otherwise never reach it. We track what we sent and re-run
+  // init whenever an incoming value differs — cheap, no restart. (This dedup keeps us from firing an
+  // init RPC on every fetch; the client separately replays accumulated env if the worker respawns.)
+  private readonly appliedCreds: Record<string, string> = {}
+
+  private getClient(): RsshubClient {
+    this.client ??= new RsshubClient({ resolveDeps: this.deps })
+    return this.client
+  }
+
+  /** worker 起过没有（双实例测试用：共用 runtime 时只该有一个）。 */
+  get spawned(): boolean { return this.client !== null }
+
+  /** 只在凭证变了（或从没 init 过）时才真发一次 init。 */
+  async init(envOverrides: Record<string, string>): Promise<void> {
+    // Re-init when a cookie value changed vs what we last sent — client.init() re-runs RSSHub's
+    // setConfig() in the worker with the updated env. Empty overrides (auth:none) never count as
+    // "changed", so public routes still trigger only the one-time first init.
+    const changed = Object.entries(envOverrides).some(([k, v]) => this.appliedCreds[k] !== v)
+    if (this.initialized && !changed) return
+    await this.getClient().init(envOverrides)
+    this.initialized = true
+    Object.assign(this.appliedCreds, envOverrides)
+  }
+
+  /** 只 init 一次（spike 脚本的 back-compat 语义）。 */
+  async ensureInit(envOverrides: Record<string, string>): Promise<void> {
+    if (this.initialized) return
+    await this.getClient().init(envOverrides)
+    this.initialized = true
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  request(path: string): Promise<any> {
+    return this.getClient().request(path)
+  }
+
+  /** 收掉 worker、注入点清空；之后再用会重起一个。 */
+  async dispose(): Promise<void> {
+    const c = this.client
+    this.client = null
+    this.initialized = false
+    for (const k of Object.keys(this.deps)) delete (this.deps as Record<string, unknown>)[k]
+    for (const k of Object.keys(this.appliedCreds)) delete this.appliedCreds[k]
+    if (c) await c.dispose()
+  }
 }
 
-/** 只给测试用：把单例 worker 收掉、注入点清空，下一次调用重建。 */
+/**
+ * 没递 runtime 的那些老入口（spike 脚本、`stream-pipeline.ts`、不带 `worker` 构造的 adapter）共用的那一个。
+ * 懒建：库入口的实例都从自己的 runtime 拿，走不到这里。
+ */
+let fallbackWorker: RsshubWorker | undefined
+function processWorker(): RsshubWorker {
+  fallbackWorker ??= new RsshubWorker()
+  return fallbackWorker
+}
+
+/** 只给测试用：把缺省 worker 收掉，下一次调用重建。 */
 export async function __disposeRsshubClient(): Promise<void> {
-  const c = client
-  client = null
-  initialized = false
-  for (const k of Object.keys(clientDeps)) delete (clientDeps as Record<string, unknown>)[k]
-  if (c) await c.dispose()
+  const w = fallbackWorker
+  fallbackWorker = undefined
+  if (w) await w.dispose()
 }
-
-let initialized = false
-// Cookie env we've already handed the worker. RSSHub snapshots its config once and never re-reads
-// env on its own, so a cookie that first arrives AFTER init (e.g. some facility, when an earlier fetch
-// was a public/cookieless route) would otherwise never reach it. We track what we sent and re-run
-// init whenever an incoming value differs — cheap, no restart. (This dedup keeps us from firing an
-// init RPC on every fetch; the client separately replays accumulated env if the worker respawns.)
-const appliedCreds: Record<string, string> = {}
 
 /** Query keys forwarded from fetch params onto the resolved route. Allowlist, not "all
  *  non-path params": the resolve engine injects keys like `url` into params that must never
@@ -98,6 +150,7 @@ export class RssHubAdapter implements Adapter {
   /** 长尾目录的重取钩子。不接 = 不取（源码形态照旧读检出那个 routes.json）。 */
   private readonly catalog?: CatalogRefreshHooks
   private readonly request: (path: string) => Promise<unknown>
+  readonly worker: RsshubWorker
 
   constructor(
     opts: {
@@ -105,16 +158,20 @@ export class RssHubAdapter implements Adapter {
       log?: (msg: string) => void
       install?: (dataDir: string, log: (m: string) => void) => Promise<unknown>
       catalog?: CatalogRefreshHooks
-      /** 取数注入点（默认走那个模块级 worker）。测试用它把 worker 整个摘掉。 */
+      /** 取数注入点（默认走 `worker`）。测试用它把 worker 整个摘掉。 */
       request?: (path: string) => Promise<unknown>
+      /** 这个 adapter 用哪个 RSSHub worker（实例从 runtime 递）。缺省 = 进程缺省那一个。 */
+      worker?: RsshubWorker
     } = {}
   ) {
     this.resolveDeps = opts.resolveDeps ?? {}
     this.log = opts.log ?? (() => {})
     this.install = opts.install ?? ((dataDir, log) => ensureRsshubInstalled({ dataDir, log }))
     this.catalog = opts.catalog
-    this.request = opts.request ?? fetchRoute
-    Object.assign(clientDeps, this.resolveDeps)
+    this.worker = opts.worker ?? processWorker()
+    const worker = this.worker
+    this.request = opts.request ?? ((path) => worker.request(path))
+    Object.assign(worker.deps, this.resolveDeps)
   }
 
   /**
@@ -164,14 +221,7 @@ export class RssHubAdapter implements Adapter {
 
   async init(envOverrides: Record<string, string>): Promise<void> {
     await this.ensureAvailable()
-    // Re-init when a cookie value changed vs what we last sent — client.init() re-runs RSSHub's
-    // setConfig() in the worker with the updated env. Empty overrides (auth:none) never count as
-    // "changed", so public routes still trigger only the one-time first init.
-    const changed = Object.entries(envOverrides).some(([k, v]) => appliedCreds[k] !== v)
-    if (initialized && !changed) return
-    await getClient().init(envOverrides)
-    initialized = true
-    Object.assign(appliedCreds, envOverrides)
+    await this.worker.init(envOverrides)
   }
 
   async fetch(params: Record<string, unknown>, manifest: SourceManifest): Promise<{ items: unknown[]; title?: string }> {
@@ -259,12 +309,10 @@ function stampFeedFields(items: any[], data: any): any[] {
 // --- back-compat helpers used by the spike scripts ---
 
 export async function ensureInit(envOverrides: Record<string, string>): Promise<void> {
-  if (initialized) return
-  await getClient().init(envOverrides)
-  initialized = true
+  await processWorker().ensureInit(envOverrides)
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export async function fetchRoute(path: string): Promise<any> {
-  return getClient().request(path)
+  return processWorker().request(path)
 }

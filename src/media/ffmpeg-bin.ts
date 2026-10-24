@@ -232,6 +232,7 @@ function defaultLookup(): MediaToolLookup {
  * 缓存失败会把「开机时还没装 ffmpeg」冻成这个进程一辈子的答案——用户装完 ffmpeg 回来点一下，
  * 页面还是说不能转写（AGENTS.md「装配期取的值 = 冻住的答案」的同一个坑）。找到的那个二进制
  * 不会跑掉，所以正面答案缓存是安全的；负面答案每次现查（几次 `accessSync`，比起一次转写可以忽略）。
+ * 进程级共享：ffmpeg 装在机器上，不属于哪个实例。
  */
 const resolved = new Map<MediaTool, Extract<MediaToolResolution, { ok: true }>>()
 

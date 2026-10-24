@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { processExitHooks, type ExitHooks } from '../../exit-hooks.ts'
 
 interface LockPayload {
   pid: number
@@ -11,12 +12,10 @@ export interface FacilityLock {
   release(): Promise<void>
 }
 
-const signals = ['SIGINT', 'SIGTERM', 'SIGHUP'] as const
-const activeLocks = new Set<FacilityLockImpl>()
-let handlersInstalled = false
-
 class FacilityLockImpl implements FacilityLock {
   released = false
+  /** 进程要走时也删掉锁文件（经调用方递的 exit hooks；runtime 的那份随 runtime 关）。 */
+  unhook: () => void = () => {}
 
   constructor(readonly path: string) {}
 
@@ -27,26 +26,13 @@ class FacilityLockImpl implements FacilityLock {
   releaseSync(): void {
     if (this.released) return
     this.released = true
-    activeLocks.delete(this)
+    this.unhook()
     try {
       unlinkSync(this.path)
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err
     }
   }
-}
-
-function installSignalHandlers(): void {
-  if (handlersInstalled) return
-  handlersInstalled = true
-  for (const sig of signals) {
-    process.once(sig, () => {
-      for (const lock of [...activeLocks]) lock.releaseSync()
-    })
-  }
-  process.once('exit', () => {
-    for (const lock of [...activeLocks]) lock.releaseSync()
-  })
 }
 
 function isPidAlive(pid: number): boolean {
@@ -67,7 +53,15 @@ function readPayload(path: string): LockPayload | null {
   }
 }
 
-export async function acquireFacilityLock(profilesRoot: string, facility: string): Promise<FacilityLock> {
+/**
+ * `exitHooks`：进程要走时谁来删这把锁。实例从自己的 runtime 递（库入口不挂进程信号，runtime 关时收）；
+ * 缺省 = 挂在真进程上的那一份（authoring CLI 的行为）。
+ */
+export async function acquireFacilityLock(
+  profilesRoot: string,
+  facility: string,
+  exitHooks: ExitHooks = processExitHooks(),
+): Promise<FacilityLock> {
   mkdirSync(profilesRoot, { recursive: true })
   const path = join(profilesRoot, `${facility}.lock`)
   const payload = JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() }, null, 2)
@@ -90,8 +84,7 @@ export async function acquireFacilityLock(profilesRoot: string, facility: string
   }
 
   const lock = new FacilityLockImpl(path)
-  activeLocks.add(lock)
-  installSignalHandlers()
+  lock.unhook = exitHooks.add(() => lock.releaseSync())
   return lock
 }
 

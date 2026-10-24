@@ -17,7 +17,7 @@ import { tmpdir, homedir } from 'node:os'
 import { join, dirname } from 'node:path'
 import { createRequire } from 'node:module'
 import { resolveDataDir } from './bootstrap.ts'
-import { createStream, type Stream } from './engine/index.ts'
+import { createStream, createRuntime, type Stream } from './engine/index.ts'
 import { loadConfig } from './config-env.ts'
 import { createHttpApp, type HttpDeps } from './http/app.ts'
 import { classifyLauncher } from './restart/policy.ts'
@@ -48,7 +48,6 @@ import { mountIdentityRoutes } from './http/identity-routes.ts'
 import { assertDeviceReady, facilityTarget, placeRun } from './devices/placement.ts'
 import { LOCAL_TARGET, taskTarget } from './devices/target.ts'
 import { installFetchFor, makeFetchFor } from './devices/fetch.ts'
-import { installGlobalFetchTrap } from './devices/global-fetch-trap.ts'
 import { type RunPlacement } from './devices/run-context.ts'
 import type { UserTaskRow } from './tasks/task-store.ts'
 import { attachEnrichCommands } from './http/enrich-ws.ts'
@@ -78,7 +77,6 @@ import { artifactsDirOf } from './board/run-source.ts'
 import { watchArtifactsDir } from './live/watch.ts'
 import { createResearchWatchers, type ResearchWatchers } from './live/research-watchers.ts'
 import { lazyNotify, type EventsService } from './events/service.ts'
-import { installProcessGuards } from './process-guard.ts'
 import { mountPanelAssets } from './http/panel-mount.ts'
 import { mountStandalonePage } from './http/standalone-page.ts'
 import { repoRoot, shippedRoot } from './http/build-identity.ts'
@@ -105,7 +103,6 @@ import { localNameOf } from './registry/source-id.ts'
 import type { InterventionService } from './kernel/plugins/intervention.ts'
 import { errText } from './err-text.ts'
 import { ImportRunStore } from './sharing/import-run-store.ts'
-import { createKernel } from './kernel/context.ts'
 import { bindModuleHook, reportUnboundHooks, MODULE_HOOKS } from './kernel/plugins/module-hooks.ts'
 
 /** 后端自己就是那扇门，默认口 = 唯一的对外口 8900（`DEFAULT_BACKEND_URL`、`GATEWAY_PORT`
@@ -257,18 +254,11 @@ export function maybeStartScheduler(
 
 async function main() {
   acquireLock()        // refuse to start if another serve is live
-  // 进程内内核：能力的共同挂载点 + 退出时的统一销毁口。**必须早于 bootstrap**——
-  // bootstrap 里的服务（Phase 1/2 起）会把自己的句柄/定时器登记成它的 effect。
-  const kernel = createKernel()
-  // 进程级兜底网（process-guard.ts 头注是权威说明）：孤儿 promise 的 rejection 不再把整个
-  // 后端带走，未捕获异常仍然退出但**先留下堆栈 + 一条通知**。
-  //
-  // 位置有讲究：紧跟 createKernel、**早于 bootstrap** —— 真事故（2026-09-04 发行机上
-  // RsshubClient 的孤儿 `ready`）就发生在启动装配期间，挂晚了正好错过它。
-  // 事件层比这里晚装配，所以走 `lazyNotify` 调用时现取（装配期取字段 = 冻住 undefined，
-  // 那条通知会永远发不出去且一个字都不报）。
-  // 不登记成内核 effect：这道网要一直活到进程真的退出为止，关停期的异常同样该被看见。
-  installProcessGuards({ notify: lazyNotify(() => kernel.streamEvents as EventsService | undefined) })
+  // 进程级共享资源（`src/engine/runtime.ts`）。serve 是进程入口，所以由它接管进程级钩子（`process: true`）：
+  // 兜底网（孤儿 rejection 不带走后端、未捕获异常留堆栈 + 通知再退）、信号上的收尾、全局 fetch 陷阱。
+  // 位置有讲究：**早于实例装配**——真事故（2026-09-04 发行机上 RsshubClient 的孤儿 `ready`）就发生在启动装配
+  // 期间，挂晚了正好错过它。实例在建内核那一刻把自己的通知口挂上去（`runtime.attachNotify`）。
+  const runtime = createRuntime({ env: process.env, process: true })
   const config = loadConfig()
   const hub = new WsHub()
   // one shared debug bus: record() rings + broadcasts, so audio-resolve (http route) and download
@@ -313,7 +303,7 @@ async function main() {
     dataDir: process.env.STREAM_DATA_DIR ?? process.cwd(),
     config,
     log: console.log,
-    kernel,
+    runtime,
     hooks: {
       // agent 修复会话给 agent 的那条 MCP 线：**口和 token 只有这儿知道**（口就是本进程绑的那个，
       // 两个数一分家，agent 就会去敲一个没人应答的地址）。
@@ -326,6 +316,7 @@ async function main() {
     },
   }))
   const boot = stream
+  const kernel = stream.kernel
   // 设备 / 节点 / 身份表随实例建（`src/engine/devices.ts`）；下面的设备路由、中继、任务的执行位置都读这几格。
   // 能力包宿主随实例建、可选包也在 createStream 里装好了（`src/engine/capabilities.ts`）；内置的 Stream Desktop
   // 仍在下面 `mountHostAgent` 挂（它要养本机进程、要知道本进程的口）。
@@ -363,9 +354,6 @@ async function main() {
   // 出站唯一入口接上设备目录。之前（装配早期）的 fetchFor 对非 local 一律报离线，这一步之后才能派到设备。
   // 必须早于调度中心 / 任务中心开始派活（它们在本函数更靠后才启动）。
   installFetchFor(makeFetchFor({ directory: harvest.hostRelays, debug: recordDebug }))
-  // 全局 fetch 的运行时兜底：远程设备上的执行里直接调全局 fetch 就抛，而不是从本机发出去。
-  // owned-outbound 早在文件首行就快照了原始 fetch，ownedFetch 不经过它。见 global-fetch-trap.ts 头注。
-  installGlobalFetchTrap()
   // 授权健康住 `ctx.auth`（横幅 / 对账 / 重登）。`focusLoginTab` 不在这儿——它是 lane 的薄壳，
   // 归 harvest 域。
   const auth = kernel.auth
@@ -1252,6 +1240,8 @@ async function main() {
     await stream.close().catch((e) => {
       console.error('[stream] kernel dispose error:', (e as Error).message)
     })
+    // runtime 是 serve 建的、serve 关：收掉 RSSHub worker、跑退出收尾（facility 锁文件）。
+    await runtime.close().catch(() => {})
     releaseLock()
     finale()
   }

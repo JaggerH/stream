@@ -108,6 +108,8 @@ export interface AuthConfig {
   requiredCookieDomainsFor?: (deviceId: string, nodeId?: string) => string[]
   /** 浏览器节点表（browser-identity D10）：设备上的节点都离线时，登录态读默认 / 最近见过的那个节点。 */
   nodes?: SlotNodes
+  /** 重登锁文件在进程要走时由谁删（runtime 的那份；缺省 = 挂在真进程上）。 */
+  exitHooks?: import('../../exit-hooks.ts').ExitHooks
 }
 
 /**
@@ -331,7 +333,7 @@ export const authPlugin = {
           { facility, lifecycle: 'persistent', visibility: 'unattended' }, 'about:blank', 'commit', 'login',
         )),
       },
-      lock: { acquire: (facility) => acquireFacilityLock(locksRoot, facility) },
+      lock: { acquire: (facility) => acquireFacilityLock(locksRoot, facility, config.exitHooks) },
     }))
     // login:oauth —— 骑用户 Chrome 里已有的第三方登录态（今天只有 Google）。装配形状与上面
     // qr 那支完全一样：同一条 lane、同一个 Transport-backed LoginPage（`makeTransportLoginPage`
@@ -342,7 +344,7 @@ export const authPlugin = {
           { facility, lifecycle: 'persistent', visibility: 'unattended' }, 'about:blank', 'commit', 'login',
         )),
       },
-      lock: { acquire: (facility) => acquireFacilityLock(locksRoot, facility) },
+      lock: { acquire: (facility) => acquireFacilityLock(locksRoot, facility, config.exitHooks) },
     }))
 
     // Resolve a facility's declared session source + provider, then run the login challenge.

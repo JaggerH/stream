@@ -116,6 +116,7 @@ export function countChangedSince(roots: string[], sinceMs: number): number {
   return n
 }
 
+// 进程级共享、只读：答的是「这份后端代码是哪个提交、检出脏没脏」——同一个进程里的实例跑的是同一份代码，答案相同。
 let commitCache: { value: string | undefined } | undefined
 let dirtyCache: { at: number; value: number } | undefined
 

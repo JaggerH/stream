@@ -45,6 +45,7 @@ async function prepareCheckoutLoader(): Promise<void> {
   ;(globalThis as Record<string, unknown>).React ??= { createElement, Fragment }
 }
 
+// 加载 RSSHub 包的 promise：只住在 worker 线程里（每个 worker 一份），不是主线程的实例状态。
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let pkgPromise: Promise<any> | null = null
 function getPkg() {

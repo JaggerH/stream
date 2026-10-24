@@ -113,6 +113,8 @@ export interface HarvestService {
 }
 
 export interface HarvestConfig {
+  /** 本机 Chrome 的发现（runtime 的那份，进程级：它读 PATH）。缺省 = 按真进程环境现找。 */
+  discoverChrome?: () => Promise<import('../../browser/discover-chrome.ts').ChromeCandidate[]>
   /** 可写状态根目录（能力缓存 / 撞墙台账 / 失败现场截图都落在它下面）。 */
   dataDir: string
   log: (...args: unknown[]) => void
@@ -518,7 +520,7 @@ export const harvestPlugin = {
         return harvestBrowserStatus({
           settingsExe: chosenExe(),
           configExe: config.harvestBrowser?.exe,
-          candidates: await discoverChromeCandidates(nodeDiscoverFs()),
+          candidates: await (config.discoverChrome ?? (() => discoverChromeCandidates(nodeDiscoverFs())))(),
         })
       },
       /** 选定一个。存在性校验在 row 的 validate 钩子里（`/api/config/harvest-browser` 直写
