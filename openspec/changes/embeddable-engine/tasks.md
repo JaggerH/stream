@@ -41,7 +41,7 @@
   - `search/seeds`、`links/recognize`、normalizer 注册表（`642aab8`）；serving / sites / projection / cookie env（`12555f1`，原 `2798deb` 已丢失、按同样标准重做）；plugin-target 与 standby（`155698f`，`ctx.packages.targets` / `ctx.packages.standby`，`STREAM_PLUGIN_NETWORK` 收进 deployment）；providers/identities（`031ef7f`，`ProviderIdentityTable` 于 ctx.sources，seed/bindings/callsite/UserStore 均按实例表）。
 - [x] 3.3 内容缓存：`content/extract`、`adapters/favicon`；normalizer 注册表；`devices/fetch` 的 `impl`
   - normalizer 注册表（`642aab8`）；extract/favicon 缓存与 devices/fetch 的 impl 归实例（`ce3b963`：`ctx.stores.articles/favicons`、`ctx.deviceFetch`，replay 的 http/html 档显式穿 fetch）。OCR 图片缓存（`content/images/ocr-cache.ts`）同形状但不在本项清单，未动。
-- [ ] 3.4 每处补「两个内核互相读不到」的用例
+- [x] 3.4 每处补「两个内核互相读不到」的用例（各模块单测 +  整体兜底）
 
 ## 4. 工具接口
 
@@ -51,9 +51,9 @@
 
 ## 5. 双实例测试
 
-- [ ] 5.1 同进程两个实例、两个临时数据目录：订阅 / 条目 / 设置 / 任务 / cookie / 缓存互不可见
-- [ ] 5.2 关 A 不影响 B 的定时任务
-- [ ] 5.3 共用一个 runtime 时只有一个 RSSHub worker
+- [x] 5.1 同进程两个实例、两个临时数据目录：订阅 / 条目 / 设置 / 任务 / cookie / 缓存互不可见（）
+- [x] 5.2 关 A 不影响 B 的定时任务（同上；秒级 cron，账本记 failed 也算「按点触发」的证据，A 关后账本冻结）
+- [x] 5.3 共用一个 runtime 时只有一个 RSSHub worker（同上：， 单例、关 A 不撤）
 
 ## 6. 发布与文档
 
