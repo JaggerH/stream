@@ -75,39 +75,39 @@ it('A 改设置（settings.json 的一项）→ B 不变', async () => {
 })
 
 it('A、B 各加一条定时任务（秒级 cron）→ 关 A → B 的照样触发，A 的账本不再被写', async () => {
-  const a = await createStream({ dataDir: mkdtempSync(join(tmpdir(), 'two-ta-')), config: tempRoot('a'), log: () => {} })
+  // scheduler=true：任务中心随 createStream 起（design D1 附注）——两个实例都这样起、互不冲突
+  // 本身就是这条用例的一部分。任务跑在实例装配的 deps 上，能**成功**跑（不是记 failed）。
+  const a = await createStream({ dataDir: mkdtempSync(join(tmpdir(), 'two-ta-')), config: tempRoot('a', true), log: () => {} })
   open.push(a)
-  const b = await createStream({ dataDir: mkdtempSync(join(tmpdir(), 'two-tb-')), config: tempRoot('b'), log: () => {} })
+  const b = await createStream({ dataDir: mkdtempSync(join(tmpdir(), 'two-tb-')), config: tempRoot('b', true), log: () => {} })
   open.push(b)
+  expect(a.tasks.depsBound()).toBe(true)
+  expect(b.tasks.depsBound()).toBe(true)
 
   const task = (id: string) => ({
     id, label: id, schedule: '* * * * * *', // 6 段含秒：每秒一班
     serial: false, whenBusy: 'skip' as const, maxAttempts: 1, enabled: true,
     run: async () => ({ summary: 'tick' }),
   })
-  await a.tasks.start([task('two.a')], { dbPath: join(a.stateDir, 'sidequest-test.sqlite'), log: () => {}, watchdog: false })
-  await b.tasks.start([task('two.b')], { dbPath: join(b.stateDir, 'sidequest-test.sqlite'), log: () => {}, watchdog: false })
   await a.tasks.addTask(task('two.a'))
   await b.tasks.addTask(task('two.b'))
 
-  const aLedger = new RunLedger(join(a.stateDir, 'sidequest-test.sqlite'))
-  const bLedger = new RunLedger(join(b.stateDir, 'sidequest-test.sqlite'))
-  // 两个账本都开始记（job 无 deps → 记 failed，但**记了**就是"按点触发"的证据）
+  const aLedger = new RunLedger(join(a.stateDir, 'sidequest.sqlite'))
+  const bLedger = new RunLedger(join(b.stateDir, 'sidequest.sqlite'))
+  // 两个账本都开始记，而且任务**跑成**（completed）——deps 是实例装配的那份，不是空。
   await new Promise((r) => setTimeout(r, 2500))
-  expect(aLedger.runs('two.a').length).toBeGreaterThan(0)
-  expect(bLedger.runs('two.b').length).toBeGreaterThan(0)
+  expect(aLedger.runs('two.a').some((r) => r.state === 'completed')).toBe(true)
+  expect(bLedger.runs('two.b').some((r) => r.state === 'completed')).toBe(true)
 
   await a.close()
   const aFrozen = aLedger.runs('two.a').length
-  await new Promise((r) => setTimeout(r, 2200))
-  const bGrew = bLedger.runs('two.b').length > bLedger.runs('two.b').length - 1 // placeholder, real assert below
-  const bAfter = bLedger.runs('two.b').length
-  expect(bAfter).toBeGreaterThan(0)
-  // A 的账本关停后不再增长（多等一拍再数一次）
+  const bBefore = bLedger.runs('two.b').length
+  await new Promise((r) => setTimeout(r, 2500))
+  // 关 A 之后 B 的运行次数**增长**（不是只断言「没报错」——bBefore 在关 A 之前就 > 0，
+  // 单独断言它等于什么都没验），A 的账本冻结。
+  expect(bLedger.runs('two.b').length).toBeGreaterThan(bBefore)
   await new Promise((r) => setTimeout(r, 1200))
   expect(aLedger.runs('two.a').length).toBe(aFrozen)
-  expect(bLedger.runs('two.b').length).toBeGreaterThan(0)
-  expect(bGrew || bAfter > 0).toBe(true)
 })
 
 it('A 写一条 cookie 快照 → B 读不到', async () => {

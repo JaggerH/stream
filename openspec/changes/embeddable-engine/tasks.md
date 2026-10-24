@@ -54,7 +54,7 @@
 ## 5. 双实例测试
 
 - [x] 5.1 同进程两个实例、两个临时数据目录：订阅 / 条目 / 设置 / 任务 / cookie / 缓存互不可见（`src/engine/two-instances.test.ts`）
-- [x] 5.2 关 A 不影响 B 的定时任务（同上；秒级 cron，账本记 failed 也算「按点触发」的证据，A 关后账本冻结）
+- [x] 5.2 关 A 不影响 B 的定时任务（同上；秒级 cron。验收返工 R3 重写：两个实例都靠 createStream 自启动的任务中心起，任务跑在实例 deps 上记 **completed**；断言关 A 后 B 的运行次数**增长**、A 的账本冻结——原断言 `bAfter > 0` 在关 A 前就成立、`bGrew` 是恒真式，都删了）
 - [x] 5.3 共用一个 runtime 时只有一个 RSSHub worker（同上：`a.runtime === b.runtime`，`runtime.rsshub` 单例、关 A 不撤）
 
 ## 6. 发布与文档
