@@ -13,96 +13,23 @@ import './http/owned-outbound.ts'
 import { serve } from '@hono/node-server'
 import type { Server } from 'node:http'
 import { existsSync, readFileSync, writeFileSync, unlinkSync } from 'node:fs'
-import { tmpdir, homedir } from 'node:os'
+import { tmpdir } from 'node:os'
 import { join, dirname } from 'node:path'
-import { createRequire } from 'node:module'
-import { resolveDataDir } from './bootstrap.ts'
 import { routes, attachRelayServers } from './engine/routes.ts'
 import { createStream, createRuntime, type Stream } from './engine/index.ts'
 import { loadConfig } from './config-env.ts'
-import { createHttpApp, type HttpDeps } from './http/app.ts'
+import { type HttpDeps } from './http/app.ts'
 import { classifyLauncher } from './restart/policy.ts'
 import { makeRestartTrigger, type Shutdown } from './restart/trigger.ts'
-import { writeFixtureFromItem } from './content/ad-fixtures.ts'
-import { WsHub, attachWs } from './http/ws.ts'
+import { WsHub } from './http/ws.ts'
 import { toClientItem } from './http/client-item.ts'
-import { attachExtRelay, closeRelayServer } from './http/ext-relay.ts'
-import { resolveExtToken } from './http/ext-upgrade.ts'
-import { summarizeCapability } from './browser/capability-store.ts'
-import { materializeExtension } from './browser/extension-dir.ts'
-import { installExtension } from './browser/extension-install.ts'
-import { uninstallExtension } from './browser/extension-uninstall.ts'
-import { reloadExtension } from './browser/extension-reload.ts'
-import { readExtensionConsole } from './browser/extension-console.ts'
-import { attachHostRelay } from './http/host-relay.ts'
-import { EventSourceRelay, attachEventSourceRelay } from './event-source/relay.ts'
-import { makeDrain } from './event-source/drain.ts'
-import { wireCookiesFeed } from './event-source/cookies-feed.ts'
-import { authorizeAccess, parseTrustedOrigins, isLoopbackAddress, peerAddress, lanBaseUrls } from './http/access-guard.ts'
-import { mountDeviceRoutes } from './http/device-routes.ts'
-import { mountExtBindingRoutes, REVOKED_CLOSE_CODE } from './http/ext-binding-routes.ts'
-import { PAIRED_PLATFORMS } from './devices/device-store.ts'
-import { ProfileClaims, agentFrom } from './devices/profile-claim.ts'
-import { mountNodeRoutes } from './http/node-routes.ts'
-import { cookieSlot } from './credentials/cookie-slot.ts'
-import { mountIdentityRoutes } from './http/identity-routes.ts'
-import { assertDeviceReady, facilityTarget, placeRun } from './devices/placement.ts'
-import { LOCAL_TARGET, taskTarget } from './devices/target.ts'
-import { makeFetchFor } from './devices/fetch.ts'
-import { type RunPlacement } from './devices/run-context.ts'
-import type { UserTaskRow } from './tasks/task-store.ts'
-import { attachEnrichCommands } from './http/enrich-ws.ts'
-import { attachAuthLoginCommands } from './http/auth-login.ts'
-
-// 真相源在 src/ext-id.ts（扩展 id 的唯一定义处；access-guard 与 ext relay 都从那里读）。
-import { STREAM_EXTENSION_ID as EXT_ID } from './ext-id.ts'
-import { DESKTOP_CAPABILITY_NAME, hostAgentSkipReason, mountHostAgent } from './host-agent/mount.ts'
 import { DebugLog } from './http/debug-log.ts'
 import { createFailureSink } from './http/debug-sink.ts'
 import { startLoopLagMonitor } from './loop-lag.ts'
 import { OpTracker, type TrackFn, type TrackSyncFn } from './op-track.ts'
-import { mountMcp } from './http/mcp-mount.ts'
-import { ACTION_RUN_DOMAIN, projectActionRun } from './mcp/action-run.ts'
-import type { RunStatus } from './agent/search/types.ts'
-import { withCapabilityTools } from './mcp/capability-tools.ts'
-import { mountConfigRows } from './http/config-rows-routes.ts'
-import { mountLiveRoutes } from './http/live-routes.ts'
-import { LiveStreamService } from './live/service.ts'
-import { mountResearchRoutes } from './http/research-routes.ts'
-import { localRecipesDir, mountLocalRecipeRoutes } from './http/local-recipes-routes.ts'
-import { mountImageGenerationRoutes, PRODUCES_IMAGES } from './http/image-generation-routes.ts'
-import { isCanonicalBrowserRecipe } from './replay/recipe.ts'
-import { mountSkillRoutes } from './http/skills-routes.ts'
-import { SKILLS_ROOT_REL } from './skills/shipped.ts'
-import { artifactsDirOf } from './board/run-source.ts'
-import { watchArtifactsDir } from './live/watch.ts'
-import { createResearchWatchers, type ResearchWatchers } from './live/research-watchers.ts'
-import { lazyNotify, type EventsService } from './events/service.ts'
-import { mountPanelAssets } from './http/panel-mount.ts'
-import { mountStandalonePage } from './http/standalone-page.ts'
-import { repoRoot, shippedRoot } from './http/build-identity.ts'
-import { mountTaskDashboard } from './http/task-dashboard.ts'
-import { mountPluginGateway } from './http/plugin-gateway.ts'
 import { type StandbyManager } from './plugins/standby/manager.ts'
-import { wireStandby } from './plugins/standby/wire.ts'
-import { standbyInertNotification } from './plugins/standby/inert-notice.ts'
-import type { TaskDeps } from './tasks/types.ts'
-import { builtinTasks } from './tasks/builtin.ts'
-import { TaskStore } from './tasks/task-store.ts'
-import { RunLedger } from './tasks/run-history.ts'
-import { compileEnabled, compileUserTask } from './tasks/user-tasks.ts'
-import { actionDirectory } from './tasks/package-actions.ts'
-import { mountTaskRoutes } from './http/task-routes.ts'
-import { mountInterventionRoutes } from './http/intervention-routes.ts'
-import { mountSourceHealthRoutes } from './http/source-health-routes.ts'
-import { SourceHealthIndex } from './intervention/source-health-view.ts'
-import { draftPath, readDraft } from './intervention/explore-graph.ts'
-import { AGENT_ROW_ID, readAgentConfig } from './intervention/agent-config.ts'
-import { localNameOf } from './registry/source-id.ts'
-import type { InterventionService } from './kernel/plugins/intervention.ts'
-import { errText } from './err-text.ts'
-import { ImportRunStore } from './sharing/import-run-store.ts'
-import { bindModuleHook, reportUnboundHooks } from './kernel/plugins/module-hooks.ts'
+import { reportUnboundHooks } from './kernel/plugins/module-hooks.ts'
+import { makeFetchFor } from './devices/fetch.ts'
 
 /** 后端自己就是那扇门，默认口 = 唯一的对外口 8900（`DEFAULT_BACKEND_URL`、`GATEWAY_PORT`
  *  都是这个数）。曾经默认 4555 是容器时代的遗留：门在 Caddy 上，
@@ -121,10 +48,6 @@ const LOCK_FILE = join(process.env.STREAM_DATA_DIR ?? tmpdir(), 'stream-serve.pi
 // pid 活性/出生时刻的判据收进 proc-identity.ts。
 // pidStartTime 保持从这里 re-export——serve.lock.test.ts 按旧路径引它。
 import { pidAlive, pidStartTime } from './proc-identity.ts'
-import { openReconcile } from './netdisk/reconcile/open.ts'
-import { runSessionExports } from './credentials/session-export.ts'
-import { streamRecordToStream } from './store/compat.ts'
-import { envCoveredFields } from './kernel/plugins/runtime-config.ts'
 export { pidStartTime }
 
 /**
@@ -280,56 +203,23 @@ async function main() {
       // agent 修复会话给 agent 的那条 MCP 线：**口和 token 只有这儿知道**（口就是本进程绑的那个，
       // 两个数一分家，agent 就会去敲一个没人应答的地址）。
       mcpEndpoint: () => ({ url: `http://127.0.0.1:${PORT}/api/mcp`, token: stream.secrets.apiToken }),
-      onItem: (item, type) => hub.broadcast({ type: 'item', item_type: type, item: toClientItem({ ...item, type }, sources.itemProjection()) }),
+      onItem: (item, type) => hub.broadcast({ type: 'item', item_type: type, item: toClientItem({ ...item, type }, stream.kernel.sources.itemProjection()) }),
       onDebug: recordDebug,
       broadcast: (msg) => hub.broadcast(msg),
       track,
       trackSync,
     },
   }))
-  const boot = stream
   const kernel = stream.kernel
-  // 设备 / 节点 / 身份表随实例建（`src/engine/devices.ts`）；下面的设备路由、中继、任务的执行位置都读这几格。
-  // 能力包宿主随实例建、可选包也在 createStream 里装好了（`src/engine/capabilities.ts`）；内置的 Stream Desktop
-  // 仍在下面 `mountHostAgent` 挂（它要养本机进程、要知道本进程的口）。
-  // 两把令牌随实例落数据目录（`src/engine/index.ts` 的 `loadSecrets`）：访问守卫与三条中继认它们。
-  const { extToken, apiToken } = stream.secrets
-  const { host: capabilityHost, loaded: loadedCapabilities } = stream.capabilities
-  const { deviceStore, extBindings, facilityDevices, facilityBindings, nodes: browserNodes, identities: siteIdentities } = stream.devices
-  // 落盘状态住内核的存储域（`ctx.stores`）——下面的 HttpDeps 组装从这里取，键一个没变。
-  // 设置覆盖层（`settings.json`）：TMDb/OMDb 凭证与 Source 运行时配置两组读写口直接吃它，
-  // 不再经 Boot 转一手（那几格本来就只是转调）。
-  const settingsStore = kernel.settings
-  /** 旧 /api/settings/video-sources 契约的状态投影（has* 布尔，key 永不回显），
-   *  数据源是 video-sources 配置 row 的四层合并读口。 */
-  const videoSourcesStatus = () => {
-    const v = settingsStore.rows.resolve('video-sources')
-    return {
-      hasTmdbApiKey: !!v.tmdbApiKey,
-      hasOmdbApiKey: !!v.omdbApiKey,
-      language: (v.language as string | undefined) ?? 'zh-CN',
-    }
-  }
-  const stores = kernel.stores
-  // 包这一域（描述符 / 启用判据 / 容器动作 / AList 配置面）住 `ctx.packages`。**网关与 standby
-  // 那两处不走 HttpDeps**，直接吃 `pkgs.backendDirectory` / `pkgs.isPluginEnabled`（见下）。
-  const pkgs = kernel.packages
-  // Source 目录 + recipe 包安装面住 `ctx.sources`。
-  const sources = kernel.sources
-  // 通知中心住 `ctx.streamEvents`（**不是 `ctx.events`**——那是 cordis 本体的服务，见
-  // kernel/plugins/events.ts）。三个消费点：HttpDeps、standby 降级告警、TaskDeps。
-  const streamEvents = kernel.streamEvents
-  // 采集运输面住 `ctx.harvest`。**这一域有 5 处不走 HttpDeps 的直连接线**（两条中继 attach、
-  // WS hub 的两条命令、TaskDeps 的 reapIdle），漏改任一处都是静默的：extRelay 那次的形状是
-  // 「扩展 popup 显示已连、后端 status() 恒 disconnected、采集每轮只报『环境没就绪』」。
-  const harvest = kernel.harvest
   // 出站唯一入口接上设备目录（装进本实例的 ctx.deviceFetch）。装配早期 send 对非 local 一律
   // 报离线，这一步之后才能派到设备。必须早于调度中心 / 任务中心开始派活（更靠后才启动）。
-  kernel.deviceFetch.install(makeFetchFor({ directory: harvest.hostRelays, debug: recordDebug }))
-  // 授权健康住 `ctx.auth`（横幅 / 对账 / 重登）。`focusLoginTab` 不在这儿——它是 lane 的薄壳，
+  kernel.deviceFetch.install(makeFetchFor({ directory: kernel.harvest.hostRelays, debug: recordDebug }))
+  // 设备 / 节点 / 身份表随实例建（`src/engine/devices.ts`）；下面的设备路由、中继、任务的执行位置都读这几格。
+  // 能力包宿主随实例建、可选包也在 createStream 里装好了（`src/engine/capabilities.ts`）；内置的 Stream Desktop
+  // 仍在 `attachRelayServers` 里挂（它要养本机进程、要知道本进程的口）。
+  // 两把令牌随实例落数据目录（`src/engine/index.ts`）：访问守卫与三条中继认它们。
 
-  // ── HTTP 面（D1）：路由/挂载/中继全部搬进 src/engine/routes.ts，serve 只递 io ──
-  const scheduling = kernel.scheduling
+  // ── HTTP 面（D1）：路由/挂载/中继接线全在 src/engine/routes.ts，serve 只递 io ──
   // `POST /api/restart` 的两只手：闸门读账本；触发先交出 mode、下一拍才开始关（trigger.ts）。
   // 优雅关（`shutdownThen`）在 main() 末尾才装好，而 HTTP 早在那之前就在听——中间这个窗口里
   // 的 restart 请求必须被**拒绝**而不是排进 setImmediate 去撞 undefined（那会是未捕获异常、
@@ -339,8 +229,7 @@ async function main() {
     running: () => stream.tasks.runningTasks(),
     trigger: makeRestartTrigger({ mode: classifyLauncher(process.env), shutdown: () => shutdown }),
   }
-
-  // ── HTTP 面（D1）：路由/挂载/中继接线全在 src/engine/routes.ts，serve 只递 io ──
+  // standby 管理器的共享槽：接线在 routes() 里（buildStandbyOrDegrade），关停在下面 shutdownThen 读。
   const standbyRef: { current: StandbyManager | null } = { current: null }
   const app = await routes({
     stream,
@@ -358,22 +247,15 @@ async function main() {
   )
   kernel.effect(() => () => { server.close() })
   attachRelayServers(server as unknown as Server, { stream, hub, debugLog, track, trackSync, port: PORT, restart, standbyRef })
-  const streams = scheduling.scheduler.list()
+  const streams = kernel.scheduling.scheduler.list()
   console.log(`[stream] ${streams.length} streams → vault ${config.vault_root}`)
   // scheduler.start() runs each stream's initial harvest itself (staggered) — no
   // manual tick loop here, which previously double-ran every stream at boot.
   // 查询档(STREAM_NO_SCHEDULER=1,stdio MCP spawn 的即用即回收后端)跳过采集,只服务查询。
-  maybeStartScheduler(scheduling.scheduler, config.deployment?.scheduler !== false)
+  maybeStartScheduler(kernel.scheduling.scheduler, config.deployment?.scheduler !== false)
   // The scheduler is the only standing harvest engine (ARCHITECTURE.md Data Scheduling,
   // invariant 4). Standing resolution goals are expressed as exclusive Streams, harvested
   // here — not by any parallel subscription loop.
-
-  // 调度中心（spec 2026-07-24 §3）：4 处业务定时器收编——cookie-refresh（原 5min 裸定时）、
-  // jobs-sweep（原 10min）、standby-reaper（原 wire.ts 自建 60s）、netdisk-autosync（原 bootstrap
-  // 6h，失败不再 .catch(() => {}) 静默吞）。降级守卫在 startTaskCenter 内部：start 失败只留一行
-  // 日志，不掀翻服务器。
-  // 查询档(STREAM_NO_SCHEDULER=1)跳过采集调度中心，与上面 maybeStartScheduler 同一开关——
-  // 查询型即用即回收后端不该常驻定时任务（cookie-refresh/jobs-sweep/standby-reaper/netdisk-autosync）。
 
   // 三个模块级钩子的接线体检：只报**不该是 null 却是 null 的那些**。两条常态降级显式申报，
   // 不进这行——没有 Docker / 没插件声明 standby 时 standby 本就该 inert；查询档
@@ -382,8 +264,8 @@ async function main() {
     log: (m) => console.log(m),
     probes: [
       // 钩子都在实例上（ctx.packages），名册也跟着实例走——没有模块级全局可指了。
-      { name: 'pluginTarget', bound: () => pkgs.targets.bound },
-      { name: 'standby', bound: () => pkgs.standby.bound },
+      { name: 'pluginTarget', bound: () => kernel.packages.targets.bound },
+      { name: 'standby', bound: () => kernel.packages.standby.bound },
       { name: 'taskDeps', bound: () => stream.tasks.depsBound() },
     ],
     degraded: [
