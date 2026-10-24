@@ -27,9 +27,6 @@ import { DebugLog } from './http/debug-log.ts'
 import { createFailureSink } from './http/debug-sink.ts'
 import { startLoopLagMonitor } from './loop-lag.ts'
 import { OpTracker, type TrackFn, type TrackSyncFn } from './op-track.ts'
-import { type StandbyManager } from './plugins/standby/manager.ts'
-import { reportUnboundHooks } from './kernel/plugins/module-hooks.ts'
-import { makeFetchFor } from './devices/fetch.ts'
 
 /** 后端自己就是那扇门，默认口 = 唯一的对外口 8900（`DEFAULT_BACKEND_URL`、`GATEWAY_PORT`
  *  都是这个数）。曾经默认 4555 是容器时代的遗留：门在 Caddy 上，
@@ -129,22 +126,6 @@ function releaseLock(): void {
  * 用户自己那个 Chrome——所以能被 `pkill` 匹配到的浏览器进程，只可能是**别人的**（用户的窗口、
  * 开发者别的工具起的 headless shell）。后端启动去杀它们，就是关一扇不属于自己的窗。
  */
-/** 查询档无采集:stdio MCP spawn 出的即用即回收后端(STREAM_NO_SCHEDULER=1)不该把所有订阅流的
- *  定时采集跑起来——查询型用户连上问一句不应顺带触发全量采集(两档拍板)。标记为真则跳过
- *  scheduler.start() 并打一行原因日志;否则照常启动。API 查询路径与本分支无关(app 在 main() 里
- *  无条件构造),不受本标记影响。返回是否已启动,便于调用方/测试断言。 */
-export function maybeStartScheduler(
-  scheduler: { start(): void },
-  enabled: boolean,
-  log: (msg: string) => void = console.log,
-): boolean {
-  if (!enabled) {
-    log('[stream] scheduler disabled — query-only backend, no standing harvest')
-    return false
-  }
-  scheduler.start()
-  return true
-}
 
 
 async function main() {
@@ -211,13 +192,12 @@ async function main() {
     },
   }))
   const kernel = stream.kernel
-  // 出站唯一入口接上设备目录（装进本实例的 ctx.deviceFetch）。装配早期 send 对非 local 一律
-  // 报离线，这一步之后才能派到设备。必须早于调度中心 / 任务中心开始派活（更靠后才启动）。
-  kernel.deviceFetch.install(makeFetchFor({ directory: kernel.harvest.hostRelays, debug: recordDebug }))
   // 设备 / 节点 / 身份表随实例建（`src/engine/devices.ts`）；下面的设备路由、中继、任务的执行位置都读这几格。
   // 能力包宿主随实例建、可选包也在 createStream 里装好了（`src/engine/capabilities.ts`）；内置的 Stream Desktop
   // 仍在 `attachRelayServers` 里挂（它要养本机进程、要知道本进程的口）。
   // 两把令牌随实例落数据目录（`src/engine/index.ts`）：访问守卫与三条中继认它们。
+  // 后台工作（调度中心、采集调度器、standby、research watchers、出站设备接线）已随 createStream
+  // 启动（design D1 附注）——createStream 解析时它们就都在跑，serve 不再补任何一针。
 
   // ── HTTP 面（D1）：路由/挂载/中继接线全在 src/engine/routes.ts，serve 只递 io ──
   // `POST /api/restart` 的两只手：闸门读账本；触发先交出 mode、下一拍才开始关（trigger.ts）。
@@ -229,8 +209,6 @@ async function main() {
     running: () => stream.tasks.runningTasks(),
     trigger: makeRestartTrigger({ mode: classifyLauncher(process.env), shutdown: () => shutdown }),
   }
-  // standby 管理器的共享槽：接线在 routes() 里（buildStandbyOrDegrade），关停在下面 shutdownThen 读。
-  const standbyRef: { current: StandbyManager | null } = { current: null }
   const app = await routes({
     stream,
     hub,
@@ -239,40 +217,17 @@ async function main() {
     trackSync,
     port: PORT,
     restart,
-    standbyRef,
   })
 
   const server = serve({ fetch: app.fetch, port: PORT, hostname: '0.0.0.0' }, (info) =>
     console.log(`[stream] HTTP+WS on http://0.0.0.0:${info.port} (ws: /ws)`)
   )
   kernel.effect(() => () => { server.close() })
-  attachRelayServers(server as unknown as Server, { stream, hub, debugLog, track, trackSync, port: PORT, restart, standbyRef })
+  attachRelayServers(server as unknown as Server, { stream, hub, debugLog, track, trackSync, port: PORT, restart })
   const streams = kernel.scheduling.scheduler.list()
   console.log(`[stream] ${streams.length} streams → vault ${config.vault_root}`)
-  // scheduler.start() runs each stream's initial harvest itself (staggered) — no
-  // manual tick loop here, which previously double-ran every stream at boot.
-  // 查询档(STREAM_NO_SCHEDULER=1,stdio MCP spawn 的即用即回收后端)跳过采集,只服务查询。
-  maybeStartScheduler(kernel.scheduling.scheduler, config.deployment?.scheduler !== false)
   // The scheduler is the only standing harvest engine (ARCHITECTURE.md Data Scheduling,
-  // invariant 4). Standing resolution goals are expressed as exclusive Streams, harvested
-  // here — not by any parallel subscription loop.
-
-  // 三个模块级钩子的接线体检：只报**不该是 null 却是 null 的那些**。两条常态降级显式申报，
-  // 不进这行——没有 Docker / 没插件声明 standby 时 standby 本就该 inert；查询档
-  // （STREAM_NO_SCHEDULER=1）根本不起调度中心，taskDeps 没人要。掺进常态 = 第一天就变噪音。
-  reportUnboundHooks({
-    log: (m) => console.log(m),
-    probes: [
-      // 钩子都在实例上（ctx.packages），名册也跟着实例走——没有模块级全局可指了。
-      { name: 'pluginTarget', bound: () => kernel.packages.targets.bound },
-      { name: 'standby', bound: () => kernel.packages.standby.bound },
-      { name: 'taskDeps', bound: () => stream.tasks.depsBound() },
-    ],
-    degraded: [
-      ...(standbyRef.current ? [] : ['standby']),
-      ...(config.deployment?.scheduler === false ? ['taskDeps'] : []),
-    ],
-  })
+  // invariant 4) and it started inside createStream（design D1 附注）；这里只剩进程级的日志与监听。
 
   let shuttingDown = false
   /** 优雅关：关停步骤对信号退出和 `POST /api/restart` 是同一份，只有**最后一步**不同——
@@ -282,7 +237,7 @@ async function main() {
     shuttingDown = true
     console.log(`\n[stream] ${label} → shutting down...`)
     await stream.tasks.stop()
-    if (standbyRef.current) await standbyRef.current.shutdown().catch(() => {})
+    // standby 的收尾在实例的 close() 里（reaper 随调度中心停，管理器随后关）——
     // 采集的两步关停（先 `scheduler.stop()` 不再派新班，再 `shutdownAdapters()` 杀掉 adapter
     // 名下的 chrome 子进程）已经是采集调度域的两个 effect，由下面 quiesceKernel 按注册反序
     // 执行——**这里一行手写的都没有了**。漏掉 shutdownAdapters 的后果没变：遗留 chrome 跨重启

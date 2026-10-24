@@ -94,7 +94,9 @@ export async function wireStandby(deps: StandbyWiringDeps): Promise<StandbyWirin
   // 没过就连 Docker 端点都不该去解析。
   if (!plan.gated) return inert('not-gated')
 
-  const ep = (deps.resolveEndpoint ?? (() => resolveDockerEndpoint(process.env, process.platform)))()
+  // 默认实现不读环境（engine 可达模块禁 process.env，no-process-env 守卫）：调用方从
+  // config.deployment.docker_host 显式递进来（engine/background.ts），CLI 同理。
+  const ep = (deps.resolveEndpoint ?? (() => resolveDockerEndpoint({}, process.platform)))()
   const docker = ep ? (deps.makeClient ?? makeDockerClient)(ep) : null
   // Docker 端点解析不出 / ping 不通 → 只打一行日志、不接线 —— 容器保持常驻,绝不能让插件调用
   // 因为 standby 探测失败而跟着炸(降级是这个特性的核心安全属性,不是可选项)。

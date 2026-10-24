@@ -31,9 +31,6 @@ export interface SharingDeps {
   directory: Pick<import('../providers/directory.ts').ProviderDirectory, 'serveKeysOf' | 'isFallback'>
   /** 网盘对齐 binding 分享（B）：读投影/暂存 pending。absent → 未接 AList，netdisk 分享不可用。 */
   mappingStore?: { get(id: string): import('../netdisk/types.ts').MappingSet | undefined; save(set: import('../netdisk/types.ts').MappingSet): void }
-  /** 导入会建频道和流（present 由 bundle 决定，research 也在其中）——建完要让装配层重建
-   *  research watcher 集合。见 HttpDeps.onChannelsChanged。 */
-  onChannelsChanged?: () => void
 }
 
 /** 与 app.ts 的 errorBody 同形状（sharing 路由独立注册，helper 就地一份）。 */
@@ -159,8 +156,6 @@ export function registerSharingRoutes(app: Hono, deps: SharingDeps): void {
     })
     deps.runs.create(run)
     // 导入可能建出 research 频道，watcher 集合要跟着重建（`applyCollectionPolicy` 那一半没接
-    // 这条路，是因为导入建的流本来就走各自 present 的既有排班；watcher 这边没有这层兜底）。
-    deps.onChannelsChanged?.()
     return c.json(projectRun(run, deps), 201)
   })
 

@@ -2023,15 +2023,21 @@ Stream's backend can be embedded into another process instead of being run as
   you make. The creator also owns closing it.
 - **`createStream({ dataDir, config?, runtime? })`** (`src/engine/index.ts`) —
   one **instance**: data-dir lock, the cordis kernel, full bootstrap, the task
-  center and the two API tokens. One instance per data directory (a second
-  `createStream` on the same directory throws); instances sharing a runtime
-  share its lazily-created worker. `stream.close()` quiesces the kernel and
-  releases the lock — the shared runtime survives unless you created it.
+  center and the two API tokens. It also **starts the instance's background
+  work** (harvest scheduler, task center, standby wiring, research watchers) —
+  there is no separate `start()`; an instance that never sees `routes()` still
+  harvests on schedule and fires tasks on time. `config.deployment.scheduler
+  = false` turns all of it off (query-only mode). One instance per data
+  directory (a second `createStream` on the same directory throws); instances
+  sharing a runtime share its lazily-created worker. `stream.close()` stops the
+  task center and standby, quiesces the kernel and releases the lock — the
+  shared runtime survives unless you created it.
 - **`routes(io)` / `attachRelayServers(server, io)`** (`src/engine/routes.ts`) —
-  the whole HTTP surface. `routes` builds and returns the Hono app (REST API,
-  MCP, plugin gateway, panel assets); `attachRelayServers` hangs the
-  extension/host/event-source relays and the Stream Desktop host agent onto an
-  already-listening server. Callers that don't serve HTTP simply never call
+  the whole HTTP surface (including the sidequest dashboard, which binds
+  loopback on the port the caller passes). `routes` builds and returns the Hono
+  app (REST API, MCP, plugin gateway, panel assets); `attachRelayServers` hangs
+  the extension/host/event-source relays and the Stream Desktop host agent onto
+  an already-listening server. Callers that don't serve HTTP simply never call
   these — the instance works in-process without any port.
 - **`stream.tools`** (`src/engine/tools.ts`) — the in-process tool interface
   the MCP endpoint is built on: `stream.tools.list()` / `stream.tools.call()`

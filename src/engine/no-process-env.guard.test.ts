@@ -27,6 +27,7 @@ const OFFENDERS: Record<string, string> = {
   'src/intervention/acp-client.ts': '进程：agent 子进程继承环境',
   'src/media/ffmpeg-bin.ts': '进程：ffmpeg 探测子进程继承环境',
   'src/rsshub-worker-log.ts': '进程：worker 子进程自身的日志路径（RSSHUB_WORKER_LOG_PATH，随环境继承）',
+  'src/tasks/exec-runner.ts': '进程：任务执行的子进程继承环境（design 附录 A；经 user-tasks 编译口进入实例可达图）',
 }
 
 /** 运行期的模块说明符：`import … from`、`export … from`、裸 `import '…'`、`import('…')`。`import type` / `export type` 另判。 */

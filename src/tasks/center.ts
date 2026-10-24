@@ -13,6 +13,9 @@ import { dirname, resolve } from 'node:path'
 // 中间没有任何钩子，而"这一班到底跑不跑"必须在**入队之前**决定（见 buildCron）。
 import nodeCron from 'node-cron'
 import type { ScheduledTask, TaskDeps } from './types.ts'
+import type { TaskStore, UserTaskRow } from './task-store.ts'
+import type { RunLedger } from './run-history.ts'
+import type { PackageAction } from './package-actions.ts'
 import { registerTasks } from './registry.ts'
 import { bindTaskRoute } from './task-routes.ts'
 import { makeWatchdogTask, type TaskLook } from './watchdog.ts'
@@ -262,12 +265,34 @@ export interface TaskCenterStartOptions {
 }
 
 /**
+ * 实例装配（`src/engine/background.ts`）写、HTTP 任务面（`mountTaskRoutes`）读的共享物。
+ * 调度中心自己的运行不读它们；放在这里是「实例持有、路由只读」的最小口——store/ledger 由实例
+ * 打开（两边各开一份 sqlite 连接就是两套状态），任务清单与编译口由实例装配。查询档
+ * （`deployment.scheduler = false`）下 store/ledger 仍在（读清单不需要节拍器在跑），
+ * `builtins` 缺席 → 任务面诚实报空。
+ */
+export interface TaskCenterAssembly {
+  /** 用户任务行（stream.db）。缺席 = 打不开（文件锁 / 权限 / 磁盘满），任务面整体缺席。 */
+  readonly store?: TaskStore
+  /** 运行账本（sidequest.sqlite 的读口）。 */
+  readonly ledger?: RunLedger
+  /** 内置任务（调度中心开着时的装配结果；含按本机依赖条件装配的分寸）。 */
+  readonly builtins?: readonly ScheduledTask[]
+  /** 包交出的动作名录（任务面 actions 列的数据源）。 */
+  readonly actions?: ReadonlyMap<string, PackageAction>
+  /** 用户任务行 → 可调度任务（compileUserTask + 实例的 compileOpts；HTTP 的 apply 用）。 */
+  readonly compileRow?: (row: UserTaskRow) => ScheduledTask
+}
+
+/**
  * 一个实例的调度中心。原先 `center.ts` 的模块级状态整体收在这里（design 附录 B）；行为一字不改：
  * uniqueness、补跑（watchdog）、代际、每 taskId 串行链都还是原来那套。
  */
 export class TaskCenter {
   /** 任务注册表（taskId → 任务）。job 运行时经路由表查的就是它。 */
   readonly registry = new Map<string, ScheduledTask>()
+  /** 实例装配的共享物（见 `TaskCenterAssembly`）。`createStream` 的后台装配写一次，路由只读。 */
+  assembly: TaskCenterAssembly = {}
   private deps: TaskDeps | undefined
   private active: SidequestFacade | undefined
   private activeJobClass: unknown

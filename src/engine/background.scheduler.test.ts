@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { maybeStartScheduler } from './serve.ts'
+import { maybeStartScheduler } from './background.ts'
 
 // 查询档无采集：stdio MCP spawn 出的即用即回收后端不该把所有订阅流的定时采集跑起来——查询型
 // 用户连上问一句不应顺带触发全量采集（两档拍板）。开关的翻译（STREAM_NO_SCHEDULER=1 →

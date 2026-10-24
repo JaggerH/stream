@@ -19,6 +19,8 @@ import { openDevices, type StreamDevices } from './devices.ts'
 import { createCapabilities, loadOptional, provideBrowserCookies, type StreamCapabilities } from './capabilities.ts'
 import { TaskCenter } from '../tasks/center.ts'
 import { lazyNotify, type EventsService } from '../events/service.ts'
+import type { StandbyManager } from '../plugins/standby/manager.ts'
+import { startBackground } from './background.ts'
 
 export type { StreamRuntime } from './runtime.ts'
 export { createRuntime } from './runtime.ts'
@@ -100,6 +102,10 @@ export async function createStream(opts: CreateStreamOptions): Promise<Stream> {
   const line = (l: string) => log(l)
   let devices: StreamDevices
   let capabilities: StreamCapabilities
+  const tasks = new TaskCenter()
+  // standby 管理器共享槽：后台接线写，实例关停（close）读。
+  const standby: { current: StandbyManager | null } = { current: null }
+  let closing: Promise<void> | undefined
   try {
     devices = openDevices(stateDir, kernel, log)
     capabilities = createCapabilities(stateDir, kernel, line)
@@ -117,36 +123,41 @@ export async function createStream(opts: CreateStreamOptions): Promise<Stream> {
     })
     provideBrowserCookies(capabilities, kernel, line)
     await loadOptional(capabilities, stateDir, config, line)
+    const instance: Stream = {
+      kernel,
+      config,
+      stateDir,
+      runtime,
+      devices,
+      secrets,
+      capabilities,
+      tools: createTools(kernel, capabilities),
+      tasks,
+      close: () => closing ??= (async () => {
+        try {
+          // 先停调度中心：它的 job 读内核上的服务，内核撤完再跑就是对着关掉的库干活。
+          await tasks.stop()
+          // standby 的 reaper 随调度中心停了；管理器在这里收尾（容器 cell 落盘、撤销 adopt）。
+          if (standby.current) await standby.current.shutdown().catch(() => {})
+          await quiesceKernel(kernel)
+        } finally {
+          detachNotify()
+          release()
+          if (ownsRuntime) await runtime.close()
+        }
+      })(),
+    }
+    // 后台工作随实例启动（design D1 附注）：不调 routes() 的嵌入方拿到的也是一份会自己动的
+    // 实例——订阅按时采集、任务按点跑。这一步抛错走下面的装配失败路径统一回收。
+    await startBackground(instance, opts.hooks, line, standby)
+    return instance
   } catch (e) {
     // 装到一半失败：已经挂上的那部分照样要撤，锁照样要放——否则同一个目录再也起不来。
+    if (standby.current) await standby.current.shutdown().catch(() => {})
     await quiesceKernel(kernel).catch(() => {})
     detachNotify()
     release()
     if (ownsRuntime) await runtime.close().catch(() => {})
     throw e
-  }
-  const tasks = new TaskCenter()
-  let closing: Promise<void> | undefined
-  return {
-    kernel,
-    config,
-    stateDir,
-    runtime,
-    devices,
-    secrets,
-    capabilities,
-    tools: createTools(kernel, capabilities),
-    tasks,
-    close: () => closing ??= (async () => {
-      try {
-        // 先停调度中心：它的 job 读内核上的服务，内核撤完再跑就是对着关掉的库干活。
-        await tasks.stop()
-        await quiesceKernel(kernel)
-      } finally {
-        detachNotify()
-        release()
-        if (ownsRuntime) await runtime.close()
-      }
-    })(),
   }
 }

@@ -8,8 +8,13 @@ import type { DeclaresEnvironmentUnavailable } from '../../shared/failure/enviro
 export abstract class DeviceError extends Error {
   abstract readonly code: string
   abstract readonly retryable: boolean
-  constructor(readonly deviceId: string, message: string, options?: { cause?: unknown }) {
+  readonly deviceId: string
+  // 显式赋值而不是参数属性：本文件在 StreamTaskJob 的可达图里，sidequest 的 inline runner 用
+  // Node 原生 import 装载 jobs 文件——strip-only 模式过不了参数属性（要 transform 才行），
+  // 留着它，每条任务都会在装载期记 failed。
+  constructor(deviceId: string, message: string, options?: { cause?: unknown }) {
     super(message, options)
+    this.deviceId = deviceId
     this.name = new.target.name
   }
 }
@@ -36,16 +41,20 @@ export class DeviceFetchQueueTimeout extends DeviceError implements DeclaresEnvi
 export class DeviceIncapable extends DeviceError {
   readonly code = 'device-incapable'
   readonly retryable = false
-  constructor(deviceId: string, readonly need: string) {
+  readonly need: string
+  constructor(deviceId: string, need: string) {
     super(deviceId, `设备 ${deviceId} 没有 ${need} 能力——检查绑定，或在这台设备上启用它`)
+    this.need = need
   }
 }
 
 export class HostNotAllowed extends DeviceError {
   readonly code = 'host-not-allowed'
   readonly retryable = false
-  constructor(deviceId: string, readonly host: string) {
+  readonly host: string
+  constructor(deviceId: string, host: string) {
     super(deviceId, `不允许经设备 ${deviceId} 访问 ${host}——它不在本次执行所属包声明的主机里（stream.network.hosts）`)
+    this.host = host
   }
 }
 
@@ -60,8 +69,10 @@ export class DeviceLost extends DeviceError {
 /** agent 拒绝或执行失败时回报的错误（`private-target` / `too-large` / `network` / `timeout` / `host-not-allowed`）。 */
 export class DeviceRefused extends DeviceError {
   readonly retryable = false
-  constructor(deviceId: string, readonly code: string, detail: string) {
+  readonly code: string
+  constructor(deviceId: string, code: string, detail: string) {
     super(deviceId, `设备 ${deviceId} 拒绝或未能完成请求（${code}）：${detail}`)
+    this.code = code
   }
 }
 
@@ -76,8 +87,13 @@ export class DeviceRefused extends DeviceError {
 export abstract class IdentityError extends Error {
   abstract readonly code: string
   abstract readonly retryable: boolean
-  constructor(readonly facility: string, readonly target: string, message: string, options?: { cause?: unknown }) {
+  readonly facility: string
+  readonly target: string
+  // 参数属性禁用，理由同 DeviceError。
+  constructor(facility: string, target: string, message: string, options?: { cause?: unknown }) {
     super(message, options)
+    this.facility = facility
+    this.target = target
     this.name = new.target.name
   }
 }
@@ -95,8 +111,12 @@ export class IdentityOffline extends IdentityError implements DeclaresEnvironmen
 export class IdentityMismatch extends IdentityError {
   readonly code = 'identity-mismatch'
   readonly retryable = false
-  constructor(facility: string, target: string, readonly nodeId: string, readonly found: string, where: string) {
+  readonly nodeId: string
+  readonly found: string
+  constructor(facility: string, target: string, nodeId: string, found: string, where: string) {
     super(facility, target, `${where}里的 ${facility} 现在登的是 ${found}，不是${target}——没有执行，也不会自动重试`)
+    this.nodeId = nodeId
+    this.found = found
   }
 }
 
@@ -105,8 +125,10 @@ export class IdentitySignedOut extends IdentityError {
   readonly retryable = false
   /** 采集侧落进「需要登录」（`classifyError` 认这个声明）：它就是一次登录失效，只是知道是哪个 profile。 */
   readonly failureCategory = 'auth' as const
-  constructor(facility: string, target: string, readonly nodeId: string, where: string) {
+  readonly nodeId: string
+  constructor(facility: string, target: string, nodeId: string, where: string) {
     super(facility, target, `${where}里的 ${facility} 已登出（${target}）——没有执行，需要在那个 profile 里重新登录`)
+    this.nodeId = nodeId
   }
 }
 

@@ -6,12 +6,15 @@ import { createStream, type Stream } from './index.ts'
 import { readConfig } from '../bootstrap.ts'
 import { LOCK_NAME } from './data-dir-lock.ts'
 
-/** 一个干净的数据目录 + 一个空的内置包目录（不装仓库里那几十个包，装配只剩宿主自己）。 */
+/** 一个干净的数据目录 + 一个空的内置包目录（不装仓库里那几十个包，装配只剩宿主自己）。
+ *  后台工作默认**关**：这几条用例测的是实例本体，起真 sidequest 引擎是 background.test.ts
+ *  与 two-instances.test.ts 的事。 */
 function tempRoot(): { root: string; config: ReturnType<typeof readConfig> } {
   const root = mkdtempSync(join(tmpdir(), 'stream-engine-'))
   const packages = join(root, 'packages')
   mkdirSync(packages)
-  const config = { ...readConfig(join(root, 'config.yaml'), { STREAM_DATA_DIR: root }), packages_dir: packages, rsshub_catalog: '' }
+  const base = readConfig(join(root, 'config.yaml'), { STREAM_DATA_DIR: root })
+  const config = { ...base, packages_dir: packages, rsshub_catalog: '', deployment: { ...base.deployment, scheduler: false } }
   return { root, config }
 }
 

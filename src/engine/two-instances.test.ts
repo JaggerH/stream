@@ -24,11 +24,13 @@ afterEach(async () => {
   for (const r of roots.splice(0)) rmSync(r, { recursive: true, force: true })
 })
 
-function tempRoot(tag: string): ReturnType<typeof readConfig> {
+function tempRoot(tag: string, scheduler = false): ReturnType<typeof readConfig> {
   const root = mkdtempSync(join(tmpdir(), `stream-two-${tag}-`))
   roots.push(root)
   const packages = join(root, 'packages')
-  const config = { ...readConfig(join(root, 'config.yaml'), { STREAM_DATA_DIR: root }), packages_dir: packages, rsshub_catalog: '' }
+  const base = readConfig(join(root, 'config.yaml'), { STREAM_DATA_DIR: root })
+  // 后台工作默认**关**：隔离类用例不需要真 sidequest 引擎；场景 3 显式开（它测的就是定时）。
+  const config = { ...base, packages_dir: packages, rsshub_catalog: '', deployment: { ...base.deployment, scheduler } }
   return config
 }
 

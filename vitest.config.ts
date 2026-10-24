@@ -18,6 +18,12 @@ import { defineConfig } from 'vitest/config'
 process.env.TZ = 'Asia/Shanghai'
 export default defineConfig({
   test: {
+    // sidequest 不外部化：它的 inline runner 会在运行期原生 import jobs 清单（→ stream-task-job.ts
+    // → task-routes.ts 的进程级路由表）。外部化时那份 import 绕开 vite，造出第二份模块图——
+    // 路由表登记在 vite 那份上，job 跑在原生那份上，永远 "no route for this job"（双实例测试
+    // 场景 3 的任务因此只能记 failed）。inline 进 vite 后，同一条 import 走模块 runner，
+    // 两边是同一份模块、同一张路由表。
+    server: { deps: { inline: [/sidequest/] } },
     exclude: [
       '**/node_modules/**',
       'app/**',

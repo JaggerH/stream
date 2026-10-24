@@ -62,6 +62,23 @@ await stream.close() // quiesceKernel + 关库 + 摘定时器
   `process.env`（白名单列出确有理由的，如 `NODE_ENV`）。
 - `routes(app)` 只挂路由，不 `listen`；端口、TLS、进程信号是调用方的事。
 
+**附注（验收返工 R1 落定，2026-10-24）：实例的后台工作在 `createStream()` 里直接启动，不设显式的 `start()`。**
+
+- **启动时机二选一的落点**：`createStream` 就是 D1 草图的「bootstrap + 非 HTTP 装配」，解析即活——嵌入方只调它就拿到
+  一份会自己动的实例。「拿到实例还要记得 start」是个无声的坑：忘了就什么都不跑，而且没有任何一处报错。
+  不加方法 = 不新增公共接口面。代价是失去「先装配、后开闸」的顺序控制；要延迟的调用方用
+  `config.deployment.scheduler = false` 整体关掉（与查询档 `STREAM_NO_SCHEDULER` 同一开关）。
+- **归属按「不挂路由的嵌入方是否也需要它」落定**。下面这些从 `routes()` / `serve.ts` 搬进实例（`src/engine/background.ts`）：
+  调度中心（`TaskStore` / `RunLedger` / `taskDeps` / 内置 + 用户任务 / `tasks.start`）、`scheduler.start()`、
+  `markInterruptedAtBoot`、standby 接线、research watchers、接线体检（`reportUnboundHooks`）、出站设备接线
+  （`ctx.deviceFetch.install`——它必须早于任务中心派活，随任务中心一起搬）。`routes()` 只挂 HTTP 与「推 ws」那半
+  （hub 广播、ws 命令、面板资源）。
+- **随这次落定的三个从属决定**：
+  - research watcher 的**同步触发**从 HTTP 写路径（`HttpDeps.onChannelsChanged`）搬到数据层
+    （`stores.channels.onChange`）——HTTP、MCP 工具、导入三条写入路径全覆盖，不再靠每个调用点记得调一次。
+  - standby 管理器随实例关停：`close()` 内「停任务中心 → 关 standby → `quiesceKernel`」，调用方不用再接共享槽。
+  - sidequest 面板（dashboard）不随实例起：它是 HTTP 面，只在挂了路由时起（D5 末行「dashboard 归调用方」的落地）。
+
 ### D2. 一个实例 = 一个数据目录
 
 全部持久状态在 `dataDir` 下。两个实例传同一个 `dataDir` 是调用方的错误：入口在数据目录里拿一把文件锁（沿用

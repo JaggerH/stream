@@ -460,10 +460,6 @@ export interface HttpDeps {
   netdiskRoutes?: import('./netdisk-routes.ts').NetdiskDeps
   /** named channel groups — read-layer navigation over streams.d */
   channelStore?: import('../store/user-store.ts').UserStore
-  /** 「流—频道」关系 / 频道 present / 流成员表被改动了。装配层用它重建 research present 的
-   *  fs-watcher 集合（见 live/research-watchers.ts）。**回调不是事件**：目前只有一个消费者，
-   *  为它立一套频道变更事件是过度设计。缺席（最小测试装配）→ 只是没有实时推送，不影响写入本身。 */
-  onChannelsChanged?: () => void
   /** built-in defaults ⊕ config.yaml global ad_filter — the baseline the per-stream
    *  ad-filter reclassify endpoint merges a stream's own ad_filter on top of. */
   baseAdRules?: import('../content/ad-filter.ts').AdRules
@@ -1720,8 +1716,6 @@ export function createHttpApp(deps: HttpDeps): Hono {
     if (channel) deps.channelStore.patchChannel(channel.id, { stream_ids: [...channel.stream_ids, created.id] })
     // 无条件排班曾是这里的写法——一条建完就要挪进 research 频道的流也会当场开始采集。
     applyCollectionPolicy([created.id])
-    // 建流时直接绑进一个 research 频道 → 这条流现在该有 watcher 了。
-    deps.onChannelsChanged?.()
     return c.json(created, 201)
   })
 
@@ -1764,7 +1758,6 @@ export function createHttpApp(deps: HttpDeps): Hono {
     } else deps.service.updateResourceStream(streamRecordToStream(updated))
     // 改成员表就可能换掉 artifacts 目录（换 artifactsDir、加减源都从频道页发这条 PATCH）——
     // 老 watcher 盯着的目录已经不是这条流的了，必须停掉重起。
-    if (needsReschedule) deps.onChannelsChanged?.()
     return c.json(updated)
   })
 
@@ -1774,8 +1767,6 @@ export function createHttpApp(deps: HttpDeps): Hono {
     if (!deps.channelStore.getStream(id)) return c.json(errorBody('not_found', 'stream not found'), 404)
     deps.channelStore.removeStream(id)
     deps.service.unscheduleResourceStream(id)
-    // 流没了（removeStream 同步从所有 channel.stream_ids 摘除）→ 它的 watcher 要停。
-    deps.onChannelsChanged?.()
     return c.json({ ok: true })
   })
 
@@ -2256,8 +2247,6 @@ export function createHttpApp(deps: HttpDeps): Hono {
       space_id: body.space_id as string | undefined,
     })
     applyCollectionPolicy(created.stream_ids)
-    // 新建 research 频道（创建对话框走的正是这条）→ 它绑的流现在该有 watcher 了。
-    deps.onChannelsChanged?.()
     return c.json(created, 201)
   })
 
@@ -2293,8 +2282,6 @@ export function createHttpApp(deps: HttpDeps): Hono {
     if (!updated) return c.json(errorBody('not_found', 'channel not found'), 404)
     // 新旧成员表的并集：挪进来的要撤出调度，挪出去的要重新排班（撤出不是单向门）。
     applyCollectionPolicy([...current.stream_ids, ...streamIds])
-    // present 改成/改离 research、成员表增删——两种都要重算 watcher 集合。
-    deps.onChannelsChanged?.()
     // 返回**持久化后的 ChannelView**（与 GET /api/channels 逐字段同源），不是裸 ChannelRecord：
     // 前端拿它直接覆盖共享状态里那一条，从而不必"写完手工合并自己那份可能陈旧的快照"。
     // 形状必须与 GET 一致——差一个 `streams` 字段，前端覆盖完就是一片空白。
@@ -2314,8 +2301,6 @@ export function createHttpApp(deps: HttpDeps): Hono {
     // 频道后只剩 research 引用着它——不问判据它就一直采到重启。反方向（删掉最后一个引用者 → 成为
     // 无主流 → 进调度）是 `isCollected` 那条刻意的默认，与 PATCH 把它从频道里摘出去逐字一致。
     applyCollectionPolicy(channel.stream_ids)
-    // 删掉的若是 research 频道，它名下那些流的 watcher 要停（流本身还在，只是没人再看它）。
-    deps.onChannelsChanged?.()
     return c.json({ ok: true })
   })
 
@@ -4924,7 +4909,7 @@ export function createHttpApp(deps: HttpDeps): Hono {
   // 链接认领的只读口：认领表是模块级 thunk（sources 域挂的），没有 deps，无条件挂。
   registerLinkRoutes(app, deps.links ? { recognize: deps.links.recognize } : {})
   if (deps.netdiskRoutes) registerNetdiskRoutes(app, deps.netdiskRoutes)
-  if (deps.sharing) registerSharingRoutes(app, { ...deps.sharing, onChannelsChanged: deps.onChannelsChanged })
+  if (deps.sharing) registerSharingRoutes(app, deps.sharing)
   if (deps.onboard) registerOnboardRoutes(app, deps.onboard)
   if (deps.conversions) {
     registerConversionsRoutes(app, {

@@ -14,6 +14,24 @@
 - **WHEN** 用户照旧运行 `stream serve`
 - **THEN** 端口、HTTP API、MCP 端点、数据目录布局与改动前一致
 
+### Requirement: 实例的后台工作
+
+订阅采集与调度中心（内置 + 用户任务）SHALL 随 `createStream()` 启动：调用方不调用 `routes()`，实例的调度器与任务照常运行。
+`config.deployment.scheduler = false` SHALL 整体关掉它们（查询档同一开关）。sidequest 面板 SHALL NOT 随实例启动——它是 HTTP 面，
+只在调用方挂路由时启动，SHALL 只绑定本机回环地址，端口由 `routes()` 的参数给出（缺省 8678）。
+
+#### Scenario: 不挂路由的实例自己会动
+- **WHEN** 调用方 `createStream({ dataDir })` 后不调用 `routes()`
+- **THEN** 内置任务已登记、调度器在跑、一条秒级任务按点触发并跑成，且全程没有任何端口被监听
+
+#### Scenario: 双实例各跑各的定时
+- **WHEN** 同一进程两个实例各自带着任务中心启动，关闭其中一个
+- **THEN** 另一个实例的定时任务继续按点触发，关停实例的账本不再增长
+
+#### Scenario: 面板不随实例起
+- **WHEN** 两个实例同进程启动、各自挂路由并给出不同的面板端口
+- **THEN** 两个面板都起在各自给出的端口上、只绑本机回环；不挂路由的实例不起面板
+
 ### Requirement: 一个实例一个数据目录
 
 一个实例的全部持久状态 SHALL 落在它的数据目录下。两个实例 SHALL NOT 共用同一个数据目录：第二个以同一目录启动的实例 SHALL

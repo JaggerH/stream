@@ -89,7 +89,7 @@ export async function spawnBackend(opts: {
   // 降级闸自动落回 inert,等价 none——默认 host 无害。显式设置者优先。
   childEnv.STREAM_PLUGIN_NETWORK = env.STREAM_PLUGIN_NETWORK ?? 'host'
   // 查询档:stdio MCP 拉起的是即用即回收后端,只服务查询,不该启动采集调度(否则查询型用户连上
-  // 问一句就顺带触发全量采集,违背两档拍板)。默认关采集;serve.ts 的 maybeStartScheduler 据此
+  // 问一句就顺带触发全量采集,违背两档拍板)。默认关采集;实例的后台装配（engine/background）据此
   // 跳过 scheduler.start()。显式设置者优先(仍可强开采集)。不动端口——只加 env,不碰 C1 约定。
   childEnv.STREAM_NO_SCHEDULER = env.STREAM_NO_SCHEDULER ?? '1'
   // 告诉后端「有人管你」:POST /api/restart 时它以 RESTART_EXIT_CODE(75)退出,由这层壳
