@@ -8,7 +8,7 @@
 
 - [x] 1.1 `src/engine/index.ts`：`createStream({dataDir, config, log, runtime})` 包住现有 `bootstrap()`，`close()` 走 `quiesceKernel`
 - [x] 1.2 数据目录文件锁：同一目录第二次启动抛错
-- [ ] 1.3 环境变量收进 config：库入口可达模块不读 `process.env`，守卫测试 + 白名单
+- [x] 1.3 环境变量收进 config：库入口可达模块不读 `process.env`，守卫测试 + 白名单（收尾 `0511f43`：MINERU_URL/VOICEPRINT_URL 回落删除、desktop see/status、RECIPE_PROBE、STREAM_NPM_REGISTRY、DOCKER_HOST、RSSHUB_PKG、STREAM_GATEWAY_PORT、serve 里 STREAM_NO_SCHEDULER/RECIPE_UPDATE_CHECK 的直读全部翻译进 `deploymentFromEnv`；名单只剩 acp-client / ffmpeg-bin / rsshub-worker-log 三条子进程继承环境的条目）
   - 已做：`loadConfig()` 移到 `src/config-env.ts`（进程入口专用）；`bootstrap.ts` 只剩 `readConfig(path, env)`；新增
     `AppConfig.deployment`（`deploymentFromEnv()` 翻译），credentials / runtime-config / agent / conversions 四个域插件改为显式收。
     守卫 `src/engine/no-process-env.guard.test.ts`（只减不增的名单）。
