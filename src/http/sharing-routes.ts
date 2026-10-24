@@ -16,6 +16,8 @@ import { isParked } from '../providers/parked.ts'
 import { unknownKey, unknownKeyMessage } from './strict-input.ts'
 
 export interface SharingDeps {
+  /** 本实例的合并身份表（`ctx.sources.identities`）：导出时判系统行。 */
+  identities: import('../providers/identities.ts').ProviderIdentityTable
   store: UserStore
   registry: Registry
   plugins: PluginDescriptor[]
@@ -116,7 +118,7 @@ export function registerSharingRoutes(app: Hono, deps: SharingDeps): void {
       const netdiskBindings = (deps.mappingStore && Array.isArray(body.netdiskBindingIds))
         ? collectNetdiskBindings(body.netdiskBindingIds, deps.mappingStore)
         : undefined
-      const { bundle, warnings } = exportBundle(body.root, deps.store, catalog, meta, {
+      const { bundle, warnings } = exportBundle(body.root, deps.store, catalog, meta, deps.identities, {
         providerIds: Array.isArray(body.providerIds) ? body.providerIds : undefined,
         bindingCallsiteIds: Array.isArray(body.bindingCallsiteIds) ? body.bindingCallsiteIds : undefined,
         netdiskBindings,

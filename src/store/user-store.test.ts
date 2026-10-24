@@ -4,14 +4,16 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import Database from 'better-sqlite3'
 import { UserStore } from './user-store.ts'
-import { setPackageIdentities } from '../providers/identities.ts'
+import { ProviderIdentityTable } from '../providers/identities.ts'
+
+const identities = new ProviderIdentityTable()
 
 describe('UserStore', () => {
   let dir: string
   let store: UserStore
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), 'user-store-'))
-    store = new UserStore(join(dir, 'stream.db'))
+    store = new UserStore(join(dir, 'stream.db')); store.setIdentities(() => identities)
   })
   afterEach(() => {
     store.close()
@@ -148,7 +150,7 @@ describe('UserStore', () => {
       INSERT INTO providers VALUES ('old-row','l','','resolve','[]','sequential','[]',NULL,'{}','t','t',1);
     `)
     raw.close()
-    const migrated = new UserStore(dbPath) // must not throw
+    const migrated = new UserStore(dbPath); migrated.setIdentities(() => identities) // must not throw
     const row = migrated.getProvider('old-row')!
     expect(row.system).toBe(true) // system value survives the rebuild
     // the rebuilt CHECK accepts the new variant
@@ -230,7 +232,7 @@ describe('UserStore', () => {
     store.patchProvider('fetch-url', { expand: { map: { x: '$item.x' }, assemble: { url: '$item.u', type: 'pathClassify', desc: '$item.d' } } })
     expect(store.getProvider('fetch-url')!.expand).toBeUndefined()
     const expand = { map: { detailUrl: '$item.detailUrl' }, assemble: { url: '$item.link', type: 'pathClassify', desc: '$item.title' } }
-    setPackageIdentities([{ facility: 'pkg', packageName: '@t/pkg', declaration: {
+    identities.setPackageRows([{ facility: 'pkg', packageName: '@t/pkg', declaration: {
       id: 'pkg-combo', category: 'search', serveKeys: ['pkg-combo'], strategy: 'expand', expand,
       label: 'x', description: 'x', members: [{ source: 'a' }, { source: 'b' }],
     } }])
@@ -241,7 +243,7 @@ describe('UserStore', () => {
       })
       expect(store.getProvider('pkg-combo')!.expand).toEqual(expand)
       expect(store.getProvider('pkg-combo')!.strategy).toBe('expand')
-    } finally { setPackageIdentities([]) }
+    } finally { identities.setPackageRows([]) }
   })
 
   it('persists video detail cache entries independently from Stream configuration', () => {
@@ -267,7 +269,7 @@ describe('UserStore', () => {
     raw.exec(`CREATE TABLE providers (capability TEXT PRIMARY KEY, overrides TEXT NOT NULL DEFAULT '{}', updated_at TEXT NOT NULL)`)
     raw.prepare(`INSERT INTO providers VALUES ('search', '{}', 't')`).run()
     raw.close()
-    const migrated = new UserStore(join(dir, 'legacy.db'))
+    const migrated = new UserStore(join(dir, 'legacy.db')); migrated.setIdentities(() => identities)
     expect(migrated.listProviders()).toEqual([]) // legacy overrides had no consumer — dropped
     migrated.putProvider({
       id: 'p', label: '', description: '', category: 'search', serves: ['content'],
@@ -275,7 +277,7 @@ describe('UserStore', () => {
     })
     expect(migrated.getProvider('p')!.strategy).toBe('concurrent')
     migrated.close()
-    store = new UserStore(join(dir, 'stream.db')) // keep afterEach close() happy
+    store = new UserStore(join(dir, 'stream.db')); store.setIdentities(() => identities) // keep afterEach close() happy
   })
 
   it('adopts a legacy targets table in place (2026-07-04 Target→Channel rename)', () => {
@@ -288,13 +290,13 @@ describe('UserStore', () => {
       created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`)
     raw.prepare(`INSERT INTO targets VALUES ('my-feed', '我的频道', 'timeline', '["s1"]', 0, '{}', 't', 't')`).run()
     raw.close()
-    const migrated = new UserStore(join(dir, 'renamed.db'))
+    const migrated = new UserStore(join(dir, 'renamed.db')); migrated.setIdentities(() => identities)
     const chan = migrated.getChannel('my-feed')! // user rows survive the table rename verbatim
     expect(chan.label).toBe('我的频道')
     expect(chan.stream_ids).toEqual(['s1'])
     expect(migrated.listChannels().map((c) => c.id)).toContain('default-timeline') // system seed still runs
     migrated.close()
-    store = new UserStore(join(dir, 'stream.db')) // keep afterEach close() happy
+    store = new UserStore(join(dir, 'stream.db')); store.setIdentities(() => identities) // keep afterEach close() happy
   })
 
   it('migrates a channels CHECK missing tasks by rebuilding, preserving the existing row incl. space_id', () => {
@@ -313,7 +315,7 @@ describe('UserStore', () => {
     ).run()
     raw.close()
 
-    const migrated = new UserStore(dbPath) // must not throw on the CHECK-missing-tasks table
+    const migrated = new UserStore(dbPath); migrated.setIdentities(() => identities) // must not throw on the CHECK-missing-tasks table
 
     // 老行原样在——直接读原始列，不经 rowToChannel 的 space 校验，逼真验证重建没丢东西。
     // 一个「直接 DROP 老表重建」的错实现同样能让下面 (b) 的插入通过，但这里会先炸：
@@ -331,7 +333,7 @@ describe('UserStore', () => {
     migrated.putChannel({ id: 't1', label: '定时任务', present: 'tasks', stream_ids: [], options: {} })
     expect(migrated.getChannel('t1')!.present).toBe('tasks')
     migrated.close()
-    store = new UserStore(join(dir, 'stream.db')) // keep afterEach close() happy
+    store = new UserStore(join(dir, 'stream.db')); store.setIdentities(() => identities) // keep afterEach close() happy
   })
 
   it('migrates a channels CHECK that has tasks but not embed — rebuild once more, rows intact', () => {
@@ -350,7 +352,7 @@ describe('UserStore', () => {
     ).run()
     raw.close()
 
-    const migrated = new UserStore(dbPath)
+    const migrated = new UserStore(dbPath); migrated.setIdentities(() => identities)
     const rawAfter = new Database(dbPath)
     const row = rawAfter.prepare('SELECT * FROM channels WHERE id = ?').get('t1') as any
     rawAfter.close()
@@ -361,7 +363,7 @@ describe('UserStore', () => {
     migrated.putChannel({ id: 'e1', label: '监控', present: 'embed', stream_ids: [], options: { url: 'http://x/' } })
     expect(migrated.getChannel('e1')!.present).toBe('embed')
     migrated.close()
-    store = new UserStore(join(dir, 'stream.db')) // keep afterEach close() happy
+    store = new UserStore(join(dir, 'stream.db')); store.setIdentities(() => identities) // keep afterEach close() happy
   })
 
   it('accepts the transcribe variant', () => {
@@ -390,7 +392,7 @@ describe('UserStore', () => {
        VALUES ('keep','K','','search','["content"]','concurrent','[]',NULL,'{}','t','t')`
     ).run()
     raw.close()
-    const migrated = new UserStore(join(dir, 'oldcheck.db'))
+    const migrated = new UserStore(join(dir, 'oldcheck.db')); migrated.setIdentities(() => identities)
     expect(migrated.getProvider('keep')!.category).toBe('search') // existing row preserved
     // the new variant is now accepted (was rejected by the old CHECK)
     migrated.putProvider({
@@ -399,7 +401,7 @@ describe('UserStore', () => {
     })
     expect(migrated.getProvider('transcribe')!.category).toBe('transcribe')
     migrated.close()
-    store = new UserStore(join(dir, 'stream.db')) // keep afterEach close() happy
+    store = new UserStore(join(dir, 'stream.db')); store.setIdentities(() => identities) // keep afterEach close() happy
   })
 
   it('accepts the llm variant', () => {
@@ -429,7 +431,7 @@ describe('UserStore', () => {
        VALUES ('keep','K','','transcribe','["*"]','sequential','[]',NULL,'{}','t','t')`
     ).run()
     raw.close()
-    const migrated = new UserStore(join(dir, 'llmcheck.db'))
+    const migrated = new UserStore(join(dir, 'llmcheck.db')); migrated.setIdentities(() => identities)
     expect(migrated.getProvider('keep')!.category).toBe('transcribe') // existing row preserved
     migrated.putProvider({
       id: 'llm', label: '', description: '', category: 'llm', serves: ['*'],
@@ -437,7 +439,7 @@ describe('UserStore', () => {
     })
     expect(migrated.getProvider('llm')!.category).toBe('llm') // new variant now accepted
     migrated.close()
-    store = new UserStore(join(dir, 'stream.db')) // keep afterEach close() happy
+    store = new UserStore(join(dir, 'stream.db')); store.setIdentities(() => identities) // keep afterEach close() happy
   })
 
   it('drops leftover providers_old table if it exists before rebuild and preserves existing rows', () => {
@@ -461,7 +463,7 @@ describe('UserStore', () => {
        VALUES ('keep','K','','transcribe','["*"]','sequential','[]',NULL,'{}','t','t')`
     ).run()
     raw.close()
-    const migrated = new UserStore(join(dir, 'leftover_check.db'))
+    const migrated = new UserStore(join(dir, 'leftover_check.db')); migrated.setIdentities(() => identities)
     expect(migrated.getProvider('keep')!.category).toBe('transcribe')
     migrated.putProvider({
       id: 'llm', label: '', description: '', category: 'llm', serves: ['*'],
@@ -469,12 +471,12 @@ describe('UserStore', () => {
     })
     expect(migrated.getProvider('llm')!.category).toBe('llm')
     migrated.close()
-    store = new UserStore(join(dir, 'stream.db')) // keep afterEach close() happy
+    store = new UserStore(join(dir, 'stream.db')); store.setIdentities(() => identities) // keep afterEach close() happy
   })
 
 
   it('persists and reads back lastHarvestAt per stream', () => {
-    const store = new UserStore(join(dir, 'lha.db'))
+    const store = new UserStore(join(dir, 'lha.db')); store.setIdentities(() => identities)
     expect(store.getLastHarvestAt('s1')).toBeNull()
     store.setLastHarvestAt('s1', '2026-07-20T10:00:00.000Z')
     expect(store.getLastHarvestAt('s1')).toBe('2026-07-20T10:00:00.000Z')
@@ -483,7 +485,7 @@ describe('UserStore', () => {
   })
 
   it('drops lastHarvestAt when the stream is removed', () => {
-    const store = new UserStore(join(dir, 'lha2.db'))
+    const store = new UserStore(join(dir, 'lha2.db')); store.setIdentities(() => identities)
     store.putStream({ id: 's1', label: 's1', strategy: 'fanout', cadence_seconds: 60, members: [], options: {} } as any)
     store.setLastHarvestAt('s1', '2026-07-20T10:00:00.000Z')
     store.removeStream('s1')
@@ -492,7 +494,7 @@ describe('UserStore', () => {
 
   it('近乎全空的 armed 位按 (stream, source) 持久化，并随删流一起走', () => {
     const path = join(dir, 'guard.db')
-    const store = new UserStore(path)
+    const store = new UserStore(path); store.setIdentities(() => identities)
     store.putStream({ id: 's1', label: 's1', strategy: 'fanout', cadence_seconds: 60, members: [], options: {} } as any)
     expect(store.isNearEmptyArmed('s1', 'src-a')).toBe(false)
     store.armNearEmpty('s1', 'src-a')
@@ -501,7 +503,7 @@ describe('UserStore', () => {
     expect(store.isNearEmptyArmed('s1', 'src-b')).toBe(false)
 
     // 跨实例可读——重启后一个真被清空的 collection 流不用重新攒两轮
-    const reopened = new UserStore(path)
+    const reopened = new UserStore(path); reopened.setIdentities(() => identities)
     expect(reopened.isNearEmptyArmed('s1', 'src-a')).toBe(true)
     reopened.clearNearEmpty('s1', 'src-a')
     expect(reopened.isNearEmptyArmed('s1', 'src-a')).toBe(false)
@@ -547,12 +549,12 @@ describe('UserStore', () => {
       )`)
     raw.prepare(`INSERT INTO provider_bindings (callsite_id, provider_ids, updated_at) VALUES ('search.content', '["content-search"]', 't')`).run()
     raw.close()
-    const migrated = new UserStore(join(dir, 'nolegacyparams.db'))
+    const migrated = new UserStore(join(dir, 'nolegacyparams.db')); migrated.setIdentities(() => identities)
     expect(migrated.getProviderBinding('search.content')).toEqual({ callsiteId: 'search.content', providerIds: ['content-search'], updatedAt: 't' })
     migrated.putProviderBinding({ callsiteId: 'llm.chat', providerIds: ['llm'], params: { model: 'x' } })
     expect(migrated.getProviderBinding('llm.chat')!.params).toEqual({ model: 'x' })
     migrated.close()
-    store = new UserStore(join(dir, 'stream.db')) // keep afterEach close() happy
+    store = new UserStore(join(dir, 'stream.db')); store.setIdentities(() => identities) // keep afterEach close() happy
   })
 
 })
@@ -571,12 +573,12 @@ describe('channels present migration', () => {
     raw.prepare(`INSERT INTO channels VALUES ('c1','旧频道','mixed','[]',0,'{}','2026-01-01','2026-01-01')`).run()
     raw.prepare(`INSERT INTO channels VALUES ('c2','视频','video','[]',0,'{}','2026-01-01','2026-01-01')`).run()
     raw.close()
-    const store = new UserStore(file)
+    const store = new UserStore(file); store.setIdentities(() => identities)
     expect(store.getChannel('c1')?.present).toBe('timeline')
     expect(store.getChannel('c2')?.present).toBe('video')
     store.close()
     // 幂等:再开一次不炸、数据不变
-    const again = new UserStore(file)
+    const again = new UserStore(file); again.setIdentities(() => identities)
     expect(again.getChannel('c1')?.present).toBe('timeline')
     again.close()
   })
@@ -593,7 +595,7 @@ describe('channels present migration', () => {
       options TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`)
     raw.prepare(`INSERT INTO channels VALUES ('keep','K','timeline','[]',0,'{}','2026-01-01','2026-01-01')`).run()
     raw.close()
-    const migrated = new UserStore(file)
+    const migrated = new UserStore(file); migrated.setIdentities(() => identities)
     expect(migrated.getChannel('keep')?.present).toBe('timeline') // 老行保住
     migrated.putChannel({ id: 'r1', label: '研究', present: 'research', stream_ids: [], options: {} })
     expect(migrated.getChannel('r1')?.present).toBe('research')
@@ -613,7 +615,7 @@ describe('collectedStreamIds（调度装载的那份清单）', () => {
   let store: UserStore
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), 'user-store-live-'))
-    store = new UserStore(join(dir, 'stream.db'))
+    store = new UserStore(join(dir, 'stream.db')); store.setIdentities(() => identities)
     for (const id of ['s-live', 's-both', 's-collected']) {
       store.putStream({ id, label: id, strategy: 'fanout', cadence_seconds: 900, members: [], options: {} })
     }
@@ -677,7 +679,7 @@ describe('channels 重建的原子性', () => {
       stream_ids TEXT NOT NULL DEFAULT '[]', system INTEGER NOT NULL DEFAULT 0,
       options TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`)
     raw.close()
-    const store = new UserStore(file)
+    const store = new UserStore(file); store.setIdentities(() => identities)
     expect(store.getChannel('keep')?.present).toBe('timeline')
     store.putChannel({ id: 'r1', label: '研究', present: 'research', stream_ids: [], options: {} })
     expect(store.getChannel('r1')?.present).toBe('research')

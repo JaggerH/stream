@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
+import { ProviderIdentityTable } from '../providers/identities.ts'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { randomUUID } from 'node:crypto'
@@ -14,7 +15,7 @@ describe('export→import round-trip 等价', () => {
     src.putChannel({ id: 'mine', label: 'Mine', present: 'timeline', stream_ids: ['s1', 's2'], options: {} })
 
     const catalog = buildDependencyCatalog({ plugins: [{ id: 'rsshub', homepage: 'https://r' } as never], recipePackages: [], readManifest: () => undefined, readEmbedded: () => undefined })
-    const { bundle } = exportBundle({ kind: 'channel', id: 'mine' }, src, catalog, { title: 'Mine', created: '2026-07-18', revision: '1.0.0' })
+    const { bundle } = exportBundle({ kind: 'channel', id: 'mine' }, src, catalog, { title: 'Mine', created: '2026-07-18', revision: '1.0.0' }, new ProviderIdentityTable())
 
     const dst = new UserStore(':memory:')
     importBundle(bundle, {

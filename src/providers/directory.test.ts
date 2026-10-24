@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { ProviderIdentityTable } from './identities.ts'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -24,7 +25,7 @@ describe('ProviderDirectory', () => {
   beforeEach(() => {
     dir = mkdtempSync(join(tmpdir(), 'provider-directory-'))
     store = new UserStore(join(dir, 'stream.db'))
-    ensureSystemRows(store) // 23 条系统行落库，身份原样进列（'*' 照旧进 serves 列）
+    ensureSystemRows(store, new ProviderIdentityTable()) // 23 条系统行落库，身份原样进列（'*' 照旧进 serves 列）
     directory = new ProviderDirectory(store, SYSTEM_IDENTITIES)
   })
   afterEach(() => {

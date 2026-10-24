@@ -4,7 +4,7 @@ import { dirname } from 'node:path'
 import { SYSTEM_CHANNEL_RECORDS, DEFAULT_SPACE_ID, DEFAULT_VIDEO_CHANNEL_ID, VIDEO_RANKING_STREAMS, type ProviderRecord, type ProviderBinding, type SpaceRecord, type StreamRecord, type ChannelRecord } from './types.ts'
 import { isParked } from '../providers/parked.ts'
 import { presentDescriptor } from '../providers/presents.ts'
-import { identityOf } from '../providers/identities.ts'
+import type { ProviderIdentityTable } from '../providers/identities.ts'
 import { identityServes } from '../providers/system/types.ts'
 import { readSlots } from './slots.ts'
 import type { VideoDetail } from '../video/types.ts'
@@ -614,8 +614,17 @@ export class UserStore {
    * 依赖 store，反过来引会成环）。判据走 `identityOf()` **函数现取**——store 比包装配早，构造期
    * 抓一份表就抓到了只有宿主行的那张。
    */
-  private withSystemIdentity(p: ProviderRecord): ProviderRecord {
-    const identity = identityOf(p.id)
+  /** 本实例的合并身份表（宿主 + 包行）。store 建得比包装配早，只能事后回填（provider 域接线）；
+   *  没回填 = 只有宿主静态表那一半在起作用（旧行为里模块级表装配前也是这个形状）。 */
+  private identityTable?: () => ProviderIdentityTable
+
+  /** provider 域装配后回填（ identities 在 ctx.sources 上）。 */
+  setIdentities(source: () => ProviderIdentityTable): void {
+    this.identityTable = source
+  }
+
+  private withSystemIdentity(p: ProviderRecord, identities?: ProviderIdentityTable): ProviderRecord {
+    const identity = identities?.identityOf(p.id)
     if (!identity) return p
     const { expand: _dropped, ...rest } = p
     return {
@@ -628,7 +637,7 @@ export class UserStore {
     }
   }
   putProvider(record: ProviderRecord): ProviderRecord {
-    const p = this.withSystemIdentity(record)
+    const p = this.withSystemIdentity(record, this.identityTable?.())
     const now = this.now()
     const current = this.getProvider(p.id)
     const system = p.system ?? current?.system ?? false

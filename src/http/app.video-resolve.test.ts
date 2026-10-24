@@ -11,7 +11,8 @@ import { ProviderStatsStore } from '../providers/stats-store.ts'
 import { ContentUnavailableError } from '../providers/unavailable.ts'
 import { ProviderExecutor, sourceOf } from '../providers/executor.ts'
 import { ProviderDirectory } from '../providers/directory.ts'
-import { allIdentities, setPackageIdentities } from '../providers/identities.ts'
+import { ProviderIdentityTable } from '../providers/identities.ts'
+const identities = new ProviderIdentityTable()
 import { ensureSystemRows } from '../providers/seed.ts'
 import { fake, health, manifests } from './__fixtures__/app-harness.ts'
 import { isAllowedSegHost, segHeadersFor } from '../video/dash.ts'
@@ -48,18 +49,18 @@ const DOUYIN_SRC = '@streamapp/douyin-tiktok-download-api/douyin-resolve'
 describe('video playback resolution → per-platform resolve providers', () => {
   let dir: string
   const health = async (): Promise<HealthInfo> => ({ cookies: { domains: [], updatedAt: null }, manifests: 0, streams: 0 })
-  beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'vid-')); setPackageIdentities([BILI_ROW, DOUYIN_ROW]) })
-  afterEach(() => { setPackageIdentities([]); rmSync(dir, { recursive: true, force: true }); vi.restoreAllMocks() })
+  beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'vid-')); identities.setPackageRows([BILI_ROW, DOUYIN_ROW]) })
+  afterEach(() => { identities.setPackageRows([]); rmSync(dir, { recursive: true, force: true }); vi.restoreAllMocks() })
 
   function buildVideoApp(resolve: (sourceId: string, input: unknown) => unknown[]) {
     const channelStore = new UserStore(join(dir, `prov-${Math.random()}.db`))
-    ensureSystemRows(channelStore)
+    ensureSystemRows(channelStore, identities)
     const stats = new ProviderStatsStore(join(dir, `stats-${Math.random()}.db`))
     const registry = new Registry(manifests)
     const seen: Array<{ sourceId: string; input: unknown }> = []
     const debug: Array<{ channel: string; ok: boolean; summary: string; fields: Array<{ label: string; value: string }> }> = []
     const executor = new ProviderExecutor({
-      directory: new ProviderDirectory(channelStore, allIdentities()), registry, stats,
+      directory: new ProviderDirectory(channelStore, identities.all()), registry, stats,
       fetchSource: async (sourceId, input) => { seen.push({ sourceId, input }); return resolve(sourceId, input) },
     })
     const app = createHttpApp({

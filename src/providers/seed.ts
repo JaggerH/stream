@@ -1,6 +1,7 @@
 import type { UserStore } from '../store/user-store.ts'
 import type { ProviderRecord } from '../store/types.ts'
-import { allIdentities, identityOf } from './identities.ts'
+import { SYSTEM_IDENTITIES } from './system/index.ts'
+import type { ProviderIdentityTable } from './identities.ts'
 import { PROVIDER_CALLSITES } from './callsites.ts'
 import { identityServes } from './system/types.ts'
 
@@ -11,7 +12,8 @@ import { identityServes } from './system/types.ts'
  *
  *  **函数而不是 const**：表里现在含包声明的行（`src/providers/identities.ts`），而包在装配期
  *  才挂上；模块加载那一刻求值会得到一张只有宿主行的表，而且不会有任何一处报错。 */
-export function systemProviderIds(): string[] { return [...allIdentities().keys()] }
+/** 合并身份表的全部行（宿主 ∪ 本实例的包声明行）。 */
+export function systemProviderIds(identitiesTable: ProviderIdentityTable): string[] { return [...identitiesTable.all().keys()] }
 
 /** 页面"调用位置"注记（live 行）——HTTP 视图层拼进 ProviderView.callSites。
  *
@@ -43,10 +45,13 @@ export const PROVIDER_CALL_SITES: Record<string, string[]> = {
  * 这一行出现在哪些调用位置。手写表里有就用手写的（那是宿主行的人话，比调用点 label 更具体）；
  * 没有就按「哪些调用点把它当默认行」反查它们的 `label`。包行走的是后一条。
  */
-export function callSitesOf(providerId: string): string[] {
+export function callSitesOf(providerId: string, identitiesTable?: ProviderIdentityTable): string[] {
   const written = PROVIDER_CALL_SITES[providerId]
   if (written) return written
-  return PROVIDER_CALLSITES.filter((cs) => cs.defaultProviderIds.includes(providerId)).map((cs) => cs.label)
+  // 包声明进默认行的调用点，按它的 label 反查（同宿主那条路，只是名单来自本实例的表）。
+  const declared = identitiesTable?.callsitePackageRows()
+  if (!declared) return []
+  return PROVIDER_CALLSITES.filter((cs) => (declared.get(cs.id) ?? []).includes(providerId)).map((cs) => cs.label)
 }
 
 /** 这一行的**默认来源**——"给这行加个成员"时该开哪个 source 的配置面。
@@ -75,8 +80,8 @@ export const PLANNED_PROVIDERS: Array<{ id: string; label: string; description: 
  *
  *  身份字段照写进 DB 只是因为那几列 NOT NULL——**读侧一律以代码身份为准**
  *  （`ProviderDirectory.merged`），所以行上那份从此是死数据，不是第二个真相源。 */
-function rowFor(id: string): ProviderRecord {
-  const identity = identityOf(id)!
+function rowFor(id: string, identitiesTable: ProviderIdentityTable): ProviderRecord {
+  const identity = identitiesTable.identityOf(id)!
   return {
     id,
     label: identity.defaultLabel,
@@ -137,20 +142,22 @@ export type EnsureSystemRowsResult = { inserted: number; retired: RetiredSystemR
  */
 export function ensureSystemRows(
   store: UserStore,
+  /** 本实例的合并身份表（宿主静态行 + 本实例装载的包声明行）。 */
+  identitiesTable: ProviderIdentityTable,
   /** 「这个包这一轮装上了吗」——与 `pruneDeadMembers` 同一个谓词，由调用方从 registry 现推。
    *  缺省当作"全都在场"，保持旧行为（清退一切不在身份表里的系统行）。 */
   packageLoaded: (pkgName: string) => boolean = () => true,
 ): EnsureSystemRowsResult {
-  // 合并表取一次给两个循环用：`allIdentities()` 每次都新建一张 Map（宿主表 + 包行），
+  // 合并表取一次给两个循环用：`identitiesTable.all()` 每次都新建一张 Map（宿主表 + 包行），
   // 放在清退循环里就是每条存量行重建一遍。这一趟之内表不会变（装配期单线程，包行在此之前
   // 已经挂好），所以取一次和逐次现取是同一个答案。
-  const identities = allIdentities()
+  const identities = identitiesTable.all()
   let inserted = 0
   for (const [id, identity] of identities) {
     if (id === 'transcribe') continue
     const current = store.getProvider(id)
     if (!current) {
-      store.putProvider(rowFor(id))
+      store.putProvider(rowFor(id, identitiesTable))
       inserted++
       continue
     }
@@ -277,7 +284,7 @@ function removedByCode(
  *    长得一样，而回默认至少让这一行还是可用的；用户改回去仍然随时可以。
  */
 export function pruneDeadMembers(
-  store: UserStore, sources: SourceLookup, packageLoaded: (pkgName: string) => boolean,
+  store: UserStore, sources: SourceLookup, identitiesTable: ProviderIdentityTable, packageLoaded: (pkgName: string) => boolean,
   /** 已加载的包退役的目录路由（id → 理由）。**必填、不给默认值**：给了默认值就等于
    *  "忘了传 = 这条规则不生效"，而那是静默的。 */
   retiredRoutes: () => ReadonlyMap<string, string>,
@@ -286,7 +293,7 @@ export function pruneDeadMembers(
   const pruned: PrunedMember[] = []
   for (const row of store.listProviders()) {
     if (!row.system) continue
-    const identity = identityOf(row.id)
+    const identity = identitiesTable.identityOf(row.id)
     const dead: string[] = []
     const moved: Array<{ from: string; to: string }> = []
     const kept: typeof row.members = []
@@ -333,10 +340,10 @@ export function pruneDeadMembers(
  *
  * 这一行的 label/members 每次启动都被重写（用户对它的编辑不留存）——这条没变，是旧有行为。
  */
-export function ensureTranscribeRow(store: UserStore): ProviderRecord {
-  const identity = identityOf('transcribe')!
+export function ensureTranscribeRow(store: UserStore, identitiesTable: ProviderIdentityTable): ProviderRecord {
+  const identity = identitiesTable.identityOf('transcribe')!
   // `system` 刻意不写（`rowFor` 给的那个 true 在这里摘掉）：今天 bootstrap 建这一行也不带它，
   // 而它是不是系统行由身份表回答（`ProviderDirectory.isSystem`），不由这一列回答。
-  const { system: _system, ...row } = rowFor('transcribe')
+  const { system: _system, ...row } = rowFor('transcribe', identitiesTable)
   return store.putProvider({ ...row, members: [...identity.defaultMembers] })
 }

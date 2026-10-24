@@ -453,6 +453,7 @@ async function main() {
     sharing: {
       store: stores.channels,
       registry: sources.registry,
+      identities: sources.identities,
       plugins: pkgs.plugins,
       // getter：install 热挂载后归并快照会整体换掉，分享路由每次请求经它读到最新（I-1）。
       recipePackages: () => sources.recipePackages().list,

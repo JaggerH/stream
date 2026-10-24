@@ -9,7 +9,9 @@ import {
   BUILTIN_LAYER_SCAN, linkTableOf, loadRecipePackages, providerDeclarationsOf, retiredRoutesOf, searchSourcesOf, servingPoliciesOf,
 } from '../replay/recipe-package.ts'
 import { loadPlugins } from '../plugins/loader.ts'
-import { identityOf, setPackageIdentities } from '../providers/identities.ts'
+import { ProviderIdentityTable } from '../providers/identities.ts'
+const identities = new ProviderIdentityTable()
+const identityOf = (id: string) => identities.identityOf(id)
 import { downloadPageKind as downloadPageKindImpl } from '../video/resolve.ts'
 import { settableRecognizer } from '../links/recognizer.fixture.ts'
 import { Serving } from '../media/serving.ts'
@@ -43,14 +45,14 @@ const knownSources = new Set<string>([
 ])
 
 afterEach(() => {
-  setPackageIdentities([])
+  identities.setPackageRows([])
   setPackageSearchSources(() => [])
   setLinkDeclarationSource(() => [])
 })
 
 describe('资源站的包声明（真实 packages/）', () => {
   it('BT 影视的组合体行由包出：被身份表接受，expand 配置与 provides 标签都在，成员指向真实 recipe', () => {
-    expect(setPackageIdentities(providerDeclarationsOf(pkgs))).toEqual([])
+    expect(identities.setPackageRows(providerDeclarationsOf(pkgs))).toEqual([])
     const row = identityOf('btbtla')!
     expect(row).toMatchObject({ category: 'search', strategy: 'expand', provides: ['search-download'], declaredBy: '@streamapp/btbtla' })
     expect(row.expand?.map).toEqual({ detailUrl: '$item.detailUrl' })
@@ -104,13 +106,13 @@ describe('资源站的包声明（真实 packages/）', () => {
     const dir = mkdtempSync(join(tmpdir(), 'resource-sites-prune-'))
     const store = new UserStore(join(dir, 'stream.db'))
     try {
-      ensureSystemRows(store)
+      ensureSystemRows(store, identities)
       store.patchProvider('download-resolve', { members: [{ source: '@streamapp/builtin/magnet-btbtla' }] })
       const lookup = {
         get: (id: string) => (knownSources.has(id) ? {} : undefined),
         builtinIdsByLocalName: (local: string) => [...knownSources].filter((id) => id.slice(id.lastIndexOf('/') + 1) === local),
       }
-      const pruned = pruneDeadMembers(store, lookup, () => true, () => new Map()).filter((p) => p.providerId === 'download-resolve')
+      const pruned = pruneDeadMembers(store, lookup, identities, () => true, () => new Map()).filter((p) => p.providerId === 'download-resolve')
       expect(pruned).toEqual([{ providerId: 'download-resolve', sourceId: '@streamapp/builtin/magnet-btbtla', restoredDefaults: false, movedTo: '@streamapp/btbtla/magnet-btbtla' }])
       expect(store.getProvider('download-resolve')!.members).toEqual([{ source: '@streamapp/btbtla/magnet-btbtla' }])
     } finally { store.close(); rmSync(dir, { recursive: true, force: true }) }

@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest'
+import { ProviderIdentityTable } from '../providers/identities.ts'
 import { scanSecrets, translateRequirements, buildDependencyCatalog, exportBundle } from './export-closure.ts'
 import { UserStore } from '../store/user-store.ts'
 
@@ -31,7 +32,7 @@ describe('导出脱密', () => {
     s.putProvider({ id: 'leaky', label: 'L', description: '', category: 'resolve', serves: ['x'], strategy: 'sequential',
       members: [{ source: 'q', params: { apiKey: 'sk-live-should-not-ship' } }], contract: null, options: {} })
     const cat = buildDependencyCatalog({ plugins: [], recipePackages: [], readManifest: () => undefined, readEmbedded: () => undefined })
-    expect(() => exportBundle({ kind: 'channel', id: 'c' }, s, cat, { title: 'C', created: '2026-07-19', revision: '1.0.0' }, { providerIds: ['leaky'] }))
+    expect(() => exportBundle({ kind: 'channel', id: 'c' }, s, cat, { title: 'C', created: '2026-07-19', revision: '1.0.0' }, new ProviderIdentityTable(), { providerIds: ['leaky'] }))
       .toThrow(/拒绝导出|secret|敏感/i)
     s.close()
   })

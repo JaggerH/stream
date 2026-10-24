@@ -26,7 +26,7 @@ import { LinkRecognizer } from '../../links/recognize.ts'
 import { Normalizers } from '../../content/normalize.ts'
 import { trackRefFromUrl } from '../../audio/track-url.ts'
 import { Serving } from '../../media/serving.ts'
-import { setPackageIdentities } from '../../providers/identities.ts'
+import { ProviderIdentityTable } from '../../providers/identities.ts'
 import { SearchSeeds } from '../../search/seeds.ts'
 import { SourceSites, sourceSitesOf, type ItemProjectionSource } from '../../packages/item-projection.ts'
 import type { Recipe } from '../../replay/recipe.ts'
@@ -162,6 +162,8 @@ export interface SourcesService {
   normalizers: Normalizers
   /** 本实例的送字节策略（`stream.serving` 声明 + 冷却 + 主机实测，现取）。 */
   serving: Serving
+  /** 本实例的合并身份表（宿主静态表 + 本实例装载的包声明行，装配期快照）。 */
+  identities: ProviderIdentityTable
   /** 本实例的「源 → 站点」查表（包的 homepage 声明，现取）。 */
   sites: SourceSites
   /** 本实例的条目投影源（包的 `stream.item` 声明 + 本实例 registry，现取）。 */
@@ -304,10 +306,11 @@ export const sourcesPlugin = {
     // current 后自动跟上；存结果 = 新装的包永远不走代理，且不报错）。**本实例一份**：冷却与主机
     // 实测都是这一台 Stream 的记忆，同进程的另一个实例互读只会互相污染。
     const serving = new Serving(() => servingPoliciesOf(recipePackagesRef.current.list))
-    // 包声明的 Provider 行并进身份表。**装配期一次，不是 thunk**（理由见 identities.ts 头注：
-    // 下游 ensureSystemRows 会按表建行/删行）。provider 域 inject 了 'sources'，所以这一行
+    // 包声明的 Provider 行并进本实例的身份表。**装配期一次，不是 thunk**（理由见 identities.ts
+    // 头注：下游 ensureSystemRows 会按表建行/删行）。provider 域 inject 了 'sources'，所以这一行
     // 必然早于 ensureSystemRows 跑。被拒的行要出声——静默丢一条 = 用户装了包却没有那个能力。
-    for (const bad of setPackageIdentities(providerDeclarationsOf(recipePackagesRef.current.list))) {
+    const identities = new ProviderIdentityTable()
+    for (const bad of identities.setPackageRows(providerDeclarationsOf(recipePackagesRef.current.list))) {
       log(`[stream] package provider row rejected: ${bad.id} (from ${bad.facility}) — ${bad.reason}`)
     }
     // 链接认领表（spec 2026-09-26-link-recognition）：thunk 现取，热装的包下一次认领就生效。
@@ -662,6 +665,7 @@ export const sourcesPlugin = {
       links,
       normalizers,
       serving,
+      identities,
       sites,
       itemProjection,
       retiredRoutes,

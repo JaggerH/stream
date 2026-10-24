@@ -5,6 +5,7 @@
 // 为什么单独一个文件而不是塞进 seed.test.ts：这三条断言里有一条是**隐私边界**
 //（静态页抽得出正文时，跑 JS、出境、烧额度的那一档一次都不许被调），它值得一个自己的名字。
 import { describe, it, expect, vi, afterEach } from 'vitest'
+import { ProviderIdentityTable } from './identities.ts'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -29,7 +30,7 @@ const PAGE: client.FirecrawlPage = { markdown: '# 跑完 JS 才有的正文', fi
 function ladder(defuddle: () => Promise<unknown[]>) {
   const dir = mkdtempSync(join(tmpdir(), 'article-ladder-'))
   const store = new UserStore(join(dir, 'stream.db'))
-  ensureSystemRows(store)
+  ensureSystemRows(store, new ProviderIdentityTable())
   const calls: string[] = []
   const adapter = new FirecrawlAdapter((...a) => globalThis.fetch(...a))
   // 非 builtin 成员走引擎：成员 params（`$input` 已填）并进 adapter params，runtimeConfig 由宿主解析（这里 keyless）。

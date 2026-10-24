@@ -8,7 +8,6 @@ import type { RecipePackage } from '../replay/recipe-package.ts'
 import type { SourceManifest } from '../manifest/types.ts'
 import { pluginIdForDescriptor } from '../registry/seal.ts'
 import { canonicalSourceId } from '../streams/store.ts'
-import { allIdentities } from '../providers/identities.ts'
 import {
   STREAM_BUNDLE_FORMAT, BUNDLE_SIZE_WARN_BYTES, serializeBundle,
   type StreamBundleV1, type BundleMeta, type PluginRequirement, type RecipeRequirement, type UnclassifiedDep,
@@ -267,6 +266,7 @@ export function exportBundle(
   store: UserStore,
   catalog: DependencyCatalog,
   meta: BundleMeta,
+  identities: import('../providers/identities.ts').ProviderIdentityTable,
   opts: { sizeWarnBytes?: number; providerIds?: string[]; bindingCallsiteIds?: string[]; netdiskBindings?: import('./bundle-format.ts').NetdiskBindingShare[] } = {},
 ): { bundle: StreamBundleV1; warnings: string[] } {
   const closure = collectClosure(root, store)
@@ -278,7 +278,7 @@ export function exportBundle(
   for (const p of [...closure.providers, ...picked]) providersById.set(p.id, p)
   // 「是不是系统行」按代码身份表判，不看行上的 `system` 位：身份住代码之后，那一位是行上的
   // 陈旧数据，而系统行本来就不该出包（导入方自己的代码会建它）。
-  const providers = [...providersById.values()].filter((p) => !allIdentities().has(p.id))
+  const providers = [...providersById.values()].filter((p) => !identities.all().has(p.id))
 
   // 净化频道 options.slots：引用的 provider 未随包（不在最终 providers 块）的槽键剔除——
   // 槽位不回落，悬空引用会让导入方那条能力静默哑掉。敏感体检仍扫净化前的整行（见下）。

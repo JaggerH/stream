@@ -1,5 +1,5 @@
 import type { ProviderCategory } from '../store/types.ts'
-import { packageCallsiteDefaults } from './identities.ts'
+import type { ProviderIdentityTable } from './identities.ts'
 
 export type ProviderCallsiteMode = 'fixed' | 'dispatch'
 export interface ProviderEntryDescriptor {
@@ -35,8 +35,8 @@ const video = [{ id: 'video', label: '视频', presenter: 'Video Present' }]
  * `restore` / `/api/provider-callsites`）照旧读 `.defaultProviderIds`，读到的是现取的值。
  * （spec 2026-09-18-facility-knowledge-stage2-design §2.3）
  */
-export function callsiteDefaultsFor(callsiteId: string, hostDefaults: string[] = []): string[] {
-  return [...new Set([...hostDefaults, ...(packageCallsiteDefaults().get(callsiteId) ?? [])])]
+export function callsiteDefaultsFor(callsiteId: string, hostDefaults: string[] = [], identities?: ProviderIdentityTable): string[] {
+  return [...new Set([...hostDefaults, ...(identities?.callsitePackageRows().get(callsiteId) ?? [])])]
 }
 
 export const PROVIDER_CALLSITES: ProviderCallsiteDescriptor[] = [

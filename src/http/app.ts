@@ -119,9 +119,9 @@ import { tokenEqual } from './secrets.ts'
 import { TOKEN_EXEMPT_ROUTES } from './device-routes.ts'
 import { isExtensionOrigin } from './ext-binding-routes.ts'
 import { callSitesOf, PROVIDER_DEFAULT_SOURCE, PLANNED_PROVIDERS } from '../providers/seed.ts'
-import { identityOf } from '../providers/identities.ts'
 import { identityServes } from '../providers/system/types.ts'
 import { PROVIDER_CALLSITES } from '../providers/callsites.ts'
+import type { ProviderIdentityTable } from '../providers/identities.ts'
 import { PRESENTS } from '../providers/presents.ts'
 import { SlotBrokenError, type ProviderBindings, type SlotContext } from '../providers/bindings.ts'
 import { isParked } from '../providers/parked.ts'
@@ -241,6 +241,8 @@ export interface HttpDeps {
   sites?: import('../packages/item-projection.ts').SourceSites
   /** 本实例的条目投影源（`ctx.sources.itemProjection`）：列表出线与 item 广播用。缺席 = 不投影。 */
   itemProjection?: () => import('../packages/item-projection.ts').ItemProjectionSource
+  /** 本实例的合并身份表（`ctx.sources.identities`）：provider 行的系统身份判定用。缺席 = 无包行。 */
+  identities?: import('../providers/identities.ts').ProviderIdentityTable
   /** npm recipe 包安装(preview→install 两步;confirm=tarball integrity,preview 发放)。absent → 503。 */
   /**
    * 跑一条动作 recipe（`POST /api/recipes/action`）。**必须是 MCP 那侧用的同一个闭包**
@@ -856,8 +858,8 @@ const shadowedNameMessage = (name: string): string =>
  * 判据是「传了、且值和代码身份不同」——前端把整行读回来再 PATCH 回去是常态，那里面必然带着
  * 这几个字段的**原值**，把「传了」本身当成冲突会把正常编辑一起拒掉。
  */
-function systemIdentityConflict(id: string, patch: Record<string, unknown>): string | null {
-  const identity = identityOf(id)
+function systemIdentityConflict(id: string, patch: Record<string, unknown>, identities?: ProviderIdentityTable): string | null {
+  const identity = identities?.identityOf(id)
   if (!identity) return null
   const same = (a: unknown, b: unknown) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null)
   const conflicts: string[] = []
@@ -1016,7 +1018,7 @@ function providerView(deps: HttpDeps, record: import('../store/types.ts').Provid
   return {
     ...record,
     status: 'live' as const,
-    callSites: callSitesOf(record.id),
+    callSites: callSitesOf(record.id, deps.identities),
     referencedBy: deps.providerBindings?.references(record.id) ?? [],
     resolvedMembers,
     ...(defaultManifest ? { defaultSource: publicSource(defaultManifest, deps.sites?.lookup) } : {}),
@@ -2496,7 +2498,7 @@ export function createHttpApp(deps: HttpDeps): Hono {
     // 系统行的**身份**由代码定义（`src/providers/system/`），行上那几列是死数据——改它既不会生效
     // （读侧一律取代码），也不会报错。所以在门口就响亮拒掉，而不是收下再静默丢弃：静默丢弃会让
     // 用户以为改成了。members/options/label/description 是编排与文案，照常可改。
-    const identityConflict = systemIdentityConflict(c.req.param('id'), patch)
+    const identityConflict = systemIdentityConflict(c.req.param('id'), patch, deps.identities)
     if (identityConflict) {
       return c.json(errorBody('validation_error', `系统 Provider 的身份（${identityConflict}）由代码定义，不能改；可改的是 members / options / label / description`), 400)
     }

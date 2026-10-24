@@ -177,7 +177,7 @@ export interface AgentConfig {
  * 所以这个数字有两道闸门：装配期的自检（对不上直接 throw，见 `apply` 里那段）+ `agent.test.ts`
  * 里钉住它的断言。往表里加一格 → 两处都得改，任一处没改都是当场红。
  */
-export const MCP_EXTRAS_DEP_COUNT = 48
+export const MCP_EXTRAS_DEP_COUNT = 49
 
 export const agentPlugin = {
   name: 'agent',
@@ -667,6 +667,8 @@ export const agentPlugin = {
     }
 
     const mcpExtrasDeps = {
+  // 本实例的合并身份表（ctx.sources.identities）：capability_status 读声明成员那一半。
+  identities: ctx.sources.identities,
       // ctx.harvest（采集运输面）：cdp_* 的三档地址 + harvest_capability
       desktopDriver: ctx.harvest.desktopDriver,
       makeSee: ctx.harvest.makeSee, // run_action_recipe 的桌面档：`see` 的识别层（与采集同一个工厂）

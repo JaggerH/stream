@@ -1,6 +1,8 @@
 import { describe, it, expect, afterEach } from 'vitest'
-import { PROVIDER_CALLSITES, providerCallsite } from './callsites.ts'
-import { setPackageIdentities } from './identities.ts'
+import { PROVIDER_CALLSITES, callsiteDefaultsFor, providerCallsite } from './callsites.ts'
+import { ProviderIdentityTable } from './identities.ts'
+
+const identities = new ProviderIdentityTable()
 
 const decl = (callsites: string[]) => [{
   facility: 'pkg',
@@ -10,7 +12,7 @@ const decl = (callsites: string[]) => [{
   },
 }]
 
-afterEach(() => setPackageIdentities([]))
+afterEach(() => identities.setPackageRows([]))
 
 describe('music.track.* 调用点', () => {
   it('两条都是 dispatch（按 platform 键派发，不是绑死一行）', () => {
@@ -19,15 +21,15 @@ describe('music.track.* 调用点', () => {
     }
   })
   it('没有包声明时默认行为空——宿主自己不认识任何取歌平台', () => {
-    expect(providerCallsite('music.track.resolve')!.defaultProviderIds).toEqual([])
+    expect(callsiteDefaultsFor('music.track.resolve', providerCallsite('music.track.resolve')!.defaultProviderIds, identities)).toEqual([])
   })
   it('包声明了 callsites → 默认行列表现取得到它（不是启动时冻住的）', () => {
-    setPackageIdentities(decl(['music.track.resolve', 'music.track.download']))
-    expect(providerCallsite('music.track.resolve')!.defaultProviderIds).toEqual(['pkg-track'])
-    expect(PROVIDER_CALLSITES.find((c) => c.id === 'music.track.download')!.defaultProviderIds).toEqual(['pkg-track'])
+    identities.setPackageRows(decl(['music.track.resolve', 'music.track.download']))
+    expect(callsiteDefaultsFor('music.track.resolve', providerCallsite('music.track.resolve')!.defaultProviderIds, identities)).toEqual(['pkg-track'])
+    expect(callsiteDefaultsFor('music.track.download', PROVIDER_CALLSITES.find((c) => c.id === 'music.track.download')!.defaultProviderIds, identities)).toEqual(['pkg-track'])
   })
   it('其余调用点的默认行不受影响', () => {
-    setPackageIdentities(decl(['music.track.resolve']))
+    identities.setPackageRows(decl(['music.track.resolve']))
     expect(providerCallsite('llm.chat')!.defaultProviderIds).toEqual(['llm'])
   })
 })

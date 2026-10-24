@@ -15,7 +15,8 @@ import { ensureSystemRows } from '../providers/seed.ts'
 import { ProviderBindings } from '../providers/bindings.ts'
 import { ProviderDirectory } from '../providers/directory.ts'
 // 合并表（宿主静态表 + 包声明的行），与 provider 域装配时读的是同一个函数。
-import { allIdentities, setPackageIdentities } from '../providers/identities.ts'
+import { ProviderIdentityTable } from '../providers/identities.ts'
+const identities = new ProviderIdentityTable()
 import { PROVIDER_CALLSITES, callsiteDefaultsFor } from '../providers/callsites.ts'
 import { DedupStore } from '../dedup-store.ts'
 import { ItemStore } from '../item-store.ts'
@@ -49,10 +50,10 @@ const NETEASE_TRACK_ROW = {
 
 describe('provider CRUD endpoints (row model)', () => {
   // 包行是进程级的全局表；跑完摘掉，别让它漏进同进程里别的用例。
-  afterEach(() => { setPackageIdentities([]) })
+  afterEach(() => { identities.setPackageRows([]) })
 
   function providersApp(extra: Partial<Parameters<typeof createHttpApp>[0]> = {}) {
-    setPackageIdentities([NETEASE_TRACK_ROW])
+    identities.setPackageRows([NETEASE_TRACK_ROW])
     const registry = new Registry([
       ...manifests,
       mk({ id: 'cs-primary', matchers: ['music.163.com/song'], priority: 1 }),
@@ -67,15 +68,16 @@ describe('provider CRUD endpoints (row model)', () => {
     sourceHealth.record('cs-mirror', { kind: 'error', message: 'down' })
     const stats = new ProviderStatsStore(join(dir, `cache-${Math.random()}.db`))
     const executor = new ProviderExecutor({
-      directory: new ProviderDirectory(channelStore, allIdentities()), registry, stats,
+      directory: new ProviderDirectory(channelStore, identities.all()), registry, stats,
       fetchSource: async (sourceId) => (sourceId === '@streamapp/toubiec/toubiec-search' ? [{ id: 1 }] : []),
     })
-    ensureSystemRows(channelStore)
-    const providerBindings = new ProviderBindings(channelStore, new ProviderDirectory(channelStore, allIdentities()))
-    providerBindings.ensureDefaults(PROVIDER_CALLSITES)
+    ensureSystemRows(channelStore, identities)
+    const providerBindings = new ProviderBindings(channelStore, new ProviderDirectory(channelStore, identities.all()))
+    providerBindings.ensureDefaults(PROVIDER_CALLSITES, identities)
     const service = new StreamService({ registry, scheduler, channels: channelStore })
     const events = new EventsService(new EventStore(join(dir, `events-${Math.random()}.json`)), () => {})
     const app = createHttpApp({
+    identities,
       service, itemStore: store, health, channelStore,
       providers: { executor, stats },
       providerBindings,
@@ -252,10 +254,10 @@ describe('provider CRUD endpoints (row model)', () => {
       }
       // 反面：一个包都没装时这两条的默认是**空**，于是 `ensureDefaults` 跳过、不写空绑定
       // ——页面上就是一格待用户/包填的槽，而不是一条指向不存在的行的绑定。
-      setPackageIdentities([])
+      identities.setPackageRows([])
       expect(callsiteDefaultsFor('music.track.resolve')).toEqual([])
       expect(callsiteDefaultsFor('music.track.download')).toEqual([])
-      setPackageIdentities([NETEASE_TRACK_ROW])
+      identities.setPackageRows([NETEASE_TRACK_ROW])
       // Task 8：llm 调用点目录条目存在，默认绑定指向唯一的系统 llm 行，未设 params
       expect(byId.get('llm.chat')).toMatchObject({ binding: { providerIds: ['llm'] } })
       expect((byId.get('llm.chat') as any)?.binding.params).toBeUndefined()
@@ -606,8 +608,8 @@ describe('provider CRUD endpoints (row model)', () => {
     try {
       const registry = new Registry(manifests)
       const scheduler = new Scheduler({ registry, streams: [stream], adapters: new Map([['fake', fake]]), resolveCreds: async () => ({}), vaultRoot: join(dir, 'v'), dedup })
-      const executor = new ProviderExecutor({ directory: new ProviderDirectory(channelStore, allIdentities()), registry, stats, fetchSource: async () => [] })
-      ensureSystemRows(channelStore)
+      const executor = new ProviderExecutor({ directory: new ProviderDirectory(channelStore, identities.all()), registry, stats, fetchSource: async () => [] })
+      ensureSystemRows(channelStore, identities)
       const app = createHttpApp({
         service: new StreamService({ registry, scheduler, channels: channelStore }),
         itemStore: store, health, channelStore,
@@ -908,12 +910,12 @@ describe('GET /api/search — blocked 前置条件随 warning 结构化带出', 
     const sourceHealth = new SourceHealthStore(join(dir, `health-${Math.random()}.json`))
     const stats = new ProviderStatsStore(join(dir, `cache-${Math.random()}.db`))
     const executor = new ProviderExecutor({
-      directory: new ProviderDirectory(channelStore, allIdentities()), registry, stats,
+      directory: new ProviderDirectory(channelStore, identities.all()), registry, stats,
       fetchSource: async (sourceId) => (await fetchSource(sourceId)) as never,
     })
-    ensureSystemRows(channelStore)
-    const providerBindings = new ProviderBindings(channelStore, new ProviderDirectory(channelStore, allIdentities()))
-    providerBindings.ensureDefaults(PROVIDER_CALLSITES)
+    ensureSystemRows(channelStore, identities)
+    const providerBindings = new ProviderBindings(channelStore, new ProviderDirectory(channelStore, identities.all()))
+    providerBindings.ensureDefaults(PROVIDER_CALLSITES, identities)
     const service = new StreamService({ registry, scheduler, channels: channelStore })
     const events = new EventsService(new EventStore(join(dir, `events-${Math.random()}.json`)), () => {})
     return createHttpApp({
@@ -973,12 +975,12 @@ describe('GET /api/search — 每个成员跑了多久', () => {
     const sourceHealth = new SourceHealthStore(join(dir, `health-${Math.random()}.json`))
     const stats = new ProviderStatsStore(join(dir, `cache-${Math.random()}.db`))
     const executor = new ProviderExecutor({
-      directory: new ProviderDirectory(channelStore, allIdentities()), registry, stats,
+      directory: new ProviderDirectory(channelStore, identities.all()), registry, stats,
       fetchSource: async (sourceId) => (await fetchSource(sourceId)) as never,
     })
-    ensureSystemRows(channelStore)
-    const providerBindings = new ProviderBindings(channelStore, new ProviderDirectory(channelStore, allIdentities()))
-    providerBindings.ensureDefaults(PROVIDER_CALLSITES)
+    ensureSystemRows(channelStore, identities)
+    const providerBindings = new ProviderBindings(channelStore, new ProviderDirectory(channelStore, identities.all()))
+    providerBindings.ensureDefaults(PROVIDER_CALLSITES, identities)
     const service = new StreamService({ registry, scheduler, channels: channelStore })
     const events = new EventsService(new EventStore(join(dir, `events-${Math.random()}.json`)), () => {})
     return createHttpApp({

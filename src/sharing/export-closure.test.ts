@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest'
+import { ProviderIdentityTable } from '../providers/identities.ts'
 import { UserStore } from '../store/user-store.ts'
 import { collectClosure, collectNetdiskBindings, exportBundle, buildDependencyCatalog } from './export-closure.ts'
 import type { MappingSet } from '../netdisk/types.ts'
@@ -44,10 +45,10 @@ describe('slotProviderCandidates / options.slots 净化', () => {
     const catalog = buildDependencyCatalog({ plugins: [], recipePackages: [], readManifest: () => undefined, readEmbedded: () => undefined })
     const meta = { title: 'C1', created: '2026-07-18', revision: '1.0.0' }
 
-    const notShipped = exportBundle({ kind: 'channel', id: 'c1' }, s, catalog, meta)
+    const notShipped = exportBundle({ kind: 'channel', id: 'c1' }, s, catalog, meta, new ProviderIdentityTable())
     expect((notShipped.bundle.channels[0].options as { slots?: Record<string, unknown> })?.slots ?? {}).not.toHaveProperty('search.resources')
 
-    const shipped = exportBundle({ kind: 'channel', id: 'c1' }, s, catalog, meta, { providerIds: ['p-nsfw'] })
+    const shipped = exportBundle({ kind: 'channel', id: 'c1' }, s, catalog, meta, new ProviderIdentityTable(), { providerIds: ['p-nsfw'] })
     expect(shipped.bundle.providers?.map((p) => p.id)).toContain('p-nsfw')
     expect((shipped.bundle.channels[0].options as { slots?: Record<string, unknown> })?.slots).toEqual({ 'search.resources': ['p-nsfw'] })
     s.close()

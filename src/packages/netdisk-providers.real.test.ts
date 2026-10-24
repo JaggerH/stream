@@ -2,9 +2,11 @@ import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it } from 'vitest'
 import { BUILTIN_LAYER_SCAN, loadRecipePackages, providerDeclarationsOf } from '../replay/recipe-package.ts'
 import { loadPlugins } from '../plugins/loader.ts'
-import { identityOf, setPackageIdentities } from '../providers/identities.ts'
+import { ProviderIdentityTable } from '../providers/identities.ts'
+const identities = new ProviderIdentityTable()
+const identityOf = (id: string) => identities.identityOf(id)
 import { SYSTEM_IDENTITIES } from '../providers/system/index.ts'
-import { PROVIDER_CALLSITES, providerCallsite } from '../providers/callsites.ts'
+import { PROVIDER_CALLSITES, callsiteDefaultsFor, providerCallsite } from '../providers/callsites.ts'
 import { callSitesOf } from '../providers/seed.ts'
 import { NETDISK_SAVE_DEST } from '../../shared/netdisk/save-dest.ts'
 
@@ -60,7 +62,7 @@ const BEFORE = [
   },
 ] as const
 
-afterEach(() => { setPackageIdentities([]) })
+afterEach(() => { identities.setPackageRows([]) })
 
 describe('网盘 Provider 行的包声明（真实 packages/）', () => {
   it('宿主静态表里不再有网盘行', () => {
@@ -68,7 +70,7 @@ describe('网盘 Provider 行的包声明（真实 packages/）', () => {
   })
 
   it('五条行由包出，被身份表接受，身份与搬家前逐字段一致', () => {
-    expect(setPackageIdentities(providerDeclarationsOf(pkgs))).toEqual([])
+    expect(identities.setPackageRows(providerDeclarationsOf(pkgs))).toEqual([])
     for (const b of BEFORE) {
       expect(identityOf(b.id), b.id).toEqual({
         id: b.id,
@@ -90,13 +92,13 @@ describe('网盘 Provider 行的包声明（真实 packages/）', () => {
   })
 
   it('调用点的默认行由包的 callsites 填，与搬家前一致（验活另收百度那条）', () => {
-    setPackageIdentities(providerDeclarationsOf(pkgs))
+    identities.setPackageRows(providerDeclarationsOf(pkgs))
     // 顺序随包扫描序；dispatch 按键挑行，两条键不同，所以顺序不构成语义。
-    expect([...providerCallsite('netdisk.share.verify')!.defaultProviderIds].sort()).toEqual(['netdisk-verify-baidu', 'netdisk-verify-quark'])
-    expect(providerCallsite('netdisk.share.save')!.defaultProviderIds).toEqual(['netdisk-save-quark'])
-    expect(providerCallsite('netdisk.play')!.defaultProviderIds).toEqual(['netdisk-play-quark'])
-    expect(providerCallsite('netdisk.folder')!.defaultProviderIds).toEqual(['netdisk-folder-quark'])
-    for (const b of BEFORE) expect(callSitesOf(b.id), b.id).toEqual([providerCallsite(b.callsite)!.label])
+    expect([...callsiteDefaultsFor('netdisk.share.verify', providerCallsite('netdisk.share.verify')!.defaultProviderIds, identities)].sort()).toEqual(['netdisk-verify-baidu', 'netdisk-verify-quark'])
+    expect(callsiteDefaultsFor('netdisk.share.save', providerCallsite('netdisk.share.save')!.defaultProviderIds, identities)).toEqual(['netdisk-save-quark'])
+    expect(callsiteDefaultsFor('netdisk.play', providerCallsite('netdisk.play')!.defaultProviderIds, identities)).toEqual(['netdisk-play-quark'])
+    expect(callsiteDefaultsFor('netdisk.folder', providerCallsite('netdisk.folder')!.defaultProviderIds, identities)).toEqual(['netdisk-folder-quark'])
+    for (const b of BEFORE) expect(callSitesOf(b.id, identities), b.id).toEqual([providerCallsite(b.callsite)!.label])
   })
 
   it('包未挂上时，四个网盘调用点宿主默认为空（宿主不认识任何网盘）', () => {

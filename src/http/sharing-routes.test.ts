@@ -7,6 +7,7 @@ import { UserStore } from '../store/user-store.ts'
 import { Registry } from '../registry/registry.ts'
 import { ImportRunStore, type ImportItem } from '../sharing/import-run-store.ts'
 import { registerSharingRoutes } from './sharing-routes.ts'
+import { ProviderIdentityTable } from '../providers/identities.ts'
 import { ProviderBindings } from '../providers/bindings.ts'
 import { ProviderDirectory } from '../providers/directory.ts'
 import { SYSTEM_IDENTITIES } from '../providers/system/index.ts'
@@ -18,7 +19,7 @@ function app() {
   const runs = new ImportRunStore(join(tmpdir(), `ir-${randomUUID()}.json`))
   const a = new Hono()
   registerSharingRoutes(a, {
-    store, registry: new Registry([]), plugins: [{ id: 'rsshub' } as never], recipePackages: () => [],
+    store, registry: new Registry([]), identities: new ProviderIdentityTable(), plugins: [{ id: 'rsshub' } as never], recipePackages: () => [],
     recipesUserDir: join(tmpdir(), `ru-${randomUUID()}`), runs,
     bindings: new ProviderBindings(store, new ProviderDirectory(store, SYSTEM_IDENTITIES)),
     directory: new ProviderDirectory(store, SYSTEM_IDENTITIES),

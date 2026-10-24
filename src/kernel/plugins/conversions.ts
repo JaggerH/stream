@@ -306,7 +306,7 @@ export const conversionsPlugin = {
 
     // 这一行无条件建，整份梯子都写进去（理由在 `ensureTranscribeRow` 头注：成员自己现读 token，
     // 筛与不筛运行时一个样，而筛掉的代价是能力的存在与否被绑在启动那一刻）。
-    const transcribeRow = ensureTranscribeRow(channels)
+    const transcribeRow = ensureTranscribeRow(channels, ctx.sources.identities)
     // 这里是个**裸块**，不是条件分支：里面那一串 const 只服务于这一段（identify / 抽名 /
     // 出现账 / 分窗），用块把它们的作用域圈住。以前这儿是 `if (transcribeRow)` —— 那个 if 才是
     // 「配上 key 要重启」的真正来源，见上一行的注释与 `ensureTranscribeRow` 头注。

@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
+import { ProviderIdentityTable } from '../providers/identities.ts'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
@@ -25,14 +26,14 @@ describe('C2/I1/I2 — 密钥扫描覆盖 provider 成员、camelCase、options'
     const s = new UserStore(':memory:')
     s.putStream({ id: 's1', label: 'S', strategy: 'fanout', cadence_seconds: 3600, members: [{ plugin: 'p', source: 'q', params: {} }], options: { apiKey: 'sk-live-in-options' } })
     s.putChannel({ id: 'c', label: 'C', present: 'timeline', stream_ids: ['s1'], options: {} })
-    expect(() => exportBundle({ kind: 'channel', id: 'c' }, s, catalog, meta)).toThrow(/拒绝导出|敏感|secret/i)
+    expect(() => exportBundle({ kind: 'channel', id: 'c' }, s, catalog, meta, new ProviderIdentityTable())).toThrow(/拒绝导出|敏感|secret/i)
     s.close()
   })
 
   it('provider 成员 params 里的密钥被拦（provider 根导出）', () => {
     const s = new UserStore(':memory:')
     s.putProvider({ id: 'pv', label: 'PV', description: 'd', category: 'search', serves: ['*'], strategy: 'concurrent', members: [{ source: 'x', params: { sessionToken: 'sk-secret' } }], options: {} })
-    expect(() => exportBundle({ kind: 'provider', id: 'pv' }, s, catalog, meta)).toThrow(/拒绝导出|敏感|secret/i)
+    expect(() => exportBundle({ kind: 'provider', id: 'pv' }, s, catalog, meta, new ProviderIdentityTable())).toThrow(/拒绝导出|敏感|secret/i)
     s.close()
   })
 })

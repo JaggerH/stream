@@ -8,7 +8,7 @@ import { ProviderDirectory } from '../../providers/directory.ts'
 import { providerDirectoryPlugin } from '../../providers/directory-plugin.ts'
 import { ProviderBindings, type SlotContext } from '../../providers/bindings.ts'
 import { ensureSystemRows, pruneDeadMembers } from '../../providers/seed.ts'
-import { allIdentities } from '../../providers/identities.ts'
+
 import { PROVIDER_CALLSITES } from '../../providers/callsites.ts'
 import { memberCallArgs } from '../../providers/invoke-types.ts'
 import { NETDISK_SAVE_DEST } from '../../../shared/netdisk/save-dest.ts'
@@ -256,7 +256,7 @@ export const providerPlugin = {
     // Provider 读模型：谁服务哪个键、谁在兜底、哪些行趴着——全部只在这一个对象里判。系统行的
     // 身份来自代码（`src/providers/system/`），行上只剩编排。内核里也挂一份同源实例，好让按
     // inject 取它的服务不必经本域的聚合对象（今天两处指向同一个 store + 同一张身份表）。
-    const identities = allIdentities()
+    const identities = ctx.sources.identities.all()
     const providerDirectory = new ProviderDirectory(channels, identities)
     void ctx.plugin(providerDirectoryPlugin, { store: channels, systemIdentities: identities })
     providerExecutor = new ProviderExecutor({
@@ -304,7 +304,8 @@ export const providerPlugin = {
       if (cut > 0 && !m.id.startsWith('rsshub:')) loadedPackages.add(m.id.slice(0, cut))
     }
     const packageLoaded = (pkgName: string) => loadedPackages.has(pkgName)
-    const ensuredProviders = ensureSystemRows(channels, packageLoaded)
+    channels.setIdentities(() => ctx.sources.identities)
+    const ensuredProviders = ensureSystemRows(channels, ctx.sources.identities, packageLoaded)
     if (ensuredProviders.inserted) log(`[stream] backfilled ${ensuredProviders.inserted} missing system provider rows`)
     // 清退是把用户库里的行删掉，必须出声——静默删数据是不可接受的。
     for (const gone of ensuredProviders.retired) {
@@ -319,7 +320,7 @@ export const providerPlugin = {
     // `pruneDeadMembers` 头注）。清退管"身份没了"，这条管"成员指的那个源没了"——两者都必须
     // 出声：一个指向不存在 sourceId 的成员是**静默死**，界面上看着配好了，就是不出结果。
     // 退役表走 thunk 现取（与 catalog 同一份），不在这儿存一份快照。
-    for (const dead of pruneDeadMembers(channels, registry, packageLoaded, () => ctx.sources.retiredRoutes())) {
+    for (const dead of pruneDeadMembers(channels, registry, ctx.sources.identities, packageLoaded, () => ctx.sources.retiredRoutes())) {
       if (dead.movedTo) {
         log(`[stream] provider row ${dead.providerId}: member ${dead.sourceId} moved to ${dead.movedTo} (source changed package; params kept)`)
         continue
@@ -329,8 +330,8 @@ export const providerPlugin = {
         `${dead.restoredDefaults ? '; members 清空后已回该行的默认成员' : ''}`,
       )
     }
-    const providerBindings = new ProviderBindings(channels, providerDirectory)
-    const seededBindings = providerBindings.ensureDefaults(PROVIDER_CALLSITES)
+    const providerBindings = new ProviderBindings(channels, providerDirectory, ctx.sources.identities)
+    const seededBindings = providerBindings.ensureDefaults(PROVIDER_CALLSITES, ctx.sources.identities)
     if (seededBindings.inserted) log(`[stream] seeded ${seededBindings.inserted} provider callsite bindings`)
     // 并进去的那些也要出声：它改的是用户库里一条**已有**的绑定（只往 dispatch 调用点加行）。
     if (seededBindings.augmented) log(`[stream] merged ${seededBindings.augmented} package-declared default rows into existing dispatch bindings`)

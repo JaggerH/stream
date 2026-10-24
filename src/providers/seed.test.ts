@@ -6,11 +6,14 @@ import { UserStore } from '../store/user-store.ts'
 import { Registry } from '../registry/registry.ts'
 import type { SourceManifest } from '../manifest/types.ts'
 import { callSitesOf, ensureSystemRows, ensureTranscribeRow, pruneDeadMembers, systemProviderIds } from './seed.ts'
-import { allIdentities, setPackageIdentities } from './identities.ts'
+import { ProviderIdentityTable } from './identities.ts'
 import { ProviderExecutor } from './executor.ts'
 import { ProviderDirectory } from './directory.ts'
 import { SYSTEM_IDENTITIES } from './system/index.ts'
 import { PROVIDER_CALLSITES } from './callsites.ts'
+
+/** 本测试文件里的实例身份表：需要包行的用例自己 setPackageRows，用完清回宿主表。 */
+const identities = new ProviderIdentityTable()
 
 /** 17 条宿主身份里除 transcribe 之外的那些 —— `ensureSystemRows` 建的就是这一批。 */
 const ALWAYS_SEEDED = [...SYSTEM_IDENTITIES.keys()].filter((id) => id !== 'transcribe')
@@ -63,7 +66,7 @@ describe('ensureSystemRows', () => {
   it('空表建齐全部系统行（transcribe 除外——它按 token 有无另建）', () => {
     const { store, cleanup } = freshStore('seed-')
 
-    expect(ensureSystemRows(store)).toEqual({ inserted: ALWAYS_SEEDED.length, retired: [], keptAbsent: [] })
+    expect(ensureSystemRows(store, identities)).toEqual({ inserted: ALWAYS_SEEDED.length, retired: [], keptAbsent: [] })
     expect(ALWAYS_SEEDED.length).toBe(18) // 19 条宿主身份 − transcribe（包声明的行不在这张表里）
     const ids = store.listProviders().map((p) => p.id)
     expect(ids).toEqual([...ALWAYS_SEEDED].sort()) // listProviders 是 ORDER BY id
@@ -89,19 +92,19 @@ describe('ensureSystemRows', () => {
     // `llm` 的种子不带成员——连接是用户自己加的 llm-openai 实例，占位比空列表坏
     expect(store.getProvider('llm')!.members).toEqual([])
 
-    expect(ensureSystemRows(store)).toEqual({ inserted: 0, retired: [], keptAbsent: [] }) // 幂等
+    expect(ensureSystemRows(store, identities)).toEqual({ inserted: 0, retired: [], keptAbsent: [] }) // 幂等
     cleanup()
   })
 
   it('删掉的行不复活、改过的行不覆盖；掉了 system 标志的旧行重申标志', () => {
     const { store, cleanup } = freshStore('seed-edits-')
-    ensureSystemRows(store)
+    ensureSystemRows(store, identities)
 
     store.patchProvider('music-search', { members: [{ source: 'user-picked' }] })
     store.putProvider({ ...store.getProvider('download-resolve')!, system: false })
     store.removeProvider('podcast-feed')
 
-    expect(ensureSystemRows(store).inserted).toBe(1) // 只有 podcast-feed 缺着
+    expect(ensureSystemRows(store, identities).inserted).toBe(1) // 只有 podcast-feed 缺着
     expect(store.getProvider('podcast-feed')!.system).toBe(true)
     expect(store.getProvider('download-resolve')!.system).toBe(true) // 标志重申
     expect(store.getProvider('music-search')!.members).toEqual([{ source: 'user-picked' }]) // 编辑存活
@@ -109,15 +112,15 @@ describe('ensureSystemRows', () => {
     // 用户删掉一条后再跑一次会补回来——这正是 `ensureSystemRows` 的语义：系统行必须在
     // （它是能力的落点，缺了就是一条静默哑掉的调用链）。
     store.removeProvider('podcast-feed')
-    expect(ensureSystemRows(store).inserted).toBe(1)
+    expect(ensureSystemRows(store, identities).inserted).toBe(1)
     cleanup()
   })
 
   it('按 serves-key 分发：每平台一条 resolve 行（各自包声明的），不串台', () => {
     const { store, cleanup } = freshStore('seed-video-')
-    setPackageIdentities([BILI_ROW, DOUYIN_ROW])
+    identities.setPackageRows([BILI_ROW, DOUYIN_ROW])
     try {
-    ensureSystemRows(store, () => true)
+    ensureSystemRows(store, identities, () => true)
 
     // 包行：裸名成员已补成全名（`<包名>/<局部名>`），建出来的行带 declaredBy
     expect(store.getProvider('video-bilibili')).toMatchObject({
@@ -130,19 +133,19 @@ describe('ensureSystemRows', () => {
     })
 
     const executor = new ProviderExecutor({
-      directory: new ProviderDirectory(store, allIdentities()),
+      directory: new ProviderDirectory(store, identities.all()),
       registry: { get: () => undefined } as never,
       stats: { record: () => {} } as never,
       fetchSource: async () => [],
     })
     expect(executor.match('resolve', 'bilibili-video').map((p) => p.id)).toEqual(['video-bilibili'])
     expect(executor.match('resolve', 'douyin-video').map((p) => p.id)).toEqual(['video-douyin'])
-    } finally { setPackageIdentities([]); cleanup() }
+    } finally { identities.setPackageRows([]); cleanup() }
   })
 
   it('影视详情三行的 category/成员顺序，且成员顺序归用户', () => {
     const { store, cleanup } = freshStore('seed-video-detail-')
-    ensureSystemRows(store)
+    ensureSystemRows(store, identities)
 
     expect(store.getProvider('video-canonical')).toMatchObject({
       // 详情三行走 collect（全收）——策略必须是 concurrent，首胜即停在这里自相矛盾。
@@ -156,7 +159,7 @@ describe('ensureSystemRows', () => {
     })
 
     store.patchProvider('video-metadata', { members: [{ source: '@streamapp/omdb/omdb-metadata' }, { source: '@streamapp/builtin/tmdb-metadata' }] })
-    expect(ensureSystemRows(store).inserted).toBe(0)
+    expect(ensureSystemRows(store, identities).inserted).toBe(0)
     expect(store.getProvider('video-metadata')!.members).toEqual([
       { source: '@streamapp/omdb/omdb-metadata' }, { source: '@streamapp/builtin/tmdb-metadata' },
     ])
@@ -166,7 +169,7 @@ describe('ensureSystemRows', () => {
   // ── 清退：正向（补齐）的对称动作。判据 = `system = 1` 且 id 不在身份表里。 ──
   it('清退：system=1 但身份已从代码里删掉的行被删掉', () => {
     const { store, cleanup } = freshStore('seed-retire-')
-    ensureSystemRows(store)
+    ensureSystemRows(store, identities)
     // 存量库里真实躺着的那三条看板数据平面行（身份早已删除，成员指向不存在的 source）。
     for (const id of ['run-list', 'run-metrics', 'run-timeseries']) {
       store.putProvider({
@@ -175,7 +178,7 @@ describe('ensureSystemRows', () => {
       })
     }
 
-    const result = ensureSystemRows(store)
+    const result = ensureSystemRows(store, identities)
     expect(result.inserted).toBe(0)
     expect(result.retired.map((r) => r.id).sort()).toEqual(['run-list', 'run-metrics', 'run-timeseries'])
     for (const id of ['run-list', 'run-metrics', 'run-timeseries']) expect(store.getProvider(id)).toBeNull()
@@ -186,13 +189,13 @@ describe('ensureSystemRows', () => {
 
   it('清退不碰用户自建行：system=0 的行即使不在身份表里也原样留着', () => {
     const { store, cleanup } = freshStore('seed-retire-user-')
-    ensureSystemRows(store)
+    ensureSystemRows(store, identities)
     store.putProvider({
       id: 'my-own-row', label: '我自己建的', description: '', category: 'search', serves: ['*'],
       strategy: 'sequential', members: [{ source: 'whatever' }], contract: null, options: {}, system: false,
     })
 
-    const result = ensureSystemRows(store)
+    const result = ensureSystemRows(store, identities)
     expect(result.retired).toEqual([])
     expect(store.getProvider('my-own-row')).toMatchObject({ members: [{ source: 'whatever' }], system: false })
     cleanup()
@@ -202,18 +205,18 @@ describe('ensureSystemRows', () => {
   // 而 id 在身份表里）——清退判据的两个条件它一个都不满足，钉死它不会被误清。
   it('清退不碰 transcribe：它 system=0，且 id 在身份表里', () => {
     const { store, cleanup } = freshStore('seed-retire-transcribe-')
-    ensureSystemRows(store)
-    const row = ensureTranscribeRow(store)
+    ensureSystemRows(store, identities)
+    const row = ensureTranscribeRow(store, identities)
     expect(row.system).toBeFalsy()
 
-    expect(ensureSystemRows(store).retired).toEqual([])
+    expect(ensureSystemRows(store, identities).retired).toEqual([])
     expect(store.getProvider('transcribe')!.members).toEqual(row.members)
     cleanup()
   })
 
   it('清退连带摘掉频道槽位里对它的悬空引用', () => {
     const { store, cleanup } = freshStore('seed-retire-slots-')
-    ensureSystemRows(store)
+    ensureSystemRows(store, identities)
     store.putProvider({
       id: 'run-list', label: 'run-list', description: '', category: 'search', serves: ['*'],
       strategy: 'sequential', members: [{ source: 'run-list-src' }], contract: null, options: {}, system: true,
@@ -223,7 +226,7 @@ describe('ensureSystemRows', () => {
       options: { slots: { 'dashboard.list': ['run-list', 'music-search'], 'other.site': ['music-search'] } },
     })
 
-    const result = ensureSystemRows(store)
+    const result = ensureSystemRows(store, identities)
     expect(result.retired).toEqual([{ id: 'run-list', clearedSlots: [{ channelId: 'ch-1', callsiteId: 'dashboard.list' }] }])
     expect((store.getChannel('ch-1')!.options as { slots: Record<string, string[]> }).slots).toEqual({
       'dashboard.list': ['music-search'], // 槽键留着（"曾被显式配置过"的痕迹），只摘掉悬空 id
@@ -233,15 +236,14 @@ describe('ensureSystemRows', () => {
   })
 
   it('systemProviderIds() 派生自合并身份表（不另立第二份名单）', () => {
-    expect(systemProviderIds()).toEqual([...SYSTEM_IDENTITIES.keys()])
-    expect(systemProviderIds()).toContain('transcribe')
+    expect(systemProviderIds(identities)).toContain('transcribe')
   })
 
   it('systemProviderIds() 含包声明的行（合并表 = 宿主 ∪ 包）', () => {
-    setPackageIdentities([PKG_ROW])
+    identities.setPackageRows([PKG_ROW])
     try {
-      expect(systemProviderIds()).toEqual([...SYSTEM_IDENTITIES.keys(), 'pkg-track'])
-    } finally { setPackageIdentities([]) }
+      expect(systemProviderIds(identities)).toEqual([...SYSTEM_IDENTITIES.keys(), 'pkg-track'])
+    } finally { identities.setPackageRows([]) }
   })
 
   /**
@@ -251,17 +253,17 @@ describe('ensureSystemRows', () => {
    */
   describe('清退分清「代码删了」与「这一轮没加载」', () => {
     const seedPkgRow = (store: UserStore) => {
-      setPackageIdentities([PKG_ROW])
-      ensureSystemRows(store)
+      identities.setPackageRows([PKG_ROW])
+      ensureSystemRows(store, identities)
       expect(store.getProvider('pkg-track')!.options).toMatchObject({ declaredBy: '@t/pkg' })
-      setPackageIdentities([])   // 下一轮：这条身份不在表里了
+      identities.setPackageRows([])   // 下一轮：这条身份不在表里了
     }
 
     it('包这一轮不在场 → 保住那条行并报出来', () => {
       const { store, cleanup } = freshStore('seed-absent-pkg-')
       try {
         seedPkgRow(store)
-        const result = ensureSystemRows(store, () => false)
+        const result = ensureSystemRows(store, identities, () => false)
         expect(result.retired).toEqual([])
         expect(result.keptAbsent).toEqual([{ id: 'pkg-track', packageName: '@t/pkg' }])
         expect(store.getProvider('pkg-track')).not.toBeNull()
@@ -272,7 +274,7 @@ describe('ensureSystemRows', () => {
       const { store, cleanup } = freshStore('seed-removed-pkg-')
       try {
         seedPkgRow(store)
-        const result = ensureSystemRows(store, (name) => name === '@t/pkg')
+        const result = ensureSystemRows(store, identities, (name) => name === '@t/pkg')
         expect(result.keptAbsent).toEqual([])
         expect(result.retired.map((r) => r.id)).toEqual(['pkg-track'])
         expect(store.getProvider('pkg-track')).toBeNull()
@@ -282,12 +284,12 @@ describe('ensureSystemRows', () => {
     it('没盖 declaredBy 的宿主行照旧清退（哪怕谓词说"都不在场"）', () => {
       const { store, cleanup } = freshStore('seed-host-orphan-')
       try {
-        ensureSystemRows(store)
+        ensureSystemRows(store, identities)
         store.putProvider({
           id: 'gone-host-row', label: 'x', description: '', category: 'search', serves: ['*'],
           strategy: 'sequential', members: [], contract: null, options: {}, system: true,
         })
-        const result = ensureSystemRows(store, () => false)
+        const result = ensureSystemRows(store, identities, () => false)
         expect(result.retired.map((r) => r.id)).toEqual(['gone-host-row'])
         expect(result.keptAbsent).toEqual([])
       } finally { cleanup() }
@@ -326,14 +328,14 @@ describe('pruneDeadMembers', () => {
   }
   /** 第四格必填（没有默认值，逼着每个调用点表态）；这一批用例里没有任何包退役目录路由。 */
   const prune = (store: UserStore, present: string[]) =>
-    pruneDeadMembers(store, lookup(present), loadedFrom(present), () => new Map())
+    pruneDeadMembers(store, lookup(present), identities, loadedFrom(present), () => new Map())
 
   /** 只看被测那一行：一份稀疏 registry 会把别的种子行的成员也判死，那是对的，只是与本条无关。 */
   const onRow = (out: ReturnType<typeof pruneDeadMembers>, id: string) => out.filter((p) => p.providerId === id)
 
   it('包装上了、它不再出这个 id → 清掉；同包里还活着的那条留下', () => {
     const { store, cleanup } = freshStore('prune-')
-    ensureSystemRows(store)
+    ensureSystemRows(store, identities)
     store.patchProvider('music-search', {
       members: [{ source: '@streamapp/p/alive' }, { source: '@streamapp/p/gone' }],
     })
@@ -352,7 +354,7 @@ describe('pruneDeadMembers', () => {
    */
   it('包这一轮没装上（读不动 / 撞 id 被摘）→ 成员留着，缺席是暂时的而清掉是永久的', () => {
     const { store, cleanup } = freshStore('prune-absent-pkg-')
-    ensureSystemRows(store)
+    ensureSystemRows(store, identities)
     store.patchProvider('music-search', { members: [{ source: '@streamapp/broken/its-source' }] })
 
     // registry 里一条 `@streamapp/broken/*` 都没有 ⇒ 这个包这一轮不在场 ⇒ 证不了是代码删的。
@@ -363,7 +365,7 @@ describe('pruneDeadMembers', () => {
 
   it('裸名成员一律留着——它不带包名，证不了"哪个包该出它"', () => {
     const { store, cleanup } = freshStore('prune-bare-')
-    ensureSystemRows(store)
+    ensureSystemRows(store, identities)
     store.patchProvider('music-search', { members: [{ source: 'zuna-search' }] })
 
     expect(onRow(prune(store, ['@streamapp/zuna/other']), 'music-search')).toEqual([])
@@ -373,7 +375,7 @@ describe('pruneDeadMembers', () => {
 
   it('rsshub: 目录路由留着——它不归任何包，随目录刷新增减', () => {
     const { store, cleanup } = freshStore('prune-rsshub-')
-    ensureSystemRows(store)
+    ensureSystemRows(store, identities)
     const before = store.getProvider('resource-search')!.members
     expect(before.some((m) => (m as { source?: string }).source?.startsWith('rsshub:'))).toBe(true)
 
@@ -384,7 +386,7 @@ describe('pruneDeadMembers', () => {
 
   it('全名在 registry 里解析得到 → 留下（判活走解析，不是字面比）', () => {
     const { store, cleanup } = freshStore('prune-alive-')
-    ensureSystemRows(store)
+    ensureSystemRows(store, identities)
     store.patchProvider('music-search', { members: [{ source: '@streamapp/p/x' }] })
 
     expect(onRow(prune(store, ['@streamapp/p/x']), 'music-search')).toEqual([])
@@ -393,7 +395,7 @@ describe('pruneDeadMembers', () => {
 
   it('清完 members 空了 → 回该行身份的默认成员', () => {
     const { store, cleanup } = freshStore('prune-restore-')
-    ensureSystemRows(store)
+    ensureSystemRows(store, identities)
     store.patchProvider('download-resolve', { members: [{ source: '@streamapp/p/gone' }] })
 
     expect(onRow(prune(store, ['@streamapp/p/still-here']), 'download-resolve')).toEqual([
@@ -418,7 +420,7 @@ describe('pruneDeadMembers', () => {
 
   it('扩展式成员（mode:auto）不碰——它按"此刻有哪些源"现取，没有可指坏的目标', () => {
     const { store, cleanup } = freshStore('prune-auto-')
-    ensureSystemRows(store)
+    ensureSystemRows(store, identities)
     const before = store.getProvider('lyrics-search')!.members
     expect(before).toEqual([{ mode: 'auto', category: 'lyrics' }])
 
@@ -432,7 +434,7 @@ describe('pruneDeadMembers', () => {
   // 它一个 —— 改指过去，而不是清掉再回默认。
   it('lyrics-search 的存量 members 指着搬走的旧源 id → 改指到内置层唯一同局部名的新全名', () => {
     const { store, cleanup } = freshStore('prune-lyrics-')
-    ensureSystemRows(store)
+    ensureSystemRows(store, identities)
     store.patchProvider('lyrics-search', { members: [{ source: '@streamapp/builtin/netease-lyrics' }] })
 
     const present = ['@streamapp/netease/netease-lyrics', '@streamapp/builtin/some-other-source']
@@ -447,7 +449,7 @@ describe('pruneDeadMembers', () => {
   // （用户可能还调过顺序）——改指到新包、顺序与 params 原样，不清成默认、也不静默指死。
   it('video-metadata / video-images 的存量 OMDb 老全名 → 改指到 @streamapp/omdb，用户排的顺序不动', () => {
     const { store, cleanup } = freshStore('prune-omdb-')
-    ensureSystemRows(store)
+    ensureSystemRows(store, identities)
     store.patchProvider('video-metadata', { members: [{ source: '@streamapp/builtin/omdb-metadata' }, { source: '@streamapp/builtin/tmdb-metadata' }] })
     store.patchProvider('video-images', { members: [{ source: '@streamapp/builtin/tmdb-images' }, { source: '@streamapp/builtin/omdb-images' }] })
 
@@ -492,13 +494,13 @@ describe('pruneDeadMembers：搬了包的成员改指', () => {
     return (pkgName: string) => set.has(pkgName)
   }
   const run = (store: UserStore, builtin: string[], thirdParty: string[] = []) =>
-    pruneDeadMembers(store, layered(builtin, thirdParty), loaded([...builtin, ...thirdParty]), () => new Map())
+    pruneDeadMembers(store, layered(builtin, thirdParty), identities, loaded([...builtin, ...thirdParty]), () => new Map())
       .filter((p) => p.providerId === 'music-search')
   const stale = '@streamapp/builtin/some-search'
   const other = { source: '@streamapp/toubiec/toubiec-search', params: { keyword: '$input' } }
   const seed = () => {
     const env = freshStore('prune-moved-')
-    ensureSystemRows(env.store)
+    ensureSystemRows(env.store, identities)
     env.store.patchProvider('music-search', { members: [{ source: stale, params: { keyword: '$input', extra: 1 } }, other] })
     return env
   }
@@ -545,13 +547,13 @@ describe('pruneDeadMembers：被包顶掉的目录路由', () => {
 
   it('系统行上指向已退役目录路由的成员被清掉', () => {
     const { store, cleanup } = freshStore('prune-retired-')
-    ensureSystemRows(store)
+    ensureSystemRows(store, identities)
     store.patchProvider('content-search', { members: [
       { mode: 'auto', provides: 'search-content' },
       { source: 'rsshub:site/vsearch/:kw' },
     ] })
 
-    const pruned = onRow(pruneDeadMembers(store, emptySources, () => true, () => new Map([['rsshub:site/vsearch/:kw', '本包已接管']])))
+    const pruned = onRow(pruneDeadMembers(store, emptySources, identities, () => true, () => new Map([['rsshub:site/vsearch/:kw', '本包已接管']])))
     expect(pruned.map((p) => p.sourceId)).toEqual(['rsshub:site/vsearch/:kw'])
     expect(store.getProvider('content-search')!.members).toEqual([{ mode: 'auto', provides: 'search-content' }])
     cleanup()
@@ -559,23 +561,23 @@ describe('pruneDeadMembers：被包顶掉的目录路由', () => {
 
   it('没被退役的目录路由照旧留着（rsshub: 一律不清那条规则仍在）', () => {
     const { store, cleanup } = freshStore('prune-not-retired-')
-    ensureSystemRows(store)
+    ensureSystemRows(store, identities)
     store.patchProvider('content-search', { members: [{ source: 'rsshub:site/vsearch/:kw' }] })
 
-    expect(onRow(pruneDeadMembers(store, emptySources, () => true, () => new Map()))).toEqual([])
+    expect(onRow(pruneDeadMembers(store, emptySources, identities, () => true, () => new Map()))).toEqual([])
     expect(store.getProvider('content-search')!.members).toEqual([{ source: 'rsshub:site/vsearch/:kw' }])
     cleanup()
   })
 
   it('退役表是调用时现取的，不是传参那一刻的快照', () => {
     const { store, cleanup } = freshStore('prune-retired-thunk-')
-    ensureSystemRows(store)
+    ensureSystemRows(store, identities)
     store.patchProvider('content-search', { members: [{ source: 'rsshub:site/vsearch/:kw' }] })
 
     let table = new Map<string, string>()
     const thunk = () => table
     table = new Map([['rsshub:site/vsearch/:kw', '本包已接管']])
-    expect(onRow(pruneDeadMembers(store, emptySources, () => true, thunk)).map((p) => p.sourceId)).toEqual(['rsshub:site/vsearch/:kw'])
+    expect(onRow(pruneDeadMembers(store, emptySources, identities, () => true, thunk)).map((p) => p.sourceId)).toEqual(['rsshub:site/vsearch/:kw'])
     cleanup()
   })
 })
@@ -590,7 +592,7 @@ describe('pruneDeadMembers：被包顶掉的目录路由', () => {
 describe('ensureTranscribeRow', () => {
   it('一把 key 都没有也照样建——梯子的存在不该由此刻有没有钥匙决定', () => {
     const { store, cleanup } = freshStore('transcribe-none-')
-    const row = ensureTranscribeRow(store)
+    const row = ensureTranscribeRow(store, identities)
     expect(row.members.map((m) => ('source' in m ? m.source : ''))).toEqual([
       '@streamapp/groq/groq-whisper', '@streamapp/cloudflare/cf-whisper', '@streamapp/builtin/openai-whisper',
     ])
@@ -600,7 +602,7 @@ describe('ensureTranscribeRow', () => {
 
   it('落的是身份声明的成本阶梯原样：groq → cloudflare → openai', () => {
     const { store, cleanup } = freshStore('transcribe-all-')
-    const row = ensureTranscribeRow(store)
+    const row = ensureTranscribeRow(store, identities)
     expect(row.members).toEqual([
       { source: '@streamapp/groq/groq-whisper', params: { tokenName: 'groq' } },
       { source: '@streamapp/cloudflare/cf-whisper', params: { tokenName: 'cloudflare' } },
@@ -616,7 +618,7 @@ describe('ensureTranscribeRow', () => {
     // 少了它，`sttConfigured`（kernel/plugins/conversions.ts）就无从逐档判断钥匙在不在，
     // 而它是「配上 key 立刻能用、不用重启」的判据源。
     const { store, cleanup } = freshStore('transcribe-tokennames-')
-    for (const m of ensureTranscribeRow(store).members) {
+    for (const m of ensureTranscribeRow(store, identities).members) {
       expect((m as { params?: { tokenName?: string } }).params?.tokenName).toBeTruthy()
     }
     cleanup()
@@ -624,8 +626,8 @@ describe('ensureTranscribeRow', () => {
 
   it('重跑幂等：成员不会越堆越多', () => {
     const { store, cleanup } = freshStore('transcribe-rerun-')
-    const first = ensureTranscribeRow(store)
-    const second = ensureTranscribeRow(store)
+    const first = ensureTranscribeRow(store, identities)
+    const second = ensureTranscribeRow(store, identities)
     expect(second.members).toEqual(first.members)
     expect(store.getProvider('transcribe')!.members).toHaveLength(3)
     cleanup()
@@ -635,9 +637,9 @@ describe('ensureTranscribeRow', () => {
   // 这一行每次启动整份重写，所以老全名不会活过一次启动（不需要迁移、也不需要别名）。
   it('存量行上的老全名 @streamapp/builtin/cf-whisper 在下一次启动被改写成新全名', () => {
     const { store, cleanup } = freshStore('transcribe-cf-moved-')
-    ensureTranscribeRow(store)
+    ensureTranscribeRow(store, identities)
     store.patchProvider('transcribe', { members: [{ source: '@streamapp/builtin/cf-whisper', params: { tokenName: 'cloudflare' } }] })
-    ensureTranscribeRow(store)
+    ensureTranscribeRow(store, identities)
     const sources = store.getProvider('transcribe')!.members.map((m) => ('source' in m ? m.source : ''))
     expect(sources).toContain('@streamapp/cloudflare/cf-whisper')
     expect(sources).not.toContain('@streamapp/builtin/cf-whisper')
@@ -648,21 +650,21 @@ describe('ensureTranscribeRow', () => {
 describe('callSitesOf —— 调用位置注记', () => {
   // 复位放 afterEach，不放用例末尾：断言一红用例就中断了，末尾那句复位跑不到，
   // 包行会漏给后面的用例（这个文件里 `systemProviderIds()` 那条正好会被它带偏）。
-  afterEach(() => setPackageIdentities([]))
+  afterEach(() => identities.setPackageRows([]))
 
   it('手写表里有的照旧', () => {
-    expect(callSitesOf('music-search')).toEqual(['GET /api/search?scope=music'])
+    expect(callSitesOf('music-search', identities)).toEqual(['GET /api/search?scope=music'])
   })
   it('手写表里没有的（包行）按调用点 label 反查生成', () => {
-    setPackageIdentities([{ facility: 'pkg', declaration: {
+    identities.setPackageRows([{ facility: 'pkg', declaration: {
       id: 'pkg-track', category: 'resolve', serveKeys: ['pkg'], strategy: 'sequential',
       label: 'L', description: 'D', members: [{ mode: 'auto', matches: 'pkg.com/song' }],
       callsites: ['music.track.resolve', 'music.track.download'],
     } }])
-    expect(callSitesOf('pkg-track')).toEqual(['音乐播放解析', '音乐下载解析'])
+    expect(callSitesOf('pkg-track', identities)).toEqual(['音乐播放解析', '音乐下载解析'])
   })
   it('哪边都没有 → 空数组', () => {
-    expect(callSitesOf('nobody')).toEqual([])
+    expect(callSitesOf('nobody', identities)).toEqual([])
   })
 })
 

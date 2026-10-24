@@ -19,6 +19,7 @@ import { ProviderExecutor, sourceOf } from '../providers/executor.ts'
 import { ProviderDirectory } from '../providers/directory.ts'
 import { SYSTEM_IDENTITIES } from '../providers/system/index.ts'
 import { ensureSystemRows } from '../providers/seed.ts'
+import { ProviderIdentityTable } from '../providers/identities.ts'
 import { DedupStore } from '../dedup-store.ts'
 import { ItemStore } from '../item-store.ts'
 import { createHttpApiFixture, fake, health, item, manifests, mk, stream, type HttpApiFixture } from './__fixtures__/app-harness.ts'
@@ -551,7 +552,7 @@ function musicProviders(perSource: Record<string, unknown[]>) {
     mk({ id: '@streamapp/toubiec/toubiec-search', adapter: 'replay', capabilities: ['search'] }),
     mk({ id: '@streamapp/zuna/zuna-search', adapter: 'replay', capabilities: ['search'] }),
   ])
-  ensureSystemRows(channelStore)
+  ensureSystemRows(channelStore, new ProviderIdentityTable())
   const calls: Array<{ sourceId: string; params?: Record<string, unknown> }> = []
   const executor = new ProviderExecutor({
     directory: new ProviderDirectory(channelStore, SYSTEM_IDENTITIES), registry, stats,
@@ -625,7 +626,7 @@ it('GET /api/search?scope=content fans out over search-content members and prese
     mk({ id: 'douyin-search', provides: ['search-content'], capabilities: ['search'] }),
     mk({ id: 'other-search', provides: ['search-content'], capabilities: ['search'] }),
   ])
-  ensureSystemRows(channelStore)
+  ensureSystemRows(channelStore, new ProviderIdentityTable())
   const seen: Array<{ sourceId: string; params?: Record<string, unknown> }> = []
   const executor = new ProviderExecutor({
     directory: new ProviderDirectory(channelStore, SYSTEM_IDENTITIES), registry, stats,
@@ -665,7 +666,7 @@ it('接线：search.resources 被槽位覆盖时,app.ts 传给 facetResources �
   const channelStore = new UserStore(join(dir, `res-prov-alt-${Math.random()}.db`))
   const stats = new ProviderStatsStore(join(dir, `res-stats-alt-${Math.random()}.db`))
   const registry = new Registry([...manifests, mk({ id: 'pansou-search', provides: ['search-download'], capabilities: ['search'] })])
-  ensureSystemRows(channelStore)
+  ensureSystemRows(channelStore, new ProviderIdentityTable())
   // 覆盖行：不是默认的 resource-search，member 带自己的成员表——只要 providerId 传对了，
   // executor 就该按这一行（而不是默认行）扇出。
   channelStore.putProvider({
@@ -701,7 +702,7 @@ it('GET /api/search?scope=resources fans out raw over search-download and facets
   const channelStore = new UserStore(join(dir, `res-prov-${Math.random()}.db`))
   const stats = new ProviderStatsStore(join(dir, `res-stats-${Math.random()}.db`))
   const registry = new Registry([...manifests, mk({ id: 'pansou-search', provides: ['search-download'], capabilities: ['search'] })])
-  ensureSystemRows(channelStore)
+  ensureSystemRows(channelStore, new ProviderIdentityTable())
   const seen: Array<{ sourceId: string; params?: Record<string, unknown> }> = []
   const executor = new ProviderExecutor({
     directory: new ProviderDirectory(channelStore, SYSTEM_IDENTITIES), registry, stats,
@@ -742,7 +743,7 @@ it('GET /api/search?scope=video fans out over video-search and dedups hits into 
   const channelStore = new UserStore(join(dir, `video-prov-${Math.random()}.db`))
   const stats = new ProviderStatsStore(join(dir, `video-stats-${Math.random()}.db`))
   const registry = new Registry(manifests)
-  ensureSystemRows(channelStore)
+  ensureSystemRows(channelStore, new ProviderIdentityTable())
   const seen: Array<{ sourceId: string; params?: Record<string, unknown> }> = []
   const executor = new ProviderExecutor({
     directory: new ProviderDirectory(channelStore, SYSTEM_IDENTITIES), registry, stats,

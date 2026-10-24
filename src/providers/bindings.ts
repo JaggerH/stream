@@ -1,7 +1,8 @@
 import type { ProviderBinding, ProviderRecord } from '../store/types.ts'
 import { readSlots } from '../store/slots.ts'
 import type { UserStore } from '../store/user-store.ts'
-import { providerCallsite, type ProviderCallsiteDescriptor } from './callsites.ts'
+import { callsiteDefaultsFor, providerCallsite, type ProviderCallsiteDescriptor } from './callsites.ts'
+import type { ProviderIdentityTable } from './identities.ts'
 import { isParked } from './parked.ts'
 import type { ProviderDirectory } from './directory.ts'
 import { strategySupportsCollect } from './strategies/index.ts'
@@ -40,6 +41,8 @@ export class ProviderBindings {
     /** 「这一行服务这个键吗」的唯一判据（`'*'` 兜底的翻译也在它里面）；`get()` 另供
      *  validateSelection 读**合并行**的 strategy（系统行的身份归代码，库里那一列可能是旧值）。 */
     private readonly directory: Pick<ProviderDirectory, 'servesKey' | 'get'>,
+    /** 本实例的合并身份表：restore/ensureDefaults 把包声明的默认行并进宿主默认。缺 = 只宿主默认。 */
+    private readonly identities?: ProviderIdentityTable,
   ) {}
 
   /** 每个调用点补一条默认绑定（已有的不动）。
@@ -48,17 +51,18 @@ export class ProviderBindings {
    *  一台没装那个包的机器上它就是空的。写一条空绑定的代价不是"绑了个空"——是**下次开机
    *  这一格就补不上了**（判据是"有没有绑定"，空绑定也算有），用户装完包重启仍然没有默认行，
    *  而没有任何一处会喊。跳过 = 这一格保持"未绑定"，包一到位下次开机自然补齐。 */
-  ensureDefaults(descriptors: ProviderCallsiteDescriptor[]): EnsureDefaultsResult {
+  ensureDefaults(descriptors: ProviderCallsiteDescriptor[], identities?: ProviderIdentityTable): EnsureDefaultsResult {
     let inserted = 0
     let augmented = 0
     for (const descriptor of descriptors) {
-      if (descriptor.defaultProviderIds.length === 0) continue
+      const defaults = callsiteDefaultsFor(descriptor.id, descriptor.defaultProviderIds, identities)
+      if (defaults.length === 0) continue
       const existing = this.store.getProviderBinding(descriptor.id)
       if (!existing) {
         this.store.putProviderBinding({
           callsiteId: descriptor.id,
-          providerIds: descriptor.defaultProviderIds,
-          offeredDefaults: [...descriptor.defaultProviderIds],
+          providerIds: defaults,
+          offeredDefaults: [...defaults],
         })
         inserted++
         continue
@@ -74,8 +78,8 @@ export class ProviderBindings {
       // 提过的记在 `offeredDefaults` 里（缺席 = 一条都没提过，升级后第一次开机照提一遍）。
       if (descriptor.mode !== 'dispatch') continue
       const offered = existing.offeredDefaults ?? []
-      const missing = descriptor.defaultProviderIds.filter((id) => !existing.providerIds.includes(id) && !offered.includes(id))
-      const nextOffered = [...new Set([...offered, ...descriptor.defaultProviderIds])]
+      const missing = defaults.filter((id) => !existing.providerIds.includes(id) && !offered.includes(id))
+      const nextOffered = [...new Set([...offered, ...defaults])]
       // 一个不缺、账也没变 → 一次写都不发（每次开机都跑，幂等要真幂等）。
       if (missing.length === 0 && nextOffered.length === offered.length) continue
       this.store.putProviderBinding({
@@ -172,11 +176,12 @@ export class ProviderBindings {
    *  包一到位下次开机 `ensureDefaults` 自然补齐（同那边"不写空绑定"的理由）。 */
   restore(callsiteId: string): ProviderBinding | null {
     const descriptor = this.requireDescriptor(callsiteId)
-    if (descriptor.defaultProviderIds.length === 0) {
+    const defaults = callsiteDefaultsFor(callsiteId, descriptor.defaultProviderIds, this.identities)
+    if (defaults.length === 0) {
       this.store.removeProviderBinding(callsiteId)
       return null
     }
-    return this.put(callsiteId, descriptor.defaultProviderIds)
+    return this.put(callsiteId, defaults)
   }
   clear(callsiteId: string): boolean { this.requireDescriptor(callsiteId); return this.store.removeProviderBinding(callsiteId) }
   fixed(callsiteId: string, ctx?: SlotContext): string | null {

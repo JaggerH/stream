@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest'
+import { ProviderIdentityTable } from '../providers/identities.ts'
 import { UserStore } from '../store/user-store.ts'
 import { exportBundle, buildDependencyCatalog } from './export-closure.ts'
 
@@ -19,7 +20,7 @@ const meta = { title: 'Mine', created: '2026-07-18', revision: '1.0.0' }
 describe('exportBundle', () => {
   it('Channel 根：配置行 + recipe 内嵌 + credentials 声明', () => {
     const s = storeWithChannel()
-    const { bundle } = exportBundle({ kind: 'channel', id: 'mine' }, s, catalog, meta)
+    const { bundle } = exportBundle({ kind: 'channel', id: 'mine' }, s, catalog, meta, new ProviderIdentityTable())
     expect(bundle.channels[0].id).toBe('mine')
     expect(bundle.streams[0].id).toBe('s1')
     expect(bundle.embedded.recipes['xhs'].version).toBe('2.1.3')
@@ -44,7 +45,7 @@ describe('exportBundle', () => {
         ? ({ id: '@streamapp/xhs/xhs-home', title: 'XHS', auth: { type: 'none' } } as never) : undefined,
       readEmbedded: () => undefined,
     })
-    const { bundle } = exportBundle({ kind: 'channel', id: 'mine' }, s, ns, meta)
+    const { bundle } = exportBundle({ kind: 'channel', id: 'mine' }, s, ns, meta, new ProviderIdentityTable())
     expect(bundle.streams[0].members[0].source).toBe('@streamapp/xhs/xhs-home')
     expect(bundle.streams[0].members[0].plugin).toBe('xhs') // plugin 那一格不动，它是另一个字段
     s.close()
@@ -58,14 +59,14 @@ describe('exportBundle', () => {
     })
     s.putChannel({ id: 'mine', label: 'Mine', present: 'timeline', stream_ids: ['s1'], options: {} })
     const none = buildDependencyCatalog({ plugins: [], recipePackages: [], readManifest: () => undefined, readEmbedded: () => undefined })
-    const { bundle } = exportBundle({ kind: 'channel', id: 'mine' }, s, none, meta)
+    const { bundle } = exportBundle({ kind: 'channel', id: 'mine' }, s, none, meta, new ProviderIdentityTable())
     expect(bundle.streams[0].members[0].source).toBe('nyaa/search/:query?')
     s.close()
   })
 
   it('无密钥值快照：全包文本不含任何凭证/密钥的实际值', () => {
     const s = storeWithChannel()
-    const { bundle } = exportBundle({ kind: 'channel', id: 'mine' }, s, catalog, meta)
+    const { bundle } = exportBundle({ kind: 'channel', id: 'mine' }, s, catalog, meta, new ProviderIdentityTable())
     const text = JSON.stringify(bundle)
     expect(text).not.toMatch(/sk-|Bearer |__pus|cookie=/i)
     expect(text).toContain('xhs.com') // 声明在，值不在
@@ -76,13 +77,13 @@ describe('exportBundle', () => {
     const s = new UserStore(':memory:')
     s.putStream({ id: 's9', label: 'S', strategy: 'fanout', cadence_seconds: 3600, members: [{ plugin: 'p', source: 'q', params: { apiKey: 'sk-live-xxx' } }], options: {} })
     s.putChannel({ id: 'c9', label: 'C', present: 'timeline', stream_ids: ['s9'], options: {} })
-    expect(() => exportBundle({ kind: 'channel', id: 'c9' }, s, catalog, meta)).toThrow(/拒绝导出|secret|敏感/i)
+    expect(() => exportBundle({ kind: 'channel', id: 'c9' }, s, catalog, meta, new ProviderIdentityTable())).toThrow(/拒绝导出|secret|敏感/i)
     s.close()
   })
 
   it('超阈值给体积警告', () => {
     const s = storeWithChannel()
-    const { warnings } = exportBundle({ kind: 'channel', id: 'mine' }, s, catalog, { ...meta }, { sizeWarnBytes: 10 })
+    const { warnings } = exportBundle({ kind: 'channel', id: 'mine' }, s, catalog, { ...meta }, new ProviderIdentityTable(), { sizeWarnBytes: 10 })
     expect(warnings.some((w) => /体积|size/i.test(w))).toBe(true)
     s.close()
   })
@@ -96,7 +97,7 @@ describe('exportBundle', () => {
     s.putProviderBinding({ callsiteId: 'netdisk.share.verify', providerIds: ['mine-quark'] })
 
     const { bundle } = exportBundle(
-      { kind: 'channel', id: 'mine' }, s, catalog, meta,
+      { kind: 'channel', id: 'mine' }, s, catalog, meta, new ProviderIdentityTable(),
       { providerIds: ['mine-quark', 'download-resolve'], bindingCallsiteIds: ['netdisk.share.verify'] },
     )
     expect(bundle.providers?.map((p) => p.id)).toContain('mine-quark')
@@ -107,7 +108,7 @@ describe('exportBundle', () => {
 
   it('不勾选：即便频道运行时会用到 Provider，包内 providers/providerBindings 也为空', () => {
     const s = storeWithChannel()
-    const { bundle } = exportBundle({ kind: 'channel', id: 'mine' }, s, catalog, meta)
+    const { bundle } = exportBundle({ kind: 'channel', id: 'mine' }, s, catalog, meta, new ProviderIdentityTable())
     expect(bundle.providers ?? []).toHaveLength(0)
     expect(bundle.providerBindings ?? []).toHaveLength(0)
     s.close()
@@ -118,7 +119,7 @@ describe('exportBundle × netdiskBindings', () => {
   it('scanSecrets 覆盖 netdiskBindings：matchSpec 里混入疑似密钥 → 拒导出', () => {
     const s = storeWithChannel()
     const poisoned = [{ left: { kind: 'tmdb', id: '1', media: 'movie', title: 'X' }, matchSpec: { version: 1, apiKey: 'sk-leak' } as never }]
-    expect(() => exportBundle({ kind: 'channel', id: 'mine' }, s, catalog, meta, { netdiskBindings: poisoned as never }))
+    expect(() => exportBundle({ kind: 'channel', id: 'mine' }, s, catalog, meta, new ProviderIdentityTable(), { netdiskBindings: poisoned as never }))
       .toThrow(/拒绝导出|密钥|secret|敏感/i)
     s.close()
   })
@@ -126,7 +127,7 @@ describe('exportBundle × netdiskBindings', () => {
   it('stream-left binding 的 stream 未随包 → 告缺 warning，不静默', () => {
     const s = storeWithChannel()
     const nb = [{ left: { kind: 'stream', streamId: 's-missing', title: '某剧' } }]
-    const { bundle, warnings } = exportBundle({ kind: 'channel', id: 'mine' }, s, catalog, meta, { netdiskBindings: nb as never })
+    const { bundle, warnings } = exportBundle({ kind: 'channel', id: 'mine' }, s, catalog, meta, new ProviderIdentityTable(), { netdiskBindings: nb as never })
     expect(warnings.some((w) => w.includes('s-missing'))).toBe(true)
     expect(bundle.netdiskBindings).toHaveLength(1)
     s.close()
@@ -135,7 +136,7 @@ describe('exportBundle × netdiskBindings', () => {
   it('tmdb-left binding 直接写进包，无需任何 stream', () => {
     const s = storeWithChannel()
     const nb = [{ left: { kind: 'tmdb', id: '1399', media: 'tv', title: '权游' }, matchSpec: { version: 2 } as never }]
-    const { bundle, warnings } = exportBundle({ kind: 'channel', id: 'mine' }, s, catalog, meta, { netdiskBindings: nb as never })
+    const { bundle, warnings } = exportBundle({ kind: 'channel', id: 'mine' }, s, catalog, meta, new ProviderIdentityTable(), { netdiskBindings: nb as never })
     expect(bundle.netdiskBindings?.[0].left).toMatchObject({ kind: 'tmdb', id: '1399' })
     expect(warnings.filter((w) => w.includes('未随包'))).toHaveLength(0)
     s.close()

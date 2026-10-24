@@ -55,7 +55,6 @@ import { createRecipeDebugSessions } from './recipe-debug.ts'
 import { diagnoseCapabilities, slotOf, type ConfigSlotView } from './capability-gaps.ts'
 import { provisionConfigSlot } from '../credentials/provision-slot.ts'
 import { keyRefOf } from '../credentials/key-state.ts'
-import { identityOf } from '../providers/identities.ts'
 import { mediaToolAvailable, type MediaTool } from '../media/ffmpeg-bin.ts'
 import { withLyricsCache } from '../audio/lyrics-cache.ts'
 
@@ -107,7 +106,7 @@ export type McpExtrasDeps = Pick<AgentDomain, 'searchAgent' | 'webSearch' | 'int
   // `configProvisionerFor` / `keyState`：`capability_status` 与 `provision_capability_key`
   // 的两条腿——「这一格配了没」和「谁能替他去申请」。两个都是**函数**（每次调用现查），
   // 别在这里求值：用户刚配完一把 key 答案就变了。
-  & Pick<SourcesService, 'registry' | 'liveRecipes' | 'configProvisionerFor' | 'keyState'>
+  & Pick<SourcesService, 'registry' | 'liveRecipes' | 'configProvisionerFor' | 'keyState' | 'identities'>
   // 采集运输面住内核的 harvest 域（`ctx.harvest`）——cdp_* 的三档地址（chrome / facility /
   // desktop）与 harvest_capability 全部骑它，Boot 上已经没有这几格。
   & Pick<
@@ -261,7 +260,7 @@ export function buildMcpExtras(boot: McpExtrasDeps): McpExtras {
    * 「装配期取的值 = 冻住的答案」）。
    */
   const slotsOfRow = (row: string): ConfigSlotView[] => {
-    const declared = (identityOf(row)?.defaultMembers ?? []) as Array<{ source?: string; params?: Record<string, unknown> }>
+    const declared = (boot.identities.identityOf(row)?.defaultMembers ?? []) as Array<{ source?: string; params?: Record<string, unknown> }>
     const live = (boot.channels.getProvider(row)?.members ?? []) as Array<{ source?: string; params?: Record<string, unknown> }>
     const out = new Map<string, ConfigSlotView>()
     for (const m of [...declared, ...live]) {

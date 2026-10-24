@@ -1,4 +1,5 @@
 import { describe, it, expect, afterEach } from 'vitest'
+import { ProviderIdentityTable } from '../providers/identities.ts'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -38,7 +39,7 @@ function harness(sources: string[], handlers: Record<string, (params: Record<str
   const dir = mkdtempSync(join(tmpdir(), 'subtitle-scrape-'))
   const store = new UserStore(join(dir, 'stream.db'))
   const stats = new ProviderStatsStore(join(dir, 'stats.db'))
-  ensureSystemRows(store)
+  ensureSystemRows(store, new ProviderIdentityTable())
   const calls: Array<{ sourceId: string; params: Record<string, unknown> }> = []
   const executor = new ProviderExecutor({
     directory: new ProviderDirectory(store, SYSTEM_IDENTITIES), registry: new Registry(sources.map(mk)), stats,
