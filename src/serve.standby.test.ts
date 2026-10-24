@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { buildStandbyOrDegrade } from './serve.ts'
+import { buildStandbyOrDegrade } from './plugins/standby/wire.ts'
 
 // I3:standby 的任何构造失败都必须降级成"一行日志 + standby inert",而不是掀翻整个后端启动。
 // 真实的那颗雷:makeStandbyManager 对重名 service 主动 throw,而 main() 结尾是

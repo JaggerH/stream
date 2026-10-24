@@ -1,0 +1,1010 @@
+/**
+ * HTTP + WS backend entry. Serves the REST API + live WS channel and runs the
+ * scheduler in the background. The panel bundles (or any client) talk to this.
+ * Logs to stdout.
+ */
+import '../load-env.ts' // make .env the backend secret source (RSSHub telegram session, etc.)
+// owned-outbound 必须在任何 facility（尤其内嵌 RSSHub，其 request-rewriter 会 patch 全局 fetch /
+// node:http）加载之前 import，才能在顶层同步快照到原始出站绑定。放在 load-env 之后、首位，收敛为
+// 显式启动契约。时序保证来自 RSSHub 的运行时懒加载 + 本 import 首位（结构性早于任何补丁）；命门测试
+// owned-outbound.sentinel.test.ts 锁死的是「捕获机制本身」（import 后再 patch，已存引用不受影响）。
+// 别把它挪到其他 facility import 之后。
+import '../http/owned-outbound.ts'
+import { serve } from '@hono/node-server'
+import { existsSync, readFileSync, writeFileSync, unlinkSync } from 'node:fs'
+import { tmpdir, homedir } from 'node:os'
+import { join, dirname } from 'node:path'
+import { createRequire } from 'node:module'
+import { resolveDataDir } from '../bootstrap.ts'
+import { createStream, createRuntime, type Stream } from './index.ts'
+import { createHttpApp, type HttpDeps } from '../http/app.ts'
+import { writeFixtureFromItem } from '../content/ad-fixtures.ts'
+import { WsHub, attachWs } from '../http/ws.ts'
+import { toClientItem } from '../http/client-item.ts'
+import { attachExtRelay, closeRelayServer } from '../http/ext-relay.ts'
+import { resolveExtToken } from '../http/ext-upgrade.ts'
+import { summarizeCapability } from '../browser/capability-store.ts'
+import { materializeExtension } from '../browser/extension-dir.ts'
+import { installExtension } from '../browser/extension-install.ts'
+import { uninstallExtension } from '../browser/extension-uninstall.ts'
+import { reloadExtension } from '../browser/extension-reload.ts'
+import { readExtensionConsole } from '../browser/extension-console.ts'
+import { attachHostRelay } from '../http/host-relay.ts'
+import { EventSourceRelay, attachEventSourceRelay } from '../event-source/relay.ts'
+import { makeDrain } from '../event-source/drain.ts'
+import { wireCookiesFeed } from '../event-source/cookies-feed.ts'
+import { authorizeAccess, parseTrustedOrigins, isLoopbackAddress, peerAddress, lanBaseUrls } from '../http/access-guard.ts'
+import { mountDeviceRoutes } from '../http/device-routes.ts'
+import { mountExtBindingRoutes, REVOKED_CLOSE_CODE } from '../http/ext-binding-routes.ts'
+import { PAIRED_PLATFORMS } from '../devices/device-store.ts'
+import { ProfileClaims, agentFrom } from '../devices/profile-claim.ts'
+import { mountNodeRoutes } from '../http/node-routes.ts'
+import { cookieSlot } from '../credentials/cookie-slot.ts'
+import { mountIdentityRoutes } from '../http/identity-routes.ts'
+import { assertDeviceReady, facilityTarget, placeRun } from '../devices/placement.ts'
+import { LOCAL_TARGET, taskTarget } from '../devices/target.ts'
+import { makeFetchFor } from '../devices/fetch.ts'
+import { type RunPlacement } from '../devices/run-context.ts'
+import type { UserTaskRow } from '../tasks/task-store.ts'
+import { attachEnrichCommands } from '../http/enrich-ws.ts'
+import { attachAuthLoginCommands } from '../http/auth-login.ts'
+
+// 真相源在 src/ext-id.ts（扩展 id 的唯一定义处；access-guard 与 ext relay 都从那里读）。
+import { STREAM_EXTENSION_ID as EXT_ID } from '../ext-id.ts'
+import { DESKTOP_CAPABILITY_NAME, hostAgentSkipReason, mountHostAgent } from '../host-agent/mount.ts'
+import { DebugLog } from '../http/debug-log.ts'
+import { createFailureSink } from '../http/debug-sink.ts'
+import { startLoopLagMonitor } from '../loop-lag.ts'
+import { OpTracker, type TrackFn, type TrackSyncFn } from '../op-track.ts'
+import { mountMcp } from '../http/mcp-mount.ts'
+import { ACTION_RUN_DOMAIN, projectActionRun } from '../mcp/action-run.ts'
+import type { RunStatus } from '../agent/search/types.ts'
+import { withCapabilityTools } from '../mcp/capability-tools.ts'
+import { mountConfigRows } from '../http/config-rows-routes.ts'
+import { mountLiveRoutes } from '../http/live-routes.ts'
+import { LiveStreamService } from '../live/service.ts'
+import { mountResearchRoutes } from '../http/research-routes.ts'
+import { localRecipesDir, mountLocalRecipeRoutes } from '../http/local-recipes-routes.ts'
+import { mountImageGenerationRoutes, PRODUCES_IMAGES } from '../http/image-generation-routes.ts'
+import { isCanonicalBrowserRecipe } from '../replay/recipe.ts'
+import { mountSkillRoutes } from '../http/skills-routes.ts'
+import { SKILLS_ROOT_REL } from '../skills/shipped.ts'
+import { artifactsDirOf } from '../board/run-source.ts'
+import { watchArtifactsDir } from '../live/watch.ts'
+import { createResearchWatchers, type ResearchWatchers } from '../live/research-watchers.ts'
+import { lazyNotify, type EventsService } from '../events/service.ts'
+import { mountPanelAssets } from '../http/panel-mount.ts'
+import { mountStandalonePage } from '../http/standalone-page.ts'
+import { repoRoot, shippedRoot } from '../http/build-identity.ts'
+import { mountTaskDashboard } from '../http/task-dashboard.ts'
+import { mountPluginGateway } from '../http/plugin-gateway.ts'
+import { type StandbyManager } from '../plugins/standby/manager.ts'
+import { buildStandbyOrDegrade, wireStandby } from '../plugins/standby/wire.ts'
+import { runSessionExports } from '../credentials/session-export.ts'
+import { standbyInertNotification } from '../plugins/standby/inert-notice.ts'
+import type { TaskDeps } from '../tasks/types.ts'
+import { builtinTasks } from '../tasks/builtin.ts'
+import { TaskStore } from '../tasks/task-store.ts'
+import { RunLedger } from '../tasks/run-history.ts'
+import { compileEnabled, compileUserTask } from '../tasks/user-tasks.ts'
+import { actionDirectory } from '../tasks/package-actions.ts'
+import { mountTaskRoutes } from '../http/task-routes.ts'
+import { mountInterventionRoutes } from '../http/intervention-routes.ts'
+import { mountSourceHealthRoutes } from '../http/source-health-routes.ts'
+import { SourceHealthIndex } from '../intervention/source-health-view.ts'
+import { draftPath, readDraft } from '../intervention/explore-graph.ts'
+import { AGENT_ROW_ID, readAgentConfig } from '../intervention/agent-config.ts'
+import { localNameOf } from '../registry/source-id.ts'
+import type { InterventionService } from '../kernel/plugins/intervention.ts'
+import { errText } from '../err-text.ts'
+import { ImportRunStore } from '../sharing/import-run-store.ts'
+import { bindModuleHook, reportUnboundHooks } from '../kernel/plugins/module-hooks.ts'
+import { envCoveredFields } from '../kernel/plugins/runtime-config.ts'
+
+/** 后端自己就是那扇门，默认口 = 唯一的对外口 8900（`DEFAULT_BACKEND_URL`、`GATEWAY_PORT`
+ *  都是这个数）。曾经默认 4555 是容器时代的遗留：门在 Caddy 上，
+ *  后端躲在网内，于是"起在 4555、探 8900"的默认组合让 spawn 必然超时（见 `mcp/spawn-backend.ts`
+ *  的 C1 注释）。默认值对齐之后，那个坑连同它的补丁一起消失。
+ *  compose 自托管旁支里后端仍躲在 Caddy 后面，那条路显式传 `STREAM_PORT=4555`（见
+ *  `plugins/compose.ts`）——**显式的那一侧是特例，默认的这一侧是主路**。 */
+
+/**
+ * HTTP 面（D1）：实例的**全部**对外路由/挂载/中继接线。
+ *
+ * `routes(io)` 建并返回 Hono app（createHttpApp + 直连挂载 + 面板 + 任务面板）；调用方拿到它
+ * 再去 listen。`attachRelayServers(server, io)` 把 ws 中继（扩展 / host / 事件源）与 Stream
+ * Desktop 的宿主进程挂到**已监听**的 server 上——它们要的是在听的那个 socket，所以在
+ * listen 之后调。research watcher 与 `markInterruptedAtBoot` 也归这里（都是实例的事）。
+ *
+ * io 只递 serve 独有的几样：实例本体、ws hub、debug 记录口、op 归因、端口与 restart 槽；
+ * 其余一切从 `io.stream`（kernel / config / secrets / devices / capabilities）现取。
+ */
+import type { Hono } from 'hono'
+import type { Server } from 'node:http'
+import type { DebugEntry } from '../debug.ts'
+
+export interface RouteIo {
+  stream: Stream
+  hub: import('../http/ws.ts').WsHub
+  debugLog: import('../http/debug-log.ts').DebugLog
+  track: TrackFn
+  trackSync: TrackSyncFn
+  port: number
+  restart: NonNullable<import('../http/app.ts').HttpDeps['restart']>
+  /** standby 管理器的共享槽：buildStandbyOrDegrade 写、调用方的关停读。 */
+  standbyRef: { current: import('../plugins/standby/manager.ts').StandbyManager | null }
+}
+
+export async function routes(io: RouteIo): Promise<Hono> {
+  const stream = io.stream
+  const kernel = stream.kernel
+  const config = stream.config
+  const hub = io.hub
+  const debugLog = io.debugLog
+  const recordDebug: (e: DebugEntry) => void = (e) => { debugLog.put(e) }
+  const { track, trackSync } = io
+  const PORT = io.port
+  const restart = io.restart
+  // 域引用（serve 时代在 main 头部拆的那批）——全部从实例现取。
+  const boot = stream
+  const stores = kernel.stores
+  const settingsStore = kernel.settings
+  const pkgs = kernel.packages
+  const sources = kernel.sources
+  const harvest = kernel.harvest
+  const { extToken, apiToken } = stream.secrets
+  const { host: capabilityHost, loaded: loadedCapabilities } = stream.capabilities
+  const { deviceStore, extBindings, facilityDevices, facilityBindings, nodes: browserNodes, identities: siteIdentities } = stream.devices
+  const streamEvents = kernel.streamEvents
+  /** 旧 /api/settings/video-sources 契约的状态投影（has* 布尔，key 永不回显）。 */
+  const videoSourcesStatus = () => {
+    const v = settingsStore.rows.resolve('video-sources')
+    return {
+      hasTmdbApiKey: !!v.tmdbApiKey,
+      hasOmdbApiKey: !!v.omdbApiKey,
+      language: (v.language as string | undefined) ?? 'zh-CN',
+    }
+  }
+
+  // 归 harvest 域。
+  const auth = kernel.auth
+  // Provider 执行面住 `ctx.provider`（解析面 / 执行器 / 绑定 / 读模型 / 网盘两个 capability /
+  // 视频详情 / 分集索引）。本域**全部**经 HttpDeps 下去，没有第二条直连接线。
+  const provider = kernel.provider
+  // 网盘（AList 对齐层）住 `ctx.netdisk`。**它有一条不走 HttpDeps 的直连**：下面调度中心
+  // `taskDeps` 的三格（netdisk / netdiskStore / reconcile）。漏改那三格不报错——
+  // netdisk-autosync 每轮「成功」实为 deps undefined 早退，网盘几天不同步零报警。
+  const netdiskDomain = kernel.netdisk
+  // 搜索扇出住 `ctx.search`（内容搜索 / 资源搜索批量与流式 / 两个归一化口）。本域全部经
+  // HttpDeps 下去，没有第二条直连接线。
+  const search = kernel.search
+  // 转换底座住 `ctx.conversions`（转换资源 / 声纹库 / 引擎 / job 账本 / 转成文字）。**它有一条
+  // 不走 HttpDeps 的直连**：下面调度中心 `taskDeps` 的 `capabilityJobs` 那一格。漏改不报错——
+  // jobs-sweep 每轮「成功」实为 deps undefined 早退，卡住的 job 永远没人收。
+  const conversionsDomain = kernel.conversions
+  // 对话 / 搜索 agent / 意图跟踪住 `ctx.agent`（会话库 / 心愿单 / 摘要 prompt 状态面 /
+  // 网页搜索梯子 / search agent / 意图服务 / mcpExtras）。**它有两条不走 HttpDeps 的直连**：
+  // `mountMcp` 的第三个参数（mcpExtras）与调度中心 `taskDeps` 的 `intents` 那一格。前者漏改
+  // 是 MCP 工具面整片消失，后者漏改不报错——intent 的定时消化每轮「成功」实为 deps undefined
+  // 早退，意图几天不消化零报警。
+  const agentDomain = kernel.agent
+  // 采集调度住 `ctx.scheduling`（Scheduler / StreamService / baseAdRules / health /
+  // lastHarvestAt）。**它有两条不走 HttpDeps 的直连**：下面 `mountMcp` 的第一个参数（service）
+  // 与 `maybeStartScheduler`。关停不在这里——两步都是域内 effect，`quiesceKernel` 撤销。
+  const scheduling = kernel.scheduling
+  stores.downloadQueue.onJob((job) => hub.broadcast({ type: 'audio-download', job }))
+  // 库存（频道 / Stream / 空间）变了就告诉所有前端一声，让它们自己重读。
+  //
+  // **这条通知的理由是"改配置的不止用户自己"**：对话里让 AI 去订阅一个源、改一个频道，走的是
+  // MCP 工具、不经过任何一个网页里的按钮。没有它，页面上那份配置就停在打开时那一刻，而且
+  // 不报错——用户会以为 AI 没做成，再做一遍。
+  //
+  // **合并成一拍**：一次「订阅」是好几次写（建 stream + 并进频道的引用表 …），逐次广播就是
+  // 逐次让每个前端重拉一遍 `/api/channels`。`setTimeout(0)` 把同一轮里的写收成一次。
+  // 不用 `queueMicrotask`：写是同步的，微任务在同一个 tick 末尾就跑，收不住跨 await 的那几次。
+  kernel.effect(() => {
+    let pending: ReturnType<typeof setTimeout> | undefined
+    const off = stores.channels.onChange(() => {
+      if (pending !== undefined) return
+      pending = setTimeout(() => { pending = undefined; hub.broadcast({ type: 'inventory' }) }, 0)
+    })
+    return () => { off(); if (pending !== undefined) clearTimeout(pending) }
+  })
+  // 前端「打开一条」的 WS 现取：派发到包交出的 enricher 表（`content.enrich.source` 指哪个就查哪个）。
+  // thunk 而不是把 Map 冻进去：表随包装载填充，装配期取值就是那个"开机时不对、过一会儿才对"的形状。
+  attachEnrichCommands(hub, { enrichers: () => pkgs.activated.enrichers })
+  attachAuthLoginCommands(hub, { startLogin: auth.startLogin })
+
+  // research watcher 注册表的**前向引用**：真身在下面（要 `researchArtifactsDirForStream` 和
+  // `hub`），而 HttpDeps 在这里就得成型。所以下面传给 `onChannelsChanged` 的是一个**调用时
+  // 现取**的 thunk，不是把对象冻进去（把求值结果写死在装配期是本文件反复吃过亏的形状）。
+  // 路由只在请求到来时调它，那时装配早已结束。
+  let researchWatchers: ResearchWatchers | undefined
+
+  /** 把扩展目录物化到 `<dataDir>/extension/`。**手动装和代装调的是同一个函数**——两条路指向
+   *  同一个目录，出问题时排查只有一个路径（spec 2026-08-30-extension-onboarding §5）。
+   *  发行形态下仓库产物不在场，落 npm 包那一档：`resolve` 拿的是包里 `package.json` 的位置，
+   *  因为包根不一定是个可被 `require.resolve` 直接命中的模块。 */
+  const materializeStreamExtension = () =>
+    materializeExtension({
+      // **两个锚**：源码跑时产物在仓库根下；打包产物里 `server.mjs` 住资源目录，那一份的锚
+      // 是 cwd（和 `packages_dir=./packages` 同一个锚，见 build-server.mjs 里拷它的那一步）。
+      // 挑"产物真在那儿"的那个，挑不出来就回落仓库根——让错误消息里出现的是熟悉的那条路径。
+      repoRoot: shippedRoot('extension/.output/chrome-mv3'),
+      dataDir: resolveDataDir(config),
+      resolvePkg: (spec) => dirname(createRequire(import.meta.url).resolve(`${spec}/package.json`)),
+    })
+
+  // 动作 run 的读口（`runAction` 回 running 之后调用方等结果用）。读的是 MCP `get_agent_run`
+  // 同一本库、同一份投影——只认 `domain:'action'` 那些行，别的 run 在这条路上是 404。
+  // `/api/recipes/action/:runId` 与豆包生图口共用这一个。
+  const actionRun = (runId: string) => {
+    const rec = agentDomain.searchAgent.get(runId) as
+      | { domain?: string; goal: string; status: RunStatus; updatedAt: string; result?: unknown; error?: string }
+      | null
+    return rec && rec.domain === ACTION_RUN_DOMAIN ? projectActionRun(runId, rec) : null
+  }
+
+
+  const app = createHttpApp({
+    service: scheduling.service,
+    restart,
+    articles: stores.articles,
+    favicons: stores.favicons,
+    // 每条改动「流—频道」关系 / 频道 present / 流成员表的写入路径都调它一次——
+    // 与 `applyCollectionPolicy` 是同一个接缝的两边，见 live/research-watchers.ts 头注。
+    onChannelsChanged: () => researchWatchers?.sync(),
+    resolve: { registry: sources.registry, resolveEngine: provider.resolveEngine, intentResolver: provider.intentResolver, radarMatcher: provider.radarMatcher, sourceHealth: stores.sourceHealth, streams: () => scheduling.scheduler.list(), lyricsCache: stores.audioArchive },
+    channelStore: stores.channels,
+    sharing: {
+      store: stores.channels,
+      registry: sources.registry,
+      identities: sources.identities,
+      plugins: pkgs.plugins,
+      // getter：install 热挂载后归并快照会整体换掉，分享路由每次请求经它读到最新（I-1）。
+      recipePackages: () => sources.recipePackages().list,
+      recipesUserDir: sources.recipesUserDir,
+      runs: new ImportRunStore(join(dirname(config.item_db), 'import-runs.json')),
+      bindings: provider.providerBindings,
+      directory: provider.providerDirectory,
+      mappingStore: netdiskDomain.netdiskRoutes?.store,
+    },
+    onboard: { wishlist: agentDomain.onboardWishlist },
+    // 动作 recipe 的脚本入口，**递的就是 MCP 在用的那一个闭包**——不在这里重新装配一份
+    // ActionRecipeDeps：那样两条路的 findRecipe / runBrowser / browserConnected 会各自演化，
+    // 而"同一条 recipe 走两条路行为不一样"是查不出源头的那种坏法。
+    runAction: agentDomain.mcpExtras.runActionRecipe,
+    actionRun,
+    providers: { executor: provider.providerExecutor, stats: provider.providerStats },
+    resolveDownloads: provider.resolveDownloads,
+    providerBindings: provider.providerBindings,
+    videoDetails: provider.videoDetails,
+    episodeIndex: provider.episodeIndex,
+    netdisk: netdiskDomain.netdisk,
+    // **原样传内核那一份，别在这儿往上加格子。** `openReconcile` 曾经装在这里，结果只喂饱了
+    // HTTP 这一端：MCP 工具面读的是 `ctx.netdisk.netdiskRoutes`（另一个对象），模型手里因此
+    // 压根没有那个工具，而且没有任何一处报错。要给这一域加能力就去 `kernel/plugins/netdisk.ts`。
+    netdiskRoutes: netdiskDomain.netdiskRoutes,
+    netdiskShare: provider.netdiskShare,
+    netdiskPlay: provider.netdiskPlay,
+    debug: { record: recordDebug, recent: (o) => debugLog.recent(o), clear: () => debugLog.clear() },
+    track,
+    baseAdRules: scheduling.baseAdRules,
+    itemStore: stores.itemStore,
+    // 归堆账本要在这里显式接上：bootstrap 建了不算数——HttpDeps 是三处接线
+    // （app.ts 的类型 / bootstrap 的产出 / 这里的注入），漏了这一处的症状是
+    // 单测全绿而真端点恒 503（`storyGroup` 也永远不出现）。
+    storyFold: stores.storyFold,
+    seenStore: stores.seenStore,
+    health: scheduling.health,
+    lastHarvestAt: scheduling.lastHarvestAt,
+    authFacilities: auth.authFacilities,
+    reconcileAuth: auth.reconcileAuthNow,
+    focusLoginTab: harvest.focusLoginTab,
+    events: streamEvents,
+    pageLook: harvest.pageLook,
+    closeFacilityTabs: harvest.closeFacilityTabs,
+    pageShot: harvest.pageShot,
+    normalizeSearchItem: search.normalizeSearchItem,
+    renormalizeItems: search.renormalizeItems,
+    links: sources.links,
+    recipePackageOps: sources.recipePackageOps,
+    videoSearch: search.videoSearch,
+    videoSearchStream: search.videoSearchStream,
+    facetResources: search.facetResources,
+    packageEnrichers: pkgs.activated.enrichers,
+    packageConnect: pkgs.activated.connect,
+    credentialProvider: boot.kernel.credentials.cookieProvider,
+    // broker 的鉴权面：认包 token、按包申报的域放行（漏接这两个 → 端点 fail-closed 403）。
+    speakerRegistry: conversionsDomain.speakerRegistry,
+    conversions: conversionsDomain.conversions,
+    pluginStatus: pkgs.pluginStatus,
+    setPluginEnabled: pkgs.setPluginEnabled,
+    packageInventory: pkgs.packageInventory,
+    packagePending: pkgs.pending,
+    containerOps: pkgs.containerOps,
+    alist: { status: pkgs.alist.status, test: pkgs.alist.test, permanentToken: pkgs.alist.permanentToken },
+    extSyncConfig: () => boot.kernel.credentials.extSyncConfig(),
+    summaryPrompt: { status: agentDomain.summaryPromptStatus, set: agentDomain.setSummaryPrompt },
+    // 这两格直接吃 `kernel.settings`——它们从来只是设置库的一层转调，没有 bootstrap 才有的
+    // 知识，所以不必绕一趟 Boot。videoSources 的写路径已收进配置 row 引擎
+    // （`rows.put('video-sources')`，密文保留/校验只有引擎那一份），这两格现在是
+    // 旧 /api/settings/video-sources 端点的薄转发；status 形状（has* 布尔）保持旧契约。
+    videoSources: {
+      status: () => videoSourcesStatus(),
+      set: async (next) => {
+        await settingsStore.rows.put('video-sources', next as Record<string, unknown>)
+        return videoSourcesStatus()
+      },
+    },
+    // source family 转发（config-rows slice3）：分层/密文/校验只有引擎一份。
+    sourceRuntimeConfig: {
+      status: (ref) => settingsStore.rows.status(`source:${ref}`),
+      set: (ref, values) => settingsStore.rows.put(`source:${ref}`, values),
+      // 反查（哪条 recipe 产出这一格）归 Source 域；这里只是把它接到 HTTP 面上。
+      provisioner: (ref) => sources.configProvisionerFor(ref),
+      // 现取 registry：热装的包声明的格下一次问就算数。表外的 ref（含 perInstance 的 `llm:<名>`）回空。
+      envCovered: (ref) => envCoveredFields(
+        ref,
+        Object.keys(sources.registry.all().find((m) => m.runtime_config?.ref === ref)?.runtime_config?.fields ?? {}),
+        config.deployment?.env ?? {},
+      ),
+      // `userInitiated: true` 够格的依据：这个闭包**只有** `POST /api/source-runtime-config/provision`
+      // 一个消费方，而那个端点只由配置卡上那颗需要用户先在弹窗里点第二下的按钮触发——没有任何
+      // 调度 / 定时 / 批处理路径走得到这里。宿主自己直调 `scheduler.readSource` 并打这个标记的，
+      // 今天只剩这一处；其余"用户当场点的动作"（如点赞 / 收藏）一律走 `runActionRecipe`，
+      // 由它统一管这个标记。
+      // 今天这条 recipe 不是 `meta.action:true`（标了反而会被 `readSource` 拒掉），但标记照打：
+      // 它陈述的是"这次是谁发起的"，那是事实，不该等到闸门收紧那天才补。
+      // **加第二个消费方之前回到这里重新论证一遍**，不够格就得去掉这个标记。
+      provision: async (ref, params) => {
+        const p = sources.configProvisionerFor(ref)
+        if (!p) throw new Error(`没有任何 recipe 声明它产出 ${ref} 这一格配置`)
+        await scheduling.scheduler.readSource(p.sourceId, params, { userInitiated: true })
+      },
+    },
+    keyState: sources.keyState,
+    adapters: kernel.adapters,
+    audioArchive: stores.audioArchive,
+    subtitleCacheDir: netdiskDomain.subtitleCacheDir,
+    downloadQueue: stores.downloadQueue,
+    collections: stores.collections,
+    watchProgress: stores.watchProgress,
+    // extId：扩展的 POST 带 `Origin: chrome-extension://<id>`，同源判据对它不成立，得单独认。
+    // trustedHosts：自托管挂了域名/反代时用户自己登记（默认只认 IP 与 localhost，防 rebinding）。
+    // trustedOrigins：**非本机口上的页面**要打这里的 `/api/*` 时登记（精确串匹配）。本机来源
+    // （127.0.0.1 / localhost 任意口，用户 DSH 里那张 Stream 页就是）`isTrustedOrigin` 默认就认，
+    // 不用登记；这份只留给后端和页面不在同一台机器的场景。默认空。
+    accessGuard: {
+      token: apiToken,
+      extId: EXT_ID,
+      trustedHosts: config.trusted_hosts,
+      trustedOrigins: parseTrustedOrigins(process.env.STREAM_TRUSTED_ORIGINS),
+    },
+    extRelayAuth: { token: extToken, extId: EXT_ID, tokenHashOf: (id) => extBindings.tokenHashOf(id) },
+    intents: agentDomain.intents,
+    // 「组件」页那一列：这个包给了哪些工具。**thunk**——见 HttpDeps.capabilityTools 的头注。
+    // 键是**包 id**（界面按包列行），值来自 host 按**能力名**分的那张表，装载回执里两者对得上。
+    capabilityTools: () => {
+      const byName = capabilityHost.toolsByCapability()
+      return Object.fromEntries(loadedCapabilities.map((c) => [c.pkg.id, byName[c.name] ?? []]))
+    },
+    // 只读诊断探针 GET /api/ext/relay-status 的数据源（下方 attachExtRelay 挂的是同一个 relay 实例）。
+    extRelayStatus: () => harvest.extRelay.status(),
+    claimedTabs: harvest.claimedTabs,
+    // GET /api/browser-capability 的数据源：relay 现状 + 落盘的 everSeen 缓存，纯读、不探测。
+    browserCapability: () => summarizeCapability(harvest.extRelay.status(), harvest.browserCapability.get()),
+    // 全量诊断 + 设置页的 Chrome 选择面。**摸文件系统**，所以只挂在这两条路上，不进快判。
+    harvestBrowser: harvest.harvestBrowser,
+    // 扩展安装引导（spec 2026-08-30-extension-onboarding）。物化只在真要装时才做——绝大多数
+    // 启动都用不到，boot 期多拷几 MB 是纯浪费。
+    extensionOnboarding: {
+      state: () => settingsStore.extensionOnboarding(),
+      materialize: () => materializeStreamExtension(),
+      install: async () => {
+        const driver = harvest.desktopDriver()
+        // 抛，不回 blocked：`blocked` 的意思是"跑了、卡在某一步"，而这是**根本没跑**。
+        // 两者的下一步完全不同（去看 Stream Desktop vs 去看 Chrome）。
+        if (!driver) throw new Error('Stream Desktop 没连上，桌面这一档整个不可用——代装跑不了')
+        // **代装前先物化一遍**：手动装那条路调的是同一个函数，两条路必须指向同一个目录。
+        const { dir } = materializeStreamExtension()
+        return installExtension({
+          driver,
+          extensionDir: dir,
+          // 卡住时请 AI 介入，和采集那条路同一个收件人；现取——介入域装配得晚。
+          repairRunner: (kernel.intervention as InterventionService | undefined)?.repairRunner,
+          // 唯一的成功判据（spec §3）：扩展连上中继。上限 15s、间隔 500ms。
+          waitForConnected: async () => {
+            for (let i = 0; i < 30; i++) {
+              if (harvest.extRelay.status().connected) return true
+              await new Promise((r) => setTimeout(r, 500))
+            }
+            return harvest.extRelay.status().connected
+          },
+          // 会话租约（接管指示条 + Ctrl+Alt+Esc 中止）**不在这里接**：这一趟是一条 desktop
+          // recipe，`runDesktopRecipe` 自己就把整趟包进 driver 的租约里（那是唯一的咽喉，
+          // 三个调用方共用）。在这儿再包一层等于同一把锁要两次。
+        })
+      },
+      uninstall: async () => {
+        const driver = harvest.desktopDriver()
+        if (!driver) throw new Error('Stream Desktop 没连上，桌面这一档整个不可用——卸载跑不了')
+        return uninstallExtension({
+          driver,
+          // 判据和装的时候对称：**中继断开**才算卸掉了，不看页面上卡片还在不在。
+          waitForDisconnected: async () => {
+            for (let i = 0; i < 30; i++) {
+              if (!harvest.extRelay.status().connected) return true
+              await new Promise((r) => setTimeout(r, 500))
+            }
+            return !harvest.extRelay.status().connected
+          },
+        })
+      },
+      reload: async () => {
+        const driver = harvest.desktopDriver()
+        if (!driver) throw new Error('Stream Desktop 没连上，桌面这一档整个不可用——重载跑不了')
+        return reloadExtension({
+          driver,
+          relaySince: () => harvest.extRelay.status().since,
+          // 判据：中继以**新的** since 连上（扩展重启后重连）。上限 20s、间隔 500ms。
+          waitForReconnect: async (before) => {
+            for (let i = 0; i < 40; i++) {
+              const s = harvest.extRelay.status()
+              if (s.connected && s.since && s.since !== before) return s.since
+              await new Promise((r) => setTimeout(r, 500))
+            }
+            return null
+          },
+        })
+      },
+      readConsole: async () => {
+        const driver = harvest.desktopDriver()
+        if (!driver) throw new Error('Stream Desktop 没连上，桌面这一档整个不可用——读不了扩展控制台')
+        return readExtensionConsole(driver)
+      },
+      decline: () => settingsStore.declineExtensionOnboarding(new Date().toISOString()),
+    },
+    // 非广告 label → capture the false positive as a negative ad-fixture
+    recordNegative: (item) => writeFixtureFromItem(item, 'negative', new Date().toISOString()),
+  })
+
+  // 接缝：`mcpExtras` 从 agent 域取（`service` 仍在 Boot，批次 8 才轮到它）。这一格**不走
+  // HttpDeps**，漏改的症状是 MCP 工具面整片消失——它是那 25 格逐项转发表的唯一出口。
+  // `withCapabilityTools` 而不是 `{...}` 展开：那份 extras 里有一批 getter，展开就冻住了。
+  await mountMcp(app, scheduling.service, withCapabilityTools(agentDomain.mcpExtras, () => capabilityHost.toolDefs()))
+  // 配置 row 的通用端点对（GET/PUT /api/config/:rowId）：同上直连挂 app，不进 HttpDeps。
+  // row 由各归属域注册（settings/agent/harvest），这里只递引擎。
+  mountConfigRows(app, { rows: settingsStore.rows })
+  // live present 的取数面（spec 2026-08-25-research-present）：同款直连挂载，不进 HttpDeps。
+  // 四格取法与 brief 草稿不同，均照本文件现场已有的同名变量/口径改写：
+  //   - manifestOf 是 `sources.registry.get`，不是 `.source`（registry 只有 get 这个查法）。
+  //   - adapterFor 用 `kernel.adapters`（本文件里已有的同一张 Map，见上面 `adapters: kernel.adapters`），
+  //     bootstrap.ts 里的 `activated.adapters` 是 bootstrap 函数作用域局部变量，serve.ts 够不到。
+  //   - runtimeConfigFor 用 `kernel.runtimeConfig`（runtime-config.ts 的 `runtimeConfigPlugin` 挂的
+  //     ctx 提供值），不是穿一份 bootstrap 局部变量进来：bootstrap 只把 `runtimeConfigFor` 显式递给了
+  //     四个「blessed」消费点（BuiltinAdapter / Scheduler / ResolveEngine / 分集索引），没有从
+  //     `bootstrap()` 的返回值里带出来给 serve.ts；`ctx.runtimeConfig` 正是给这类新消费点用的公开口。
+  const liveStreams = new LiveStreamService({
+    getStream: (id) => stores.channels.getStream(id),
+    manifestOf: (sourceId) => sources.registry.get(sourceId),
+    adapterFor: (m) => kernel.adapters.get(m.adapter),
+    runtimeConfigFor: (m) => kernel.runtimeConfig(m as never),
+  })
+  mountLiveRoutes(app, { live: liveStreams })
+  // research present 的详情面（GET /api/research/streams/:streamId/runs/:runId[/artifacts/:name]）：
+  // 同款直连挂载，不进 HttpDeps。streamId → artifacts 目录的解析抽成具名函数
+  // `researchArtifactsDirForStream`——Task 6 的文件系统 watcher 复用同一条解析，不重抄一遍。
+  // 取法与 live 面同款（见上面 liveStreams 的头注）：manifestOf 用 `sources.registry.get`，
+  // runtimeConfig 用 `kernel.runtimeConfig`；只取该 stream 的第一个成员——research present
+  // 一个 stream 只绑一个 research-runs 源。
+  function researchArtifactsDirForStream(streamId: string): string {
+    const stream = stores.channels.getStream(streamId)
+    if (!stream) throw new Error(`no stream "${streamId}"`)
+    const member = stream.members[0]
+    if (!member) throw new Error(`stream "${streamId}" 没有绑定任何源`)
+    const manifest = sources.registry.get(member.source)
+    const runtimeConfig = manifest ? kernel.runtimeConfig(manifest as never) : {}
+    return artifactsDirOf(member.params, { runtimeConfig })
+  }
+  mountResearchRoutes(app, { dirForStream: researchArtifactsDirForStream })
+  // 「我自己写的 recipe 放哪 / 它装载了吗」。`mounted` 是**独立的那一端**——问活着的 registry，
+  // 不是让这条路由自己再解析一遍盘上的文件（那样只能证明"我又读了一次"）。
+  mountLocalRecipeRoutes(app, {
+    recipesDir: localRecipesDir(resolveDataDir(config)),
+    mounted: (id) => sources.registry.get(id) !== undefined,
+  })
+  // 动作 recipe → OpenAI images 形状的适配器（spec 2026-09-14-doubao-image-openai-bridge-design）。
+  // 宿主不点名任何包：哪些 recipe 是"模型"由它们自己申报 `meta.produces:"images"`，这里只现算一张表。
+  // 递的 runAction / actionRun 和 `/api/recipes/action` 那两格是同一个闭包——它只是动作 recipe
+  // 的另一件外衣，不另装配一份 deps。
+  mountImageGenerationRoutes(app, {
+    targets: pkgs.targets,
+    runAction: agentDomain.mcpExtras.runActionRecipe,
+    actionRun,
+    // 只有 canonical browser recipe 有 `output.targetCount`（一轮固定出几张）；模型 id = sourceId。
+    models: () =>
+      [...sources.liveRecipes.current]
+        .filter(([, r]) => r.meta?.action === true && r.meta?.produces === PRODUCES_IMAGES)
+        .map(([id, r]) => ({ id, perRun: isCanonicalBrowserRecipe(r) ? r.output.targetCount : 1 })),
+  })
+  // 「把 Stream 的 skill 装进我自己的 Claude Code / Codex」（spec 2026-09-05-skill-delivery-design）。
+  // 同款直连挂载，不进 HttpDeps。根按"东西在不在"挑，和扩展物化同一个形状——发行形态下
+  // `.claude/skills/` 住资源目录，dev 下住仓库根。
+  mountSkillRoutes(app, {
+    sourceRoot: shippedRoot(SKILLS_ROOT_REL),
+    dataDir: resolveDataDir(config),
+    home: homedir(),
+  })
+  // store/ledger/日志目录不是调度中心的专属资源：它们在这里（路由挂载之前）无条件构造，两种模式
+  // 都能读——"看一眼有哪些任务、上次跑得怎么样"是读 store + 账本，不需要节拍器在跑。真正按
+  // STREAM_NO_SCHEDULER 门控的只有下面调度中心那个 if 块（节拍器本身、taskDeps 的装配）。
+  // 构造本身要挡：TaskStore 构造函数同步 `new Database(dbPath)` + `db.exec(...)`，文件被锁 /
+  // 损坏 / 权限不对 / 磁盘满都会同步 throw；这个 throw 不接住会一路逃到 main() 外层的
+  // `.catch(() => process.exit(1))`。降级方式与 buildStandbyOrDegrade 同款：接住、打一行日志、
+  // 任务面整体缺席（taskStore/runLedger/taskLogDir 留 undefined），路由仍挂但内置/用户任务清单为空。
+  const ledgerPath = join(dirname(config.item_db), 'sidequest.sqlite')
+  const taskLogDirCandidate = join(dirname(config.item_db), 'task-logs')
+  let taskStore: TaskStore | undefined
+  let runLedger: RunLedger | undefined
+  let taskLogDir: string | undefined
+  let taskDeps: TaskDeps | undefined
+  try {
+    taskStore = new TaskStore(join(dirname(config.item_db), 'stream.db'))
+    runLedger = new RunLedger(ledgerPath)
+    taskLogDir = taskLogDirCandidate
+  } catch (e) {
+    taskStore = undefined
+    runLedger = undefined
+    taskLogDir = undefined
+    console.log(`[stream] task center store disabled — open failed: ${errText(e)}`)
+  }
+  // 任务面路由：两种模式都挂（store/ledger 已在上面无条件构造）。builtins 读 taskDeps——
+  // 查询档（STREAM_NO_SCHEDULER=1）下调度中心不起，taskDeps 保持 undefined，内置任务清单就
+  // 诚实地报空；用户自定义任务不受影响。store/ledger 开不起来（罕见：文件锁/权限/磁盘满）时
+  // 整个任务面缺席——TaskRoutesDeps 要求 store/ledger 非空，这里没有第三种"半条腿"的挂法。
+  // 包提供的动作：`activate()` 交出来的第三样东西。一条**用户任务**行可以把 `action` 指到
+  // 这里的某个名字上（排期、启停、参数全在那一行和它绑的配置 row 里，见 `package-actions.ts`）。
+  const packageActions = actionDirectory(pkgs.activated.actions)
+  if (packageActions.size) {
+    console.log(`[stream] package actions: ${[...packageActions.keys()].join(', ')}`)
+  }
+  /** 编译一条任务行要的两样东西：动作名录 + 它绑的那格配置 row 的**生效值**。
+   *  两个都是**调用时才取**——用户在界面上改完那格，下一轮就该按新的来。 */
+  const compileOpts = () => ({
+    ...(taskLogDir ? { logDir: taskLogDir } : {}),
+    actions: (name: string) => packageActions.get(name),
+    paramsFor: (ref: string) => settingsStore.runtimeConfig(ref),
+    // 执行位置：行的身份 → 环境 → 设备 → 包 facility 的默认目标 → local，开跑时解一次（browser-identity D7）。
+    // 身份 / 环境目标在这里选节点、唤起、核对（动作的新鲜度窗口 60 秒）；失败都在动作被调用之前。
+    placement: (row: UserTaskRow) => {
+      const pkgId = row.action?.split(':')[0]
+      const net = pkgId ? pkgs.networkFor(pkgId) : undefined
+      const target = taskTarget(row) ?? (net?.facility ? facilityTarget(facilityBindings, net.facility) : undefined) ?? LOCAL_TARGET
+      return placeRun({
+        target,
+        ...(net?.facility ? { facility: net.facility } : {}),
+        hosts: net?.hosts ?? [],
+        router: kernel.identityRouter,
+        purpose: 'action',
+      })
+    },
+    ready: (p: RunPlacement) => assertDeviceReady(p, harvest.hostRelays, 'http.fetch'),
+    // 运行记录带节点（browser-identity D12）：执行那一刻节点表里的 profile 名与环境。
+    nodeOf: (bindingId: string) => {
+      const nodeId = harvest.extRelays.nodeOf(bindingId)
+      if (!nodeId) return undefined
+      const n = browserNodes?.get(nodeId)
+      return { nodeId, ...(n?.profileName ? { profileName: n.profileName } : {}), ...(n?.environment ? { environment: n.environment } : {}) }
+    },
+  })
+  mountDeviceRoutes(app, {
+    store: deviceStore,
+    registry: harvest.hostRelays,
+    isLocal: (c) => isLoopbackAddress(peerAddress(c)),
+    backendUrls: () => lanBaseUrls(String(PORT)),
+    ...(facilityDevices ? { bindings: facilityDevices } : {}),
+    // 只收有包认领的 facility；调用时才问（包热装卸会变）。
+    knownFacility: (f) => pkgs.networkForFacility(f) !== undefined,
+    facilities: () => pkgs.facilities(),
+    // 身份 / 环境目标（browser-identity D7）：只收身份表里见过的账号、节点上标过的环境。表打不开 = 一律拒。
+    ...(siteIdentities ? { knownIdentity: (f: string, a: string) => siteIdentities!.list({ facility: f }).some((i) => i.accountId === a) } : {}),
+    ...(browserNodes ? { knownEnvironment: (e: string) => browserNodes!.list().some((n) => n.environment === e) } : {}),
+    // 设备没了，挂在它上面的 Chrome 也就没有执行位置可言——一并撤销并断开。
+    onRevoked: (id) => {
+      for (const b of extBindings.revokeDevice(id)) harvest.extRelays.kick(b, REVOKED_CLOSE_CODE, 'revoked')
+    },
+  })
+  mountIdentityRoutes(app, { identities: () => kernel.siteIdentities })
+  mountExtBindingRoutes(app, {
+    store: extBindings,
+    registry: harvest.extRelays,
+    devices: { name: (id) => deviceStore.list().find((d) => d.deviceId === id)?.name },
+    isLocal: (c) => isLoopbackAddress(peerAddress(c)),
+    backendUrls: () => lanBaseUrls(String(PORT)),
+    extId: EXT_ID,
+    ...(browserNodes ? { nodes: browserNodes } : {}),
+  })
+  // profile 认领（browser-identity D3）：没有节点表就无处可记，整组不挂。
+  if (browserNodes) {
+    const claims = new ProfileClaims({
+      agent: agentFrom(harvest.hostRelays),
+      nodes: browserNodes,
+      deviceOf: (b) => harvest.extRelays.deviceOf(b),
+      nodeOf: (b) => harvest.extRelays.nodeOf(b),
+      extId: EXT_ID,
+      log: (line) => console.log(line),
+    })
+    harvest.extRelays.onClaim((b, nonce) => claims.redeem(b, nonce))
+    // 新 profile 的竞态：认领等待中这台设备上新连上一个未认领的节点 → 补发一次。
+    harvest.extRelays.onBindingConnected((b) => claims.onBindingConnected(b))
+    kernel.effect(() => () => claims.close())
+    const claimAgent = agentFrom(harvest.hostRelays)
+    mountNodeRoutes(app, {
+      claims, nodes: browserNodes, isLocal: (c) => isLoopbackAddress(peerAddress(c)),
+      online: (b) => harvest.extRelays.isOnline(b),
+      // 节点行上的「扩展没给的登录态域」：读那个节点槽位最近一轮 cookiePull 的结果。
+      cookieGaps: (n) => auth.cookieGaps(cookieSlot(n.deviceId, n.nodeId)),
+      // 能识别 profile 的扩展设备：本机（桌面 agent）与每台在线的配对设备，agent 声明了 browser.claim 才算。
+      claimable: () => ['local', ...harvest.hostRelays.devices().filter((d) => PAIRED_PLATFORMS.has(d.hello.platform)).map((d) => d.hello.deviceId)]
+        .filter((id) => claimAgent(id)?.ops.has('browser.claim')),
+    })
+  }
+  if (taskStore && runLedger) {
+    mountTaskRoutes(app, {
+      store: taskStore,
+      ledger: runLedger,
+      builtins: () => (taskDeps ? builtinTasks(taskDeps) : []).map((t) => ({
+        id: t.id, label: t.label, schedule: t.schedule,
+        ...(t.timezone === undefined ? {} : { timezone: t.timezone }),
+        ...(t.group === undefined ? {} : { group: t.group }),
+        ...(t.exclusiveOn === undefined ? {} : { exclusiveOn: t.exclusiveOn }),
+        ...(t.whenBusy === undefined ? {} : { whenBusy: t.whenBusy }),
+      })),
+      actions: () => [...packageActions.keys()],
+      apply: (row) => stream.tasks.addTask(compileUserTask(row, compileOpts())),
+      unapply: async (id) => { await stream.tasks.removeTask(id) },
+      runNow: (id) => stream.tasks.runTaskNow(id),
+    })
+  }
+  // 源健康：三本账合成一个词（spec 2026-09-12）。介入域缺席时 run / 提议两格永远空，状态词最多到 quarantined。
+  {
+    // 调用时现取，别在装配期冻住答案（AGENTS.md「装配期取的值 = 冻住的答案」）：
+    // 介入域可能在后端启动之后才被配置/重载，下面几个 thunk 与 repairs getter 都要看到那时的值。
+    const intervention = () => kernel.intervention as InterventionService | undefined
+    const ledger = kernel.repairLedger
+    const quietManifest = (id: string) => { try { return sources.registry.get(id) } catch { return undefined } }
+    const packageFor = (sourceId: string) => sources.recipePackages().list.find((p) => p.sources.some((m) => m.id === sourceId))
+    const index = new SourceHealthIndex({
+      manifest: quietManifest,
+      site: (e) => sources.sites.lookup(e),
+      health: (id) => stores.sourceHealth.get(id),
+      healthIds: () => Object.keys(stores.sourceHealth.snapshot()),
+      ledger: (id) => ledger.get(id),
+      ledgerIds: () => Object.keys(ledger.snapshot()),
+      runs: (id) => intervention()?.store.list({ sourceId: id, limit: 50 }) ?? [],
+      runSourceIds: () => [...new Set((intervention()?.store.list({ limit: 1000 }) ?? []).map((r) => r.sourceId))],
+      events: (runId) => intervention()?.store.events(runId, { limit: 2000 }) ?? [],
+      // 草稿按 facility 分文件（与学到的图同目录），而视图那一层只有 sourceId——facility 在这儿解。
+      draftFor: (sourceId, runId) => {
+        const facility = packageFor(sourceId)?.facility
+        return facility ? readDraft(draftPath(join(resolveDataDir(config), 'state-graphs'), facility, runId)) : undefined
+      },
+      proposals: (id) => intervention()?.store.proposals({ sourceId: id }) ?? [],
+      channels: () => stores.channels.listChannels(),
+      streams: () => scheduling.scheduler.list(),
+      currentRecipe: (id) => {
+        const pkg = packageFor(id)
+        if (!pkg) return undefined
+        try { return JSON.parse(readFileSync(join(pkg.dir, `${localNameOf(id)}.recipe.json`), 'utf8')) as unknown } catch { return undefined }
+      },
+      // `AgentConfig` 的限额住在 `limits.{turns,tokens,wallMs}`，视图那一格要的是分钟制的三个数。
+      limits: () => {
+        const cfg = readAgentConfig(kernel.settings.rows.resolve(AGENT_ROW_ID))
+        return cfg
+          ? { maxTurns: cfg.limits.turns, maxTokens: cfg.limits.tokens, maxWallMinutes: Math.round(cfg.limits.wallMs / 60_000) }
+          : undefined
+      },
+    })
+    mountSourceHealthRoutes(app, {
+      index,
+      get repairs() { return intervention()?.repairs },
+      reasonFor: (id) => ledger.get(id)?.lastReason ?? stores.sourceHealth.get(id)?.lastError ?? 'manual',
+      affectedFor: (id) => { try { return sources.registry.affectedSources(id).affected } catch { return [id] } },
+    })
+  }
+  // 介入域缺席（没配 LLM / 关掉了）时这几口整条不挂：挂一个只会回空的读口，等于告诉界面
+  // 「介入跑过、什么都没产出」，而实际是这台机器根本没开介入——缺席就该 404，别补空答案。
+  if (kernel.intervention) {
+    mountInterventionRoutes(app, {
+      store: kernel.intervention.store,
+      graphs: kernel.intervention.graphs,
+      repairs: kernel.intervention.sessions,
+      explorations: kernel.intervention.explorations,
+      // 探索挂在 facility 上，而露面（run 列表 / 源健康）按源记账——拿这个包的第一个源当那一行。
+      facilityOf: (f) => {
+        const id = sources.recipePackages().byFacility.get(f)?.sources[0]?.id
+        return id ? { sourceId: id } : undefined
+      },
+    })
+    // 上一个进程留下的在飞 run：agent 子进程随它一起没了，库里那些行却还写着「running」。
+    // 续得上的收成 paused（**不自动续**——自动拉起来等于用户没点过任何东西就开始烧 token），
+    // 续不上的收成终态 error。**两个数分开说**：只报暂停那个，另一批就没人知道发生过。
+    const { paused, failed } = kernel.intervention.repairs.markInterruptedAtBoot()
+    if (paused) console.log(`[intervention] ${paused} 条修复会话因重启暂停，可在运维页「源健康」该源的修复页里「继续」`)
+    if (failed) console.log(`[intervention] ${failed} 条在飞的 run 没有可续的会话，因重启收成 error`)
+  }
+  // 每个 research present 频道绑的流各起一个 watcher。目录取不到就跳过这条流（源没配全，
+  // 不是错误路径）——watcher 缺席只意味着退化成"打开页面时查一次"。`notify` 用
+  // `lazyNotify`：事件层比这里晚装配，装配期直接取 `kernel.streamEvents` 字段会冻住 undefined。
+  const notifyNewResearchRun = lazyNotify(() => kernel.streamEvents as EventsService | undefined)
+  // 集合本身是**运行期可变**的（频道随时新建/改绑/删），所以它归 ResearchWatchers 自己管；
+  // 登记进内核 effect 的只有 `stopAll()` 这一件进程级收尾——常驻句柄不登记就没人关，是本文件
+  // 已经吃过一次亏的形状（那次是 wss + ping 定时器）。所有权边界见那个模块的头注。
+  researchWatchers = createResearchWatchers({
+    listChannels: () => stores.channels.listChannels(),
+    dirForStream: researchArtifactsDirForStream,
+    start: ({ dir, streamId }) => watchArtifactsDir({
+      dir,
+      streamId,
+      onChanged: (id) => hub.broadcast({ type: 'live-changed', streamId: id }),
+      onNewRun: (runId) => notifyNewResearchRun({ type: 'research-run', severity: 'info', title: `新 run：${runId}`, dedupeKey: `research-run:${runId}` }),
+    }),
+  })
+  researchWatchers.sync()
+  kernel.effect(() => () => researchWatchers?.stopAll())
+  // 面板产物（app/ 打出来的 IIFE bundle）的出口。必须在 dev 反代 / SPA 兜底之前挂，
+  // 否则 /panel/* 被整段吞成 index.html。同上直连挂 app，不进 HttpDeps。
+  // **根要挑，不能写死 `repoRoot`**：打包形态下整个后端是一个 `server.mjs`，`repoRoot` 算出来
+  // 是资源目录的上两级（不存在），于是 `/panel/*` 恒 404 —— 工作台里报「bundle 加载失败」，
+  // 而那句话给的两个猜测（后端没起 / 没 build:panel）都不是真因。同扩展目录那一处，见 `shippedRoot`。
+  mountPanelAssets(app, { root: join(shippedRoot('app/dist-panel'), 'app', 'dist-panel') })
+  // Sidequest 面板：经 /_p/sidequest 整路透传到容器内 loopback:8678。必须先于
+  // mountPluginGateway 注册，因为两者都处理 /_p/* 路由，更具体的规则需要优先匹配。
+  mountTaskDashboard(app, { port: 8678 })
+  // /_p 插件网关：与 mountMcp 同样直接挂在 app 上（不进 HttpDeps，避开三处接线陷阱——见
+  // src/http/plugin-gateway.ts 头注）。descriptors 用包域加载后的那份描述符
+  // （PluginDescriptor[]，sharing.plugins 已用同一字段）；mode 读
+  // STREAM_PLUGIN_NETWORK。mode=none 或无插件能解析出 target 时自行 no-op，不注册路由。
+  // descriptors 必须是**两层合并**（`pkgs.backendDirectory`）：只喂 `pkgs.plugins` 的话，
+  // 第三方包的容器被建起来、被 standby 管着，`/_p/<包 id>` 却恒 404——建了没人打得到，
+  // 而且一行日志都不会提（终审 Important 3）。同一份合并名单也喂给包域里的 target resolver。
+  mountPluginGateway(app, {
+    descriptors: pkgs.backendDirectory.all(),
+    mode: config.deployment?.plugin_network ?? 'none',
+    standby: pkgs.standby,
+  })
+
+  // standby-manager：声明了 backend.standby 的插件闲置回收 + 按需唤醒。
+  // 接线陷阱同 mountMcp/mountPluginGateway：不进 HttpDeps（见 src/http/plugin-gateway.ts 头注），
+  // 走模块级 hook，在 serve.ts 里一次性接好。要管哪些服务是纯计算，抽到 planStandbyServices
+  // （service-list.ts）里单测——两道构造闸、healthUrl 拼装、跳过不可解析目标都在那边有测试；
+  // 留在这里的只有「把接线结果绑到 main() 的局部变量上」这一件事：整段有副作用的接线
+  // （Docker 探测 / 造管理器 / adopt）都在 wireStandby（standby/wire.ts）里，
+  // 那里有 wire.test.ts 逐条守着失败路径。别把 adopt() 拎回这个回调外面——
+  // 它必须留在 buildStandbyOrDegrade 的受保护区内，否则「配置错掀翻开机」会悄悄回来。
+  // reaper 轮次不再由 wireStandby 自建裸定时器驱动，见下方 standby-reaper 任务注释。
+  let standbyMgr: StandbyManager | null = null
+  // I3：整块交给 buildStandbyOrDegrade（见其注释）——任何 throw 都降级成一行日志 + standby inert，
+  // 绝不掀翻 main()。reaper 轮次不再是这里自建的裸定时器——已收编进调度中心的
+  // standby-reaper 任务（src/tasks/builtin.ts），只驱动 standbyMgr.tick()。
+  await buildStandbyOrDegrade(async () => {
+    const wiring = await wireStandby({
+      // 合并名单（内置 + 第三方），不是 `pkgs.plugins`：container-policy 给第三方兜的
+      // `standby: { idleMinutes: 30 }` 写在安装确认页上，名册漏了第三方那层，那句承诺就是
+      // 空话——容器建起来一直跑，没人收也没人说。
+      descriptors: pkgs.backendDirectory.all(),
+      mode: config.deployment?.plugin_network ?? 'none',
+      isEnabled: (p) => pkgs.isPluginEnabled(p),
+      // 接线经内核 effect 登记（bindModuleHook）：挂上时 set、quiesceKernel 时复位为 null。
+      // 传 null 的那一路（adopt 半路抛的复位）保持直接 set——那是"撤销一个半成品"，
+      // 不是一次新的绑定，包成 effect 只会往树上挂一个什么都不做的 disposer。
+      setHook: (m) =>
+        m
+          ? bindModuleHook(kernel, () => pkgs.standby.bind(m), () => pkgs.standby.bind(null))
+          : pkgs.standby.bind(null),
+    })
+    standbyMgr = wiring.manager
+    // inert 的原因要活过这次接线:取址答空时才有人能分出「够不着 Docker」(事故,该喊)
+    // 和「按设计如此」(桌面档 / 没插件声明 standby)。随内核 dispose 复位——不复位的话,
+    // 同进程第二次 bootstrap 会读到上一次的残留,而残留和真事故长得一模一样。
+    bindModuleHook(
+      kernel,
+      () => pkgs.standby.setInertReason(wiring.inertReason ?? null),
+      () => pkgs.standby.setInertReason(null),
+    )
+    // 降级不等于闭嘴:够不着 Docker 时所有带容器的插件一起失效,而它们的失败形状是
+    // 「取址答空 → base 空串 → 一句 Failed to parse URL」,没有一处会说出真正的原因。
+    // 判据(只有这一档喊)与文案在 standbyInertNotification。
+    const notice = standbyInertNotification(wiring)
+    if (notice) streamEvents.emit(notice)
+  }, () => {
+    // 降级清理：hook 若已指向一个半成品管理器，后续 withAwake 会打到它上面。
+    // 只可能在异常前被设上，这里无条件复位。
+    standbyMgr = null
+    pkgs.standby.bind(null)
+  }, undefined, (detail: string) => {
+    streamEvents.emit({
+      type: 'plugin.container', severity: 'error',
+      title: '插件容器的休眠/唤醒失效了',
+      body: '接线没起来，所有带后端容器的插件不再按需唤醒、也不再闲置回收。'
+        + '已经停着的那些容器**不会有人叫醒它们**，用到它们的功能会一直失败（Stream 其余部分照常）。'
+        + `原因：${detail}`,
+      dedupeKey: 'standby:degraded',
+    })
+  })
+
+  // 前端那一层：必须最后挂载——兜底 `*` 若挂在 mountMcp/mountPluginGateway/mountPanelAssets
+  // 之前会抢先吞掉 /api/mcp、/_p/*、/panel/*。
+  //
+  // 这一层只有一种形态：8900 的独立正门（standalone-page.ts）——一张自包含页挂同一批面板
+  // bundle。对话不在这里，对话在用户自己的宿主（Claude Code / Codex / DSH）里，经 MCP 使唤
+  // 这个后端（spec 2026-09-05）。
+  mountStandalonePage(app)
+
+  if (config.deployment?.scheduler !== false) {
+    // 用户定义的定时任务（spec 2026-08-28 §3.1）：定义住 stream.db，跑起来和 builtin 无差别。
+    // store/ledger/taskLogDir 已经在路由挂载之前无条件构造好了（见上面那段头注），这里直接读
+    // 同一份绑定——不重新声明、不重新 new。
+    // **一份装配，两个消费者**：模块级 deps（Job 类经动态 import，闭包不到这里）与
+    // builtinTasks 的条件装配，都读这同一个对象——布尔表参数已删，见 builtinTasks 头注。
+    taskDeps = {
+      log: (m) => console.log(m),
+      events: { append: (e) => streamEvents.emit(e) }, // EventsService 的门面方法叫 emit，TaskDeps 只认 append
+      cookieProvider: boot.kernel.credentials.cookieProvider,
+      // 接缝：这一格**直连内核的 conversions 域**，不经 HttpDeps（见上面 conversionsDomain 的头注）。
+      capabilityJobs: conversionsDomain.capabilityJobs ?? undefined,
+      standbyManager: io.standbyRef.current ?? undefined,
+      // 接缝：这四格**直连内核的 netdisk 域**，不经 HttpDeps（见上面 netdiskDomain 的头注）。
+      netdisk: netdiskDomain.netdisk ?? undefined,
+      netdiskStore: netdiskDomain.netdiskRoutes?.store ?? undefined,
+      reconcile: netdiskDomain.netdiskRoutes?.reconcile ?? undefined,
+      // 第四格（追更）同样直连内核那一份——每小时的 netdisk-follow 靠它扫到期的剧。
+      follow: netdiskDomain.netdiskRoutes?.follow ?? undefined,
+      browserLanes: { reapIdle: harvest.reapIdleLanes },
+      authReconcile: auth.reconcileAuthNow,
+      // 接缝：这一格**直连内核的 agent 域**，不经 HttpDeps（见上面 agentDomain 的头注）。
+      intents: agentDomain.intents,
+      // 同上：run 账本 + 动作产物的保留期清理直连 agent 域。
+      agentRuns: agentDomain.agentRuns,
+      // runLedger 开不起来时这一格不装配：一个恒 throw 的 ledger-prune 比没有这个任务更坏
+      // （builtinTasks 按 `wired.ledger` 是否存在条件装配，见其头注）。
+      ...(runLedger ? { ledger: { prune: (o: { keepPerTask: number; keepMs: number }) => runLedger!.prune(o) } } : {}),
+      // 登录态导出：**一条都没声明就整格不装配**，于是任务表上根本不出现这个任务（`builtinTasks`
+      // 按 `wired.sessionExports` 在不在条件装配）。声明在 config.yaml，见 AppConfig.session_exports。
+      ...(boot.config.session_exports?.length
+        ? {
+            sessionExports: () =>
+              runSessionExports(boot.config.session_exports!, boot.kernel.credentials.cookieProvider),
+          }
+        : {}),
+      // 包更新检查（`recipe-update-check`）：deployment.recipe_update_check=false 关掉 = 整格不装配，
+      // 任务表上就没有这条（与 sessionExports 同一种"没有就不出现"的写法，不是一条空跑的任务）。
+      ...(config.deployment?.recipe_update_check !== false
+        ? { recipePackageOps: { updates: () => sources.recipePackageOps.updates() } }
+        : {}),
+    }
+    bindModuleHook(kernel, () => stream.tasks.setDeps(taskDeps!), () => stream.tasks.resetDeps())
+    void stream.tasks.start(
+      [
+        ...builtinTasks(taskDeps),
+        // taskStore 开不起来时用户定义任务面整体缺席，只用内置任务照常起——见上面 try/catch 头注。
+        ...(taskStore ? compileEnabled(taskStore.list(), compileOpts()) : []),
+      ],
+      // sidequest.sqlite 落在 config 数据目录下（同 ext-token 的落盘规则），不依赖启动 cwd。
+      { dbPath: ledgerPath, dashboardPort: 8678, log: (m) => console.log(m) },
+    )
+  }
+  return app
+}
+
+/** 把 ws 中继与 Stream Desktop 宿主挂到已监听的 server 上（listen 之后调；理由见文件头注）。 */
+export function attachRelayServers(server: Server, io: RouteIo): void {
+  const stream = io.stream
+  const kernel = stream.kernel
+  const config = stream.config
+  const hub = io.hub
+  const debugLog = io.debugLog
+  const recordDebug: (e: DebugEntry) => void = (e) => { debugLog.put(e) }
+  const PORT = io.port
+  const { extToken, apiToken } = stream.secrets
+  const { host: capabilityHost, loaded: loadedCapabilities } = stream.capabilities
+  const { deviceStore, extBindings, facilityDevices, facilityBindings, nodes: browserNodes } = stream.devices
+  const streamEvents = kernel.streamEvents
+  const harvest = kernel.harvest
+  kernel.effect(() => () => { server.close() })
+  attachWs(server as unknown as Server, hub, (req, url) =>
+    authorizeAccess({
+      remoteAddress: req.socket.remoteAddress,
+      bearer: req.headers.authorization,
+      queryToken: url.searchParams.get('token'),
+      token: apiToken,
+    }) !== 'denied'
+  )
+  // 两条中继的 wss **接住返回值并登记成内核 effect**：过去这里把它们丢了，于是关停时
+  // 两个 WebSocketServer 加上每条连接身上那个 20s ping 定时器从没人关——全项目关停期
+  // 最后一处常驻连接泄漏。`closeRelayServer` 先断连再关服务器（interval 挂在连接上，
+  // 光 close 服务器清不掉它）。
+  kernel.effect(() => {
+    // 本机 token → 本机节点（不带 nodeId 的老扩展 → 兼容槽）；配对 token → 那条绑定，换节点来连 4004
+    // （device-execution D7、browser-identity D1/D2，判法在 resolveExtToken）。
+    const wss = attachExtRelay(server as unknown as Server, harvest.extRelays, {
+      resolveToken: (t, hs) => resolveExtToken(t, hs, { localToken: extToken, bindings: extBindings, log: console.log }),
+    })
+    return () => closeRelayServer(wss)
+  })
+  // host-desktop Engine relay at /api/host — Stream Desktop's native process (enigo + OS a11y)
+  // connects here. Reuses the local shared secret — it reads it straight off disk (it is a local
+  // process, so the filesystem is its channel; see app/host-agent datadir.rs — the directory name
+  // is internal, the shipped binary is `stream-desktop`).
+  // Nothing connected → kind:'desktop' sources decline as a miss.
+  kernel.effect(() => {
+    const wss = attachHostRelay(server as unknown as Server, harvest.hostRelays, {
+      token: extToken,
+      deviceAuth: (t) => deviceStore.deviceForToken(t),
+      onDeviceSeen: (id) => deviceStore.touch(id),
+      // A phone whose accessibility service went off can still connect but cannot do anything.
+      // The OS turns it off silently (app updates, some OEM cleanups), so say it where the user looks.
+      onDeviceState: (id, prev, next) => {
+        if (next.a11yEnabled || prev?.a11yEnabled === false) return
+        const name = harvest.hostRelays.devices().find((d) => d.hello.deviceId === id)?.hello.name ?? id
+        streamEvents.emit({
+          type: 'device.a11y-off', severity: 'warn',
+          title: `${name} 的无障碍服务关了`,
+          body: '手机上的 Stream 连着，但无障碍服务被系统关掉了，手机上的 recipe 都跑不了。到手机的 设置 → 无障碍 → Stream 重新打开。',
+          dedupeKey: `device-a11y-off:${id}`,
+        })
+      },
+    })
+    return () => closeRelayServer(wss)
+  })
+  // 外部事件源子进程的收信端 at /api/event-source（Spec 1 只装端点，spawn/看护留 Spec 2）。
+  // 与上面两条中继同一把 `extToken`、同一个 teardown 形状。事件帧经 `drain` 触发已注册任务
+  // （`EVENT_SOURCE_TASK_MAP` 现为空 → 每个事件都 mapToTask=null，drain 直接 ack；Spec 2 加
+  // `{ xianyu: '<发货任务>' }`）；`hello` 帧按子进程声明的域名，把后端已有的 cookie 快照喂回去。
+  // 喂 cookie 走**只读**接缝：直接读 `cookieProvider.cookiesFor`，不催新鲜度、不拉浏览器
+  //（那条带 ensureFresh 的路是能力包热路径专用，见 src/engine/capabilities.ts 的 provideBrowserCookies 头注）。
+  // 不变量（追到另一端）：outbox 是「至少一次」投递——崩溃前未 ack 的事件会在重连后被重推，
+  // 且真 runTaskNow(id) 无条件 enqueue、drain 的防重只按 taskId 不按事件 id，都不足以防双发。
+  // 所以这张表映射到的任务【必须按事件 id 幂等】（闲鱼＝按 order_id）。往表里加映射前先读这条。
+  const EVENT_SOURCE_TASK_MAP: Record<string, string> = {}
+  kernel.effect(() => {
+    const esRelay = new EventSourceRelay(
+      (frame, sock) => void drain(frame, sock),
+      (hello, _sock) => void cookiesFeed.onHello(hello.domains),
+      (line) => console.log(line),
+    )
+    const drain = makeDrain({
+      mapToTask: (ev) => EVENT_SOURCE_TASK_MAP[ev.source] ?? null,
+      runTaskNow: (id) => stream.tasks.runTaskNow(id),
+      log: (line) => console.log(line),
+    })
+    const cookiesFeed = wireCookiesFeed(esRelay, {
+      cookiesFor: (domain) => kernel.credentials.cookieProvider.cookiesFor(domain),
+    })
+    const wss = attachEventSourceRelay(server as unknown as Server, esRelay, { token: extToken })
+    return () => closeRelayServer(wss)
+  })
+  // 后端自己养 Stream Desktop 的本机进程（登记 native messaging + 拉起 + 看护）：扩展配对要经它
+  // 拿 relay token，没人养 = 扩展永远 never-seen 且不报错。理由见 host-agent/mount.ts 头注。
+  // 挂在 relay 之后：它起来就会连 /api/host，门得先开。
+  {
+    const skip = hostAgentSkipReason()
+    // 前缀与这个能力挂上之后它自己那条日志一致（`[stream-<能力名>]`，host 按能力名派生）。
+    // 两个前缀会让"这台机器上 Stream Desktop 到底怎么了"分成两串日志，而它是同一件事。
+    if (skip) console.log(`[stream-${DESKTOP_CAPABILITY_NAME}] ${skip}`)
+    else {
+      kernel.effect(() => {
+        const disposing = mountHostAgent({
+          // 与可选包同一个宿主：服务总线和工具表都只有这一份。
+          host: capabilityHost,
+          baseUrl: `http://127.0.0.1:${PORT}`,
+          dataDir: resolveDataDir(config),
+          extensionId: EXT_ID,
+          log: (msg) => console.log(msg),
+        })
+        return async () => { await (await disposing)() }
+      })
+    }
+}
+}

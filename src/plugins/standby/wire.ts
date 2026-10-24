@@ -3,6 +3,7 @@ import type { PluginNetMode } from '../plugin-target.ts'
 import { resolveDockerEndpoint, makeDockerClient, type DockerClient, type DockerEndpoint } from './docker-api.ts'
 import { makeStandbyManager, type StandbyManager, type StandbyManagerDeps } from './manager.ts'
 import { planStandbyServices, standbyManagingLabel } from './service-list.ts'
+import { errText } from '../../err-text.ts'
 
 /**
  * inert 的三条出口,**各自有名字**。
@@ -129,5 +130,34 @@ export async function wireStandby(deps: StandbyWiringDeps): Promise<StandbyWirin
     // 收养到一半、状态不完整的管理器上。
     setHook(null)
     throw e
+  }
+}
+
+/**
+ * standby 装配的**降级承诺**（I3）：任何 throw ⇒ 一行日志 + standby 彻底 inert + 服务器照常起来。
+ *
+ * makeStandbyManager 对重名 service 是主动 throw 的（模块内部这么做是对的：静默相互覆盖更坏），
+ * 可这个 throw 一旦落到 main() 里，就变成**两个插件的 service 名撞车 ⇒ 整个后端拒绝启动**，把每一个
+ * 跟 standby 毫无关系的功能一起带走。这个特性的核心安全属性正是「绝不弄挂主链路」——让一次调用失败
+ * 远好过让开机失败。build 里的 Docker 探测 / adopt / 定时器接线故意留在调用方（跟 boot 强耦合），
+ * 这里只包住「炸了怎么办」这一层——它就是这条降级承诺的可测接缝。
+ */
+export async function buildStandbyOrDegrade(
+  build: () => Promise<void>,
+  cleanup: () => void,
+  log: (msg: string) => void = console.log,
+  notify?: (detail: string) => void,
+): Promise<void> {
+  try {
+    await build()
+  } catch (e) {
+    try { cleanup() } catch { /* 清理本身再炸也不能把 main() 带走 */ }
+    const detail = errText(e)
+    log(`[standby] disabled — standby setup failed: ${detail}`)
+    // 只有日志不够。standby inert 的后果是**沉默的**：睡着的容器再没人唤醒——备齐也不会替
+    // 它起（那是 standby 的活，见 provisioner.ts 头注「谁管『转不转』」），于是表现只是
+    // 「这个插件就是不好使」，唯一的线索在一行没人看的启动日志里。
+    // 通知本身再炸也不许掀翻开机——这整个函数的存在理由就是这个。
+    try { notify?.(detail) } catch { /* 同上 */ }
   }
 }
