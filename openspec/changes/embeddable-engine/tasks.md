@@ -25,8 +25,8 @@
     - 调度中心（`TaskStore` / `RunLedger` / 包动作 / `compileOpts` / `taskDeps` / `startTaskCenter`）与 `scheduler.start()`：
       跟 D5 的重写（3.1）一起搬，开关改读 `config.deployment.scheduler` / `recipe_update_check`（今天 serve 还读两个环境变量）。
       要带上 standby 接线（`taskDeps.standbyManager`，它读 `STREAM_PLUGIN_NETWORK`）。
-    - research watchers、`markInterruptedAtBoot`、`installFetchFor`（模块级 `impl`，见 3.3）。
-    - `DebugLog` 失败落盘、`LiveStreamService` / `SourceHealthIndex` / `ProfileClaims` 这些只被路由用的实例对象：随 `routes(app)` 一起定。
+    - ~~research watchers、`markInterruptedAtBoot`、`installFetchFor`~~：完成（`5545264`——前两者搬进 `engine/routes.ts`；`installFetchFor` 被 `ctx.deviceFetch.install` 取代，见 3.3）。
+    - `DebugLog` 失败落盘、`LiveStreamService` / `SourceHealthIndex` / `ProfileClaims`：完成（`DebugLog`/`ProfileClaims` 归 routes 内建，`LiveStreamService`/`SourceHealthIndex` 在 routes 构造——不经 HTTP 的调用方不需要它们）。
 
 ## 2. 进程级共享资源
 
