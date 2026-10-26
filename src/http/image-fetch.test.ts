@@ -1,7 +1,7 @@
 import { describe, it, expect, afterEach } from 'vitest'
 import { createServer, type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
-import { BROWSER_UA, getImageNoReferer, getNoReferer } from './image-fetch.ts'
+import { BROWSER_UA, getImageNoReferer, getImageWithFallback, getNoReferer } from './image-fetch.ts'
 import { Serving } from '../media/serving.ts'
 
 let server: Server | undefined
@@ -96,5 +96,29 @@ describe('getNoReferer', () => {
     expect(seen[0]).toBe('bytes=0-3')
     expect(r.contentRange).toBe('bytes 0-3/100')
     expect(r.contentLength).toBe('4')
+  })
+})
+
+describe('getImageWithFallback', () => {
+  it('only tries declared image hosts after the original host rejects, preserving the path', async () => {
+    const seen: string[] = []
+    server = createServer((req, res) => {
+      seen.push(`${req.headers.host}${req.url}`)
+      if (req.headers.host?.startsWith('localhost:')) {
+        res.statusCode = 403
+        res.end('denied')
+      } else {
+        res.setHeader('content-type', 'image/jpeg')
+        res.end('image bytes')
+      }
+    })
+    await new Promise<void>((r) => server!.listen(0, '::', r))
+    const { port } = server!.address() as AddressInfo
+    const serving = new Serving(() => [{ match: 'localhost', label: 'fixture', hosts: ['127.0.0.1'] }])
+    const response = await getImageWithFallback(`http://localhost:${port}/cover.jpg?x=1`, AbortSignal.timeout(5000), serving)
+    expect(response.status).toBe(200)
+    expect(response.contentType).toBe('image/jpeg')
+    expect(await new Response(response.body as never).text()).toBe('image bytes')
+    expect(seen).toEqual([`localhost:${port}/cover.jpg?x=1`, `127.0.0.1:${port}/cover.jpg?x=1`])
   })
 })

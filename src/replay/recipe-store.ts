@@ -244,6 +244,9 @@ function validate(sourceId: string, obj: unknown): Recipe {
       if (mode !== 'cursor' && mode !== 'increment') {
         throw new Error(`recipe "${sourceId}": pagination.mode must be "cursor" or "increment"`)
       }
+      for (const [field, spec] of Object.entries(r.mapping ?? {})) {
+        validateMappingField(sourceId, field, spec, 0)
+      }
     }
     if (r.kind === 'http') {
       if (r.output !== undefined && r.output !== 'items' && r.output !== 'object') {
@@ -792,6 +795,32 @@ function validate(sourceId: string, obj: unknown): Recipe {
     return r as Recipe
   } else {
     throw new Error(`recipe "${sourceId}": kind must be "http", "html", "fetch", "browser" or "desktop"`)
+  }
+}
+
+function validateMappingField(sourceId: string, field: string, spec: unknown, depth: number): void {
+  const bad = () => { throw new Error(`recipe "${sourceId}": mapping.${field} has an invalid field spec`) }
+  if (typeof spec === 'string') return
+  if (!spec || typeof spec !== 'object' || Array.isArray(spec) || depth > 4) return bad()
+  const value = spec as Record<string, unknown>
+  if ('firstOf' in value) {
+    if (!Array.isArray(value.firstOf) || value.firstOf.length === 0) return bad()
+    for (const candidate of value.firstOf) validateMappingField(sourceId, field, candidate, depth + 1)
+    return
+  }
+  if ('lookup' in value) {
+    const lookup = value.lookup as Record<string, unknown> | null
+    if (!lookup || typeof lookup !== 'object' || typeof lookup.path !== 'string' ||
+        !lookup.values || typeof lookup.values !== 'object' || Array.isArray(lookup.values) ||
+        !Object.values(lookup.values).every((v) => typeof v === 'string')) return bad()
+    return
+  }
+  if (typeof value.template !== 'string' || !value.capture || typeof value.capture !== 'object' || Array.isArray(value.capture)) return bad()
+  for (const entry of Object.values(value.capture as Record<string, unknown>)) {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return bad()
+    const capture = entry as Record<string, unknown>
+    if (typeof capture.path !== 'string' || typeof capture.pattern !== 'string') return bad()
+    try { new RegExp(capture.pattern) } catch { return bad() }
   }
 }
 

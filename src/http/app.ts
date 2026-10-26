@@ -133,7 +133,7 @@ import { publicSource, fallbackSource } from '../registry/public.ts'
 import { brokenDependencies } from '../registry/affected-sources.ts'
 import { existsSync, statSync, createReadStream, accessSync, constants as fsConstants } from 'node:fs'
 import { Readable } from 'node:stream'
-import { getImageNoReferer } from './image-fetch.ts'
+import { getImageWithFallback } from './image-fetch.ts'
 import { extractTrackRef } from '../audio/index.ts'
 import type { TrackRef } from '../audio/resolver.ts'
 import { rsshubItemsToTracks } from '../audio/music-search.ts'
@@ -3465,7 +3465,7 @@ export function createHttpApp(deps: HttpDeps): Hono {
           // image CDN (sns-webpic-qc.xhscdn.com) rejects with 403. This proxy's whole point is to
           // fetch hotlink-protected covers with NO Referer, so it must bypass that wrapper. (The
           // rest of the app keeps the wrapped fetch — it wants the proxy/UA rewriting.)
-          upstream = await getImageNoReferer(url, ac.signal, 3, deps.serving)
+          upstream = await getImageWithFallback(url, ac.signal, deps.serving)
         } finally {
           clearTimeout(timer)
         }

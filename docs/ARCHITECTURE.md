@@ -782,6 +782,11 @@ declaration), route/params schema, cadence hint. A Source belongs to exactly one
 (`pluginId` is assigned by the backend catalog) and is only ever executed through it. Sources
 are members — of Streams and of Providers — never subscribed to directly.
 
+Declarative recipe item fields are mapped in `src/replay/interpret.ts`. Plain paths and templates
+remain valid; a field may also try `firstOf` alternatives, build a template from a regex
+capture in another raw field, or look up an explicit exception by key. The recipe owns the source-specific paths and patterns. The
+normalizer consumes the resulting `enclosure_url` and `track_id` to construct audio media.
+
 ### Who logs back in when login state is lost: the three tiers of `auth.login`
 
 `auth: { type: 'session', login }` says **not where the login state is stored** (the browser tier

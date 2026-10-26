@@ -59,6 +59,23 @@ describe('mapItem', () => {
     expect(mapItem(raw, { author: '=转转回收', platform: '=zhuanzhuan' })).toEqual({ author: '转转回收', platform: 'zhuanzhuan' })
     expect(mapItem(raw, { author: '转转回收' }).author).toBeUndefined()
   })
+
+  it('uses a source URL first, then a captured path to build a URL when it is missing', () => {
+    const mapping = { media: { firstOf: [
+      'direct.url',
+      { template: 'https://media.example/audio/{day}/{id}.mp3', capture: {
+        day: { path: 'cover', pattern: 'cover/([0-9]{4}/[0-9]{2}/[0-9]{2})/' },
+      } },
+      { lookup: { path: 'id', values: { special: 'https://media.example/audio/known.mp3' } } },
+    ] } }
+    expect(mapItem({ id: '7', cover: 'https://img.example/cover/2026/10/23/x.jpg', direct: { url: 'https://media.example/official.mp3' } }, mapping).media)
+      .toBe('https://media.example/official.mp3')
+    expect(mapItem({ id: '7', cover: 'https://img.example/cover/2026/10/23/x.jpg' }, mapping).media)
+      .toBe('https://media.example/audio/2026/10/23/7.mp3')
+    expect(mapItem({ id: '7', cover: 'https://img.example/avatar/x.jpg' }, mapping).media).toBeUndefined()
+    expect(mapItem({ id: 'special', cover: 'https://img.example/avatar/x.jpg' }, mapping).media)
+      .toBe('https://media.example/audio/known.mp3')
+  })
 })
 
 describe('substitute', () => {

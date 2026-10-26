@@ -1,4 +1,4 @@
-import type { Recipe, FetchRecipe, HttpRecipe, RecipeFieldMap } from './recipe.ts'
+import type { Recipe, FetchRecipe, HttpRecipe, RecipeFieldMap, RecipeFieldSpec } from './recipe.ts'
 
 /** Both recipe kinds the declarative engine runs: same request/pagination/assert/mapping,
  *  different transport. */
@@ -108,17 +108,44 @@ function renderTemplate(raw: unknown, tpl: string): string {
 
 export function mapItem(raw: unknown, mapping: RecipeFieldMap): MappedItem {
   const out: MappedItem = {}
-  // A mapping value is a plain dot-path (the common case) UNLESS it contains a `{…}`
-  // hole, in which case it is a template composed from the raw item's paths. Dot-paths
-  // never contain braces, so this is backward-compatible with every existing recipe.
-  // A leading `=` makes the rest a LITERAL (`"author": "=转转回收"`): a constant the response
-  // does not carry — the platform name of a single-platform feed is the usual case. Without
-  // it a bare constant is read as a dot-path, resolves to undefined and the field is silently
-  // absent (bit us: a recycle-price row with no platform name in the purchase receipt).
+  // String values keep the dot-path / `{raw.path}` template / `=literal` contract.
+  // Object values add fallback, capture, and explicit lookup without changing those strings.
   for (const [field, spec] of Object.entries(mapping)) {
-    out[field] = spec.startsWith('=') ? spec.slice(1) : spec.includes('{') ? renderTemplate(raw, spec) : getPath(raw, spec)
+    out[field] = mapField(raw, spec)
   }
   return out
+}
+
+function mapField(raw: unknown, spec: RecipeFieldSpec): unknown {
+  if (typeof spec === 'string') {
+    return spec.startsWith('=') ? spec.slice(1) : spec.includes('{') ? renderTemplate(raw, spec) : getPath(raw, spec)
+  }
+  if ('firstOf' in spec) {
+    for (const candidate of spec.firstOf) {
+      const value = mapField(raw, candidate)
+      if (value !== undefined && value !== null && value !== '') return value
+    }
+    return undefined
+  }
+  if ('lookup' in spec) {
+    const key = getPath(raw, spec.lookup.path)
+    return key == null ? undefined : spec.lookup.values[String(key)]
+  }
+  const captures: Record<string, string> = {}
+  for (const [name, { path, pattern }] of Object.entries(spec.capture)) {
+    const source = getPath(raw, path)
+    if (source == null) return undefined
+    const match = new RegExp(pattern).exec(String(source))
+    if (!match) return undefined
+    captures[name] = match[1] ?? match[0]
+  }
+  let complete = true
+  const value = spec.template.replace(/\{([^{}]+)\}/g, (_whole, path: string) => {
+    const found = captures[path] ?? getPath(raw, path.trim())
+    if (found == null || found === '') { complete = false; return '' }
+    return String(found)
+  })
+  return complete ? value : undefined
 }
 
 /** Assert the response shape; throw drift on any missing assert path. */

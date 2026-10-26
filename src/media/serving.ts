@@ -83,6 +83,18 @@ export class Serving {
     return this.policyFor(url)?.referer
   }
 
+  /** Image proxy fallback candidates from the owning package; keep path, query and port. */
+  imageUrlsFor(url: string): string[] {
+    const policy = this.policyFor(url)
+    if (!policy?.hosts?.length) return [url]
+    const original = new URL(url)
+    return [url, ...policy.hosts.filter((host) => host !== original.hostname).map((host) => {
+      const next = new URL(url)
+      next.hostname = host
+      return next.toString()
+    })]
+  }
+
   /**
    * 按策略把一条上游直链送出去：能放行就原样透传字节（**Range 照传**，懒加载仍归浏览器），
    * 候选主机挨个试，全被拒才变成一条说人话的 502 并进入冷却。

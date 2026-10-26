@@ -105,3 +105,26 @@ export async function getImageNoReferer(
   const r = await getNoReferer(rawUrl, signal, { redirects, serving })
   return { status: r.status, contentType: r.contentType, body: r.body }
 }
+
+/** Use package-declared alternate hosts only when the original image host fails. */
+export async function getImageWithFallback(
+  rawUrl: string,
+  signal: AbortSignal,
+  serving?: Serving,
+): Promise<{ status: number; contentType: string | null; body: Readable }> {
+  const urls = serving?.imageUrlsFor(rawUrl) ?? [rawUrl]
+  let lastError: unknown
+  for (let i = 0; i < urls.length; i++) {
+    let response: { status: number; contentType: string | null; body: Readable }
+    try {
+      response = await getImageNoReferer(urls[i]!, signal, 3, serving)
+    } catch (error) {
+      lastError = error
+      continue
+    }
+    if (response.status >= 200 && response.status < 300) return response
+    if (i === urls.length - 1) return response
+    response.body.resume()
+  }
+  throw lastError
+}

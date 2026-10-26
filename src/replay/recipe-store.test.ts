@@ -64,6 +64,17 @@ beforeAll(() => {
 })
 afterAll(() => rmSync(dir, { recursive: true, force: true }))
 
+it('rejects a malformed captured mapping at load time', () => {
+  const recipe = {
+    version: 1, kind: 'http', sourceId: 'capture-check',
+    request: { url: 'https://example.com/items', method: 'GET' },
+    pagination: { mode: 'increment', itemsAt: 'data', param: 'page', start: 1, step: 1, maxPages: 1 },
+    assert: [],
+    mapping: { url: { template: 'https://example.com/{day}', capture: { day: { path: 'cover', pattern: '[' } } } },
+  }
+  expect(() => validateRecipe('capture-check', recipe)).toThrow(/mapping\.url/)
+})
+
 describe('makeFileRecipeStore', () => {
   it('loads and returns a valid recipe by id', () => {
     const r = makeFileRecipeStore(dir).load('good')

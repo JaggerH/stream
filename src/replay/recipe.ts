@@ -61,8 +61,12 @@ export interface RecipeAssert {
   desc: string
 }
 
-/** target item field -> dot-path within a single raw item */
-export type RecipeFieldMap = Record<string, string>
+/** target item field -> path/template or a declared fallback built from raw item fields */
+export type RecipeFieldSpec = string
+  | { firstOf: RecipeFieldSpec[] }
+  | { template: string; capture: Record<string, { path: string; pattern: string }> }
+  | { lookup: { path: string; values: Record<string, string> } }
+export type RecipeFieldMap = Record<string, RecipeFieldSpec>
 
 /**
  * A Recipe is the compiled, versioned unit a fallback source runs — establish a
