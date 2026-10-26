@@ -137,16 +137,18 @@ curl -s -G 127.0.0.1:8900/api/sources --data-urlencode "q=播客"
 `members[].source` 填它回的 `id`（**真正必须对的是这一个**），`plugin` 填它的 `adapter`
 （`rsshub` / `replay` / `builtin` …）：
 
+运行下面的例子前，把 `<播客节目 id>` 换成小宇宙播客 URL 中的节目 id。
+
 ```bash
 curl -s -X POST 127.0.0.1:8900/api/streams -H 'content-type: application/json' -d '{
   "id": "my-podcast",
-  "label": "故事FM",
+  "label": "我的播客",
   "strategy": "fanout",
   "cadence_seconds": 86400,
   "options": {},
   "channel_id": "default-audio",
-  "members": [{ "plugin": "replay", "source": "@streamapp/lizhi/lizhi-user",
-                "params": { "id": "2657184879512415276" } }]
+  "members": [{ "plugin": "rsshub", "source": "@streamapp/rsshub/xiaoyuzhou-podcast",
+                "params": { "id": "<播客节目 id>" } }]
 }'
 ```
 

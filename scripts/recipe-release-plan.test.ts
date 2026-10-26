@@ -86,10 +86,10 @@ describe('readRecipePackages（真实内置包目录）', () => {
     '@streamapp/douyin-tiktok-download-api',
     '@streamapp/pansou',
   ]
-  it('恰好 48 个可发的包（35 纯 recipe + 13 带代码），13 个带代码的逐名在内且都不 private', () => {
+  it('恰好 47 个可发的包（34 纯 recipe + 13 带代码），13 个带代码的逐名在内且都不 private', () => {
     const all = readRecipePackages(packagesDir)
     const publishable = all.filter((p) => p.publishable && !p.private)
-    expect(publishable).toHaveLength(48)
+    expect(publishable).toHaveLength(47)
     expect(publishable.map((p) => p.name)).toContain('@streamapp/wechat')
     const codePkgs = publishable.filter((p) => p.code).map((p) => p.name).sort()
     expect(codePkgs).toEqual(CODE_PACKAGE_NAMES)

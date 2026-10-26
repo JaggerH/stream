@@ -160,27 +160,6 @@ describe('shipped recipe packages load (manifest schema)', () => {
     expect(observers).toEqual([])
   })
 
-  describe('内置 lizhi 包：facility 知识住在包里', () => {
-    // 一个空的"用户层"目录，建一次、用完删掉。每次 pkg() 现 mkdtemp 的话，一轮测试留两个空目录
-    // 在 /tmp 里——这个仓库被磁盘写满咬过，留垃圾不是小事。
-    let userDir = ''
-    beforeAll(() => { userDir = mkdtempSync(join(tmpdir(), 'stream-empty-recipes-')) })
-    afterAll(() => { if (userDir) rmSync(userDir, { recursive: true, force: true }) })
-    const pkg = () => mergeRecipePackagesByFacility(PACKAGES_DIR, userDir).byFacility.get('lizhi')!
-    it('声明了 .lizhi.fm 的送字节策略与备选 CDN', () => {
-      const p = pkg()
-      expect(p.serving?.[0]).toMatchObject({ match: '.lizhi.fm', label: '荔枝 FM' })
-      expect(p.serving?.[0].hosts).toEqual(['cdn101.lizhi.fm', 'cdn102.lizhi.fm', 'cdn.gzlzfm.com', 'cdn101.gzlzfm.com'])
-    })
-    it('声明了它顶掉的 RSSHub 路由', () => {
-      expect(Object.keys(pkg().retires ?? {})).toEqual(['rsshub:lizhi/user/:id'])
-    })
-    it('recipe mapping 带 track_id', () => {
-      const recipe = loadRecipePackages(PACKAGES_DIR, BUILTIN_LAYER_SCAN).recipes.get('@streamapp/lizhi/lizhi-user') as { mapping?: Record<string, string> }
-      expect(recipe?.mapping?.track_id).toBe('voiceInfo.voiceId')
-    })
-  })
-
   describe('内置 netease 包：网易云的知识住在包里', () => {
     let userDir = ''
     beforeAll(() => { userDir = mkdtempSync(join(tmpdir(), 'stream-empty-recipes-')) })

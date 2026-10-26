@@ -20,8 +20,8 @@
       type: string
       required: true
 # podcast-feed 那一行的成员按 **category** 现取：`categories` 含 podcast 且声明了 `key_param`
-# 的每个源自动进去（registry.inCategory）。荔枝那半由 @streamapp/lizhi 这个 recipe 包提供，
-# 小宇宙这半在下面这条 curated 声明里——catalog 的长尾路由不带 `key_param`，捞不进这一行。
+# 的每个源自动进去（registry.inCategory）。小宇宙在下面这条 curated 声明里；
+# catalog 的长尾路由不带 `key_param`，捞不进这一行。
 - id: xiaoyuzhou-podcast
   adapter: rsshub
   description: 小宇宙 — 单个播客节目的最新单集（按节目订阅，音频可直接在时间线里播）。

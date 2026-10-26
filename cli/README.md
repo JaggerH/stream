@@ -156,16 +156,18 @@ curl -s -G 127.0.0.1:8900/api/sources --data-urlencode "q=播客"
 Put the `id` it returns into `members[].source` (**this is the one that has to be right**), and its
 `adapter` (`rsshub` / `replay` / `builtin` …) into `plugin`:
 
+Replace `<podcast-id>` with the id from a Xiaoyuzhou podcast URL before running this example.
+
 ```bash
 curl -s -X POST 127.0.0.1:8900/api/streams -H 'content-type: application/json' -d '{
   "id": "my-podcast",
-  "label": "故事FM",
+  "label": "My Podcast",
   "strategy": "fanout",
   "cadence_seconds": 86400,
   "options": {},
   "channel_id": "default-audio",
-  "members": [{ "plugin": "replay", "source": "@streamapp/lizhi/lizhi-user",
-                "params": { "id": "2657184879512415276" } }]
+  "members": [{ "plugin": "rsshub", "source": "@streamapp/rsshub/xiaoyuzhou-podcast",
+                "params": { "id": "<podcast-id>" } }]
 }'
 ```
 

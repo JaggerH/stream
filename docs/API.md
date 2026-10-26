@@ -466,7 +466,7 @@ is never silently dropped.
   into `<plugin>:<source>` and looked up in the registry, which falls back to the bare `source`
   name, so `source` is what actually has to be right. A source collected by recipe in your own
   logged-in Chrome belongs to the `replay` plugin
-  (e.g. `{ "plugin": "replay", "source": "lizhi-user", "params": { "id": "…" } }`).
+  (e.g. `{ "plugin": "rsshub", "source": "xiaoyuzhou-podcast", "params": { "id": "…" } }`).
 - **`options`** — the free-JSON home of a stream's side fields: `vault_subdir` (defaults to the
   stream `id`), `mode`, `ad_filter`, `harvest`. No schema, no migrations.
 - **`"strategy": "exclusive"`** — for a feed reachable through several backends: `members` become
