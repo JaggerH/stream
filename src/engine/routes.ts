@@ -282,6 +282,7 @@ export async function routes(io: RouteIo): Promise<Hono> {
     normalizeSearchItem: search.normalizeSearchItem,
     renormalizeItems: search.renormalizeItems,
     links: sources.links,
+    serving: sources.serving,
     recipePackageOps: sources.recipePackageOps,
     videoSearch: search.videoSearch,
     videoSearchStream: search.videoSearchStream,
