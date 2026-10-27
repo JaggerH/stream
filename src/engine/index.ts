@@ -22,6 +22,7 @@ import type { TaskSettledEvent } from '../tasks/types.ts'
 import { lazyNotify, type EventsService } from '../events/service.ts'
 import type { StandbyManager } from '../plugins/standby/manager.ts'
 import { startBackground } from './background.ts'
+import { callerFetchGuardPolicy, configureCallerFetchGuard } from '../net/caller-fetch-guard.ts'
 
 export type { StreamRuntime } from './runtime.ts'
 export { createRuntime } from './runtime.ts'
@@ -90,6 +91,11 @@ export async function createStream(opts: CreateStreamOptions): Promise<Stream> {
   // 不读进程环境（deploymentFromEnv 只见这里显式给的 env）；config.yaml 里的 deployment
   // 键照读——嵌入方写文件关掉开箱订阅，就是走的这一格。
   const config = opts.config ?? readConfig(join(opts.dataDir, 'config.yaml'), { STREAM_DATA_DIR: opts.dataDir })
+  // caller-fetch-guard 的进程级策略位：配置解析一次，名单写错在装配期就炸出来（缺省 = null = 关闭，
+  // 所有抓取路径与没有这条配置时逐字节一致）。开关状态是进程级部署配置，不是实例级业务数据。
+  // 只开不关：同一进程里后建的实例没写这一项，不能把先建的实例打开的守卫悄悄关掉。
+  const guardPolicy = callerFetchGuardPolicy(config.caller_fetch_guard)
+  if (guardPolicy) configureCallerFetchGuard(guardPolicy)
   const stateDir = resolveDataDir(config)
   // 锁拿在建内核之前：第二份实例连一张表都不该打开。
   const release = lockDataDir(stateDir)

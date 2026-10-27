@@ -3,6 +3,14 @@ import type { StreamServiceLike } from './tools.ts'
 import type { VideoSearchResult } from '../video/types.ts'
 import type { LaneAction, ActionSpec, ActionKind, ActionIntent, ActResult } from '../replay/interactive-gate.ts'
 import { fetchUrl, type FetchUrlDeps } from '../http/fetch-url.ts'
+// caller-fetch-guard（openspec/changes/private-fetch-guard）：三个「调用方给什么抓什么」的
+// 工具包进守卫作用域——开关打开时这些调用里的出站连接按实际要连的 IP 逐跳判；订阅采集等
+// 可信配置路径从不进作用域，不受影响。开关关闭（缺省）时 withCallerFetchGuard 原样透传。
+import {
+  assertCallerUrlAllowed,
+  unwrapCallerUrlBlocked,
+  withCallerFetchGuard,
+} from '../net/caller-fetch-guard.ts'
 import type { IntentService } from '../intent/service.ts'
 import { readContent } from '../conversions/read-content.ts'
 import type { StoredItem } from '../item-store.ts'
@@ -435,9 +443,21 @@ export function toolCatalog(service: StreamServiceLike, extras: McpExtras): Tool
       schema: { url: z.string().describe('The URL to fetch (a supported platform page, or a direct image/video link)') },
       // resolveByLink 现读（getter 透传，别拍成死值）：extras 那一格本身是每次调用现派发的闭包，
       // 装/卸包、改绑定都跟得上。
-      run: ({ url }) => fetchUrl(url as string, {
-        get resolveByLink() { return extras.resolveByLink },
-      }),
+      run: ({ url }) =>
+        withCallerFetchGuard(async () => {
+          try {
+            await assertCallerUrlAllowed(url as string)
+            return await fetchUrl(url as string, {
+              get resolveByLink() { return extras.resolveByLink },
+            })
+          } catch (e) {
+            // 守卫的拒绝是一条工具回执（error 字段带原因），不是未处理异常；其余照旧上抛
+            // （SlotBrokenError 由门面映 422 的语义不变）。
+            const blocked = unwrapCallerUrlBlocked(e)
+            if (blocked) return { platform: 'unknown', media: [], error: blocked.message }
+            throw e
+          }
+        }),
     },
   ]
 
@@ -617,21 +637,31 @@ export function toolCatalog(service: StreamServiceLike, extras: McpExtras): Tool
         'Returns {url, text, chars, truncated} — or {error} when the page yields no article text (paywall, JS-only app, login wall, a bare file). ' +
         'NOT the same as stream_fetch_url: that one extracts downloadable MEDIA from platform pages / direct links and returns nothing useful for an ordinary web page.',
       schema: { url: z.string().describe('the page URL to read') },
-      run: async ({ url }) => {
-        const got = await readUrl(url as string)
-        const text = got?.text?.trim() ?? ''
-        // 抓不到就说抓不到。回一段空文本冒充成功，模型会当成「这页没内容」而不是「我没读到」，
-        // 然后要么编、要么原地重试——两种都比一句实话贵。
-        if (!text) return { url, error: '这个页面没抓到正文（可能是付费墙 / 纯前端渲染 / 需要登录 / 不是文章页）' }
-        const truncated = text.length > READ_URL_MAX_CHARS
-        return {
-          url,
-          chars: text.length,
-          truncated,
-          // 截断也要**说出来**：半篇文章被无声吃掉，模型会拿前半截当全文下结论。
-          text: truncated ? `${text.slice(0, READ_URL_MAX_CHARS)}\n…（已截断，全文 ${text.length} 字）` : text,
-        }
-      },
+      run: async ({ url }) =>
+        withCallerFetchGuard(async () => {
+          try {
+            await assertCallerUrlAllowed(url as string)
+            const got = await readUrl(url as string)
+            const text = got?.text?.trim() ?? ''
+            // 抓不到就说抓不到。回一段空文本冒充成功，模型会当成「这页没内容」而不是「我没读到」，
+            // 然后要么编、要么原地重试——两种都比一句实话贵。
+            if (!text) return { url, error: '这个页面没抓到正文（可能是付费墙 / 纯前端渲染 / 需要登录 / 不是文章页）' }
+            const truncated = text.length > READ_URL_MAX_CHARS
+            return {
+              url,
+              chars: text.length,
+              truncated,
+              // 截断也要**说出来**：半篇文章被无声吃掉，模型会拿前半截当全文下结论。
+              text: truncated ? `${text.slice(0, READ_URL_MAX_CHARS)}\n…（已截断，全文 ${text.length} 字）` : text,
+            }
+          } catch (e) {
+            // 守卫的拒绝要带原因回到模型手里（不是「没抓到正文」的误报，也不是裸异常）；
+            // 重定向跳内网那类深层拒绝沿梯子带出原因，落成 isError 消息，同样不算未处理异常。
+            const blocked = unwrapCallerUrlBlocked(e)
+            if (blocked) return { url, error: blocked.message }
+            throw e
+          }
+        }),
     })
   }
 
@@ -662,7 +692,17 @@ export function toolCatalog(service: StreamServiceLike, extras: McpExtras): Tool
         description:
           'Resolve a release whose needsResolve=true — its `link` is a page on the source site, not a direct download. Returns { downloads: [{url, type, password?, name?}] } where type is magnet/ed2k/quark/baidu/aliyun/http; usually one entry, first is preferred.',
         schema: { url: z.string() },
-        run: async ({ url }) => ({ downloads: await videoResolve(url as string) }),
+        run: async ({ url }) =>
+          withCallerFetchGuard(async () => {
+            try {
+              await assertCallerUrlAllowed(url as string)
+              return { downloads: await videoResolve(url as string) }
+            } catch (e) {
+              const blocked = unwrapCallerUrlBlocked(e)
+              if (blocked) return { downloads: [], error: blocked.message }
+              throw e
+            }
+          }),
       })
     }
   }

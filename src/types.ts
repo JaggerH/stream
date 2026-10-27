@@ -157,6 +157,19 @@ export interface AppConfig {
   trusted_hosts?: string[]
   /** deterministic item-level ad filter; matched items are folded, not dropped */
   ad_filter?: import('./content/ad-filter.ts').AdRules
+  /**
+   * 「调用方传入任意网址」抓取路径的可选私网拒绝（`src/net/caller-fetch-guard.ts`）。
+   * 服务端部署时防止 read_url / stream_fetch_url / video_resolve 与 HTTP 门
+   * /api/media/from-url、/api/enrich?source=link 抓取本机回环或内网服务；**缺省关闭**，关闭时这些路径与没有这条
+   * 配置时逐字节一致。作用域只限上述门——订阅源、RSSHub 桥、插件与适配器的服务地址等
+   * 可信配置路径不受影响（校验挂在调用作用域上，不挂在全局 fetch 上）。
+   */
+  caller_fetch_guard?: {
+    /** true = 打开。缺省 false。 */
+    reject_private?: boolean
+    /** 例外名单：主机名（精确匹配）或 CIDR 网段（IPv4 / IPv6），名单内的放行。 */
+    allow?: string[]
+  }
   /** path to the audio archive SQLite db (default: sibling of item_db) */
   audio_archive_db: string
   /** root directory for archived audio files（缺省 `<Stream 根目录>/music`；config.yaml / AUDIO_ARCHIVE_ROOT 覆盖） */

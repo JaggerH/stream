@@ -5,6 +5,14 @@
 // owned 通道：绕开内嵌 RSSHub request-rewriter 的进程级 fetch 补丁（见 http/owned-outbound.ts）。
 // SSRF 守卫（isPrivateHost/publicHttpUrl）语义不变，只换底层传输。
 import { ownedFetch } from '../http/owned-outbound.ts'
+// caller-fetch-guard（openspec/changes/private-fetch-guard）：可选拒绝私网。只在守卫激活
+// （开关打开且这次调用在 read_url 等门的作用域里）时改走受校验的连接层——连接时按实际要连
+// 的 IP 逐跳判，例外名单可以放行旧闸拦下的主机；未激活时每个分支与引入前一字不差。
+import {
+  assertCallerUrlAllowed,
+  guardedFetch,
+  unwrapCallerUrlBlocked,
+} from '../net/caller-fetch-guard.ts'
 
 const UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36'
@@ -53,20 +61,32 @@ export async function safeFetchResponse(
   opts: { maxBytes?: number; timeoutMs?: number; signal?: AbortSignal } = {}
 ): Promise<Response | null> {
   const { maxBytes = 50_000_000, timeoutMs = 20_000 } = opts
-  if (!publicHttpUrl(rawUrl)) return null
+  const guarded = guardedFetch()
+  if (guarded) {
+    await assertCallerUrlAllowed(rawUrl) // 名单放行旧闸（publicHttpUrl）拦下的主机
+  } else if (!publicHttpUrl(rawUrl)) {
+    return null
+  }
   const timeout = AbortSignal.timeout(timeoutMs)
   let res: Response
   try {
-    res = await ownedFetch(rawUrl, {
+    const init: RequestInit = {
       headers: { 'User-Agent': UA, Accept: '*/*' },
       signal: opts.signal ? AbortSignal.any([opts.signal, timeout]) : timeout,
       redirect: 'follow',
-    })
-  } catch {
+    }
+    res = guarded ? await guarded(rawUrl, init) : await ownedFetch(rawUrl, init)
+  } catch (e) {
+    // 守卫的拒绝要原样出去（它就是这次调用的答案），不能被吞成 null——那会被上层说成「没抓到」。
+    if (unwrapCallerUrlBlocked(e)) throw unwrapCallerUrlBlocked(e)
     return null
   }
   if (!res.ok) return null
-  if (!publicHttpUrl(res.url || rawUrl)) return null // redirect landed on a private host
+  if (guarded) {
+    await assertCallerUrlAllowed(res.url || rawUrl) // 重定向落点（连接层已逐跳判过，这里兜名单语义）
+  } else if (!publicHttpUrl(res.url || rawUrl)) {
+    return null // redirect landed on a private host
+  }
   const len = Number(res.headers.get('content-length') ?? '0')
   if (len && len > maxBytes) return null
   return res
@@ -79,22 +99,33 @@ export async function safeFetchText(
   opts: { maxBytes?: number; timeoutMs?: number } = {}
 ): Promise<FetchedPage | null> {
   const { maxBytes = 2_000_000, timeoutMs = 8000 } = opts
-  if (!publicHttpUrl(rawUrl)) return null
+  const guarded = guardedFetch()
+  if (guarded) {
+    await assertCallerUrlAllowed(rawUrl)
+  } else if (!publicHttpUrl(rawUrl)) {
+    return null
+  }
   let res: Response
   try {
-    res = await ownedFetch(rawUrl, {
+    const init: RequestInit = {
       headers: { 'User-Agent': UA, Accept: 'text/html,application/xhtml+xml' },
       signal: AbortSignal.timeout(timeoutMs),
       redirect: 'follow',
-    })
-  } catch {
+    }
+    res = guarded ? await guarded(rawUrl, init) : await ownedFetch(rawUrl, init)
+  } catch (e) {
+    if (unwrapCallerUrlBlocked(e)) throw unwrapCallerUrlBlocked(e)
     return null
   }
   if (!res.ok) return null
   const ct = res.headers.get('content-type') ?? ''
   if (ct && !/text\/html|application\/xhtml/i.test(ct)) return null
   // guard against a redirect landing on a private host
-  if (!publicHttpUrl(res.url || rawUrl)) return null
+  if (guarded) {
+    await assertCallerUrlAllowed(res.url || rawUrl)
+  } else if (!publicHttpUrl(res.url || rawUrl)) {
+    return null
+  }
   try {
     const buf = await res.arrayBuffer()
     const bytes = buf.byteLength > maxBytes ? buf.slice(0, maxBytes) : buf

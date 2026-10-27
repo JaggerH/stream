@@ -8,6 +8,7 @@
  */
 import type { Context } from 'cordis'
 import { ownedFetch } from '../http/owned-outbound.ts'
+import { assertCallerUrlAllowed, guardedFetch as callerGuardedFetch } from '../net/caller-fetch-guard.ts'
 import {
   HostFetchQueueTimeout, HostOpError, HostRelayDisconnected, HostRelayTimeout,
   type HttpFetchArgs, type HttpFetchResult,
@@ -81,7 +82,15 @@ export function makeFetchFor(deps: FetchForDeps): typeof fetch {
 
   return async function fetchFor(input: string | URL | Request, init?: RequestInit): Promise<Response> {
     const p = currentPlacement()
-    if (p.deviceId === LOCAL_DEVICE) return local(input, init)
+    if (p.deviceId === LOCAL_DEVICE) {
+      // caller-fetch-guard（openspec/changes/private-fetch-guard）：只在守卫激活（开关打开且
+      // 这次调用在 read_url / stream_fetch_url 等门的作用域里）时给 local 分支换受校验的
+      // 连接层；订阅采集、适配器服务地址这些可信配置路径从不进那个作用域，这里对它们零变化。
+      const guarded = callerGuardedFetch()
+      if (!guarded) return local(input, init)
+      await assertCallerUrlAllowed(input instanceof Request ? input.url : String(input))
+      return guarded(input, init)
+    }
 
     const req = input instanceof Request ? input : undefined
     const url = new URL(req ? req.url : String(input))

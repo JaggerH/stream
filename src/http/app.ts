@@ -28,6 +28,7 @@ import { stream } from 'hono/streaming'
 import { isValidationError } from '../packages/activate.ts'
 import { GATEWAY_PREFIX } from '../plugins/gateway.ts'
 import { mergeCapabilityTools, mergePackageRuntime } from '../packages/inventory.ts'
+import { assertCallerUrlAllowed, withCallerFetchGuard } from '../net/caller-fetch-guard.ts'
 import type { PluginStatus } from '../plugins/status.ts'
 import { enrich } from '../content/enrich/index.ts'
 import type { EnrichRequest } from '../content/enrich/index.ts'
@@ -3552,7 +3553,12 @@ export function createHttpApp(deps: HttpDeps): Hono {
         : undefined,
     }
     try {
-      return c.json(await fetchUrl(url, fetchDeps))
+      // caller-fetch-guard：与 MCP 的 stream_fetch_url 同一道门、同一个作用域（openspec/
+      // changes/private-fetch-guard）。开关打开时这里先预检、连接层逐跳校验；关闭时透传。
+      return c.json(await withCallerFetchGuard(async () => {
+        await assertCallerUrlAllowed(url)
+        return fetchUrl(url, fetchDeps)
+      }))
     } catch (e) {
       if (e instanceof SlotBrokenError) return slotBroken422(c, e)
       return c.json(errorBody('upstream_error', String((e as Error).message)), 502)
@@ -3592,7 +3598,14 @@ export function createHttpApp(deps: HttpDeps): Hono {
       }
       if (!req) return c.json(errorBody('validation_error', 'bad enrich request'), 400)
       if (!deps.articles) return c.json(errorBody('unavailable', 'article cache not configured'), 503)
-      return c.json(await enrich(req, deps.articles))
+      // caller-fetch-guard：正文阅读器同样是「调用方给网址就抓」的门，且与 read_url 共用正文缓存，
+      // 包进同一个作用域（开关关闭时透传）。
+      const articles = deps.articles
+      const linkReq = req
+      return c.json(await withCallerFetchGuard(async () => {
+        await assertCallerUrlAllowed(linkReq.url)
+        return enrich(linkReq, articles)
+      }))
     } catch (e) {
       if (e instanceof SlotBrokenError) return slotBroken422(c, e)
       // 鸭子判：包 bundle 里的 ValidationError 是另一份类，instanceof 判不出会把 400 变 502。
