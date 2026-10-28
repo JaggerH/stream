@@ -384,3 +384,50 @@ describe('ExtRelay — 扩展报来的「开出了新标签」', () => {
     relay.disconnect(sock)
   })
 })
+
+describe('attachExtRelay 心跳', () => {
+  const TOKEN = 'c'.repeat(64)
+  const ORIGIN = 'chrome-extension://abcdefghijklmnop'
+
+  // 对端被冻住（虚拟机挂起、合盖、断网但没收到 FIN）时 TCP 不会关，只有「ping 没人回」能看出来。
+  async function open(autoPong: boolean) {
+    const lines: string[] = []
+    const relay = new ExtRelay()
+    const server = createServer()
+    attachExtRelay(server, relay, { token: TOKEN, log: (l) => lines.push(l), pingIntervalMs: 40 })
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+    const port = (server.address() as AddressInfo).port
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/api/ext`, [EXT_RELAY_PROTOCOL, TOKEN], { origin: ORIGIN, autoPong })
+    await new Promise<void>((resolve, reject) => {
+      ws.on('open', () => resolve())
+      ws.on('error', reject)
+    })
+    const close = async () => {
+      ws.terminate()
+      server.closeAllConnections?.()
+      await new Promise<void>((resolve) => server.close(() => resolve()))
+    }
+    return { relay, ws, lines, close }
+  }
+
+  it('不回 pong 的连接在两个心跳周期内被断开，绑定变成离线', async () => {
+    const { relay, lines, close } = await open(false)
+    try {
+      expect(relay.connected).toBe(true)
+      await vi.waitFor(() => expect(relay.connected).toBe(false), { timeout: 1000 })
+      expect(lines.some((l) => /no pong/i.test(l))).toBe(true)
+    } finally {
+      await close()
+    }
+  })
+
+  it('正常回 pong 的连接一直在线', async () => {
+    const { relay, close } = await open(true)
+    try {
+      await new Promise((r) => setTimeout(r, 300))
+      expect(relay.connected).toBe(true)
+    } finally {
+      await close()
+    }
+  })
+})

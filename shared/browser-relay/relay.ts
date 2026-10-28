@@ -12,7 +12,7 @@
  * 文件本身是廉价的叶子（`src/debug.ts` 只有类型、零 import，`src/events/store.ts` 只 import
  * `node:fs`/`node:path`），随包带上的代价可以忽略。
  */
-import { WebSocketServer } from 'ws'
+import { WebSocketServer, type WebSocket } from 'ws'
 import type { IncomingMessage, Server } from 'node:http'
 import { tokenEqual } from './token.ts'
 import { EnvironmentUnavailableError } from '../failure/environment.ts'
@@ -679,7 +679,7 @@ function asTarget(t: ExtRelay | ExtRelayTarget): ExtRelayTarget {
  * 每条新连接：connect(socket, 自报字段)（顶替旧连接）；message → handleMessage；close/error → disconnect。
  * 自报字段来自升级请求 URL 的 query（`?extVersion=&browser=&platform=`），喂给能力缓存；缺就是缺。
  * 建立与断开各打一行日志（含 origin）；连不连得上的实时答案另见 `GET /api/ext/relay-status`。
- * 后端侧 ~20s 发 WS ping 帮 MV3 SW 续命；连接关闭时清 interval。
+ * 后端侧 ~20s 发 WS ping 帮 MV3 SW 续命，两个周期收不到 pong 就断开（{@link keepRelayAlive}）；连接关闭时清 interval。
  */
 export function attachExtRelay(
   server: Server,
@@ -691,7 +691,7 @@ export function attachExtRelay(
         /** token → 绑定 id；不认得 = null（401）；认得但拒收 = `ExtUpgradeRefusal`。握手自报字段一并给出（本机按 `nodeId` 分绑定）。 */
         resolveToken: (token: string, handshake: ExtHandshake) => string | ExtUpgradeRefusal | null
       }
-  ) & { path?: string; log?: (line: string) => void },
+  ) & { path?: string; log?: (line: string) => void; /** 心跳周期，缺省 {@link RELAY_PING_MS}；测试用 */ pingIntervalMs?: number },
 ): WebSocketServer {
   const { path = '/api/ext', log = console.log } = opts
   const target = asTarget(relay)
@@ -751,20 +751,17 @@ export function attachExtRelay(
     const bindingId = (req && upgraded.get(req)) ?? 'local'
     target.connect(bindingId, socket, parseExtHandshake(req?.url))
     log(`[ext-relay] connected (origin=${origin}, binding=${bindingId})`)
-    const ping = setInterval(() => {
-      try {
-        socket.ping()
-      } catch {
-        /* socket 关闭时 ping 抛错，close 处理器会清理 */
-      }
-    }, 20_000)
+    const stopPing = keepRelayAlive(socket, {
+      ...(opts.pingIntervalMs ? { intervalMs: opts.pingIntervalMs } : {}),
+      onDead: () => log(`[ext-relay] no pong — dropping (origin=${origin}, binding=${bindingId})`),
+    })
     socket.on('message', (data) => target.handleMessage(bindingId, data.toString()))
     // close + error 可能都触发：只放行第一次，断开日志一条连接只出一行。
     let torndown = false
     const teardown = () => {
       if (torndown) return
       torndown = true
-      clearInterval(ping)
+      stopPing()
       target.disconnect(bindingId, socket)
       log(`[ext-relay] disconnected (origin=${origin}, binding=${bindingId})`)
     }
@@ -774,12 +771,53 @@ export function attachExtRelay(
   return wss
 }
 
+/** 中继连接的心跳周期。后端每隔这么久 ping 一次（也帮 MV3 SW 续命）。 */
+export const RELAY_PING_MS = 20_000
+
+/**
+ * 中继连接的心跳：每 `intervalMs` 发一次 ping；**上一次 ping 到这一次之间既没收到 pong、也没收到任何帧**，
+ * 就判定对端已经没了，`terminate()` 掉——close 处理器照常清理、把连接移出在线表。
+ *
+ * 为什么光发 ping 不够：对端被冻住（虚拟机挂起、笔记本合盖、断网但没收到 FIN）时 TCP 不会关，
+ * 后端会一直以为它在线，派过去的命令只能等到各自的超时才失败。浏览器与 host agent 都会自动回 pong，
+ * 所以正常连接不受影响；判死最慢两个周期（缺省 40s）。
+ *
+ * 返回停止函数，给 close / error 处理器调。
+ */
+export function keepRelayAlive(
+  socket: WebSocket,
+  opts: { intervalMs?: number; onDead?: () => void } = {},
+): () => void {
+  const { intervalMs = RELAY_PING_MS, onDead } = opts
+  let alive = true
+  const mark = () => {
+    alive = true
+  }
+  socket.on('pong', mark)
+  socket.on('message', mark)
+  const timer = setInterval(() => {
+    if (!alive) {
+      clearInterval(timer)
+      onDead?.()
+      socket.terminate()
+      return
+    }
+    alive = false
+    try {
+      socket.ping()
+    } catch {
+      /* socket 关闭时 ping 抛错，close 处理器会清理 */
+    }
+  }, intervalMs)
+  return () => clearInterval(timer)
+}
+
 /**
  * 关掉一个中继的 WebSocketServer。**两条中继（`/api/ext`、`/api/host`）共用这一个**——
  * 它们的 wss 生命周期一模一样，两处各写一遍迟早只改一处。
  *
  * 先 `terminate()` 每条还连着的连接，再 `close()` 服务器：单靠 `wss.close()` 不动已有连接，
- * 而每条连接身上挂着一个 20s 的 ping `setInterval`——那个 interval 只在 socket 的 close/error
+ * 而每条连接身上挂着一个心跳 `setInterval`——那个 interval 只在 socket 的 close/error
  * 上清。不主动断连的话，关停后事件循环里还钉着几个定时器，进程该退的时候退不干净。
  *
  * 断开是**正常关停**，不是故障：扩展那侧看到的就是一次普通断线，它自己会重连。

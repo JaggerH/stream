@@ -15,10 +15,10 @@ afterEach(async () => {
   if (s) await new Promise<void>((r) => s.close(() => r()))
 })
 
-async function start(helloTimeoutMs = 2000) {
+async function start(helloTimeoutMs = 2000, pingIntervalMs?: number) {
   server = createServer()
   const registry = new HostRelayRegistry()
-  attachHostRelay(server, registry, { token: TOKEN, log: () => {}, helloTimeoutMs })
+  attachHostRelay(server, registry, { token: TOKEN, log: () => {}, helloTimeoutMs, ...(pingIntervalMs ? { pingIntervalMs } : {}) })
   const srv = server
   await new Promise<void>((r) => srv.listen(0, '127.0.0.1', r))
   const url = `ws://127.0.0.1:${(srv.address() as AddressInfo).port}/api/host`
@@ -338,5 +338,31 @@ describe('attachHostRelay device tokens', () => {
     const ws = new WebSocket(`ws://127.0.0.1:${(srv.address() as AddressInfo).port}/api/host`, [HOST_RELAY_PROTOCOL, 'dev-token'])
     const status = await new Promise<number>((r) => ws.on('unexpected-response', (_q, res) => r(res.statusCode ?? 0)))
     expect(status).toBe(503)
+  })
+})
+
+describe('attachHostRelay 心跳', () => {
+  // 设备被冻住（虚拟机挂起、合盖、断网但没收到 FIN）时 TCP 不会关；不查 pong，设备会永远显示在线，
+  // 派过去的 op 要等到超时才失败。
+  it('不回 pong 的设备在两个心跳周期内被断开并移出在线表', async () => {
+    const { registry, url } = await start(2000, 40)
+    const ws = new WebSocket(url, [HOST_RELAY_PROTOCOL, TOKEN], { autoPong: false })
+    ws.on('open', () => ws.send(JSON.stringify(helloFrame)))
+    await until(() => registry.devices().length === 1)
+    expect(registry.devices()).toHaveLength(1)
+    const closed = new Promise<number>((r) => ws.on('close', (code) => r(code)))
+    await until(() => registry.devices().length === 0)
+    expect(registry.devices()).toHaveLength(0)
+    await closed
+  })
+
+  it('正常回 pong 的设备一直在线', async () => {
+    const { registry, url } = await start(2000, 40)
+    const ws = new WebSocket(url, [HOST_RELAY_PROTOCOL, TOKEN])
+    ws.on('open', () => ws.send(JSON.stringify(helloFrame)))
+    await until(() => registry.devices().length === 1)
+    await new Promise((r) => setTimeout(r, 300))
+    expect(registry.devices()).toHaveLength(1)
+    ws.terminate()
   })
 })

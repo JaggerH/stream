@@ -3,6 +3,7 @@ import type { Server } from 'node:http'
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { PAIRED_PLATFORMS } from '../devices/device-store.ts'
 import { tokenEqual } from './secrets.ts'
+import { keepRelayAlive } from './ext-relay.ts'
 import type { HostRelay, HostOp } from '../replay/desktop-driver.ts'
 import { parseHello, parseState, type HostDeviceState, type HostRelayRegistry } from './host-registry.ts'
 
@@ -580,7 +581,8 @@ export function verifyHostUpgrade(
  * stale agent must not look like a token problem or like a backend that is down. (2) Then
  * `verifyHostUpgrade` checks the origin and the token. (3) After the upgrade, the **first frame must
  * be a `hello`** within `helloTimeoutMs`. Anything else closes with 4001. Only then is the device
- * registered and frames routed to its relay. A ~20s WS ping keeps the connection warm.
+ * registered and frames routed to its relay. A ~20s WS ping keeps the connection warm; a peer that
+ * misses a pong for two periods (a frozen VM, a closed lid) is dropped ({@link keepRelayAlive}).
  */
 export function attachHostRelay(
   server: Server,
@@ -592,10 +594,12 @@ export function attachHostRelay(
     path?: string
     log?: (line: string) => void
     helloTimeoutMs?: number
+    /** Heartbeat period, default 20s; for tests. */
+    pingIntervalMs?: number
     onDeviceState?: (deviceId: string, prev: HostDeviceState | undefined, next: HostDeviceState) => void
   },
 ): WebSocketServer {
-  const { token, deviceAuth, onDeviceSeen, onDeviceState, path = '/api/host', log = console.log, helloTimeoutMs = 5_000 } = opts
+  const { token, deviceAuth, onDeviceSeen, onDeviceState, path = '/api/host', log = console.log, helloTimeoutMs = 5_000, pingIntervalMs } = opts
   const wss = new WebSocketServer({
     noServer: true,
     handleProtocols: (protocols: Set<string>) =>
@@ -657,13 +661,10 @@ export function attachHostRelay(
       }
     }, helloTimeoutMs)
     helloTimer.unref?.()
-    const ping = setInterval(() => {
-      try {
-        socket.ping()
-      } catch {
-        /* ping throws once the socket closes; the close handler cleans up */
-      }
-    }, 20_000)
+    const stopPing = keepRelayAlive(socket, {
+      ...(pingIntervalMs ? { intervalMs: pingIntervalMs } : {}),
+      onDead: () => log(`[host-relay] no pong — dropping ${deviceId ?? 'an unidentified peer'}`),
+    })
     socket.on('message', (data) => {
       if (closing) return
       const raw = data.toString()
@@ -728,7 +729,7 @@ export function attachHostRelay(
     })
     const teardown = () => {
       clearTimeout(helloTimer)
-      clearInterval(ping)
+      stopPing()
       if (deviceId !== null) registry.disconnect(socket, deviceId)
     }
     socket.on('close', teardown)
