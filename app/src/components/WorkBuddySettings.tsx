@@ -109,7 +109,7 @@ export function WorkBuddySettings({ apiBase }: { apiBase: string }) {
   })
 
   return <SettingsGroup className="p-4">
-    <SettingsSection title="WorkBuddy 账号" footnote="账号凭据保存在本机 WorkBuddy Helper；Magpie 的对话反代保持独立。">
+    <SettingsSection title="WorkBuddy 账号" footnote="账号凭据保存在本机 WorkBuddy Helper；对话代理继续由原有工具负责。">
       <SettingsBlock>
         <SettingsRow label="连接" control={<span className="text-[11px] text-muted-foreground">{state ? `已连接 · ${state.summary.accounts} 个账号` : '未连接'}</span>} />
         <SettingsRow label="账号" control={<div className="flex gap-2"><Button size="small" onClick={() => void beginLogin()} disabled={busy}>添加账号</Button><Button size="small" variant="neutral" onClick={() => void act(async () => {})} disabled={busy}>刷新</Button><Button size="small" variant="neutral" onClick={() => void act(async () => { await call('/checkin', 'POST') })} disabled={busy || !state?.accounts.some((a) => a.version === 'cn' && a.enabled)}>全部签到</Button></div>} />
