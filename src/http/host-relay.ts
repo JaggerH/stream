@@ -3,7 +3,7 @@ import type { Server } from 'node:http'
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { PAIRED_PLATFORMS } from '../devices/device-store.ts'
 import { tokenEqual } from './secrets.ts'
-import { keepRelayAlive } from './ext-relay.ts'
+import { keepRelayAlive, type RelayHandler, type RelayUpgradeHandle } from './ext-relay.ts'
 import type { HostRelay, HostOp } from '../replay/desktop-driver.ts'
 import { parseHello, parseState, type HostDeviceState, type HostRelayRegistry } from './host-registry.ts'
 
@@ -584,8 +584,7 @@ export function verifyHostUpgrade(
  * registered and frames routed to its relay. A ~20s WS ping keeps the connection warm; a peer that
  * misses a pong for two periods (a frozen VM, a closed lid) is dropped ({@link keepRelayAlive}).
  */
-export function attachHostRelay(
-  server: Server,
+export function hostRelayHandler(
   registry: HostRelayRegistry,
   opts: {
     token: string
@@ -598,16 +597,18 @@ export function attachHostRelay(
     pingIntervalMs?: number
     onDeviceState?: (deviceId: string, prev: HostDeviceState | undefined, next: HostDeviceState) => void
   },
-): WebSocketServer {
+): RelayHandler {
   const { token, deviceAuth, onDeviceSeen, onDeviceState, path = '/api/host', log = console.log, helloTimeoutMs = 5_000, pingIntervalMs } = opts
   const wss = new WebSocketServer({
     noServer: true,
     handleProtocols: (protocols: Set<string>) =>
       protocols.has(HOST_RELAY_PROTOCOL) ? HOST_RELAY_PROTOCOL : false,
   })
-  server.on('upgrade', (req, socket, head) => {
+  // 可组合的认领函数（openspec embeddable-device-gateway）：自己的路径完成整套握手并返回 true，
+  // 别人的路径返回 false 且不碰 socket。老用法（自挂 server）见 attachHostRelay，共用这份逻辑。
+  const handle: RelayUpgradeHandle = (req, socket, head) => {
     const pathname = new URL(req.url ?? '', 'http://localhost').pathname
-    if (pathname !== path) return // not our path: leave for other WSS upgrade listeners
+    if (pathname !== path) return false // not our path: leave for other WSS upgrade listeners
     const offered = String(req.headers['sec-websocket-protocol'] ?? '')
       .split(',')
       .map((s) => s.trim())
@@ -619,7 +620,7 @@ export function attachHostRelay(
           `Content-Length: ${Buffer.byteLength(body)}\r\nConnection: close\r\n\r\n${body}`,
       )
       socket.destroy()
-      return
+      return true
     }
     let boundDevice: string | undefined
     let deviceToken: string | undefined
@@ -638,18 +639,19 @@ export function attachHostRelay(
         log(`[host-relay] deviceAuth threw at upgrade — refusing: ${String(e)}`)
         socket.write('HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\n\r\n')
         socket.destroy()
-        return
+        return true
       }
       deviceToken = t ?? undefined
       if (!boundDevice) {
         log(`[host-relay] rejected upgrade (origin=${req.headers.origin ?? '<none>'})`)
         socket.write('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n')
         socket.destroy()
-        return
+        return true
       }
     }
     wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req, { boundDevice, deviceToken }))
-  })
+    return true
+  }
   wss.on('connection', (socket, _req, bound: { boundDevice?: string; deviceToken?: string } = {}) => {
     const { boundDevice, deviceToken } = bound
     let deviceId: string | null = null
@@ -735,5 +737,26 @@ export function attachHostRelay(
     socket.on('close', teardown)
     socket.on('error', teardown)
   })
-  return wss
+  return { path, wss, handle }
+}
+
+/** 老用法（自己挂 server）：行为与抽出 handler 之前逐字节一致。 */
+export function attachHostRelay(
+  server: Server,
+  registry: HostRelayRegistry,
+  opts: {
+    token: string
+    deviceAuth?: (token: string) => string | undefined
+    onDeviceSeen?: (deviceId: string) => void
+    path?: string
+    log?: (line: string) => void
+    helloTimeoutMs?: number
+    /** Heartbeat period, default 20s; for tests. */
+    pingIntervalMs?: number
+    onDeviceState?: (deviceId: string, prev: HostDeviceState | undefined, next: HostDeviceState) => void
+  },
+): WebSocketServer {
+  const h = hostRelayHandler(registry, opts)
+  server.on('upgrade', (req, socket, head) => { h.handle(req, socket, head) })
+  return h.wss
 }

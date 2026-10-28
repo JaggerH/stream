@@ -681,8 +681,29 @@ function asTarget(t: ExtRelay | ExtRelayTarget): ExtRelayTarget {
  * 建立与断开各打一行日志（含 origin）；连不连得上的实时答案另见 `GET /api/ext/relay-status`。
  * 后端侧 ~20s 发 WS ping 帮 MV3 SW 续命，两个周期收不到 pong 就断开（{@link keepRelayAlive}）；连接关闭时清 interval。
  */
-export function attachExtRelay(
-  server: Server,
+export interface ExtRelayAttachOptions {
+  path?: string
+  log?: (line: string) => void
+  /** 心跳周期，缺省 {@link RELAY_PING_MS}；测试用 */
+  pingIntervalMs?: number
+}
+
+/** `handle` 的返回值：true = 这条 upgrade 我认领并已处理；false = 不是我的路径，socket 原样让给下一个监听者。 */
+export type RelayUpgradeHandle = (req: IncomingMessage, socket: import('node:stream').Duplex, head: Buffer) => boolean
+
+export interface RelayHandler {
+  path: string
+  wss: WebSocketServer
+  handle: RelayUpgradeHandle
+}
+
+/**
+ * 把 `/api/ext`（或自定义路径）的 WS 端点装成一个**可组合的认领函数**（openspec
+ * `embeddable-device-gateway`）：`handle` 对自己的路径完成整套握手（token 校验、拒绝路径），别人的
+ * 路径返回 false 且不碰 socket——嵌入方（设备网关）就是这样把两条中继叠在自己的 `upgrade` 处理里的。
+ * 要老用法（自己挂上 server）就用 {@link attachExtRelay}，两者共享同一份握手逻辑。
+ */
+export function extRelayHandler(
   relay: ExtRelay | ExtRelayTarget,
   opts: (
     | { token: string; resolveToken?: undefined }
@@ -691,8 +712,8 @@ export function attachExtRelay(
         /** token → 绑定 id；不认得 = null（401）；认得但拒收 = `ExtUpgradeRefusal`。握手自报字段一并给出（本机按 `nodeId` 分绑定）。 */
         resolveToken: (token: string, handshake: ExtHandshake) => string | ExtUpgradeRefusal | null
       }
-  ) & { path?: string; log?: (line: string) => void; /** 心跳周期，缺省 {@link RELAY_PING_MS}；测试用 */ pingIntervalMs?: number },
-): WebSocketServer {
+  ) & ExtRelayAttachOptions,
+): RelayHandler {
   const { path = '/api/ext', log = console.log } = opts
   const target = asTarget(relay)
   // 只给了一把 token（插件、老调用点）= 只有本机绑定。
@@ -709,9 +730,9 @@ export function attachExtRelay(
     // 只回选协议名 —— 绝不把 token 那一项回显进响应头
     handleProtocols: (protocols: Set<string>) => (protocols.has(EXT_RELAY_PROTOCOL) ? EXT_RELAY_PROTOCOL : false),
   })
-  server.on('upgrade', (req, socket, head) => {
+  const handle: RelayUpgradeHandle = (req, socket, head) => {
     const pathname = new URL(req.url ?? '', 'http://localhost').pathname
-    if (pathname !== path) return // 不是自己的路径：留给其他 WSS 的 upgrade 监听器
+    if (pathname !== path) return false // 不是自己的路径：留给其他 WSS 的 upgrade 监听器
     // exactOptionalPropertyTypes：req.headers.* 天然是 `string | undefined`，直接铺给一个
     // `origin?: string` 的可选字段会被判成"显式赋了 undefined"而不是"没给"——同上一处的坑，
     // 只在真有值时才带这个键。
@@ -729,18 +750,19 @@ export function attachExtRelay(
       log(`[ext-relay] rejected upgrade (origin=${req.headers.origin ?? '<none>'})`)
       socket.write('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n')
       socket.destroy()
-      return
+      return true
     }
     if (typeof verdict !== 'string') {
       // 先升级再关：关闭码只存在于 WS 里。这条连接不进 target，一条命令都收不到。
       log(`[ext-relay] refused upgrade (origin=${req.headers.origin ?? '<none>'}, code=${verdict.close}, ${verdict.reason})`)
       wss.handleUpgrade(req, socket, head, (ws) => ws.close(verdict.close, verdict.reason))
-      return
+      return true
     }
     const bindingId = verdict
     upgraded.set(req, bindingId)
     wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req))
-  })
+    return true
+  }
   wss.on('connection', (socket, req) => {
     // 连接建立/断开各一行 —— 这条链路以前只记 rejected upgrade，"扩展到底连没连上"日志里查不到，
     // 误诊一次要靠反复麻烦用户点浏览器（见 GET /api/ext/relay-status 的同批修）。
@@ -768,7 +790,24 @@ export function attachExtRelay(
     socket.on('close', teardown)
     socket.on('error', teardown)
   })
-  return wss
+  return { path, wss, handle }
+}
+
+/** 老用法（自己挂 server）：行为与抽出 handler 之前逐字节一致。 */
+export function attachExtRelay(
+  server: Server,
+  relay: ExtRelay | ExtRelayTarget,
+  opts: (
+    | { token: string; resolveToken?: undefined }
+    | {
+        token?: undefined
+        resolveToken: (token: string, handshake: ExtHandshake) => string | ExtUpgradeRefusal | null
+      }
+  ) & ExtRelayAttachOptions,
+): WebSocketServer {
+  const h = extRelayHandler(relay, opts)
+  server.on('upgrade', (req, socket, head) => { h.handle(req, socket, head) })
+  return h.wss
 }
 
 /** 中继连接的心跳周期。后端每隔这么久 ping 一次（也帮 MV3 SW 续命）。 */
