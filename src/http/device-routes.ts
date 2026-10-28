@@ -31,7 +31,8 @@ export interface DeviceRoutesDeps {
   knownFacility?: (facility: string) => boolean
   /** 全部已知 facility（与 `knownFacility` 同源：`pkgs.facilities`），面板据此画「账号在哪台设备上」。 */
   facilities?: () => Array<{ facility: string; packageId: string }>
-  isLocal: (c: Context) => boolean
+  /** 谁在调管理类端口（签码、撤销、对设备下 op）：serve 传「本机回环才算」，嵌入方传自己的鉴权。 */
+  isAdmin: (c: Context) => boolean
   /** Base URLs where a phone on the LAN can reach this backend (`http://<ip>:<port>`). */
   backendUrls: (c: Context) => string[]
   /** 设备撤销之后：挂在它上面的扩展绑定一并撤销、断开（design D7）。 */
@@ -46,8 +47,8 @@ export interface DeviceRoutesDeps {
 }
 
 export function mountDeviceRoutes(app: Hono, deps: DeviceRoutesDeps): void {
-  app.post('/api/devices/pairing-code', (c) => {
-    if (!deps.isLocal(c)) return c.json({ error: '配对码只能在运行 Stream 的那台机器上生成' }, 403)
+  app.post('/devices/pairing-code', (c) => {
+    if (!deps.isAdmin(c)) return c.json({ error: '配对码只能在运行 Stream 的那台机器上生成' }, 403)
     const { code, expiresAt } = deps.store.createPairingCode()
     // One code carrying every address (LAN, Tailscale…): the phone checks which it can reach and
     // lets the user pick, instead of the panel showing one QR per address to choose from by eye.
@@ -57,7 +58,7 @@ export function mountDeviceRoutes(app: Hono, deps: DeviceRoutesDeps): void {
     return c.json({ code, expiresAt, qr })
   })
 
-  app.post('/api/devices/pair', async (c) => {
+  app.post('/devices/pair', async (c) => {
     let body: unknown
     try { body = await c.req.json() } catch { return c.json({ error: 'body 不是合法 JSON' }, 400) }
     const { code, name, platform } = (body ?? {}) as { code?: unknown; name?: unknown; platform?: unknown }
@@ -72,7 +73,7 @@ export function mountDeviceRoutes(app: Hono, deps: DeviceRoutesDeps): void {
     return c.json({ deviceId: r.deviceId, deviceToken: r.deviceToken })
   })
 
-  app.get('/api/devices', (c) => {
+  app.get('/devices', (c) => {
     const online = new Map(deps.registry.devices().map((d) => [d.hello.deviceId, d]))
     const paired = deps.store.list().map((d) => {
       const live = online.get(d.deviceId)
@@ -99,8 +100,8 @@ export function mountDeviceRoutes(app: Hono, deps: DeviceRoutesDeps): void {
    * It exists for live checks and for measuring a new app before writing its recipe; recipes
    * never go through it.
    */
-  app.post('/api/devices/:id/ops', async (c) => {
-    if (!deps.isLocal(c)) return c.json({ error: '只能在运行 Stream 的那台机器上调用' }, 403)
+  app.post('/devices/:id/ops', async (c) => {
+    if (!deps.isAdmin(c)) return c.json({ error: '只能在运行 Stream 的那台机器上调用' }, 403)
     const id = c.req.param('id')
     let raw: unknown
     try { raw = await c.req.json() } catch { return c.json({ error: 'body 不是合法 JSON' }, 400) }
@@ -119,7 +120,7 @@ export function mountDeviceRoutes(app: Hono, deps: DeviceRoutesDeps): void {
     }
   })
 
-  app.delete('/api/devices/:id', (c) => {
+  app.delete('/devices/:id', (c) => {
     const id = c.req.param('id')
     if (!deps.store.revoke(id)) return c.json({ error: '没有这台设备' }, 404)
     deps.registry.kick(id, 4003, 'revoked')
@@ -133,11 +134,11 @@ export function mountDeviceRoutes(app: Hono, deps: DeviceRoutesDeps): void {
     id === LOCAL_DEVICE || deps.store.list().some((d) => d.deviceId === id) || deps.registry.devices().some((d) => d.hello.deviceId === id)
 
   // 设备目标的行形状与升级前一样（`{facility, deviceId}`）；身份 / 环境目标带 `accountId` / `environment`。
-  app.get('/api/devices/bindings', (c) => c.json({ bindings: bindings.targets().map((b) => ({ facility: b.facility, ...targetFields(b.target) })) }))
+  app.get('/devices/bindings', (c) => c.json({ bindings: bindings.targets().map((b) => ({ facility: b.facility, ...targetFields(b.target) })) }))
 
   // 没绑的也列出来（设备 = local）：面板要给每个账号一个下拉，只列绑过的就没法绑第一次。
   // 身份 / 环境目标**不带** `deviceId`：带个 `local` 就是在说「它在本机跑」，而它恰恰不会退回本机。
-  app.get('/api/devices/facilities', (c) => {
+  app.get('/devices/facilities', (c) => {
     const bound = new Map(bindings.targets().map((b) => [b.facility, b.target]))
     const facilities = (deps.facilities?.() ?? [])
       .map((f) => ({ facility: f.facility, packageId: f.packageId, ...targetFields(bound.get(f.facility) ?? { kind: 'device', deviceId: LOCAL_DEVICE }) }))
@@ -163,7 +164,7 @@ export function mountDeviceRoutes(app: Hono, deps: DeviceRoutesDeps): void {
     return t
   }
 
-  app.put('/api/devices/bindings/:facility', async (c) => {
+  app.put('/devices/bindings/:facility', async (c) => {
     let body: unknown
     try { body = await c.req.json() } catch { return c.json({ error: 'body 不是合法 JSON' }, 400) }
     const facility = c.req.param('facility').trim()
@@ -175,7 +176,7 @@ export function mountDeviceRoutes(app: Hono, deps: DeviceRoutesDeps): void {
     return c.json({ facility, ...targetFields(bindings.target(facility) ?? { kind: 'device', deviceId: LOCAL_DEVICE }) })
   })
 
-  app.delete('/api/devices/bindings/:facility', (c) => {
+  app.delete('/devices/bindings/:facility', (c) => {
     bindings.clear(c.req.param('facility').trim())
     return c.body(null, 204)
   })

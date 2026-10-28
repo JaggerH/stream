@@ -9,6 +9,7 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { createStream, type Stream } from './index.ts'
 import { routes } from './routes.ts'
+import { deviceGateway } from './device-gateway.ts'
 import { readConfig } from '../bootstrap.ts'
 import { WsHub } from '../http/ws.ts'
 import { DebugLog } from '../http/debug-log.ts'
@@ -40,6 +41,7 @@ const io = (s: Stream, port: number, dashboardPort: number) => ({
   port,
   dashboardPort,
   restart: { running: async () => [], trigger: async () => 'reexec' as const },
+  gateway: deviceGateway(s, { basePath: '/api', isAdmin: () => true, backendUrls: () => [] }),
 })
 
 describe('sidequest 面板随 routes() 起（routes 层）', () => {

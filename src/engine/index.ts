@@ -15,7 +15,7 @@ import type { AppConfig } from '../types.ts'
 import { lockDataDir } from './data-dir-lock.ts'
 import { loadOrCreateApiToken, loadOrCreateExtToken } from '../http/secrets.ts'
 import { createRuntime, type StreamRuntime } from './runtime.ts'
-import { openDevices, type StreamDevices } from './devices.ts'
+import { openDevices, wireDeviceChanges, type StreamDevices } from './devices.ts'
 import { createCapabilities, loadOptional, provideBrowserCookies, type StreamCapabilities } from './capabilities.ts'
 import { TaskCenter } from '../tasks/center.ts'
 import type { TaskSettledEvent } from '../tasks/types.ts'
@@ -134,6 +134,9 @@ export async function createStream(opts: CreateStreamOptions): Promise<Stream> {
       ...(devices.identities ? { identities: devices.identities } : {}),
     })
     provideBrowserCookies(capabilities, kernel, line)
+    // 设备 / 绑定的上下线事件（openspec embeddable-device-gateway）：两条中继注册表随 harvest 域
+    // 在 bootstrap 里装配好，这里把它们的连接事件折进 `stream.devices.onChange`。
+    wireDeviceChanges(devices, kernel.harvest, line)
     await loadOptional(capabilities, stateDir, config, line)
     const instance: Stream = {
       kernel,

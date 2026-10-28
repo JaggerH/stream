@@ -21,26 +21,18 @@ import { createHttpApp, type HttpDeps } from '../http/app.ts'
 import { writeFixtureFromItem } from '../content/ad-fixtures.ts'
 import { WsHub, attachWs } from '../http/ws.ts'
 import { toClientItem } from '../http/client-item.ts'
-import { attachExtRelay, closeRelayServer } from '../http/ext-relay.ts'
-import { resolveExtToken } from '../http/ext-upgrade.ts'
+import { attachEventSourceRelay, EventSourceRelay } from '../event-source/relay.ts'
+import { makeDrain } from '../event-source/drain.ts'
+import { wireCookiesFeed } from '../event-source/cookies-feed.ts'
+import { authorizeAccess, parseTrustedOrigins, isLoopbackAddress, peerAddress, lanBaseUrls } from '../http/access-guard.ts'
+import { closeRelayServer } from '../http/ext-relay.ts'
+import { deviceGateway, type DeviceGateway } from './device-gateway.ts'
 import { summarizeCapability } from '../browser/capability-store.ts'
 import { materializeExtension } from '../browser/extension-dir.ts'
 import { installExtension } from '../browser/extension-install.ts'
 import { uninstallExtension } from '../browser/extension-uninstall.ts'
 import { reloadExtension } from '../browser/extension-reload.ts'
 import { readExtensionConsole } from '../browser/extension-console.ts'
-import { attachHostRelay } from '../http/host-relay.ts'
-import { EventSourceRelay, attachEventSourceRelay } from '../event-source/relay.ts'
-import { makeDrain } from '../event-source/drain.ts'
-import { wireCookiesFeed } from '../event-source/cookies-feed.ts'
-import { authorizeAccess, parseTrustedOrigins, isLoopbackAddress, peerAddress, lanBaseUrls } from '../http/access-guard.ts'
-import { mountDeviceRoutes } from '../http/device-routes.ts'
-import { mountExtBindingRoutes, REVOKED_CLOSE_CODE } from '../http/ext-binding-routes.ts'
-import { PAIRED_PLATFORMS } from '../devices/device-store.ts'
-import { ProfileClaims, agentFrom } from '../devices/profile-claim.ts'
-import { mountNodeRoutes } from '../http/node-routes.ts'
-import { cookieSlot } from '../credentials/cookie-slot.ts'
-import { mountIdentityRoutes } from '../http/identity-routes.ts'
 import { attachEnrichCommands } from '../http/enrich-ws.ts'
 import { attachAuthLoginCommands } from '../http/auth-login.ts'
 import { researchArtifactsDirFor } from './background.ts'
@@ -116,6 +108,12 @@ export interface RouteIo {
   /** sidequest 面板的口（面板进程随 routes 起并只绑 127.0.0.1；缺省 8678）。 */
   dashboardPort?: number
   restart: NonNullable<import('../http/app.ts').HttpDeps['restart']>
+  /**
+   * 设备网关（openspec embeddable-device-gateway）。由调用方（serve.ts）用 serve 的口径建好
+   * （isAdmin = 回环、backendUrls = 局域网地址），routes() 挂它的 HTTP 路由、attachRelayServers
+   * 挂它的 upgrade——两处必须拿到**同一个**实例。
+   */
+  gateway: DeviceGateway
 }
 
 export async function routes(io: RouteIo): Promise<Hono> {
@@ -501,58 +499,13 @@ export async function routes(io: RouteIo): Promise<Hono> {
     dataDir: resolveDataDir(config),
     home: homedir(),
   })
-  mountDeviceRoutes(app, {
-    store: deviceStore,
-    registry: harvest.hostRelays,
-    isLocal: (c) => isLoopbackAddress(peerAddress(c)),
-    backendUrls: () => lanBaseUrls(String(PORT)),
-    ...(facilityDevices ? { bindings: facilityDevices } : {}),
-    // 只收有包认领的 facility；调用时才问（包热装卸会变）。
-    knownFacility: (f) => pkgs.networkForFacility(f) !== undefined,
-    facilities: () => pkgs.facilities(),
-    // 身份 / 环境目标（browser-identity D7）：只收身份表里见过的账号、节点上标过的环境。表打不开 = 一律拒。
-    ...(siteIdentities ? { knownIdentity: (f: string, a: string) => siteIdentities!.list({ facility: f }).some((i) => i.accountId === a) } : {}),
-    ...(browserNodes ? { knownEnvironment: (e: string) => browserNodes!.list().some((n) => n.environment === e) } : {}),
-    // 设备没了，挂在它上面的 Chrome 也就没有执行位置可言——一并撤销并断开。
-    onRevoked: (id) => {
-      for (const b of extBindings.revokeDevice(id)) harvest.extRelays.kick(b, REVOKED_CLOSE_CODE, 'revoked')
-    },
-  })
-  mountIdentityRoutes(app, { identities: () => kernel.siteIdentities })
-  mountExtBindingRoutes(app, {
-    store: extBindings,
-    registry: harvest.extRelays,
-    devices: { name: (id) => deviceStore.list().find((d) => d.deviceId === id)?.name },
-    isLocal: (c) => isLoopbackAddress(peerAddress(c)),
-    backendUrls: () => lanBaseUrls(String(PORT)),
-    extId: EXT_ID,
-    ...(browserNodes ? { nodes: browserNodes } : {}),
-  })
-  // profile 认领（browser-identity D3）：没有节点表就无处可记，整组不挂。
-  if (browserNodes) {
-    const claims = new ProfileClaims({
-      agent: agentFrom(harvest.hostRelays),
-      nodes: browserNodes,
-      deviceOf: (b) => harvest.extRelays.deviceOf(b),
-      nodeOf: (b) => harvest.extRelays.nodeOf(b),
-      extId: EXT_ID,
-      log: (line) => console.log(line),
-    })
-    harvest.extRelays.onClaim((b, nonce) => claims.redeem(b, nonce))
-    // 新 profile 的竞态：认领等待中这台设备上新连上一个未认领的节点 → 补发一次。
-    harvest.extRelays.onBindingConnected((b) => claims.onBindingConnected(b))
-    kernel.effect(() => () => claims.close())
-    const claimAgent = agentFrom(harvest.hostRelays)
-    mountNodeRoutes(app, {
-      claims, nodes: browserNodes, isLocal: (c) => isLoopbackAddress(peerAddress(c)),
-      online: (b) => harvest.extRelays.isOnline(b),
-      // 节点行上的「扩展没给的登录态域」：读那个节点槽位最近一轮 cookiePull 的结果。
-      cookieGaps: (n) => auth.cookieGaps(cookieSlot(n.deviceId, n.nodeId)),
-      // 能识别 profile 的扩展设备：本机（桌面 agent）与每台在线的配对设备，agent 声明了 browser.claim 才算。
-      claimable: () => ['local', ...harvest.hostRelays.devices().filter((d) => PAIRED_PLATFORMS.has(d.hello.platform)).map((d) => d.hello.deviceId)]
-        .filter((id) => claimAgent(id)?.ops.has('browser.claim')),
-    })
-  }
+  // 设备面（openspec embeddable-device-gateway）：配对 / 设备 / 扩展绑定 / 节点 / 身份四组路由与
+  // 两条中继的 upgrade 全部装在 deviceGateway 里，serve 与嵌入方用同一个入口。这里的口径就是
+  // 历史行为：管理类端口只认本机回环，配对回执给局域网地址。
+  // 网关实例由调用方（serve.ts）建好、随 io 递进来——attachRelayServers 挂 upgrade 要用同一份
+  // （网关握着 ProfileClaims 的接线，两份实例就会双重登记认领钩子）。
+  const gateway = io.gateway
+  app.route(gateway.basePath, gateway.app)
   // 任务面（store/ledger/编译口）的装配在实例后台（`src/engine/background.ts`）：store 与
   // 账本由实例打开（两边各开一份 sqlite 连接就是两套状态），路由经 `tasks.assembly` 只读。
   // 查询档（scheduler=false）下 `builtins` 缺席 → 内置任务清单诚实地报空；store/ledger 开不
@@ -680,13 +633,9 @@ export function attachRelayServers(server: Server, io: RouteIo): void {
   const config = stream.config
   const hub = io.hub
   const debugLog = io.debugLog
-  const recordDebug: (e: DebugEntry) => void = (e) => { debugLog.put(e) }
   const PORT = io.port
   const { extToken, apiToken } = stream.secrets
   const { host: capabilityHost, loaded: loadedCapabilities } = stream.capabilities
-  const { deviceStore, extBindings, facilityDevices, facilityBindings, nodes: browserNodes } = stream.devices
-  const streamEvents = kernel.streamEvents
-  const harvest = kernel.harvest
   kernel.effect(() => () => { server.close() })
   attachWs(server as unknown as Server, hub, (req, url) =>
     authorizeAccess({
@@ -696,43 +645,14 @@ export function attachRelayServers(server: Server, io: RouteIo): void {
       token: apiToken,
     }) !== 'denied'
   )
-  // 两条中继的 wss **接住返回值并登记成内核 effect**：过去这里把它们丢了，于是关停时
-  // 两个 WebSocketServer 加上每条连接身上那个 20s ping 定时器从没人关——全项目关停期
-  // 最后一处常驻连接泄漏。`closeRelayServer` 先断连再关服务器（interval 挂在连接上，
-  // 光 close 服务器清不掉它）。
-  kernel.effect(() => {
-    // 本机 token → 本机节点（不带 nodeId 的老扩展 → 兼容槽）；配对 token → 那条绑定，换节点来连 4004
-    // （device-execution D7、browser-identity D1/D2，判法在 resolveExtToken）。
-    const wss = attachExtRelay(server as unknown as Server, harvest.extRelays, {
-      resolveToken: (t, hs) => resolveExtToken(t, hs, { localToken: extToken, bindings: extBindings, log: console.log }),
-    })
-    return () => closeRelayServer(wss)
-  })
-  // host-desktop Engine relay at /api/host — Stream Desktop's native process (enigo + OS a11y)
-  // connects here. Reuses the local shared secret — it reads it straight off disk (it is a local
-  // process, so the filesystem is its channel; see app/host-agent datadir.rs — the directory name
-  // is internal, the shipped binary is `stream-desktop`).
-  // Nothing connected → kind:'desktop' sources decline as a miss.
-  kernel.effect(() => {
-    const wss = attachHostRelay(server as unknown as Server, harvest.hostRelays, {
-      token: extToken,
-      deviceAuth: (t) => deviceStore.deviceForToken(t),
-      onDeviceSeen: (id) => deviceStore.touch(id),
-      // A phone whose accessibility service went off can still connect but cannot do anything.
-      // The OS turns it off silently (app updates, some OEM cleanups), so say it where the user looks.
-      onDeviceState: (id, prev, next) => {
-        if (next.a11yEnabled || prev?.a11yEnabled === false) return
-        const name = harvest.hostRelays.devices().find((d) => d.hello.deviceId === id)?.hello.name ?? id
-        streamEvents.emit({
-          type: 'device.a11y-off', severity: 'warn',
-          title: `${name} 的无障碍服务关了`,
-          body: '手机上的 Stream 连着，但无障碍服务被系统关掉了，手机上的 recipe 都跑不了。到手机的 设置 → 无障碍 → Stream 重新打开。',
-          dedupeKey: `device-a11y-off:${id}`,
-        })
-      },
-    })
-    return () => closeRelayServer(wss)
-  })
+  // 扩展中继（/api/ext）与 host 中继（/api/host）的握手都装在设备网关里（openspec
+  // embeddable-device-gateway，与 routes() 挂的四组路由同一份实例）：这里把网关的认领函数挂到
+  // 已监听的 server 上，`close()` 登记成内核 effect——`closeRelayServer` 先断连再关服务器
+  // （interval 挂在连接上，光 close 服务器清不掉它），关停期没有常驻连接泄漏。
+  // 事件源中继（/api/event-source）不在网关里：它是「外部子进程收信端」，不是设备面。
+  const gateway = io.gateway
+  kernel.effect(() => () => gateway.close())
+  server.on('upgrade', (req, socket, head) => { gateway.handleUpgrade(req, socket, head) })
   // 外部事件源子进程的收信端 at /api/event-source（Spec 1 只装端点，spawn/看护留 Spec 2）。
   // 与上面两条中继同一把 `extToken`、同一个 teardown 形状。事件帧经 `drain` 触发已注册任务
   // （`EVENT_SOURCE_TASK_MAP` 现为空 → 每个事件都 mapToTask=null，drain 直接 ack；Spec 2 加

@@ -12,7 +12,7 @@ export function mountIdentityRoutes(app: Hono, deps: { identities: () => Identit
   const unavailable = { error: '身份表不可用（stream.db 打不开）' }
   const str = (v: unknown): string | undefined => (typeof v === 'string' && v ? v : undefined)
 
-  app.get('/api/identities', (c) => {
+  app.get('/identities', (c) => {
     const svc = deps.identities()
     if (!svc) return c.json(unavailable, 503)
     const facility = str(c.req.query('facility'))
@@ -20,7 +20,7 @@ export function mountIdentityRoutes(app: Hono, deps: { identities: () => Identit
     return c.json({ identities: svc.list({ ...(facility ? { facility } : {}), ...(nodeId ? { nodeId } : {}) }) })
   })
 
-  app.post('/api/identities/refresh', async (c) => {
+  app.post('/identities/refresh', async (c) => {
     const svc = deps.identities()
     if (!svc) return c.json(unavailable, 503)
     let body: Record<string, unknown> = {}

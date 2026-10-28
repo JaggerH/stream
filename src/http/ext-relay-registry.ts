@@ -35,6 +35,15 @@ export interface NodeSeenEvent {
   profileName?: string
 }
 
+/** ExtRelayRegistry 的上下线事件载荷（at = 毫秒时间戳；deviceId / nodeId 认不出时不带）。 */
+export interface ExtChange {
+  bindingId: string
+  deviceId?: string
+  nodeId?: string
+  online: boolean
+  at: number
+}
+
 /** 认领帧的回答（`ProfileClaims.redeem` 的结果）。 */
 export type ClaimReply = { ok: true; profileDir: string; profileName: string } | { ok: false; error: string }
 
@@ -68,6 +77,7 @@ export class ExtRelayRegistry {
   }
 
   connect(bindingId: string, socket: ExtSocket & { close?: (code: number, reason: string) => void }, info?: ExtHandshake): void {
+    const wasOnline = this.sockets.has(bindingId)
     let r = this.relays.get(bindingId)
     if (!r) {
       r = this.deps.makeRelay(bindingId)
@@ -76,7 +86,10 @@ export class ExtRelayRegistry {
     }
     r.connect(socket, info)
     this.sockets.set(bindingId, socket)
-    this.connectedAt.set(bindingId, (this.deps.now ?? Date.now)())
+    const at = (this.deps.now ?? Date.now)()
+    this.connectedAt.set(bindingId, at)
+    // 新连接顶掉旧连接：绑定本来就在线，只换 socket，不重发 online。
+    if (!wasOnline) this.emitChange({ bindingId, deviceId: this.deviceOf(bindingId), nodeId: this.nodeOf(bindingId), online: true, at })
     if (info?.nodeId) {
       const deviceId = this.deviceOf(bindingId)
       // 节点表写不进去不影响这条连接：表只服务默认节点与留痕，relay 本身已经能用了。
@@ -103,6 +116,21 @@ export class ExtRelayRegistry {
     this.connectedListeners.push(fn)
   }
 
+  // ── 上下线事件（openspec embeddable-device-gateway）───────────────────────────
+  private readonly changeListeners: Array<(ch: ExtChange) => void> = []
+
+  /** 绑定连上 / 断开时叫一声。同一绑定新连接顶掉旧连接只发一次 online（被顶掉的旧 socket 关闭是
+   *  no-op）；撤销走 kick，自然发 offline。监听器抛错只记日志，不影响连接。 */
+  onChange(fn: (ch: ExtChange) => void): void {
+    this.changeListeners.push(fn)
+  }
+
+  private emitChange(ch: ExtChange): void {
+    for (const fn of this.changeListeners) {
+      try { fn(ch) } catch { /* 听众的问题不是中继的问题 */ }
+    }
+  }
+
   /** 对每一条本机 relay（现有的，以及之后才连上的节点）各调一次——门面的长期监听靠它扇出。 */
   eachLocalRelay(fn: (r: ExtRelay) => void): void {
     for (const [id, r] of this.relays) if (isLocalBinding(id)) fn(r)
@@ -122,10 +150,10 @@ export class ExtRelayRegistry {
 
   disconnect(bindingId: string, socket: ExtSocket): void {
     this.relays.get(bindingId)?.disconnect(socket)
-    if (this.sockets.get(bindingId) === socket) {
-      this.sockets.delete(bindingId)
-      this.connectedAt.delete(bindingId)
-    }
+    if (this.sockets.get(bindingId) !== socket) return
+    this.sockets.delete(bindingId)
+    this.connectedAt.delete(bindingId)
+    this.emitChange({ bindingId, deviceId: this.deviceOf(bindingId), nodeId: this.nodeOf(bindingId), online: false, at: (this.deps.now ?? Date.now)() })
   }
 
   /** 撤销：断开并忘掉。返回它当时在不在线。 */
@@ -138,6 +166,7 @@ export class ExtRelayRegistry {
     // 本机的 relay 不忘：门面挂在它们身上的监听要一直在。
     if (!isLocalBinding(bindingId)) this.relays.delete(bindingId)
     if (!s) return false
+    this.emitChange({ bindingId, deviceId: this.deviceOf(bindingId), nodeId: this.nodeOf(bindingId), online: false, at: (this.deps.now ?? Date.now)() })
     try { s.close?.(code, reason) } catch { /* 已经断了 */ }
     return true
   }

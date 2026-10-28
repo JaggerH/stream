@@ -25,7 +25,7 @@ export interface NodeRoutesDeps {
     list(): BrowserNode[]
     update(nodeId: string, patch: { label?: string | null; environment?: string | null }): BrowserNode | undefined
   }
-  isLocal: (c: Context) => boolean
+  isAdmin: (c: Context) => boolean
   /** 节点的绑定此刻在不在线（`ExtRelayRegistry.isOnline`）。没注入 = 都当不在线。 */
   online?: (bindingId: string) => boolean
   /**
@@ -88,22 +88,22 @@ async function claimOpts(c: Context): Promise<ClaimOpts | string> {
 export function mountNodeRoutes(app: Hono, deps: NodeRoutesDeps): void {
   const LOCAL_ONLY = '只能在运行 Stream 的那台机器上识别 profile'
 
-  app.get('/api/devices/:id/profiles', async (c) => {
-    if (!deps.isLocal(c)) return c.json({ error: LOCAL_ONLY }, 403)
+  app.get('/devices/:id/profiles', async (c) => {
+    if (!deps.isAdmin(c)) return c.json({ error: LOCAL_ONLY }, 403)
     const opts = await discoverOpts(c)
     if (typeof opts === 'string') return c.json({ error: opts }, 400)
     try { return c.json(await deps.claims.discover(c.req.param('id'), opts)) } catch (e) { return failure(c, e) }
   })
 
-  app.post('/api/devices/:id/profiles/claim', async (c) => {
-    if (!deps.isLocal(c)) return c.json({ error: LOCAL_ONLY }, 403)
+  app.post('/devices/:id/profiles/claim', async (c) => {
+    if (!deps.isAdmin(c)) return c.json({ error: LOCAL_ONLY }, 403)
     const opts = await claimOpts(c)
     if (typeof opts === 'string') return c.json({ error: opts }, 400)
     try { return c.json(await deps.claims.start(c.req.param('id'), opts)) } catch (e) { return failure(c, e) }
   })
 
-  app.get('/api/devices/:id/profiles/claim/:claimId', (c) => {
-    if (!deps.isLocal(c)) return c.json({ error: LOCAL_ONLY }, 403)
+  app.get('/devices/:id/profiles/claim/:claimId', (c) => {
+    if (!deps.isAdmin(c)) return c.json({ error: LOCAL_ONLY }, 403)
     const s = deps.claims.get(c.req.param('claimId'))
     // 会话 2 分钟后连同 nonce 一起扔掉；过期与不存在对面板是同一件事：重新识别。
     if (!s) return c.json({ error: '没有这次认领（过期了？）' }, 404)
@@ -112,7 +112,7 @@ export function mountNodeRoutes(app: Hono, deps: NodeRoutesDeps): void {
 
   // 面板的设备页（browser-identity D12）与扩展 popup（自己是哪个环境）读它。只是设置，不开窗、不带邮箱，
   // 所以不像上面三条那样只认本机。`woken_at` 也在行上：面板据此列「Stream 在后台打开着的 profile」（D8）。
-  app.get('/api/devices/nodes', (c) => c.json({
+  app.get('/devices/nodes', (c) => c.json({
     nodes: deps.nodes.list().map((n) => {
       const gaps = deps.cookieGaps?.(n)
       return { ...n, online: deps.online?.(n.bindingId) ?? false, ...(gaps ? { cookieGaps: gaps } : {}) }
@@ -120,7 +120,7 @@ export function mountNodeRoutes(app: Hono, deps: NodeRoutesDeps): void {
     claimable: deps.claimable?.() ?? [],
   }))
 
-  app.patch('/api/devices/nodes/:nodeId', async (c) => {
+  app.patch('/devices/nodes/:nodeId', async (c) => {
     let body: unknown
     try { body = await c.req.json() } catch { return c.json({ error: 'body 不是合法 JSON' }, 400) }
     const b = (body ?? {}) as Record<string, unknown>

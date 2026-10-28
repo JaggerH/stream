@@ -16,6 +16,8 @@ import { existsSync, readFileSync, writeFileSync, unlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, dirname } from 'node:path'
 import { routes, attachRelayServers } from './engine/routes.ts'
+import { deviceGateway } from './engine/device-gateway.ts'
+import { isLoopbackAddress, peerAddress, lanBaseUrls } from './http/access-guard.ts'
 import { createStream, createRuntime, type Stream } from './engine/index.ts'
 import { loadConfig } from './config-env.ts'
 import { type HttpDeps } from './http/app.ts'
@@ -209,7 +211,10 @@ async function main() {
     running: () => stream.tasks.runningTasks(),
     trigger: makeRestartTrigger({ mode: classifyLauncher(process.env), shutdown: () => shutdown }),
   }
-  const app = await routes({
+  // 设备网关（openspec embeddable-device-gateway）：serve 的口径 = 管理类端口只认本机回环、
+  // 配对回执给局域网地址（历史行为）。一个实例一份，HTTP 挂载（routes）与中继挂载
+  // （attachRelayServers）必须拿到同一个对象——所以 io 建一次、两处共用。
+  const io = {
     stream,
     hub,
     debugLog,
@@ -217,13 +222,19 @@ async function main() {
     trackSync,
     port: PORT,
     restart,
-  })
+    gateway: deviceGateway(stream, {
+      basePath: '/api',
+      isAdmin: (c) => isLoopbackAddress(peerAddress(c)),
+      backendUrls: () => lanBaseUrls(String(PORT)),
+    }),
+  }
+  const app = await routes(io)
 
   const server = serve({ fetch: app.fetch, port: PORT, hostname: '0.0.0.0' }, (info) =>
     console.log(`[stream] HTTP+WS on http://0.0.0.0:${info.port} (ws: /ws)`)
   )
   kernel.effect(() => () => { server.close() })
-  attachRelayServers(server as unknown as Server, { stream, hub, debugLog, track, trackSync, port: PORT, restart })
+  attachRelayServers(server as unknown as Server, io)
   const streams = kernel.scheduling.scheduler.list()
   console.log(`[stream] ${streams.length} streams → vault ${config.vault_root}`)
   // The scheduler is the only standing harvest engine (ARCHITECTURE.md Data Scheduling,

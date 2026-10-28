@@ -24,7 +24,7 @@ export interface ExtBindingRoutesDeps {
   store: ExtBindingStore
   registry: { isOnline(bindingId: string): boolean; kick(bindingId: string, code: number, reason: string): boolean }
   devices: { name(deviceId: string): string | undefined }
-  isLocal: (c: Context) => boolean
+  isAdmin: (c: Context) => boolean
   /** 扩展里该填的地址（同 `/api/devices/pairing-code` 的 `backendUrls`）：面板把它和码一起给用户。 */
   backendUrls?: (c: Context) => string[]
   extId?: string
@@ -51,15 +51,15 @@ export function mountExtBindingRoutes(app: Hono, deps: ExtBindingRoutesDeps): vo
     return n ? deps.nodes?.defaultOf(n.deviceId)?.nodeId === n.nodeId : b.default === true
   }
 
-  app.post('/api/devices/:id/ext-pairing-code', (c) => {
-    if (!deps.isLocal(c)) return c.json({ error: '配对码只能在运行 Stream 的那台机器上生成' }, 403)
+  app.post('/devices/:id/ext-pairing-code', (c) => {
+    if (!deps.isAdmin(c)) return c.json({ error: '配对码只能在运行 Stream 的那台机器上生成' }, 403)
     const id = c.req.param('id')
     if (id === LOCAL_DEVICE) return c.json({ error: '本机的浏览器不需要配对——装上扩展就会自己连上' }, 400)
     if (deps.devices.name(id) === undefined) return c.json({ error: `没有这台设备：${id}` }, 404)
     return c.json({ ...deps.store.createPairingCode(id), backends: deps.backendUrls?.(c) ?? [] })
   })
 
-  app.post('/api/ext/pair', async (c) => {
+  app.post('/ext/pair', async (c) => {
     if (!isExtensionOrigin(c.req.header('Origin') ?? '', deps.extId)) return c.json({ error: 'forbidden' }, 403)
     let body: unknown
     try { body = await c.req.json() } catch { return c.json({ error: 'body 不是合法 JSON' }, 400) }
@@ -70,14 +70,14 @@ export function mountExtBindingRoutes(app: Hono, deps: ExtBindingRoutesDeps): vo
     return c.json({ bindingId: r.bindingId, token: r.token, deviceId: r.deviceId, deviceName: deps.devices.name(r.deviceId) ?? r.deviceId })
   })
 
-  app.get('/api/ext/bindings', (c) =>
+  app.get('/ext/bindings', (c) =>
     c.json({ bindings: deps.store.list().map((b) => ({ ...b, default: isDefault(b), online: deps.registry.isOnline(b.bindingId) })) }),
   )
 
   // 设备的默认浏览器：执行选绑定时先看它（离线时退回最近连上的，见 `ExtRelayRegistry.pick`）。
   // 绑定的节点已知 → 设在节点上（browser-identity D1：用户选的本来就是一个 profile），同设备绑定表上
   // 的旧标记一并清掉，免得两处各说一个默认；节点还不知道（扩展没升级）→ 照旧记在绑定上，节点连上时迁。
-  app.put('/api/ext/bindings/:id/default', (c) => {
+  app.put('/ext/bindings/:id/default', (c) => {
     const id = c.req.param('id')
     const n = nodeOf(id)
     if (n && deps.nodes?.setDefault(n.nodeId)) {
@@ -87,14 +87,14 @@ export function mountExtBindingRoutes(app: Hono, deps: ExtBindingRoutesDeps): vo
     }
     return deps.store.setDefault(id) ? c.body(null, 204) : c.json({ error: '没有这条扩展绑定' }, 404)
   })
-  app.delete('/api/ext/bindings/:id/default', (c) => {
+  app.delete('/ext/bindings/:id/default', (c) => {
     const id = c.req.param('id')
     const n = nodeOf(id)
     const cleared = n ? deps.nodes?.clearDefault(n.nodeId) ?? false : false
     return deps.store.clearDefault(id) || cleared ? c.body(null, 204) : c.json({ error: '没有这条扩展绑定' }, 404)
   })
 
-  app.delete('/api/ext/bindings/:id', (c) => {
+  app.delete('/ext/bindings/:id', (c) => {
     const id = c.req.param('id')
     if (!deps.store.revoke(id)) return c.json({ error: '没有这条扩展绑定' }, 404)
     deps.registry.kick(id, REVOKED_CLOSE_CODE, 'revoked')

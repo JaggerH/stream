@@ -24,7 +24,7 @@ beforeEach(() => {
     bindings: new FacilityDeviceStore(join(dir, 'stream.db')),
     knownFacility: (f) => f === 'eastmoney' || f === 'bilibili',
     facilities: () => [{ facility: 'eastmoney', packageId: '@streamapp/eastmoney' }, { facility: 'bilibili', packageId: '@streamapp/bilibili' }],
-    isLocal: () => local,
+    isAdmin: () => local,
     backendUrls: () => ['http://10.9.8.21:8900', 'http://100.70.0.5:8900'],
     knownIdentity: (f, a) => f === 'bilibili' && a === '123',
     knownEnvironment: (e) => e === '个人',
@@ -37,38 +37,38 @@ const post = (path: string, body?: unknown) =>
 describe('device routes', () => {
   it('facility 绑定：PUT / GET / DELETE；未知设备 400；local 等于清除', async () => {
     const put = (f: string, deviceId: string) =>
-      app.request(`/api/devices/bindings/${f}`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ deviceId }) })
+      app.request(`/devices/bindings/${f}`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ deviceId }) })
     expect((await put('eastmoney', 'linux:nope')).status).toBe(400)
-    const { code } = await (await post('/api/devices/pairing-code')).json() as { code: string }
-    const { deviceId } = await (await post('/api/devices/pair', { code, name: 'NAS', platform: 'linux' })).json() as { deviceId: string }
+    const { code } = await (await post('/devices/pairing-code')).json() as { code: string }
+    const { deviceId } = await (await post('/devices/pair', { code, name: 'NAS', platform: 'linux' })).json() as { deviceId: string }
     expect((await put('eastmoney', deviceId)).status).toBe(200)
-    expect(await (await app.request('/api/devices/bindings')).json()).toEqual({ bindings: [{ facility: 'eastmoney', deviceId }] })
+    expect(await (await app.request('/devices/bindings')).json()).toEqual({ bindings: [{ facility: 'eastmoney', deviceId }] })
     expect((await put('eastmoney', 'local')).status).toBe(200)
-    expect(await (await app.request('/api/devices/bindings')).json()).toEqual({ bindings: [] })
+    expect(await (await app.request('/devices/bindings')).json()).toEqual({ bindings: [] })
     await put('eastmoney', deviceId)
-    expect((await app.request('/api/devices/bindings/eastmoney', { method: 'DELETE' })).status).toBe(204)
+    expect((await app.request('/devices/bindings/eastmoney', { method: 'DELETE' })).status).toBe(204)
   })
 
   // 打错一个 facility 名（`eastmony`）存进去不报错，真正的东财执行照旧在本机跑——用户以为绑好了。
   it('facility 绑定：不认识的 facility 400，参数去首尾空白', async () => {
-    const { code } = await (await post('/api/devices/pairing-code')).json() as { code: string }
-    const { deviceId } = await (await post('/api/devices/pair', { code, name: 'NAS', platform: 'linux' })).json() as { deviceId: string }
+    const { code } = await (await post('/devices/pairing-code')).json() as { code: string }
+    const { deviceId } = await (await post('/devices/pair', { code, name: 'NAS', platform: 'linux' })).json() as { deviceId: string }
     const put = (f: string) =>
-      app.request(`/api/devices/bindings/${encodeURIComponent(f)}`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ deviceId }) })
+      app.request(`/devices/bindings/${encodeURIComponent(f)}`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ deviceId }) })
     const bad = await put('eastmony')
     expect(bad.status).toBe(400)
     expect(await bad.json()).toEqual({ error: '没有这个账号（facility）：eastmony' })
     const ok = await put(' eastmoney ')
     expect(ok.status).toBe(200)
     expect(await ok.json()).toEqual({ facility: 'eastmoney', deviceId })
-    expect(await (await app.request('/api/devices/bindings')).json()).toEqual({ bindings: [{ facility: 'eastmoney', deviceId }] })
+    expect(await (await app.request('/devices/bindings')).json()).toEqual({ bindings: [{ facility: 'eastmoney', deviceId }] })
   })
 
   it('facility 列表：全部已知 facility 按名排序，绑了的带设备，没绑的是 local', async () => {
-    const { code } = await (await post('/api/devices/pairing-code')).json() as { code: string }
-    const { deviceId } = await (await post('/api/devices/pair', { code, name: 'NAS', platform: 'linux' })).json() as { deviceId: string }
-    await app.request('/api/devices/bindings/eastmoney', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ deviceId }) })
-    expect(await (await app.request('/api/devices/facilities')).json()).toEqual({ facilities: [
+    const { code } = await (await post('/devices/pairing-code')).json() as { code: string }
+    const { deviceId } = await (await post('/devices/pair', { code, name: 'NAS', platform: 'linux' })).json() as { deviceId: string }
+    await app.request('/devices/bindings/eastmoney', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ deviceId }) })
+    expect(await (await app.request('/devices/facilities')).json()).toEqual({ facilities: [
       { facility: 'bilibili', packageId: '@streamapp/bilibili', deviceId: 'local' },
       { facility: 'eastmoney', packageId: '@streamapp/eastmoney', deviceId },
     ] })
@@ -76,7 +76,7 @@ describe('device routes', () => {
 
   it('facility 目标：身份 / 环境（browser-identity D7）；只收见过的身份与标过的环境；恰好一个', async () => {
     const put = (f: string, body: unknown) =>
-      app.request(`/api/devices/bindings/${f}`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
+      app.request(`/devices/bindings/${f}`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
     const id = await put('bilibili', { accountId: '123' })
     expect(id.status).toBe(200)
     expect(await id.json()).toEqual({ facility: 'bilibili', accountId: '123' })
@@ -87,31 +87,31 @@ describe('device routes', () => {
     expect(two.status).toBe(400)
     expect((await two.json()).error).toContain('只能给一个')
     expect((await put('eastmoney', {})).status).toBe(400)
-    expect(await (await app.request('/api/devices/bindings')).json()).toEqual({ bindings: [
+    expect(await (await app.request('/devices/bindings')).json()).toEqual({ bindings: [
       { facility: 'bilibili', accountId: '123' },
       { facility: 'eastmoney', environment: '个人' },
     ] })
     // 身份 / 环境目标不带 deviceId——带个 local 就是在说它在本机跑
-    expect(await (await app.request('/api/devices/facilities')).json()).toEqual({ facilities: [
+    expect(await (await app.request('/devices/facilities')).json()).toEqual({ facilities: [
       { facility: 'bilibili', packageId: '@streamapp/bilibili', accountId: '123' },
       { facility: 'eastmoney', packageId: '@streamapp/eastmoney', environment: '个人' },
     ] })
   })
 
   it('pair accepts platform linux and rejects unknown platforms', async () => {
-    const { code } = await (await post('/api/devices/pairing-code')).json() as { code: string }
-    const bad = await post('/api/devices/pair', { code, name: 'x', platform: 'windows' })
+    const { code } = await (await post('/devices/pairing-code')).json() as { code: string }
+    const bad = await post('/devices/pair', { code, name: 'x', platform: 'windows' })
     expect(bad.status).toBe(400)
-    const ok = await post('/api/devices/pair', { code, name: 'NAS', platform: 'linux' })
+    const ok = await post('/devices/pair', { code, name: 'NAS', platform: 'linux' })
     expect(ok.status).toBe(200)
     expect(((await ok.json()) as { deviceId: string }).deviceId).toMatch(/^linux:/)
   })
 
   it('only this machine can mint a pairing code; one QR names every address and the code', async () => {
     local = false
-    expect((await post('/api/devices/pairing-code')).status).toBe(403)
+    expect((await post('/devices/pairing-code')).status).toBe(403)
     local = true
-    const res = await post('/api/devices/pairing-code')
+    const res = await post('/devices/pairing-code')
     expect(res.status).toBe(200)
     const body = await res.json() as { code: string; qr: string[] }
     // One code to scan; the phone lets the user pick the address (LAN at home, Tailscale away).
@@ -123,27 +123,27 @@ describe('device routes', () => {
   })
 
   it('pairing with the code returns a token; a wrong code is 403 invalid-code', async () => {
-    const { code } = await (await post('/api/devices/pairing-code')).json() as { code: string }
+    const { code } = await (await post('/devices/pairing-code')).json() as { code: string }
     local = false // the phone is not this machine
-    const bad = await post('/api/devices/pair', { code: code === '000000' ? '111111' : '000000' })
+    const bad = await post('/devices/pair', { code: code === '000000' ? '111111' : '000000' })
     expect(bad.status).toBe(403)
     expect(await bad.json()).toEqual({ error: 'invalid-code' })
-    const ok = await post('/api/devices/pair', { code, name: 'K80' })
+    const ok = await post('/devices/pair', { code, name: 'K80' })
     expect(ok.status).toBe(200)
     const { deviceId, deviceToken } = await ok.json() as { deviceId: string; deviceToken: string }
     expect(store.deviceForToken(deviceToken)).toBe(deviceId)
   })
 
   it('a malformed pair body is 400', async () => {
-    expect((await post('/api/devices/pair', { code: 123 })).status).toBe(400)
-    expect((await app.request('/api/devices/pair', { method: 'POST', body: 'nope' })).status).toBe(400)
+    expect((await post('/devices/pair', { code: 123 })).status).toBe(400)
+    expect((await app.request('/devices/pair', { method: 'POST', body: 'nope' })).status).toBe(400)
   })
 
   it('lists paired phones merged with online devices', async () => {
     const r = store.pair(store.createPairingCode().code, 'K80')
     if (!r.ok) throw new Error('expected ok')
     registry.connect({ send: () => {} }, { deviceId: 'desktop:pc', platform: 'windows', name: 'PC', agentVersion: '0.1.0', ops: [] })
-    const { devices } = await (await app.request('/api/devices')).json() as { devices: Array<Record<string, unknown>> }
+    const { devices } = await (await app.request('/devices')).json() as { devices: Array<Record<string, unknown>> }
     expect(devices).toEqual(expect.arrayContaining([
       expect.objectContaining({ deviceId: r.deviceId, name: 'K80', platform: 'android', paired: true, online: false }),
       expect.objectContaining({ deviceId: 'desktop:pc', platform: 'windows', paired: false, online: true, agentVersion: '0.1.0' }),
@@ -156,13 +156,13 @@ describe('device routes', () => {
     registry.connect({ send: () => {} }, { deviceId: r.deviceId, platform: 'android', name: 'K80', agentVersion: '0.1.0', ops: [] })
     const state = { a11yEnabled: false, screenOn: true, keyguardLocked: false, battery: 40, charging: false }
     registry.setState(r.deviceId, state)
-    const body = await (await app.request('/api/devices')).json() as { devices: Array<{ state?: unknown }> }
+    const body = await (await app.request('/devices')).json() as { devices: Array<{ state?: unknown }> }
     expect(body.devices[0].state).toEqual(state)
   })
 
   describe('POST /api/devices/:id/ops', () => {
     const opPost = (id: string, body: string) =>
-      app.request(`/api/devices/${encodeURIComponent(id)}/ops`, { method: 'POST', body })
+      app.request(`/devices/${encodeURIComponent(id)}/ops`, { method: 'POST', body })
     const sent: string[] = []
     let phoneId: string
     beforeEach(() => {
@@ -209,22 +209,22 @@ describe('device routes', () => {
     const closed: number[] = []
     registry.connect({ send: () => {}, close: (c) => void closed.push(c ?? 0) },
       { deviceId: r.deviceId, platform: 'android', name: 'K80', agentVersion: '0.1.0', ops: [] })
-    const res = await app.request(`/api/devices/${encodeURIComponent(r.deviceId)}`, { method: 'DELETE' })
+    const res = await app.request(`/devices/${encodeURIComponent(r.deviceId)}`, { method: 'DELETE' })
     expect(res.status).toBe(204)
     expect(closed).toEqual([4003])
     expect(registry.devices()).toHaveLength(0)
     expect(store.deviceForToken(r.deviceToken)).toBeUndefined()
-    expect((await app.request(`/api/devices/${encodeURIComponent(r.deviceId)}`, { method: 'DELETE' })).status).toBe(404)
+    expect((await app.request(`/devices/${encodeURIComponent(r.deviceId)}`, { method: 'DELETE' })).status).toBe(404)
   })
 
   // design D7：挂在这台设备上的扩展绑定随之撤销——由 onRevoked 接（serve.ts 里撤绑定并断开）。
   it('revoking a device tells onRevoked which device went', async () => {
     const revoked: string[] = []
     const app2 = new Hono()
-    mountDeviceRoutes(app2, { store, registry, isLocal: () => true, backendUrls: () => [], onRevoked: (id) => revoked.push(id) })
+    mountDeviceRoutes(app2, { store, registry, isAdmin: () => true, backendUrls: () => [], onRevoked: (id) => revoked.push(id) })
     const r = store.pair(store.createPairingCode().code, 'NAS', 'linux')
     if (!r.ok) throw new Error('expected ok')
-    expect((await app2.request(`/api/devices/${encodeURIComponent(r.deviceId)}`, { method: 'DELETE' })).status).toBe(204)
+    expect((await app2.request(`/devices/${encodeURIComponent(r.deviceId)}`, { method: 'DELETE' })).status).toBe(204)
     expect(revoked).toEqual([r.deviceId])
   })
 })

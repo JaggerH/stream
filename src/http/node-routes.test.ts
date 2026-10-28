@@ -41,7 +41,7 @@ beforeEach(() => {
   })
   local = true
   app = new Hono()
-  mountNodeRoutes(app, { claims, nodes, isLocal: () => local })
+  mountNodeRoutes(app, { claims, nodes, isAdmin: () => local })
 })
 
 const json = (method: string, path: string, body?: unknown) =>
@@ -51,16 +51,16 @@ describe('node routes', () => {
   it('profile 路由只认本机请求', async () => {
     connectAgent({ deviceId: 'desktop:pc' })
     local = false
-    expect((await app.request('/api/devices/desktop:pc/profiles')).status).toBe(403)
-    expect((await json('POST', '/api/devices/desktop:pc/profiles/claim')).status).toBe(403)
-    expect((await app.request('/api/devices/desktop:pc/profiles/claim/x')).status).toBe(403)
+    expect((await app.request('/devices/desktop:pc/profiles')).status).toBe(403)
+    expect((await json('POST', '/devices/desktop:pc/profiles/claim')).status).toBe(403)
+    expect((await app.request('/devices/desktop:pc/profiles/claim/x')).status).toBe(403)
     expect(ops).toEqual([])
   })
 
   it('设备不在线 404；agent 太旧（没声明 op）409', async () => {
-    expect((await app.request('/api/devices/desktop:pc/profiles')).status).toBe(404)
+    expect((await app.request('/devices/desktop:pc/profiles')).status).toBe(404)
     connectAgent({ deviceId: 'desktop:old', ops: ['ensureApp'] })
-    const r = await json('POST', '/api/devices/desktop:old/profiles/claim')
+    const r = await json('POST', '/devices/desktop:old/profiles/claim')
     expect(r.status).toBe(409)
     expect((await r.json() as { error: string }).error).toContain('browser.claim')
   })
@@ -68,7 +68,7 @@ describe('node routes', () => {
   it('discover：local 指本机桌面 agent；已认领的节点标出来', async () => {
     connectAgent({ deviceId: 'desktop:pc' })
     nodes.seen({ nodeId: 'node_a', deviceId: 'local', bindingId: 'local:node_a', profileDir: 'Default', profileName: '工作' })
-    const r = await app.request('/api/devices/local/profiles')
+    const r = await app.request('/devices/local/profiles')
     expect(r.status).toBe(200)
     expect(await r.json()).toEqual({
       deviceId: 'desktop:pc', userDataDir: 'C:\\U',
@@ -79,42 +79,42 @@ describe('node routes', () => {
 
   it('claim：开会话、逐个 browser.claim、交回后轮询看到 claimed', async () => {
     connectAgent({ deviceId: 'desktop:pc' })
-    const r = await json('POST', '/api/devices/desktop:pc/profiles/claim', {})
+    const r = await json('POST', '/devices/desktop:pc/profiles/claim', {})
     expect(r.status).toBe(200)
     const s = await r.json() as { claimId: string; profiles: Array<{ state: string }> }
     expect(ops).toEqual(['browser.profiles', 'browser.claim:Default', 'browser.claim:Profile 1'])
     expect(s.profiles.map((p) => p.state)).toEqual(['pending', 'pending'])
-    expect((await app.request('/api/devices/desktop:pc/profiles/claim/nope')).status).toBe(404)
-    const poll = await (await app.request(`/api/devices/desktop:pc/profiles/claim/${s.claimId}`)).json() as { done: boolean }
+    expect((await app.request('/devices/desktop:pc/profiles/claim/nope')).status).toBe(404)
+    const poll = await (await app.request(`/devices/desktop:pc/profiles/claim/${s.claimId}`)).json() as { done: boolean }
     expect(poll.done).toBe(false)
   })
 
   it('claim 带 dirs：只认领点名的 profile；dirs 形状不对 400', async () => {
     connectAgent({ deviceId: 'desktop:pc' })
-    const r = await json('POST', '/api/devices/desktop:pc/profiles/claim', { dirs: ['Profile 1'] })
+    const r = await json('POST', '/devices/desktop:pc/profiles/claim', { dirs: ['Profile 1'] })
     expect(r.status).toBe(200)
     expect(ops).toEqual(['browser.profiles', 'browser.claim:Profile 1'])
     for (const dirs of [[], 'Default', [1]]) {
-      expect((await json('POST', '/api/devices/desktop:pc/profiles/claim', { dirs })).status).toBe(400)
+      expect((await json('POST', '/devices/desktop:pc/profiles/claim', { dirs })).status).toBe(400)
     }
   })
 
   it('exe / userDataDir 透传给 agent，类型不对 400', async () => {
     connectAgent({ deviceId: 'desktop:pc' })
-    expect((await json('POST', '/api/devices/desktop:pc/profiles/claim', { exe: 3 })).status).toBe(400)
-    expect((await app.request('/api/devices/desktop:pc/profiles?userDataDir=D%3A%5CU')).status).toBe(200)
+    expect((await json('POST', '/devices/desktop:pc/profiles/claim', { exe: 3 })).status).toBe(400)
+    expect((await app.request('/devices/desktop:pc/profiles?userDataDir=D%3A%5CU')).status).toBe(200)
   })
 
   it('PATCH 节点：改 label / environment，null 清空；类型不对 400；没有节点 404', async () => {
     nodes.seen({ nodeId: 'node_a', deviceId: 'local', bindingId: 'local:node_a' })
-    const r = await json('PATCH', '/api/devices/nodes/node_a', { label: ' 公司电脑 ', environment: '工作' })
+    const r = await json('PATCH', '/devices/nodes/node_a', { label: ' 公司电脑 ', environment: '工作' })
     expect(r.status).toBe(200)
     expect(await r.json()).toMatchObject({ nodeId: 'node_a', label: '公司电脑', environment: '工作' })
-    expect(await (await json('PATCH', '/api/devices/nodes/node_a', { environment: null })).json()).not.toHaveProperty('environment')
-    expect((await json('PATCH', '/api/devices/nodes/node_a', { environment: 1 })).status).toBe(400)
-    expect((await json('PATCH', '/api/devices/nodes/node_a', {})).status).toBe(400)
-    expect((await json('PATCH', '/api/devices/nodes/node_a', { label: 'x'.repeat(65) })).status).toBe(400)
-    expect((await json('PATCH', '/api/devices/nodes/node_x', { label: 'x' })).status).toBe(404)
+    expect(await (await json('PATCH', '/devices/nodes/node_a', { environment: null })).json()).not.toHaveProperty('environment')
+    expect((await json('PATCH', '/devices/nodes/node_a', { environment: 1 })).status).toBe(400)
+    expect((await json('PATCH', '/devices/nodes/node_a', {})).status).toBe(400)
+    expect((await json('PATCH', '/devices/nodes/node_a', { label: 'x'.repeat(65) })).status).toBe(400)
+    expect((await json('PATCH', '/devices/nodes/node_x', { label: 'x' })).status).toBe(404)
   })
 })
 
@@ -139,12 +139,12 @@ describe('GET /api/devices/nodes', () => {
     nodes.setWokenAt('node_b', 1234)
     const a = new Hono()
     mountNodeRoutes(a, {
-      claims, nodes, isLocal: () => false,
+      claims, nodes, isAdmin: () => false,
       online: (bindingId) => bindingId === 'local:node_a',
       claimable: () => ['local'],
     })
     // 只读设置，不是认领：远处打开面板（经 API token）也能看。
-    const res = await a.request('/api/devices/nodes')
+    const res = await a.request('/devices/nodes')
     expect(res.status).toBe(200)
     const body = await res.json() as { nodes: Array<{ nodeId: string; online: boolean; wokenAt?: number; profileName?: string }>; claimable: string[] }
     expect(body.claimable).toEqual(['local'])
@@ -158,17 +158,17 @@ describe('GET /api/devices/nodes', () => {
     nodes.seen({ nodeId: 'node_b', deviceId: 'local', bindingId: 'local:node_b' })
     const a = new Hono()
     mountNodeRoutes(a, {
-      claims, nodes, isLocal: () => false,
+      claims, nodes, isAdmin: () => false,
       cookieGaps: (n) => (n.nodeId === 'node_b' ? { refused: ['bilibili.com'], noAccess: [], at: 5 } : undefined),
     })
-    const body = await (await a.request('/api/devices/nodes')).json() as { nodes: Array<Record<string, unknown>> }
+    const body = await (await a.request('/devices/nodes')).json() as { nodes: Array<Record<string, unknown>> }
     expect(body.nodes[0]).not.toHaveProperty('cookieGaps')
     expect(body.nodes[1].cookieGaps).toEqual({ refused: ['bilibili.com'], noAccess: [], at: 5 })
   })
 
   it('没注入判据：都不在线、谁也不能识别', async () => {
     nodes.seen({ nodeId: 'node_a', deviceId: 'local', bindingId: 'local:node_a' })
-    const body = await (await app.request('/api/devices/nodes')).json() as { nodes: Array<{ online: boolean }>; claimable: string[] }
+    const body = await (await app.request('/devices/nodes')).json() as { nodes: Array<{ online: boolean }>; claimable: string[] }
     expect(body.nodes[0].online).toBe(false)
     expect(body.claimable).toEqual([])
   })

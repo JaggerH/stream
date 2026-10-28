@@ -104,6 +104,7 @@ export class HostRelayRegistry {
 
   /** A device finished its handshake. Returns that device's relay. */
   connect(socket: HostSocket, hello: HostHello, now: number = Date.now()): WsHostRelay {
+    const wasLive = this.live.has(hello.deviceId)
     let relay = this.relays.get(hello.deviceId)
     if (!relay) {
       relay = new WsHostRelay(this.relayOpts)
@@ -111,13 +112,18 @@ export class HostRelayRegistry {
     }
     relay.connect(socket)
     this.live.set(hello.deviceId, { hello, socket, ops: new Set(hello.ops), connectedAt: now })
+    // 新连接顶掉旧连接：设备本来就在线，只换 socket，不重发 online。
+    if (!wasLive) this.emitChange({ deviceId: hello.deviceId, name: hello.name, platform: hello.platform, online: true, at: now })
     return relay
   }
 
   /** A socket closed. A socket that was already replaced by a newer one changes nothing. */
   disconnect(socket: HostSocket, deviceId: string): void {
     this.relays.get(deviceId)?.disconnect(socket)
-    if (this.live.get(deviceId)?.socket === socket) this.live.delete(deviceId)
+    const l = this.live.get(deviceId)
+    if (l?.socket !== socket) return
+    this.live.delete(deviceId)
+    this.emitChange({ deviceId, name: l.hello.name, platform: l.hello.platform, online: false, at: Date.now() })
   }
 
   /** Drop a device's live connection (revoked). Deregisters synchronously (live entry gone, pending
@@ -177,4 +183,28 @@ export class HostRelayRegistry {
     l.state = state
     return prev
   }
+
+  // ── 上下线事件（openspec embeddable-device-gateway）───────────────────────────
+  private readonly changeListeners: Array<(ch: HostChange) => void> = []
+
+  /** 设备连上 / 断开时叫一声。同一设备新连接顶掉旧连接只发一次 online（顶掉的旧 socket 关闭是 no-op）；
+   *  心跳判死走 close → disconnect，自然发 offline。监听器抛错只记日志，不影响连接。 */
+  onChange(fn: (ch: HostChange) => void): void {
+    this.changeListeners.push(fn)
+  }
+
+  private emitChange(ch: HostChange): void {
+    for (const fn of this.changeListeners) {
+      try { fn(ch) } catch { /* 听众的问题不是中继的问题 */ }
+    }
+  }
+}
+
+/** HostRelayRegistry 的上下线事件载荷（at = 毫秒时间戳）。 */
+export interface HostChange {
+  deviceId: string
+  name: string
+  platform: string
+  online: boolean
+  at: number
 }
