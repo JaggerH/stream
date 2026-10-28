@@ -59,7 +59,7 @@ describe('harvestPlugin', () => {
     for (const key of [
       'extRelay', 'hostRelays', 'browserCapability', 'harvestBrowser', 'extLauncher', 'desktopDriver', 'makeSee',
       'transport', 'recipeSessions', 'feedLedger', 'sessionRecipes', 'ensureHarvestBrowser',
-      'pageLook', 'pageShot', 'pageAct', 'closeFacilityTabs', 'reapIdleLanes', 'claimedTabs',
+      'pageLook', 'pageShot', 'pageAct', 'pageLogin', 'closeFacilityTabs', 'reapIdleLanes', 'claimedTabs',
       'focusLoginTab',
     ] as const) {
       expect(h[key], key).toBeDefined()

@@ -4,6 +4,8 @@ import { DesktopUnavailable, SESSION_BUSY_REASON, userAbortedReason } from '../r
 import { HostSessionQueueTimeout, HostAbortedByUser, INTERACTIVE_SESSION_WAIT_MS } from '../http/host-relay.ts'
 import { desktopAct, desktopLook, desktopMatch, desktopOpen, desktopPages, desktopShot } from './desktop-surface.ts'
 import { parseCdpTarget } from './cdp-target.ts'
+import { ReadLocks, SecretFillRefused, type LoginResult } from '../../shared/browser-relay/secret-fill.ts'
+import type { LaneAction } from '../replay/interactive-gate.ts'
 import {
   type ChromeSurfaceDeps,
   chromeActVerb,
@@ -21,6 +23,9 @@ export interface CdpRouterDeps extends ChromeSurfaceDeps {
   facilityLook: (facility: string, expression: string) => Promise<{ value: unknown } | null>
   facilityShot: (facility: string) => Promise<string | null>
   facilityAct: (action: ActionSpec & { facility: string }, confirmed?: boolean) => Promise<ActResult | null>
+  /** `kind:'login'`（openspec `secret-fill`）。缺席 = 这个宿主不支持，一律 `secret-source-missing`。 */
+  chromeLogin?: (action: LaneAction, confirmed?: boolean) => Promise<ActResult>
+  facilityLogin?: (action: ActionSpec & { facility: string }, confirmed?: boolean) => Promise<ActResult | null>
   /** 原生窗口这一档。**没连 Stream Desktop 时返回 undefined**——这一档随即报
    *  `agent-disconnected`，而不是静默降级成别的面（降级会让调用方以为动作生效了）。 */
   desktop?: () => DesktopDriver | undefined
@@ -139,9 +144,43 @@ export function makeCdpRouter(deps: CdpRouterDeps): CdpRouter {
     }
   }
 
+  // 登录动作期间按标签拒绝读取（openspec `secret-fill` D4）。锁在这一层：四个动词都从这里过，后端是唯一的路。
+  const locks = new ReadLocks()
+  const lockKey = (scheme: string, address: string | undefined): string | undefined =>
+    (scheme === 'chrome' || scheme === 'facility') && address ? `${scheme}:${address}` : undefined
+  const stuck = (r: ActResult | null): boolean => {
+    const res = (r as { result?: Partial<LoginResult> } | null)?.result
+    return !!res && res.navigated === false && res.cleared === false
+  }
+
+  async function login(scheme: string, address: string | undefined, spec: ActionSpec, confirmed: boolean | undefined) {
+    const key = lockKey(scheme, address)
+    if (!key) throw new Error(`cdp_act: login 要一张具体的标签——chrome:<tabId> 或 facility:<name>`)
+    return locks.hold(key, async () => {
+      if (scheme === 'chrome') {
+        if (!deps.chromeLogin) throw new SecretFillRefused('secret-source-missing', '这个宿主不支持 login')
+        const tabId = chromeTabId(address, 'act')
+        const r = await deps.chromeLogin({ ...spec, tabId }, confirmed)
+        // 没导航、也没清掉：密码还在框里。关掉这张标签是唯一稳妥的收尾；关不掉就一直锁着（hold 的 keep）。
+        if (stuck(r)) {
+          try {
+            await deps.chromeCloseTab(tabId)
+            return { ...r, closed: true } as ActResult
+          } catch {
+            return r
+          }
+        }
+        return r
+      }
+      if (!deps.facilityLogin) throw new SecretFillRefused('secret-source-missing', '这个宿主不支持 login')
+      return (await deps.facilityLogin({ ...spec, facility: address! }, confirmed)) ?? { live: false as const }
+    }, (r) => stuck(r as ActResult) && !(r as { closed?: boolean }).closed)
+  }
+
   return {
     async look({ target, js, url, interactive, inventory, frame }) {
       const { scheme, address } = parseCdpTarget(target)
+      locks.assertFree(lockKey(scheme, address))
       // `inventory` / `js` 的互斥与展开是 chrome 档的判据，共享库那一份说了算（两边各写一遍
       // 就会漂移成"一个报错、一个静默丢掉 js"）。
       const resolved = resolveLookJs({ js, inventory })
@@ -172,6 +211,7 @@ export function makeCdpRouter(deps: CdpRouterDeps): CdpRouter {
 
     async shot({ target }) {
       const { scheme, address } = parseCdpTarget(target)
+      locks.assertFree(lockKey(scheme, address))
       if (scheme === 'chrome') {
         try {
           return await chromeShotVerb(deps, { address })
@@ -190,6 +230,11 @@ export function makeCdpRouter(deps: CdpRouterDeps): CdpRouter {
 
     async act({ target, confirmed, ref, ...spec }) {
       const { scheme, address } = parseCdpTarget(target)
+      if (spec.kind === 'login') {
+        if (ref !== undefined) throw new Error(`cdp_act: login 用各字段的选择器，不收 ref`)
+        return login(scheme, address, spec, confirmed) as Promise<ActResult | { live: false }>
+      }
+      locks.assertFree(lockKey(scheme, address))
       if (spec.frame && scheme !== 'chrome') throw new Error(`cdp_act: frame 只在 chrome 档有效`)
       if (ref !== undefined) {
         // 「ref 只在 chrome 档有效」是一条**跨档**的规矩，所以守在路由这一层；展开本身

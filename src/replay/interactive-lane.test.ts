@@ -317,3 +317,61 @@ describe('InteractiveLane — iframe', () => {
     ).rejects.toThrow(/不支持 frame/)
   })
 })
+
+describe('InteractiveLane.login（openspec secret-fill）', () => {
+  const CANARY = 'Canary-lane-77c1-SecretValue'
+
+  function loginRelay(opts: { navigate: boolean }) {
+    let doc = 1
+    const calls: Array<{ method: string; params: unknown; expectDomain?: string }> = []
+    const relay = {
+      list: vi.fn(async () => [{ tabId: 9, url: 'https://a.example/login', title: 'Login' }]),
+      sendCommand: vi.fn(async (_t: number, method: string, params?: unknown, expectDomain?: string) => {
+        calls.push({ method, params, ...(expectDomain ? { expectDomain } : {}) })
+        if (method === 'Input.dispatchKeyEvent' && opts.navigate && (params as { type?: string }).type === 'keyUp') doc++
+        if (method !== 'Runtime.evaluate') return {}
+        const expr = String((params as { expression?: string }).expression ?? '')
+        if (expr === 'performance.timeOrigin') return { result: { value: doc } }
+        if (expr.includes('getBoundingClientRect'))
+          return { result: { value: { x: 100, y: 200, left: 60, top: 180, width: 80, height: 40 } } }
+        if (expr.includes('innerWidth')) return { result: { value: { x: 640, y: 400 } } }
+        return { result: { value: true } }
+      }),
+      closeTab: vi.fn(async () => {}),
+    }
+    return { relay, calls }
+  }
+  const action = {
+    kind: 'login' as const, domain: 'a.example', tabId: 9, secret: 'site-a', usernameSelector: '#u', passwordSelector: '#p', waitMs: 200,
+  }
+  const src = () => ({ get: vi.fn(async () => ({ origins: ['https://a.example'], username: 'alice', password: CANARY })) })
+
+  it('未确认 → needs-confirmation，来源一次都没被问', async () => {
+    const { relay } = loginRelay({ navigate: true })
+    const s = src()
+    const r = await new InteractiveLane('s', null, relay as never).login(action, s)
+    expect(r.status).toBe('needs-confirmation')
+    expect(s.get).not.toHaveBeenCalled()
+    expect(relay.sendCommand).not.toHaveBeenCalled()
+  })
+
+  it('特征串只出现在 Input.insertText 的参数里——结果、其余命令都没有', async () => {
+    const { relay, calls } = loginRelay({ navigate: true })
+    const r = await new InteractiveLane('s', null, relay as never).login(action, src(), { confirmed: true })
+    expect(r).toMatchObject({ status: 'done', result: { status: 'logged-in', navigated: true } })
+    expect(JSON.stringify(r)).not.toContain(CANARY)
+    const carrying = calls.filter((c) => JSON.stringify(c.params ?? null).includes(CANARY))
+    expect(carrying.map((c) => c.method)).toEqual(['Input.insertText'])
+    // 输入那一条带着发起时的域名，扩展侧会再复核一次
+    expect(carrying[0]!.expectDomain).toBe('a.example')
+  })
+
+  it('页面没动 → 清空字段（清空的那次求值里也没有值）', async () => {
+    const { relay, calls } = loginRelay({ navigate: false })
+    const r = await new InteractiveLane('s', null, relay as never).login(action, src(), { confirmed: true })
+    expect(r).toMatchObject({ result: { status: 'not-navigated', cleared: true } })
+    const clears = calls.filter((c) => c.method === 'Runtime.evaluate' && String((c.params as { expression?: string }).expression).includes("e.value = ''"))
+    expect(clears).toHaveLength(2)
+    expect(JSON.stringify(clears)).not.toContain(CANARY)
+  })
+})

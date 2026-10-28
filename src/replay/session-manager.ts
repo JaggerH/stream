@@ -3,6 +3,7 @@ import type { GroupTab } from '../../shared/browser-relay/relay.ts'
 import type { RecipeSessionSpec } from './recipe.ts'
 import type { Transport } from './transport.ts'
 import { actWithConfirm } from './run-action.ts'
+import { runLogin, type SecretSource } from '../../shared/browser-relay/secret-fill.ts'
 import { LOCAL_BINDING } from '../devices/run-context.ts'
 import { detectLoginState } from './actions.ts'
 import type { LoginCheck, LoginState } from './recipe.ts'
@@ -566,6 +567,30 @@ export class RecipeSessionManager {
         }
       }
       return actWithConfirm(entry.transport.driverFactory(entry.rawPage), action)
+    })
+  }
+
+  /**
+   * `kind:'login'` on a facility lane (openspec `secret-fill`). Same gate and same task tail as `act`; the origin
+   * check against the secret replaces act's domain check and reads the same browser-process record (`Transport.url`).
+   * `null` = this lane has no live tab.
+   */
+  async login(
+    facility: string,
+    action: ActionSpec,
+    source: SecretSource | undefined,
+    opts?: { laneKey?: string; mode?: LaneMode; confirmed?: boolean },
+  ): Promise<ActResult | null> {
+    if (!opts?.confirmed && needsConfirmation(action, opts?.mode)) {
+      return { status: 'needs-confirmation', reason: classifyAction(action).reason }
+    }
+    return this.onTail(facility, opts?.laneKey ?? DEFAULT_LANE, async (entry) => {
+      const result = await runLogin(entry.transport.driverFactory(entry.rawPage), action, {
+        source,
+        target: `facility:${facility}`,
+        currentUrl: () => entry.transport.url(entry.rawPage),
+      })
+      return { status: 'done', result }
     })
   }
 

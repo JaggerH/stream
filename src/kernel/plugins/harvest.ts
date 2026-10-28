@@ -35,6 +35,7 @@ import { FacilityCooldown } from '../../replay/facility-cooldown.ts'
 import { BlockEpisodeLog } from '../../replay/block-episodes.ts'
 import type { RecipeSessionSpec } from '../../replay/recipe.ts'
 import type { ActResult, ActionSpec } from '../../replay/interactive-gate.ts'
+import type { SecretSource } from '../../../shared/browser-relay/secret-fill.ts'
 import type { RawItem } from '../../content/normalize.ts'
 
 declare module 'cordis' {
@@ -102,6 +103,8 @@ export interface HarvestService {
   pageLook: (facility: string, expression: string) => Promise<{ value: unknown } | null>
   pageShot: (facility: string) => Promise<string | null>
   pageAct: (action: ActionSpec & { facility: string }, confirmed?: boolean) => Promise<ActResult | null>
+  /** `cdp_act({kind:'login'})` 打在 facility 上（openspec `secret-fill`）。 */
+  pageLogin: (action: ActionSpec & { facility: string }, source: SecretSource | undefined, confirmed?: boolean) => Promise<ActResult | null>
   /** 显式收尾一个 facility 名下的所有标签（前端离开该频道时调）。正常终点。 */
   closeFacilityTabs: (facility: string) => Promise<void>
   /** 关掉闲置超时的 lane，返回关掉了谁。兜的是收尾回调跑不到的异常路径。 */
@@ -637,6 +640,10 @@ export const harvestPlugin = {
       const { facility, ...spec } = action
       return recipeSessions.act(facility, spec, { confirmed })
     }
+    const pageLogin = (action: ActionSpec & { facility: string }, source: SecretSource | undefined, confirmed?: boolean) => {
+      const { facility, ...spec } = action
+      return recipeSessions.login(facility, spec, source, { confirmed })
+    }
     ctx.provide('harvest', {
       extRelay,
       extRelays,
@@ -656,6 +663,7 @@ export const harvestPlugin = {
       pageLook,
       pageShot,
       pageAct,
+      pageLogin,
       closeFacilityTabs,
       reapIdleLanes,
       claimedTabs,

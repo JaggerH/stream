@@ -14,8 +14,8 @@
  * 往字段里 type（**未提交前**）。
  */
 
-/** 动作类型。look/exists 是纯读，其余会改变页面状态（mutating）。 */
-export type ActionKind = 'goto' | 'back' | 'click' | 'type' | 'submit' | 'scroll' | 'exists' | 'look' | 'evaluate' | 'open' | 'setFiles'
+/** 动作类型。look/exists 是纯读，其余会改变页面状态（mutating）。`login` 见 `secret-fill.ts`。 */
+export type ActionKind = 'goto' | 'back' | 'click' | 'type' | 'submit' | 'scroll' | 'exists' | 'look' | 'evaluate' | 'open' | 'setFiles' | 'login'
 
 /** 调用方声明的动作意图——用于识别那些「形态是 click/type、实质是高危」的动作。 */
 export type ActionIntent = 'send' | 'publish' | 'purchase' | 'delete' | 'credential'
@@ -91,6 +91,16 @@ export interface ActionSpec {
    * 应用，轻则被当成要打开的文件名，重则拒绝启动。**开非 Chrome 应用一律传 `[]`**。
    */
   args?: string[]
+  /** `kind:'login'`：秘密的**引用名**（值由宿主注入的秘密来源给出，模型永远拿不到，见 `secret-fill.ts`）。 */
+  secret?: string
+  /** `kind:'login'`：各字段的选择器，至少一个。 */
+  usernameSelector?: string
+  passwordSelector?: string
+  totpSelector?: string
+  /** `kind:'login'`：提交按钮；缺省在最后一个填过的字段上按 Enter。 */
+  submitSelector?: string
+  /** `kind:'login'`：等页面导航走的上限（毫秒，缺省 15000）。 */
+  waitMs?: number
 }
 
 /** ext-cdp 的动作 = 动作 + tab 地址（用户自己 Chrome 里的 tabId）。 */
@@ -166,6 +176,10 @@ export function hostOf(url: string): string {
 export function classifyAction(action: ActionSpec): ActionClass {
   const readOnly = READ_ONLY.has(action.kind)
 
+  // login 固定按凭证类高危：调用方没声明 intent 也一样（它就是那件事本身）。
+  if (action.kind === 'login') {
+    return { risk: 'high', reason: HIGH_RISK_INTENT.credential, readOnly }
+  }
   if (action.intent) {
     return { risk: 'high', reason: HIGH_RISK_INTENT[action.intent], readOnly }
   }

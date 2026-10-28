@@ -107,6 +107,8 @@ export interface BootOptions {
    * 会话照跑（如实，不编）。
    */
   mcpEndpoint?: () => { url: string; token: string } | undefined
+  /** `cdp_act({kind:'login'})` 的秘密来源（openspec `secret-fill`）：嵌入方或部署方注入，Stream 自己不存秘密。缺席 = 那个动作一律拒绝。 */
+  secretSource?: import('../shared/browser-relay/secret-fill.ts').SecretSource
   /** 进程级共享资源（`src/engine/runtime.ts`，D4）：RSSHub worker、Chrome 发现、退出收尾。缺省 = 各模块的进程缺省。 */
   runtime?: import('./engine/runtime.ts').StreamRuntime
 }
@@ -764,6 +766,7 @@ export async function bootstrap(
   await kernel.plugin(agentPlugin, {
     dataDir,
     log,
+    ...(opts.secretSource ? { secretSource: opts.secretSource } : {}),
     service,
     searchTextFold: deployment.search_text_fold !== false,
     searchSemanticFold: deployment.search_semantic_fold !== false,

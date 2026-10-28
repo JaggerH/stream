@@ -1298,7 +1298,8 @@ export function toolCatalog(service: StreamServiceLike, extras: McpExtras): Tool
       annotations: ACTS,
       description: cdpToolSpec('cdp_act').description,
       schema: cdpSchema('cdp_act'),
-      run: ({ target, kind, domain, ref, frame, selector, text, targetUrl, exe, args, x, y, px, paths, expression, expect, intent, confirmed }) =>
+      run: ({ target, kind, domain, ref, frame, selector, text, targetUrl, exe, args, x, y, px, paths, expression, expect, intent, confirmed,
+        secret, usernameSelector, passwordSelector, totpSelector, submitSelector, waitMs }) =>
         cdpAct({
           target: target as string,
           kind: kind as ActionKind,
@@ -1318,6 +1319,12 @@ export function toolCatalog(service: StreamServiceLike, extras: McpExtras): Tool
           expect: expect as string | undefined,
           intent: intent as ActionIntent | undefined,
           confirmed: confirmed as boolean | undefined,
+          secret: secret as string | undefined,
+          usernameSelector: usernameSelector as string | undefined,
+          passwordSelector: passwordSelector as string | undefined,
+          totpSelector: totpSelector as string | undefined,
+          submitSelector: submitSelector as string | undefined,
+          waitMs: waitMs as number | undefined,
         }),
     })
     entries.push({

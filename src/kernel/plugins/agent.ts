@@ -100,6 +100,8 @@ export interface AgentDomain {
 }
 
 export interface AgentConfig {
+  /** `cdp_act({kind:'login'})` 的秘密来源（openspec `secret-fill`）。缺席 = 那个动作一律拒绝。 */
+  secretSource?: import('../../../shared/browser-relay/secret-fill.ts').SecretSource
   /** 可写状态根目录（`conversations.db` / `agent-runs.db` / `intents/` 都在它下面）。 */
   dataDir: string
   /** web_search 折叠的两个关灯开关（`AppConfig.deployment`）。缺席 = 开。 */
@@ -177,7 +179,7 @@ export interface AgentConfig {
  * 所以这个数字有两道闸门：装配期的自检（对不上直接 throw，见 `apply` 里那段）+ `agent.test.ts`
  * 里钉住它的断言。往表里加一格 → 两处都得改，任一处没改都是当场红。
  */
-export const MCP_EXTRAS_DEP_COUNT = 49
+export const MCP_EXTRAS_DEP_COUNT = 51
 
 export const agentPlugin = {
   name: 'agent',
@@ -681,6 +683,8 @@ export const agentPlugin = {
       pageLook: ctx.harvest.pageLook, // cdp_*(target:facility:<name>) rides that facility's harvest lane look/act/shot
       pageShot: ctx.harvest.pageShot,
       pageAct: ctx.harvest.pageAct,
+      pageLogin: ctx.harvest.pageLogin,
+      secretSource: config.secretSource,
       // ctx.search（搜索扇出）：content_search / price_search / video_search
       contentSearch: ctx.search.contentSearch,
       contentSearchDetailed: ctx.search.contentSearchDetailed,

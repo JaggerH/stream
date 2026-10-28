@@ -2,6 +2,7 @@ import type { RecipeSessionSpec } from './recipe.ts'
 import type { RecipeSessionLease } from './session-manager.ts'
 import { makeExtPageDriver, makeExtRawPage } from './browser-ext-drive.ts'
 import { actWithConfirm } from './run-action.ts'
+import { runLogin, type SecretSource } from '../../shared/browser-relay/secret-fill.ts'
 import { needsConfirmation, classifyAction, type ActResult, type LaneAction, type LaneMode } from './interactive-gate.ts'
 import {
   evalInFrame,
@@ -129,6 +130,26 @@ export class InteractiveLane {
     const opened = await this.relay.openedSince(action.tabId, since, r.status === 'confirmed' ? 0 : OPENED_WAIT_MS)
     if (!opened.length) return r
     return { ...r, opened: opened.map((o) => ({ tabId: o.tabId, url: o.url, target: `chrome:${o.tabId}` })) }
+  }
+
+  /**
+   * `kind:'login'`（openspec `secret-fill`）。门同 act；输入带上发起时的域名（扩展侧逐命令复核），
+   * 而观察导航、清空字段那一半**不带**——登录常跳到别的子域，带着它反而会把「已经跳走」读成「没动」。
+   * 顶层 URL 取自扩展报的标签记录（浏览器进程），不在页面里求值。
+   */
+  async login(action: LaneAction, source: SecretSource | undefined, opts?: { confirmed?: boolean }): Promise<ActResult> {
+    if (!opts?.confirmed && needsConfirmation(action, this.mode)) {
+      return { status: 'needs-confirmation', reason: classifyAction(action).reason }
+    }
+    const typer = makeExtPageDriver(makeExtRawPage(this.relay, action.tabId, action.domain))
+    const observer = makeExtPageDriver(makeExtRawPage(this.relay, action.tabId))
+    const result = await runLogin(typer, action, {
+      source,
+      observer,
+      target: `chrome:${action.tabId}`,
+      currentUrl: async () => (await this.relay.list()).find((t) => t.tabId === action.tabId)?.url ?? '',
+    })
+    return { status: 'done', result }
   }
 
   /**

@@ -34,7 +34,7 @@ import { createTools, type StreamTools } from './tools.ts'
 /** 宿主层递进来的回调：实例往外推东西（ws 广播、调试总线、归因、任务结果）只经这几个口，自己不持有任何连接。 */
 export type StreamHostHooks = Pick<
   BootOptions,
-  'onItem' | 'onDebug' | 'broadcast' | 'track' | 'trackSync' | 'mcpEndpoint'
+  'onItem' | 'onDebug' | 'broadcast' | 'track' | 'trackSync' | 'mcpEndpoint' | 'secretSource'
 > & {
   /** 这个实例里每条调度任务每次运行结束（成功/失败）时调用。回调抛错只记日志，不影响任务。 */
   onTaskSettled?: (e: TaskSettledEvent) => void

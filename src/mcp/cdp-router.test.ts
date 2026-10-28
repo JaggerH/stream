@@ -393,3 +393,55 @@ describe('cdp_*：排队等会话租约超时要归类', () => {
     await expect(r.shot({ target: 'app:QQ.exe' })).rejects.toBe(boom)
   })
 })
+
+describe('makeCdpRouter — login（openspec secret-fill）', () => {
+  const spec = { target: 'chrome:5', kind: 'login' as const, domain: 'a.example', secret: 's', passwordSelector: '#p', confirmed: true }
+
+  it('登录进行中，同一标签的 look / shot / act 立即被拒，别的标签照常；结束后放开', async () => {
+    let finish!: (v: unknown) => void
+    const d = { ...deps(), chromeLogin: vi.fn(() => new Promise<any>((r) => { finish = r })) }
+    const r = makeCdpRouter(d)
+    const running = r.act(spec)
+    await expect(r.look({ target: 'chrome:5', js: 'document.querySelector("#p").value' })).rejects.toThrow(/secret-fill-in-progress/)
+    await expect(r.shot({ target: 'chrome:5' })).rejects.toThrow(/secret-fill-in-progress/)
+    await expect(r.act({ target: 'chrome:5', kind: 'evaluate', domain: 'a.example', expression: '1' })).rejects.toThrow(/secret-fill-in-progress/)
+    expect(d.chromeLook).not.toHaveBeenCalled()
+    await expect(r.look({ target: 'chrome:6', js: '1' })).resolves.toBeDefined()
+    finish({ status: 'done', result: { navigated: true, cleared: true } })
+    await running
+    await expect(r.look({ target: 'chrome:5', js: '1' })).resolves.toBeDefined()
+  })
+
+  it('没导航又没清掉 → 关掉这张标签', async () => {
+    const d = { ...deps(), chromeLogin: vi.fn(async () => ({ status: 'done' as const, result: { navigated: false, cleared: false } })) }
+    const r = makeCdpRouter(d)
+    const out = await r.act(spec)
+    expect(d.chromeCloseTab).toHaveBeenCalledWith(5)
+    expect(out).toMatchObject({ closed: true })
+    await expect(r.look({ target: 'chrome:5', js: '1' })).resolves.toBeDefined()
+  })
+
+  it('关不掉 → 锁一直留着', async () => {
+    const d = {
+      ...deps(),
+      chromeCloseTab: vi.fn(async () => { throw new Error('gone') }),
+      chromeLogin: vi.fn(async () => ({ status: 'done' as const, result: { navigated: false, cleared: false } })),
+    }
+    const r = makeCdpRouter(d)
+    await r.act(spec)
+    await expect(r.look({ target: 'chrome:5', js: '1' })).rejects.toThrow(/secret-fill-in-progress/)
+  })
+
+  it('宿主没接 login → secret-source-missing；login 不收 ref', async () => {
+    const r = makeCdpRouter(deps())
+    await expect(r.act(spec)).rejects.toThrow(/secret-source-missing/)
+    await expect(r.act({ ...spec, ref: 3 })).rejects.toThrow(/不收 ref/)
+  })
+
+  it('facility 目标走 facilityLogin', async () => {
+    const d = { ...deps(), facilityLogin: vi.fn(async () => ({ status: 'done' as const, result: { navigated: true, cleared: true } })) }
+    const r = makeCdpRouter(d)
+    await r.act({ ...spec, target: 'facility:xhs' })
+    expect(d.facilityLogin).toHaveBeenCalledWith(expect.objectContaining({ facility: 'xhs', kind: 'login' }), true)
+  })
+})

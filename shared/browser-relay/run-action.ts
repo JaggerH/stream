@@ -58,6 +58,9 @@ export async function runAction(driver: PageDriver, action: ActionSpec): Promise
       if (!paths.length) throw new Error('setFiles 动作缺 paths（本地文件路径，按浏览器所在机器解释）')
       return driver.setFiles(need(action.selector, 'selector'), paths)
     }
+    case 'login':
+      // 原子登录要秘密来源、读取锁、浏览器侧的 URL 记录——这些都在宿主手里，runAction 只吃一个 driver。
+      throw new Error(`login 不经过 act 执行路径（由宿主的 login 那一格接手，见 secret-fill.ts）`)
     case 'open':
       // `kind:'open'` 的输入是 URL、输出才是 tabId——它由各宿主自己的「开一张标签」那一格接掉，
       // 永远到不了这里。留一句实话，别让它退化成一个静默的空动作。

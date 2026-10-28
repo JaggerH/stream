@@ -123,6 +123,7 @@ function actDescription(has: (t: CdpTier) => boolean, tiers: readonly CdpTier[])
     "A click/submit that OPENS A NEW TAB (window.open / target=_blank) returns `opened:[{tabId,url,target}]` — the page most likely continued THERE, so switch to that `target` instead of re-reading the old tab. Tabs opened by a tab Stream opened join the session group automatically (cdp_pages lists them with `openerTabId`).",
     "click/type/submit whose `selector` matches NO element return {status:'not-found'} — `done` no longer doubles for that; check status, don't assume a click landed just because the call returned.",
     "HIGH-RISK actions (submit, cross-site goto, or a declared `intent` of send/publish/purchase/delete/credential) STOP and return {status:'needs-confirmation'}; re-send with confirmed:true ONLY after the user agrees.",
+    "LOG IN WITHOUT SEEING THE PASSWORD: kind:'login' with `secret` (a NAME the host gave you, never a value) and `usernameSelector` / `passwordSelector` / `totpSelector` (at least one), optional `submitSelector` (default: Enter in the last field). Never put a password in `text` — use this. In one call Stream checks the tab's real origin against the secret, types the values, submits, and waits for the page to navigate; if it does not navigate the fields are cleared. Returns {status:'logged-in'|'not-navigated', origin, filled, navigated, cleared} — no values, ever. While it runs, reads of that tab are refused with `secret-fill-in-progress`. It is always HIGH-RISK. After `not-navigated`, look at the page before retrying (wrong password, captcha, a page that logs in without navigating).",
     has('desktop') && ACT_NATIVE_BLOCK,
     join([
       "OPEN A PAGE: kind:'open' with target:'chrome' (no tabId — that's what it returns) and `targetUrl`. Find-or-open: an already-open tab on the same URL (trailing slash / scheme+host case ignored) is activated and its window focused; otherwise a new tab is created. Returns {status:'done', result:{tabId,title,url,created}}. It attaches NO debugger and injects NOTHING, which is why `chrome://*` privileged pages open here and fail under cdp_look. A tab it CREATES joins the session tab group like everything else Stream opens (visible to the user, revocable by dragging out); a tab that was already open (`created:false`) is the user's own and is only activated.",
@@ -173,7 +174,7 @@ const actParams = (has: (t: CdpTier) => boolean): CdpParamSpec[] => [
   {
     name: 'kind',
     type: 'enum',
-    values: ['goto', 'back', 'click', 'type', 'submit', 'scroll', 'exists', 'look', 'evaluate', 'open', 'setFiles'],
+    values: ['goto', 'back', 'click', 'type', 'submit', 'scroll', 'exists', 'look', 'evaluate', 'open', 'setFiles', 'login'],
   },
   { name: 'domain', type: 'string' },
   { name: 'ref', type: 'number', optional: true },
@@ -187,6 +188,12 @@ const actParams = (has: (t: CdpTier) => boolean): CdpParamSpec[] => [
   { name: 'expression', type: 'string', optional: true },
   { name: 'expect', type: 'string', optional: true },
   { name: 'intent', type: 'enum', values: ['send', 'publish', 'purchase', 'delete', 'credential'], optional: true },
+  { name: 'secret', type: 'string', optional: true },
+  { name: 'usernameSelector', type: 'string', optional: true },
+  { name: 'passwordSelector', type: 'string', optional: true },
+  { name: 'totpSelector', type: 'string', optional: true },
+  { name: 'submitSelector', type: 'string', optional: true },
+  { name: 'waitMs', type: 'number', optional: true },
   { name: 'confirmed', type: 'boolean', optional: true },
 ]
 

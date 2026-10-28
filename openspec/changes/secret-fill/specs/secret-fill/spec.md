@@ -34,7 +34,7 @@
 ### Requirement: 登录动作期间拒绝读取
 
 从登录动作开始到导航完成或字段清空，系统 SHALL 立即拒绝同一标签上的 `cdp_look`、`cdp_shot` 以及 `cdp_act` 的读取与
-输入类动作，错误码 `secret-fill-in-progress`。清空失败时锁 SHALL 保持到该标签导航或关闭。
+输入类动作，错误码 `secret-fill-in-progress`。清空失败时，`chrome:<tabId>` 目标 SHALL 被关闭；无法关闭时锁 SHALL 一直保持。
 
 #### Scenario: 并发读取被拒
 - **WHEN** 登录动作进行中，另一个调用对同一标签执行 `cdp_look({js:'document.querySelector("input[type=password]").value'})`

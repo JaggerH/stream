@@ -112,7 +112,7 @@ export type McpExtrasDeps = Pick<AgentDomain, 'searchAgent' | 'webSearch' | 'int
   & Pick<
     HarvestService,
     'extLauncher' | 'extRelay' | 'browserCapability' | 'harvestBrowser'
-    | 'pageLook' | 'pageShot' | 'pageAct' | 'desktopDriver' | 'makeSee' | 'recipeOverrides'
+    | 'pageLook' | 'pageShot' | 'pageAct' | 'pageLogin' | 'desktopDriver' | 'makeSee' | 'recipeOverrides'
     // run_action_recipe 的浏览器档骑它——和采集同一个执行入口，凭据注入/限速/冷却全在里面。
     | 'sessionRecipes'
   >
@@ -123,6 +123,8 @@ export type McpExtrasDeps = Pick<AgentDomain, 'searchAgent' | 'webSearch' | 'int
   & Pick<ProviderService, 'radarMatcher' | 'intentResolver' | 'resolveEngine' | 'resolveDownloads' | 'providerBindings' | 'providerExecutor'>
   // 链接认领归实例（`ctx.sources.links`）：stream_fetch_url 的派发键要它。
   & { links: import('../links/recognize.ts').LinkRecognizer }
+  // `cdp_act({kind:'login'})` 的秘密来源（openspec `secret-fill`）。缺席 = 那个动作一律拒绝。
+  & { secretSource?: import('../../shared/browser-relay/secret-fill.ts').SecretSource }
   // 网盘住内核的 netdisk 域（`ctx.netdisk`）——netdisk_* 四个 MCP 工具骑它。两格本来就可为
   // undefined（没配 AList），语义与从 Boot Pick 时一字不差。
   & Pick<NetdiskDomain, 'netdisk' | 'netdiskRoutes'>
@@ -758,6 +760,8 @@ export function buildMcpExtras(boot: McpExtrasDeps): McpExtras {
     // re-checks the tab's domain against the browser's own record, and a tab the user dragged in
     // is never destroyed. Those survive a caller that lies; this gate does not.
     chromeAct: (action, confirmed) => lane.act(action, { confirmed }),
+    // `kind:'login'`：值从秘密来源直接进浏览器，不经模型（openspec `secret-fill`）。
+    chromeLogin: (action, confirmed) => lane.login(action, boot.secretSource, { confirmed }),
     // Enumerate the tabs the AI is allowed to touch = the ones inside the session tab group
     // (a real, visible Chrome tab group). This is how a target tab gets identified — by url /
     // title, never guessed. Tabs outside the group never appear here and cannot be driven.
@@ -801,6 +805,7 @@ export function buildMcpExtras(boot: McpExtrasDeps): McpExtras {
     // on the caller being honest is the domain re-check inside sessions.act: it reads the
     // browser's own record (Transport.url), so a wrong `domain` refuses instead of acting.
     facilityAct: boot.pageAct,
+    facilityLogin: (action, confirmed) => boot.pageLogin(action, boot.secretSource, confirmed),
     // 原生窗口档：直接骑 harvest 域那个 desktopDriver（今天它只喂 kind:'desktop' 的 source）。
     // 没连 agent 时它返回 undefined，router 随即报 agent-disconnected。
     desktop: boot.desktopDriver,
