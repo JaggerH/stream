@@ -18,6 +18,7 @@ describe('deploymentFromEnv（收编后的全量键）', () => {
     expect(d.npm_registry).toBeUndefined()
     expect(d.docker_host).toBeUndefined()
     expect(d.rsshub_pkg).toBeUndefined()
+    expect(d.workbuddy_helper_url).toBeUndefined()
   })
 
   it('开关与地址逐键翻译', () => {
@@ -32,6 +33,7 @@ describe('deploymentFromEnv（收编后的全量键）', () => {
       STREAM_NPM_REGISTRY: 'https://mirror.example',
       DOCKER_HOST: 'unix:///run/docker.sock',
       RSSHUB_PKG: '/x/rsshub/lib/pkg.ts',
+      STREAM_WORKBUDDY_HELPER_URL: 'http://127.0.0.1:18081',
     }))
     expect(d.scheduler).toBe(false)
     expect(d.recipe_update_check).toBe(false)
@@ -43,5 +45,6 @@ describe('deploymentFromEnv（收编后的全量键）', () => {
     expect(d.npm_registry).toBe('https://mirror.example')
     expect(d.docker_host).toBe('unix:///run/docker.sock')
     expect(d.rsshub_pkg).toBe('/x/rsshub/lib/pkg.ts')
+    expect(d.workbuddy_helper_url).toBe('http://127.0.0.1:18081')
   })
 })

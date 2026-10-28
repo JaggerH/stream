@@ -1560,6 +1560,14 @@ no extra container/queue needed), is driven by cron expressions, and includes re
 - **Regression prevention**: `src/tasks/no-bare-setinterval.test.ts` runs a full word-boundary grep over `src/` (`\bsetInterval\b`);
   anything outside the whitelist FAILs — new periodic needs must not bypass the scheduling center by starting bare timers.
 
+## WorkBuddy Helper account management
+
+WorkBuddy Helper owns WorkBuddy account credentials, token refresh, check-in requests, and point queries. `src/workbuddy/client.ts` is Stream's sole Helper HTTP client; it accepts only a loopback HTTP origin and keeps Helper's page token in backend memory. `src/http/workbuddy-routes.ts` exposes only account status and the operations used by the native `WorkBuddySettings` page. The page is in the Manage bundle; Helper's response headers forbid an iframe.
+
+The user task `workbuddy-daily-checkin` uses the host-owned `workbuddy:checkin` action in `src/workbuddy/runtime.ts`, registered in the task action directory. It is a host management integration rather than a Source: it produces no Stream items and does not belong in the harvest scheduler. The action disables Helper's own daily schedule before each batch. A batch is successful only if every enabled domestic account reports `confirmed` or `already_done` for the current Beijing date; the task ledger holds account names, status, balance, and point-query timestamp, never credentials. Balance is a separate observation from check-in status.
+
+The Helper address is `STREAM_WORKBUDDY_HELPER_URL`, default `http://127.0.0.1:18080`; it is read when Stream starts. Keep Helper bound to the backend machine's loopback address. Login opens Helper's official Tencent authorization URL in a separate browser tab and polls through Stream; the raw account token remains in Helper's local store.
+
 ## In-Process Kernel (Cordis): Domain Plugin Tree and Lifecycle
 
 The backend process assembly skeleton is [Cordis](https://github.com/cordiverse/cordis) (`cordis@4.0.0-rc.8`,

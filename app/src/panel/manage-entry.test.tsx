@@ -39,4 +39,13 @@ describe('DSH 设置里的 Stream 分区', () => {
     expect(screen.getByText('音频归档')).toBeTruthy()
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('http://127.0.0.1:8900/api/access-token', expect.anything()))
   })
+
+  it('有一页「WorkBuddy」：从管理页能打开账号和每日签到', async () => {
+    const el = document.createElement('div')
+    document.body.appendChild(el)
+    act(() => mount(el, { backend: 'http://127.0.0.1:8900' }))
+    fireEvent.click(await screen.findByRole('tab', { name: 'WorkBuddy' }))
+    expect(await screen.findByText('WorkBuddy 账号')).toBeTruthy()
+    expect(screen.getByRole('checkbox', { name: '每日自动签到' })).toBeTruthy()
+  })
 })

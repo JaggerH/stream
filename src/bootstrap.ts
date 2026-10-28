@@ -234,6 +234,7 @@ export function deploymentFromEnv(env: ConfigEnv): NonNullable<AppConfig['deploy
     ...(env.STREAM_NPM_REGISTRY ? { npm_registry: env.STREAM_NPM_REGISTRY } : {}),
     ...(env.DOCKER_HOST ? { docker_host: env.DOCKER_HOST } : {}),
     ...(env.RSSHUB_PKG ? { rsshub_pkg: env.RSSHUB_PKG } : {}),
+    ...(env.STREAM_WORKBUDDY_HELPER_URL ? { workbuddy_helper_url: env.STREAM_WORKBUDDY_HELPER_URL } : {}),
   }
 }
 

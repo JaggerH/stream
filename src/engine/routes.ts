@@ -64,6 +64,8 @@ import { repoRoot, shippedRoot } from '../http/build-identity.ts'
 import { mountTaskDashboard } from '../http/task-dashboard.ts'
 import { mountPluginGateway } from '../http/plugin-gateway.ts'
 import { mountTaskRoutes } from '../http/task-routes.ts'
+import { mountWorkBuddyRoutes } from '../http/workbuddy-routes.ts'
+import { helperClientFor } from '../workbuddy/runtime.ts'
 import { mountInterventionRoutes } from '../http/intervention-routes.ts'
 import { mountSourceHealthRoutes } from '../http/source-health-routes.ts'
 import { SourceHealthIndex } from '../intervention/source-health-view.ts'
@@ -512,6 +514,7 @@ export async function routes(io: RouteIo): Promise<Hono> {
   // 查询档（scheduler=false）下 `builtins` 缺席 → 内置任务清单诚实地报空；store/ledger 开不
   // 起来（罕见：文件锁/权限/磁盘满）时整个任务面缺席——TaskRoutesDeps 要求 store/ledger 非空。
   const assembled = stream.tasks.assembly
+  mountWorkBuddyRoutes(app, helperClientFor(config.deployment?.workbuddy_helper_url))
   if (assembled.store && assembled.ledger && assembled.compileRow) {
     mountTaskRoutes(app, {
       store: assembled.store,

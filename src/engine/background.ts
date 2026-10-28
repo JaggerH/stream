@@ -23,6 +23,7 @@ import { TaskStore, type UserTaskRow } from '../tasks/task-store.ts'
 import { RunLedger } from '../tasks/run-history.ts'
 import { compileEnabled, compileUserTask } from '../tasks/user-tasks.ts'
 import { actionDirectory } from '../tasks/package-actions.ts'
+import { helperClientFor, makeDailyCheckin } from '../workbuddy/runtime.ts'
 import { buildStandbyOrDegrade, wireStandby } from '../plugins/standby/wire.ts'
 import { resolveDockerEndpoint } from '../plugins/standby/docker-api.ts'
 import { standbyInertNotification } from '../plugins/standby/inert-notice.ts'
@@ -164,6 +165,7 @@ export async function startBackground(
   // TaskStore 构造函数同步 `new Database(dbPath)` + `db.exec(...)`，文件被锁 / 损坏 / 权限不对 /
   // 磁盘满都会同步 throw；降级方式与 standby 同款：接住、打一行日志、任务面整体缺席。
   const packageActions = actionDirectory(pkgs.activated.actions)
+  packageActions.set('workbuddy:checkin', makeDailyCheckin(helperClientFor(config.deployment?.workbuddy_helper_url)))
   if (packageActions.size) {
     log(`[stream] package actions: ${[...packageActions.keys()].join(', ')}`)
   }

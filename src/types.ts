@@ -141,6 +141,8 @@ export interface AppConfig {
     docker_host?: string
     /** RSSHub 本地 checkout 的 pkg 路径（`RSSHUB_PKG`，开发档才用）。 */
     rsshub_pkg?: string
+    /** Local WorkBuddy Helper address (`STREAM_WORKBUDDY_HELPER_URL`); defaults to loopback port 18080. */
+    workbuddy_helper_url?: string
   }
   /** base url of the MinerU document-parsing backend; unset → MINERU_URL env or the
    *  bootstrap-injected plugin target (compose mode: container DNS). A remote relay

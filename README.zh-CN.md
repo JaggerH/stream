@@ -59,6 +59,14 @@ connected (`/api/browser-capability` is not "ready"), walk me through loading it
 **完整的分步指南**——装扩展、订第一条流、打开转写、接对话宿主、装 skill、从命令行跑 recipe——在
 **[cli/README.zh-CN.md](cli/README.zh-CN.md)**（npm 页上那份的中文版）。
 
+## WorkBuddy 多账号签到
+
+Stream 可统一查看本机 [WorkBuddy Helper](https://github.com/autumnsentiment/workbuddy-helper) 的账号、积分和签到状态，并由任务中心执行每日签到；对话反代仍由你现有的工具负责。Helper 必须仅监听本机回环地址，默认 `http://127.0.0.1:18080`。若端口不同，启动 Stream 前设置 `STREAM_WORKBUDDY_HELPER_URL=http://127.0.0.1:<端口>`。
+
+在「管理 → WorkBuddy」逐个通过腾讯授权页添加账号，设定北京时间和每日自动签到，然后保存排期。Stream 会先关闭 Helper 自带的签到排期，避免两个调度器同时执行；历次结果在 Stream 任务页。账号令牌只保存在 Helper 的数据目录，Stream 只读取不含令牌的状态。面板中的「已签到」表示签到接口确认；积分到账还要看该账号的积分查询时间和余额。
+
+Helper 的管理接口目前使用随进程重启变化的页面令牌。Stream 在本机读取该令牌并在 403 时重新获取，不把它发给浏览器。Helper 的登录页禁止 iframe 嵌入，因此使用 Stream 原生管理页。
+
 ## 接入 MCP
 
 Stream 用**两种传输提供同一套工具**，按客户端挑：
