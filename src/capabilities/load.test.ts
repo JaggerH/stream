@@ -128,21 +128,36 @@ describe('loadOptionalCapabilities', () => {
 // 只兜 throw 不兜 hang 等于没兜：这条路被 `await` 在 serve.ts 的启动路径上，一个包的 mount
 // 里 `await` 了永不 settle 的东西（等一个没人应答的容器、等一把用户还没填的钥匙），
 // 整个后端就停在那儿——端口上没人听、日志停在上一行，症状和"启动很慢"一字不差。
+//
+// 这组测的是**闸**：import / mount 永不 settle → 到点跳过、留一行日志、其余包照装。import 一腿
+// 全走注入点当场给模块——真 fs 的 import 有毫秒级真实耗时，负载下会吃掉 50ms 的真墙钟期限
+// （实测好包也被跳过，`[] ≠ ['b-good']`：期限成了"比谁快"而不是"卡没卡"）。注入之后被计时的
+// 只剩纯内存的 mount（host.mount 不碰盘），落定全在微任务里，期限判据只跟"卡没卡"有关。
 describe('一个包卡住不该拖死后端', () => {
-  const HANG = `
-export const capability = {
-  name: 'hang',
-  async mount() { await new Promise(() => {}) },
-}
-`
-
+  const hangModule = {
+    capability: { name: 'a-hang', mount: () => new Promise(() => {}) },
+  }
+  const goodModule = {
+    capability: {
+      name: 'b-good',
+      async mount(ctx: { registerTools: (defs: unknown[]) => void }) {
+        ctx.registerTools([{
+          name: 'b_verb', description: 'b_verb', parameters: {},
+          output: { schema: { type: 'json' }, render: () => [{ type: 'text', text: 'b_verb' }] },
+          execute: async () => ({}),
+        }])
+      },
+    },
+  }
+  /** 注入点：按包 id 当场给模块，不碰盘。 */
   it('mount 永不 settle → 到点跳过它，其余包照装、函数照常返回', async () => {
     const root = mkdtempSync(join(tmpdir(), 'cap-load-'))
-    writePkg(root, 'a-hang', { capability: 'dist/index.js' }, HANG)
-    writePkg(root, 'b-good', { capability: 'dist/index.js' }, CAP('b-good', ['b_verb']))
+    writePkg(root, 'a-hang', { capability: 'dist/index.js' })
+    writePkg(root, 'b-good', { capability: 'dist/index.js' })
     const { host, lines } = newHost()
     const loaded = await loadOptionalCapabilities({
       recipesDir: root, host, log: (l) => lines.push(l), mountTimeoutMs: 50,
+      importModule: (fileUrl) => Promise.resolve(fileUrl.includes('a-hang') ? hangModule : goodModule),
     })
     expect(loaded.map((l) => l.name)).toEqual(['b-good'])
     expect(host.toolDefs().map((d) => d.name)).toEqual(['b_verb'])
