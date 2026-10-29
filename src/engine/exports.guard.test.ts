@@ -28,6 +28,7 @@ describe('@streamapp/engine 公开面', () => {
     const src = readFileSync(join(import.meta.dirname, 'index.ts'), 'utf8')
     expect(exportedNames(src)).toEqual(
       [
+        'CallerFetchGuardOptions',
         'CdpBinding',
         'CdpBindingOptions',
         'CreateStreamOptions',
@@ -47,6 +48,7 @@ describe('@streamapp/engine 公开面', () => {
         'ToolDescriptor',
         'ToolProgress',
         'ToolResult',
+        'callerFetchGuardConfigured',
         'createRuntime',
         'createStream',
         'deviceGateway',

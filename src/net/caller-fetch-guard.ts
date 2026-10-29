@@ -238,6 +238,11 @@ export function callerFetchGuardActive(): boolean {
   return policy !== null && scope.getStore() === true
 }
 
+/** 宿主自检用：策略是否已在本进程配置（不要求处在受守卫的作用域里）。 */
+export function callerFetchGuardConfigured(): boolean {
+  return policy !== null
+}
+
 /** 划一块受守卫的作用域。策略未配置时原样透传（零开销、零行为变化）。 */
 export async function withCallerFetchGuard<T>(fn: () => Promise<T>): Promise<T> {
   if (policy === null) return fn()

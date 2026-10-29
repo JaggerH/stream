@@ -22,7 +22,8 @@ import type { TaskSettledEvent } from '../tasks/types.ts'
 import { lazyNotify, type EventsService } from '../events/service.ts'
 import type { StandbyManager } from '../plugins/standby/manager.ts'
 import { startBackground } from './background.ts'
-import { callerFetchGuardPolicy, configureCallerFetchGuard } from '../net/caller-fetch-guard.ts'
+import { callerFetchGuardPolicy, configureCallerFetchGuard, type CallerFetchGuardPolicy } from '../net/caller-fetch-guard.ts'
+export { callerFetchGuardConfigured } from '../net/caller-fetch-guard.ts'
 
 export type { StreamRuntime } from './runtime.ts'
 export { createRuntime } from './runtime.ts'
@@ -45,6 +46,17 @@ export type StreamHostHooks = Pick<
   onTaskSettled?: (e: TaskSettledEvent) => void
 }
 
+/**
+ * 「调用方传入任意网址」抓取路径的私网拒绝（`src/net/caller-fetch-guard.ts`）经嵌入入口打开的形态。
+ * 嵌入方显式给时不依赖 config.yaml；字段**按格**覆盖 `config.caller_fetch_guard`——没给的字段
+ * （如 `allow` 例外名单）沿用配置。`resolve` 缺省走 node:dns，测试注入假解析表用。
+ */
+export interface CallerFetchGuardOptions {
+  reject_private?: boolean
+  allow?: string[]
+  resolve?: CallerFetchGuardPolicy['resolve']
+}
+
 export interface CreateStreamOptions {
   /** 实例的根目录（与 `STREAM_DATA_DIR` 同义：`config.yaml` 在它下面，可写状态在它的 `data/` 下）。 */
   dataDir: string
@@ -54,6 +66,7 @@ export interface CreateStreamOptions {
   /** 进程级共享资源（D4）。不传 = 自建一份，`close()` 时一起关。 */
   runtime?: StreamRuntime
   hooks?: StreamHostHooks
+  callerFetchGuard?: CallerFetchGuardOptions
 }
 
 export interface Stream {
@@ -99,7 +112,15 @@ export async function createStream(opts: CreateStreamOptions): Promise<Stream> {
   // caller-fetch-guard 的进程级策略位：配置解析一次，名单写错在装配期就炸出来（缺省 = null = 关闭，
   // 所有抓取路径与没有这条配置时逐字节一致）。开关状态是进程级部署配置，不是实例级业务数据。
   // 只开不关：同一进程里后建的实例没写这一项，不能把先建的实例打开的守卫悄悄关掉。
-  const guardPolicy = callerFetchGuardPolicy(config.caller_fetch_guard)
+  // 嵌入入口的字段按格覆盖 config.caller_fetch_guard——嵌入方要强制开的开关不依赖部署的配置文件。
+  const guardConfig = config.caller_fetch_guard ?? {}
+  const guardPolicy = callerFetchGuardPolicy(
+    {
+      reject_private: opts.callerFetchGuard?.reject_private ?? guardConfig.reject_private,
+      allow: opts.callerFetchGuard?.allow ?? guardConfig.allow,
+    },
+    opts.callerFetchGuard?.resolve,
+  )
   if (guardPolicy) configureCallerFetchGuard(guardPolicy)
   const stateDir = resolveDataDir(config)
   // 锁拿在建内核之前：第二份实例连一张表都不该打开。
