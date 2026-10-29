@@ -21,6 +21,7 @@ import type { ToolDef } from '../../shared/capability/types.ts'
 import type { StreamServiceLike } from './tools.ts'
 import { toolCatalog, RO, WRITE, ACTS, type McpExtras, type ToolAnnotations } from './tool-catalog.ts'
 import { zodShapeFromParameters } from './capability-tools.ts'
+import { deviceErrorOf } from '../devices/errors.ts'
 import { runWithToolCaller } from '../tool-caller.ts'
 // 订阅这件事只有一份判据（流 id 怎么定、占位名叫什么、采集策略是什么）——前端订阅和
 // `subscribe_source` 同吃 `shared/subscribe`。复刻一份的代价是安静的：两条路建出的流会慢慢
@@ -63,6 +64,11 @@ export interface ToolResult {
   isError?: boolean
   /** 结构化原值。出错时没有。 */
   value?: unknown
+  /**
+   * 结构化错误摘要：isError 且认得出错误类别时带上（设备错误给 `code` + `deviceId`），普通错误没有。
+   * 嵌入方按码分诊（如「设备没就绪」挂起等它回来），不解析错误文字。MCP 线上不带——协议没有这一格。
+   */
+  error?: { code: string; deviceId?: string }
 }
 
 export interface StreamTools {
@@ -81,7 +87,10 @@ export interface ToolSpec {
 
 const json = (data: unknown): ToolResult => ({ content: [{ type: 'text', text: JSON.stringify(data, null, 2) }], value: data })
 
-const errorResult = (message: string): ToolResult => ({ content: [{ type: 'text', text: message }], isError: true })
+const errorResult = (message: string, err?: unknown): ToolResult => {
+  const structured = err === undefined ? undefined : deviceErrorOf(err)
+  return { content: [{ type: 'text', text: message }], isError: true, ...(structured ? { error: structured } : {}) }
+}
 
 /**
  * 能力包没声明 `readOnlyHint` 的一律按非只读：一个第三方包不说，我们不替它担保。
@@ -237,7 +246,7 @@ export function toolSpecs(service: StreamServiceLike, extras: McpExtras): ToolSp
           const value = await def.execute(args ?? {}, { signal: ctx.signal })
           return { content: def.output.render(args, value) as ContentBlock[], value }
         } catch (err) {
-          return errorResult(err instanceof Error ? err.message : String(err))
+          return errorResult(err instanceof Error ? err.message : String(err), err)
         }
       },
     })
@@ -267,7 +276,7 @@ async function callSpec(spec: ToolSpec | undefined, name: string, args: Record<s
     }
     return await runWithToolCaller(ctx.caller, () => spec.invoke(parsed.data as Record<string, unknown>, ctx))
   } catch (err) {
-    return errorResult(err instanceof Error ? err.message : String(err))
+    return errorResult(err instanceof Error ? err.message : String(err), err)
   }
 }
 

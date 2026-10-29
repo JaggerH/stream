@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   DeviceFetchQueueTimeout, DeviceIncapable, DeviceLost, DeviceOffline, DeviceRefused, HostNotAllowed,
-  IdentityMismatch, IdentityOffline, IdentitySignedOut, failureDisposition,
+  IdentityMismatch, IdentityOffline, IdentitySignedOut, deviceErrorOf, failureDisposition,
 } from './errors.ts'
 import { HostAbortedByUser } from '../http/host-relay.ts'
 import { EnvironmentUnavailableError, isEnvironmentUnavailable } from '../../shared/failure/environment.ts'
@@ -62,5 +62,28 @@ describe('isEnvironmentUnavailable（采集侧：本轮跳过而不是判源故�
 
   it('靠声明的标记，不是继承 EnvironmentUnavailableError', () => {
     expect(new DeviceOffline('linux:nas')).not.toBeInstanceOf(EnvironmentUnavailableError)
+  })
+})
+
+describe('deviceErrorOf（工具结果的结构化错误摘要：嵌入方按它分诊，不解析文字）', () => {
+  it('设备错误给出码与设备', () => {
+    expect(deviceErrorOf(new DeviceOffline('linux:nas'))).toEqual({ code: 'device-offline', deviceId: 'linux:nas' })
+    expect(deviceErrorOf(new DeviceLost('linux:nas'))).toEqual({ code: 'device-lost', deviceId: 'linux:nas' })
+  })
+
+  it('包在 cause 链里也认得出', () => {
+    const wrapped = new Error('工具执行失败', { cause: new DeviceOffline('linux:nas') })
+    expect(deviceErrorOf(wrapped)).toEqual({ code: 'device-offline', deviceId: 'linux:nas' })
+  })
+
+  it('普通错误与身份错误给 undefined（没有「哪台设备」可说）', () => {
+    expect(deviceErrorOf(new Error('x'))).toBeUndefined()
+    expect(deviceErrorOf(new IdentityOffline('xhs', 't', 'r'))).toBeUndefined()
+  })
+
+  it('cause 成环不死循环', () => {
+    const a = new Error('a'); const b = new Error('b', { cause: a })
+    Object.assign(a, { cause: b })
+    expect(deviceErrorOf(a)).toBeUndefined()
   })
 })

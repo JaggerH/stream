@@ -148,6 +148,20 @@ export class IdentitySignedOut extends IdentityError {
 }
 
 /**
+ * 工具调用结果里带的结构化错误摘要（`tool-registry` 的 `ToolResult.error`）：嵌入方按码分诊，
+ * 不解析错误文字。顺着 `cause` 链找第一个设备错误——包常把底层错误包进自己的 `Error`，同
+ * `failureDisposition` 的理由。身份错误不给（没有「哪台设备」可说）。
+ */
+export function deviceErrorOf(e: unknown): { code: string; deviceId: string } | undefined {
+  const seen = new Set<unknown>()
+  for (let cur: unknown = e; cur instanceof Error && !seen.has(cur); cur = cur.cause) {
+    seen.add(cur)
+    if (cur instanceof DeviceError) return { code: cur.code, deviceId: cur.deviceId }
+  }
+  return undefined
+}
+
+/**
  * 任务失败后要不要按 `maxAttempts` 再来。`HostAbortedByUser` 是用户的明确意图，同样不重试。
  * 顺着 `cause` 链找第一个认得的设备错误：包常把底层错误包进自己的 `Error(…, { cause })`，
  * 只看最外层就会把一个 device-lost 当普通失败重跑——重复下单。

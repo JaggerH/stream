@@ -7,6 +7,7 @@ import type { McpExtras } from './tool-catalog.ts'
 import type { StreamServiceLike } from './tools.ts'
 import type { ToolDef } from '../../shared/capability/types.ts'
 import { SearchRunStore } from '../agent/search/run-store.ts'
+import { DeviceBrowserOffline, DeviceOffline } from '../devices/errors.ts'
 
 /**
  * 「什么都在场」的 extras：任何格读出来都是一个可调用、任何下级格也都在场的东西——于是 catalog 的
@@ -164,5 +165,44 @@ describe('annotations 守卫', () => {
     for (const n of ['run_action_recipe', 'cdp_act', 'cdp_look', 'reconcile_execute', 'netdisk_follow', 'provision_capability_key', 'stream_unsubscribe']) {
       expect(all.find((s) => s.name === n)?.annotations, n).toMatchObject({ readOnlyHint: false, destructiveHint: true })
     }
+  })
+})
+
+describe('工具失败结果带结构化错误码（嵌入方按它分诊，不解析文字）', () => {
+  it('目录工具抛设备错误 → isError + error{code, deviceId}', async () => {
+    const tools = createStreamTools(fakeService, {
+      isCommunitySource: () => false,
+      cdpLook: async () => { throw new DeviceOffline('linux:nas') },
+    })
+    const r = await tools.call('cdp_look', { target: 'chrome' })
+    expect(r.isError).toBe(true)
+    expect(r.error).toEqual({ code: 'device-offline', deviceId: 'linux:nas' })
+  })
+
+  it('能力包工具抛设备错误同样带上；普通错误不带', async () => {
+    const tools = createStreamTools(fakeService, {
+      isCommunitySource: () => false,
+      capabilityTools: () => [
+        capTool('cap_off', { execute: async () => { throw new DeviceBrowserOffline('dev-1') } }),
+        capTool('cap_plain', { execute: async () => { throw new Error('炸了') } }),
+      ],
+    })
+    const off = await tools.call('cap_off', { who: 'x' })
+    expect(off.isError).toBe(true)
+    expect(off.error).toEqual({ code: 'device-browser-offline', deviceId: 'dev-1' })
+    const plain = await tools.call('cap_plain', { who: 'x' })
+    expect(plain.isError).toBe(true)
+    expect(plain.error).toBeUndefined()
+  })
+
+  it('包在 cause 链里的设备错误也认得出', async () => {
+    const tools = createStreamTools(fakeService, {
+      isCommunitySource: () => false,
+      capabilityTools: () => [
+        capTool('cap_wrap', { execute: async () => { throw new Error('包一层', { cause: new DeviceOffline('dev-2') }) } }),
+      ],
+    })
+    const r = await tools.call('cap_wrap', { who: 'x' })
+    expect(r.error).toEqual({ code: 'device-offline', deviceId: 'dev-2' })
   })
 })
