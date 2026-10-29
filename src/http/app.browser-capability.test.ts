@@ -55,16 +55,17 @@ describe('GET /api/browser-capability', () => {
     expect(body.everSeen).toBe(false)
   })
 
-  it('扩展未连时也秒回 —— 不阻塞、不探测（dep 只被同步调用一次）', async () => {
+  it('扩展未连时也秒回 —— 不阻塞、不探测（dep 只被同步调用一次，handler 不等它）', async () => {
+    // 「不阻塞」的判据是一根永不 settle 的 promise：handler 若改成 `await dep()`（或先探测再答），
+    // 这条请求永远不回、当场撞 testTimeout——红得干干净净。旧判据是墙钟 < 100ms，量的是机器
+    // 快慢不是行为（负载下 136ms 也红）；新判据等待即失败，与快慢无关。
     let calls = 0
     const app = appWith(() => {
       calls++
-      return summarizeCapability({ connected: false, since: null }, { everSeen: true })
+      return new Promise(() => {}) as never
     })
-    const started = Date.now()
     const res = await app.request('/api/browser-capability')
     expect(res.status).toBe(200)
-    expect(Date.now() - started).toBeLessThan(100)
     expect(calls).toBe(1)
   })
 
