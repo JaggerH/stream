@@ -256,6 +256,35 @@ describe('deviceGateway（宿主自建 server + Hono，basePath /api/stream）',
     ws.close()
   })
 
+  // HA：host agent（Rust，device.rs）把配对与中继写死在 `${backend}/api/devices/pair` 与
+  // `${backend}/api/host`——不跟宿主的 basePath 走（与扩展写死 `/api/ext/*` 同一个先例）。
+  // 这条照 agent 的真实顺序走：固定路径配对 → 固定路径 WS → 设备上线。
+  it('照 host agent 真实顺序：POST /api/devices/pair → WS /api/host（固定路径）→ 设备 online', async () => {
+    const stream = await tempStream()
+    const { port } = await hostApp(stream, { isAdmin: () => true })
+    const changes: DeviceChange[] = []
+    stream.devices.onChange((c) => changes.push(c))
+
+    const code = await json(port, 'POST', '/api/stream/devices/pairing-code')
+    // agent 打的是写死的 /api/devices/pair；错码也 403（码即凭据，这条路径不要 token）
+    expect((await json(port, 'POST', '/api/devices/pair', { code: 'not-a-real-code' })).status).toBe(403)
+    const pair = await json(port, 'POST', '/api/devices/pair', { code: code.body!.code, name: '测试机', platform: 'linux' })
+    expect(pair.status).toBe(200)
+    const deviceId = pair.body!.deviceId as string
+    const token = pair.body!.deviceToken as string
+    expect(deviceId).toMatch(/^linux:/)
+
+    // agent 连的是写死的 /api/host（device.rs ws_url），不是 /api/stream/host
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/api/host`, [HOST_RELAY_PROTOCOL, token])
+    await new Promise<void>((resolve, reject) => { ws.on('open', resolve); ws.on('error', reject) })
+    ws.send(JSON.stringify({ type: 'hello', deviceId, platform: 'linux', name: '测试机', agentVersion: '1.0.0', ops: [] }))
+    await vi.waitFor(() => {
+      expect(changes).toContainEqual({ kind: 'device', deviceId, name: '测试机', platform: 'linux', online: true, at: expect.any(Number) })
+    })
+    expect(stream.devices.online().devices.map((d) => d.deviceId)).toContain(deviceId)
+    ws.close()
+  })
+
   it('心跳：不回 pong 的设备在两个周期内 offline（pingIntervalMs 小值）', async () => {
     const stream = await tempStream()
     const { port } = await hostApp(stream, { isAdmin: () => true, pingIntervalMs: 50 })

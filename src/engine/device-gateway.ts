@@ -20,7 +20,7 @@ import type { IncomingMessage, Server } from 'node:http'
 import type { Duplex } from 'node:stream'
 import { REVOKED_CLOSE_CODE, extPairHandler, mountExtBindingRoutes } from '../http/ext-binding-routes.ts'
 import { mountExtPublicRoutes } from '../http/ext-public-routes.ts'
-import { mountDeviceRoutes } from '../http/device-routes.ts'
+import { devicePairHandler, mountDeviceRoutes } from '../http/device-routes.ts'
 import { clientIp } from '../http/client-ip.ts'
 import { EXT_VERIFY_LIMIT, PairingGuard, TokenBucket, type PairingGuardOptions, type TokenBucketOptions } from '../http/rate-limit.ts'
 import { mountIdentityRoutes } from '../http/identity-routes.ts'
@@ -72,12 +72,25 @@ export interface DeviceGateway {
    */
   extApp: Hono
   /**
+   * host agent **写死在代码里**的那一口（`POST ${origin}/api/devices/pair`，device.rs 的 `pair`），
+   * 相对 `/api` 注册：宿主 app.route('/api', gateway.hostApp)。
+   *
+   * 为什么单独一份：host agent 拼的是绝对路径（`app/host-agent/src/device.rs`），它不认识宿主的
+   * basePath。与 `extApp` 同一个先例（X2-R1）：网关挂在 `/api/stream` 上时，agent 打的仍是根上的
+   * `/api/devices/pair`。缺了它的表现是 agent 配对必 401 / 404，被拒后 park 不再重试
+   * （2026-10-29 HA 线真机验收撞到的就是这个）。WS `/api/host` 不在这里——由 `handleUpgrade`
+   * 的 `alsoPaths` 认领，与 `/api/ext` 同一个形状。
+   */
+  hostApp: Hono
+  /**
    * 宿主要挂的全部 (前缀, 子应用)：逐条 `app.route(m.path, m.app)` 即可，**别只挂第一条**。
-   * basePath 是 '/api' 时只有一条（serve 的情形，扩展那几口由 app.ts 提供）；否则两条。
+   * basePath 是 '/api' 时只有一条（serve 的情形，那几口由 app.ts 提供）；否则三条（管理面 +
+   * 扩展写死的 `/api/ext/*` + host agent 写死的 `/api/devices/pair`）。
    */
   mounts: ReadonlyArray<{ readonly path: string; readonly app: Hono }>
-  /** 宿主的 http server 'upgrade' 事件里调：路径是 `${basePath}/host` / `${basePath}/ext`，或扩展
-   *  写死的 `/api/ext`（配对绑定连的就是这一条）就接管并返回 true，否则 false 留给别人（不碰 socket）。 */
+  /** 宿主的 http server 'upgrade' 事件里调：路径是 `${basePath}/host` / `${basePath}/ext`，或
+   *  写死的 `/api/ext`（配对绑定连的就是这一条）、`/api/host`（host agent 连的就是这一条）就接管
+   *  并返回 true，否则 false 留给别人（不碰 socket）。 */
   handleUpgrade(req: IncomingMessage, socket: Duplex, head: Buffer): boolean
   close(): void
 }
@@ -180,6 +193,13 @@ export function deviceGateway(stream: Stream, opts: DeviceGatewayOptions): Devic
     // 与 app.ts 的 `deps.debug?.record ?? noop` 同款。要接就在 DeviceGatewayOptions 里加一格。
   })
 
+  // host agent 写死的路径（`${origin}/api/devices/pair`）。agent 的 WS `/api/host` 由下面的
+  // hostHandler alsoPaths 认领；HTTP 的配对在这一份里。与 extApp 同一个先例（X2-R1）：agent
+  // 不认识宿主的 basePath，网关挂在别的 basePath 上时必须答得出根上的这条。码即凭据、不经 isAdmin
+  // （与 `app.ts` 的 TOKEN_EXEMPT_ROUTES 同一口径），限流用与设备面同一份 PairingGuard。
+  const hostApp = new Hono()
+  hostApp.post('/devices/pair', devicePairHandler({ store: deviceStore, sourceIp, pairingGuard: devicePairGuard }))
+
   // 本机 token → 本机节点（不带 nodeId 的老扩展 → 兼容槽）；配对 token → 那条绑定，换节点来连 4004
   // （device-execution D7、browser-identity D1/D2，判法在 resolveExtToken）。
   const extHandler = extRelayHandler(harvest.extRelays, {
@@ -198,6 +218,9 @@ export function deviceGateway(stream: Stream, opts: DeviceGatewayOptions): Devic
   // Nothing connected → kind:'desktop' sources decline as a miss.
   const hostHandler = hostRelayHandler(harvest.hostRelays, {
     path: `${base}/host`,
+    // host agent 连的是它写死的 `/api/host`（不认识 basePath）。basePath 本来就是 '/api' 时
+    // 这一条与上面重复，Set 会去重。
+    alsoPaths: ['/api/host'],
     token: stream.secrets.extToken,
     deviceAuth: (t) => deviceStore.deviceForToken(t),
     onDeviceSeen: (id) => deviceStore.touch(id),
@@ -221,7 +244,10 @@ export function deviceGateway(stream: Stream, opts: DeviceGatewayOptions): Devic
     basePath: base,
     app,
     extApp,
-    mounts: base === '/api' ? [{ path: base, app }] : [{ path: base, app }, { path: '/api', app: extApp }],
+    hostApp,
+    mounts: base === '/api'
+      ? [{ path: base, app }]
+      : [{ path: base, app }, { path: '/api', app: extApp }, { path: '/api', app: hostApp }],
     handleUpgrade: (req, socket, head) => extHandler.handle(req, socket, head) || hostHandler.handle(req, socket, head),
     close: () => {
       closeRelayServer(extHandler.wss)

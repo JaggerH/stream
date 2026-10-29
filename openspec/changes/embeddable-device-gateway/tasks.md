@@ -40,3 +40,11 @@
 - [x] 5. 网关测试加「照扩展真实顺序」一条：`/api/ext/pair` → `/api/ext/verify`（带 binding，proof 对 `sha256hex(token)`）→ claimed-tabs / debug-log → `/api/ext` WS → binding online；`hostApp` 改为逐条挂 `mounts`
 - [x] 6. 全量 `vitest run` + `tsc --noEmit`（环境性失败名单不变：`serve.routes` / 真包计数 / 网络相关共 14 条，基线同样红）
 
+
+## 计划 7：返修 HA（host agent 连不上嵌入方）
+
+- [x] 1. `device-routes.ts` 导出 `devicePairHandler`（从 `mountDeviceRoutes` 提取，行为逐字不变）
+- [x] 2. `host-relay.ts` 的 `hostRelayHandler` 加 `alsoPaths`（与扩展中继同名同形）；`attachHostRelay` 透传
+- [x] 3. 网关：`hostApp`（相对 `/api`，只挂 `POST /devices/pair`，与设备面共用 PairingGuard）+ `mounts` 第三条；`hostHandler.alsoPaths: ['/api/host']`
+- [x] 4. 网关测试加「照 host agent 真实顺序」一条：`POST /api/devices/pair`（错码 403、对码拿 token）→ WS `/api/host` → 设备 online
+- [x] 5. 全量 `flock /tmp/stream-heavy.lock node_modules/.bin/vitest run src shared` + `tsc --noEmit -p .`（环境性失败名单不变）

@@ -6,7 +6,7 @@
 HTTP 路由，以及扩展中继与宿主中继两条 WS 端点，装成一个可挂到宿主应用上的网关。宿主 SHALL 逐条挂上
 `gateway.mounts` 里的每个 `(path, app)`（`basePath` 缺省 `/api`），并在宿主 http server 的 `upgrade`
 事件里调 `gateway.handleUpgrade(req, socket, head)`：路径属于 `${basePath}/ext`、`${basePath}/host`，
-或扩展写死的 `/api/ext` 时 SHALL 接管并返回 true，否则 SHALL 返回 false 且不触碰 socket。
+或写死的 `/api/ext` 与 `/api/host` 时 SHALL 接管并返回 true，否则 SHALL 返回 false 且不触碰 socket。
 `gateway.close()` SHALL 关闭两条中继的 WebSocket 服务与认领登记。
 
 #### Scenario: 宿主挂上网关后设备可以配对并连上
@@ -18,6 +18,11 @@ HTTP 路由，以及扩展中继与宿主中继两条 WS 端点，装成一个�
 - **WHEN** 宿主把网关挂在 `/api/stream` 上，扩展用一次性码完成 `/api/ext/pair`，随后按它自己写死的
   顺序打 `/api/ext/verify`（带 binding）、`/api/ext/claimed-tabs`、`/api/ext/debug-log`，再连 `/api/ext`
 - **THEN** verify 回一条能被 `sha256hex(token)` 验过的 proof，其余几口照常应答，WS 握手成功且绑定上线
+
+#### Scenario: host agent 按它写死的路径连得上（HA）
+- **WHEN** 宿主把网关挂在 `/api/stream` 上，host agent 用一次性码 `POST /api/devices/pair`（它在
+  `app/host-agent/src/device.rs` 里写死的绝对路径），再用换到的 token 连 WS `/api/host`（同样写死）
+- **THEN** 配对成功拿到 device token，WS 握手成功且设备上线
 
 #### Scenario: 不属于自己的路径让出来
 - **WHEN** 宿主的 server 上有发往其他路径的 upgrade 请求

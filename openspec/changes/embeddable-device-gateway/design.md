@@ -24,6 +24,7 @@ interface DeviceGateway {
   readonly basePath: string
   app: Hono                                            // 管理面（相对 basePath）
   extApp: Hono                                         // 扩展写死的 /api/ext/*（相对 '/api'）
+  hostApp: Hono                                        // host agent 写死的 /api/devices/pair（相对 '/api'）
   mounts: Array<{ path: string; app: Hono }>           // 宿主逐条 app.route(m.path, m.app)
   handleUpgrade(req, socket, head): boolean            // 宿主 server 'upgrade' 里调；false = 不是自己的路径
   close(): void
@@ -44,6 +45,14 @@ deviceGateway(stream: Stream, opts: DeviceGatewayOptions): DeviceGateway
    `handleUpgrade` 除 `${basePath}/ext` 外也认 `/api/ext`。`mounts` 把这两份收成一个数组，
    宿主逐条挂就不会漏（serve 的 basePath 就是 `/api`，那几口由 `app.ts` 注册在访问门之前，
    `mounts` 因此只有一条）。桌面端不在其中：它的地址是可配的（`STREAM_HOST_URL`），不需要固定路径。
+1b-2. **host agent 的配对口另走一套固定路径（HA）。** host agent 把 `POST /api/devices/pair` 与
+   WS `/api/host` 写死在自己代码里（`app/host-agent/src/device.rs` 的 `pair` / `ws_url`），同样不认
+   宿主的 basePath——但设备模式的前提恰恰是「机器上只有 agent、没有本机 Stream」，所以不能像桌面端
+   那样靠可配地址打发：网关挂在 `/api/stream` 上时，agent 打的就是根上的 `/api/devices/pair` 与
+   `/api/host`。照 1b 同一个先例：`devicePairHandler` 从 `mountDeviceRoutes` 提成导出（码即凭据、
+   不经 isAdmin、与设备面共用同一份 PairingGuard），网关另出一份 `hostApp`（相对 `/api` 只挂这一条）
+   挂到 `/api`；`hostRelayHandler` 加 `alsoPaths`（与扩展中继同名同形），`handleUpgrade` 也认
+   `/api/host`。`mounts` 收成三条，宿主逐条挂就不会漏。
 2. **握手逻辑不复制。** `attachExtRelay` / `attachHostRelay` 的 upgrade 监听器各抽出一个内部
    `handle(req, socket, head): boolean`（false = 路径不归我），原来的「自挂 server」用法变成
    `server.on('upgrade', (req, s, h) => handle(req, s, h))`，网关的 `handleUpgrade` 直接调两个

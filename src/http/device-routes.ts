@@ -51,19 +51,16 @@ export interface DeviceRoutesDeps {
   pairingGuard?: PairingGuard
 }
 
-export function mountDeviceRoutes(app: Hono, deps: DeviceRoutesDeps): void {
-  app.post('/devices/pairing-code', (c) => {
-    if (!deps.isAdmin(c)) return c.json({ error: '配对码只能在运行 Stream 的那台机器上生成' }, 403)
-    const { code, expiresAt } = deps.store.createPairingCode()
-    // One code carrying every address (LAN, Tailscale…): the phone checks which it can reach and
-    // lets the user pick, instead of the panel showing one QR per address to choose from by eye.
-    // Still v1, with `backend` = the first address: an app that predates `backends` pairs with that.
-    const backends = deps.backendUrls(c)
-    const qr = backends.length === 0 ? [] : [JSON.stringify({ stream: 'pair', v: 1, backend: backends[0], backends, code })]
-    return c.json({ code, expiresAt, qr })
-  })
-
-  app.post('/devices/pair', async (c) => {
+/**
+ * `POST /devices/pair`（相对路径注册）：设备用一次性码换 device token。码即凭据，这条路由不经
+ * `isAdmin`（`TOKEN_EXEMPT_ROUTES` 放行，Host / Origin 检查仍在上游访问门）。单独提成处理器是因为
+ * host agent 把这个路径**写死**在自己代码里（`app/host-agent/src/device.rs`），嵌入方（设备网关）
+ * 要在 `/api/devices/pair` 上也答这一口——见 `deviceGateway` 的 `hostApp`。
+ */
+export function devicePairHandler(
+  deps: Pick<DeviceRoutesDeps, 'store' | 'sourceIp' | 'pairingGuard'>,
+): (c: Context) => Promise<Response> {
+  return async (c) => {
     // 公网入口：先过来源的令牌桶 / 冷却，再看码。冷却期里正确的码同样换不到 token。
     const source = deps.sourceIp?.(c)
     if (deps.pairingGuard && !deps.pairingGuard.allow(source)) {
@@ -87,7 +84,22 @@ export function mountDeviceRoutes(app: Hono, deps: DeviceRoutesDeps): void {
     }
     deps.pairingGuard?.succeed(source)
     return c.json({ deviceId: r.deviceId, deviceToken: r.deviceToken })
+  }
+}
+
+export function mountDeviceRoutes(app: Hono, deps: DeviceRoutesDeps): void {
+  app.post('/devices/pairing-code', (c) => {
+    if (!deps.isAdmin(c)) return c.json({ error: '配对码只能在运行 Stream 的那台机器上生成' }, 403)
+    const { code, expiresAt } = deps.store.createPairingCode()
+    // One code carrying every address (LAN, Tailscale…): the phone checks which it can reach and
+    // lets the user pick, instead of the panel showing one QR per address to choose from by eye.
+    // Still v1, with `backend` = the first address: an app that predates `backends` pairs with that.
+    const backends = deps.backendUrls(c)
+    const qr = backends.length === 0 ? [] : [JSON.stringify({ stream: 'pair', v: 1, backend: backends[0], backends, code })]
+    return c.json({ code, expiresAt, qr })
   })
+
+  app.post('/devices/pair', devicePairHandler(deps))
 
   app.get('/devices', (c) => {
     const online = new Map(deps.registry.devices().map((d) => [d.hello.deviceId, d]))

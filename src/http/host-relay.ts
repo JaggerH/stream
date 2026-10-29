@@ -591,6 +591,12 @@ export function hostRelayHandler(
     deviceAuth?: (token: string) => string | undefined
     onDeviceSeen?: (deviceId: string) => void
     path?: string
+    /**
+     * 额外认领的路径（同一条中继、同一套握手）。host agent 把 `/api/host` **写死**在自己代码里
+     * （`app/host-agent/src/device.rs` 的 `ws_url`），网关挂在别的 basePath 上时也必须答得出这一条。
+     * 缺省空。与扩展中继的 `alsoPaths`（`shared/browser-relay/relay.ts`）同一个先例。
+     */
+    alsoPaths?: readonly string[]
     log?: (line: string) => void
     helloTimeoutMs?: number
     /** Heartbeat period, default 20s; for tests. */
@@ -599,6 +605,7 @@ export function hostRelayHandler(
   },
 ): RelayHandler {
   const { token, deviceAuth, onDeviceSeen, onDeviceState, path = '/api/host', log = console.log, helloTimeoutMs = 5_000, pingIntervalMs } = opts
+  const owned = new Set([path, ...(opts.alsoPaths ?? [])])
   const wss = new WebSocketServer({
     noServer: true,
     handleProtocols: (protocols: Set<string>) =>
@@ -608,7 +615,7 @@ export function hostRelayHandler(
   // 别人的路径返回 false 且不碰 socket。老用法（自挂 server）见 attachHostRelay，共用这份逻辑。
   const handle: RelayUpgradeHandle = (req, socket, head) => {
     const pathname = new URL(req.url ?? '', 'http://localhost').pathname
-    if (pathname !== path) return false // not our path: leave for other WSS upgrade listeners
+    if (!owned.has(pathname)) return false // not our path: leave for other WSS upgrade listeners
     const offered = String(req.headers['sec-websocket-protocol'] ?? '')
       .split(',')
       .map((s) => s.trim())
