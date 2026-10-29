@@ -25,6 +25,7 @@
     "ext:reload": "node scripts/ext-reload.mjs",
     "ext:console": "node scripts/ext-console.mjs",
     "test": "scripts/qrun.sh node_modules/.bin/vitest run",
+    "test:tmp-residue": "node scripts/check-tmp-residue.mjs",
     "test:watch": "vitest"
   },
   "dependencies": {

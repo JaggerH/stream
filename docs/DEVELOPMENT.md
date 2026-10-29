@@ -109,6 +109,17 @@ systemctl --user status stream-back        # Resident backend (non-dev mode): Re
   whether another line is running in parallel. If you catch a red run, triage first: if background numbers such as test-file count or built-in package count changed, someone advanced
   `main` (check `git log` first); it is not intermittent.
 
+- **Temp directories**: tests create scratch dirs with `mkdtempSync(join(tmpdir(), 'x-'))`. `src/test-setup.ts`
+  (vitest `setupFiles`) wraps `mkdtemp` / `mkdtempSync` and removes everything a test file created when that
+  file finishes, so a full run leaves nothing behind in `TMPDIR`. Do **not** "fix" a leak by writing temp
+  files somewhere else (the repo, a fixed path) and do not wipe `TMPDIR` globally — both hide the next leak.
+  To catch paths that bypass the wrapper (e.g. writing a file straight into `tmpdir()`), run:
+  ```bash
+  node scripts/check-tmp-residue.mjs        # full suite under a fresh TMPDIR, fails if anything is left
+  ```
+  It is a script rather than a vitest `globalSetup` / `globalTeardown` because several sessions and worktrees
+  share one `TMPDIR`; a process-wide check would count other people's files and turn red at random.
+
 > **Do not look for backend logs in `logs/combined.log` / `logs/error.log`** -- those are legacy files from RSSHub's built-in winston File
 > transport, disabled by `NO_LOGFILES`, and remain 0 bytes (they have no maxsize, which is how they reached
 > 40GB on 2026-07-23). RSSHub worker output is captured by Stream itself, capped, and written to
