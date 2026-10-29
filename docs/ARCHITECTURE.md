@@ -2462,7 +2462,12 @@ characters, SPA shell); `article-firecrawl` (Firecrawl runs JS in the cloud) is 
 goes cross-border only when the former declines, so static pages never go cross-border. The
 degrade check lives inside the member, and the ladder does not make a second judgment outside
 (the path is recorded in `ladder`; see
-[API.md](API.md#conversions-convert-to-text--add-speakers--extract-frame-text--summaries)). Each inline image in the article
+[API.md](API.md#conversions-convert-to-text--add-speakers--extract-frame-text--summaries)).
+When the page itself declares a publish date (JSON-LD `datePublished`, `article:published_time`,
+`<time datetime>` — Defuddle's precedence order), `article-defuddle` returns it alongside the
+body as `published`, normalized to a bare `YYYY-MM-DD`; a partial date ("2026", "2026-09") is
+dropped rather than guessed into a month start. It surfaces on `read_url` receipts as the
+optional `publishedAt`. Each inline image in the article
 body (`![alt](url)` markup) is downloaded one by one and sent through the `parse` Provider line
 (vision model → MinerU fallback; MinerU is the optional container package `@streamapp/mineru`;
 when it is not installed, the `ocr-mineru` level is not lit and the ladder stops at the vision
