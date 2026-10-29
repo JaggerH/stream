@@ -95,18 +95,23 @@ it('A、B 各加一条定时任务（秒级 cron）→ 关 A → B 的照样触�
   const aLedger = new RunLedger(join(a.stateDir, 'sidequest.sqlite'))
   const bLedger = new RunLedger(join(b.stateDir, 'sidequest.sqlite'))
   // 两个账本都开始记，而且任务**跑成**（completed）——deps 是实例装配的那份，不是空。
-  await new Promise((r) => setTimeout(r, 2500))
-  expect(aLedger.runs('two.a').some((r) => r.state === 'completed')).toBe(true)
-  expect(bLedger.runs('two.b').some((r) => r.state === 'completed')).toBe(true)
+  // 等「账本里出现 completed」这个事件而不是睡固定时长：睡多久都得拍脑袋（负载下睡少了红、
+  // 睡多了把整条用例顶到 testTimeout），事件一到就走。
+  await expect
+    .poll(() => aLedger.runs('two.a').some((r) => r.state === 'completed'), { timeout: 8_000, interval: 250 })
+    .toBe(true)
+  await expect
+    .poll(() => bLedger.runs('two.b').some((r) => r.state === 'completed'), { timeout: 8_000, interval: 250 })
+    .toBe(true)
 
   await a.close()
   const aFrozen = aLedger.runs('two.a').length
   const bBefore = bLedger.runs('two.b').length
-  await new Promise((r) => setTimeout(r, 2500))
   // 关 A 之后 B 的运行次数**增长**（不是只断言「没报错」——bBefore 在关 A 之前就 > 0，
-  // 单独断言它等于什么都没验），A 的账本冻结。
+  // 单独断言它等于什么都没验）。涨两行 = 两次完成之间隔了至少一整个调度间隔：这段里 A 若没关，
+  // 它的同频任务也会跑。涨够就查 A 的账本冻着，不再另睡一段。
+  await expect.poll(() => bLedger.runs('two.b').length, { timeout: 8_000 }).toBeGreaterThanOrEqual(bBefore + 2)
   expect(bLedger.runs('two.b').length).toBeGreaterThan(bBefore)
-  await new Promise((r) => setTimeout(r, 1200))
   expect(aLedger.runs('two.a').length).toBe(aFrozen)
 })
 
