@@ -143,13 +143,15 @@ describe('SYSTEM_IDENTITIES', () => {
    * （订阅键要往里灌），而 RSSHub catalog 的路由从来不带 `key_param`——播客成员只能来自
    * curated 清单或 recipe 包。
    */
-  it('podcast 这个标签在真 registry 里至少捞得到两个源', () => {
+  it('podcast 这个标签在真 registry 里至少捞得到一个源', () => {
     const plugins = loadPlugins('packages')
     const recipes = mountRecipePackages('packages', join(tmpdir(), 'stream-no-user-recipes'))
     const registry = new Registry(sealManifests(plugins.flatMap((p) => p.sources ?? []), plugins))
     registry.swapGroup('recipes', sealManifests(recipes.manifests, plugins), recipes.builtinIds)
     const members = registry.inCategory('podcast').map((m) => m.id)
-    expect(members.length, `podcast 成员: ${members.join(', ') || '（空）'}`).toBeGreaterThanOrEqual(2)
+    // 1 就够：这里钉的是「标签不捞空」，不是某个数量。曾经的第二个成员是荔枝那份 recipe，
+    // 它已不再随本仓库发布（`93af235`），所以今天只剩小宇宙。
+    expect(members.length, `podcast 成员: ${members.join(', ') || '（空）'}`).toBeGreaterThanOrEqual(1)
   })
 
   it('lyrics-search 的成员按目录 category 现取，行上不写任何具体歌词源', () => {
