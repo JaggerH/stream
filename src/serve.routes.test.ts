@@ -13,19 +13,26 @@
  * **代价实测 2.3s**（空 packages_dir + 查询档），全量后端约 100s，也就是 +2%。当年为它开脱的
  * 那句"真启动太贵"没有量过。
  *
- * ## 两个判据上的坑，改这条测试之前先读
+ * ## 三个判据上的坑，改这条测试之前先读
  *
  * 1. **一条挂上了但资源不存在的路由，和一条根本没挂的路由，返回的都是 404。**
  *    所以断言必须挑「挂上了就一定不返回 404」的路由 + 输入组合，别随手挑一条。
  *    （`/api/sources/affected?id=x` 就是反例：活体上用真 id 查是 200，喂一个不存在的 id 是 404。）
  * 2. **必须有反向对照**：一条不存在的 `/api/*` 必须是 404。少了它，任何一个兜底 handler
  *    都会让上面那串断言全绿——那正是这类测试最容易变成的样子：看着在验，其实什么都没验。
+ * 3. **「连不上子进程的端口」不是产品缺陷，是环境**。有些沙箱把子进程放进独立的网络命名空间：
+ *    它照样绑端口、照样打那行监听日志，而父进程的 127.0.0.1 上根本没有它。这种环境里等满
+ *    90 秒再报 `fetch failed`，红的是一条**什么都没验到**的用例，还会被当成回归。判据写成：
+ *    子进程**自己说**「我在这个端口上听了」→ 父进程 TCP 连不上 → 跳过并打印原因；
+ *    连得上就照常全跑（健康检查、工具表、路由、反向对照一条不少）。监听日志里报的端口和
+ *    `STREAM_PORT` 不一致**不跳过**——那是真的没听在要求的位置上，是失败。
  */
-import { describe, it, expect, afterAll } from 'vitest'
+import { describe, it, expect, afterAll, type TestContext } from 'vitest'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import { spawn, type ChildProcess } from 'node:child_process'
 import { mkdtempSync, writeFileSync, mkdirSync } from 'node:fs'
+import { connect } from 'node:net'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -35,8 +42,20 @@ const REPO = resolve(fileURLToPath(new URL('..', import.meta.url)))
 /** 随机高位口：活体那份钉死 8900，别的会话也可能起着自己那份。 */
 const PORT = 21000 + Math.floor(Math.random() * 9000)
 const BOOT_TIMEOUT_MS = 90_000
+/** 端口已经连得上之后，health 不该再慢——它不查库。留 10s 只给机器卡顿。 */
+const HEALTH_TIMEOUT_MS = 10_000
+
+/** 子进程自己宣告「已经在听了」的那一行（`src/serve.ts` 的 listen 回调）。 */
+const LISTEN_RE = /\[stream\] HTTP\+WS on http:\/\/0\.0\.0\.0:(\d+)/
 
 let child: ChildProcess | undefined
+
+/** 非空 = 这个环境里父进程够不到子进程的端口，整组用例跳过（判据见文件头第 3 条）。 */
+let skipReason: string | undefined
+
+function requireBackend(ctx: TestContext): void {
+  ctx.skip(skipReason !== undefined, skipReason ?? '')
+}
 
 /**
  * 隔离三件套，少一件都会伤到别人（`docs/DEVELOPMENT.md` "Start a Separate Backend for Smoke Tests/Verification"）：
@@ -100,8 +119,49 @@ async function get(path: string): Promise<{ status: number; body: string }> {
   return { status: res.status, body: await res.text() }
 }
 
-async function waitHealthy(): Promise<void> {
+/** 父进程的 127.0.0.1 上能不能连上这个端口。连不上（拒绝/超时）就是够不到。 */
+function portReachable(port: number, timeoutMs = 2_000): Promise<boolean> {
+  return new Promise((resolve) => {
+    const socket = connect({ host: '127.0.0.1', port })
+    const done = (ok: boolean): void => {
+      socket.removeAllListeners()
+      socket.destroy()
+      resolve(ok)
+    }
+    socket.setTimeout(timeoutMs, () => done(false))
+    socket.once('connect', () => done(true))
+    socket.once('error', () => done(false))
+  })
+}
+
+/** 等子进程打出监听那一行。**这是启动完成的判据**，不是「等够多久」。 */
+async function waitListening(): Promise<void> {
   const deadline = Date.now() + BOOT_TIMEOUT_MS
+  while (Date.now() < deadline) {
+    if (child?.exitCode != null) throw new Error(`后端启动即退出 (exit=${child.exitCode})：\n${logs}`)
+    const m = LISTEN_RE.exec(logs)
+    if (m) {
+      const listening = Number(m[1])
+      // 听在别处 = 真的没听在要求的位置上（STREAM_PORT 没生效之类），不是环境，照常失败。
+      if (listening !== PORT) throw new Error(`后端监听在 ${listening}，不是 STREAM_PORT=${PORT}：\n${logs}`)
+      return
+    }
+    await new Promise((r) => setTimeout(r, 50))
+  }
+  throw new Error(`${BOOT_TIMEOUT_MS}ms 内没等到监听日志：\n${logs}`)
+}
+
+async function waitHealthy(): Promise<void> {
+  await waitListening()
+  if (!(await portReachable(PORT))) {
+    // 它说在听、这边连不上：两个进程不在同一张网络上（沙箱的网络命名空间），不是缺陷。
+    skipReason =
+      `子进程已在 127.0.0.1:${PORT} 监听（日志见下），但父进程连不上——这个环境把父子进程的网络隔开了，` +
+      `这组用例在本机以外验不了，跳过而不是报失败。\n后端日志：\n${logs}`
+    console.warn(`[serve.routes.test] 跳过：${skipReason}`)
+    return
+  }
+  const deadline = Date.now() + HEALTH_TIMEOUT_MS
   let last = ''
   while (Date.now() < deadline) {
     if (child?.exitCode != null) throw new Error(`后端启动即退出 (exit=${child.exitCode})：\n${logs}`)
@@ -112,7 +172,7 @@ async function waitHealthy(): Promise<void> {
     } catch (e) { last = (e as Error).message }
     await new Promise((r) => setTimeout(r, 100))
   }
-  throw new Error(`${BOOT_TIMEOUT_MS}ms 内没起来（最后一次：${last}）：\n${logs}`)
+  throw new Error(`${HEALTH_TIMEOUT_MS}ms 内 health 没到 200（最后一次：${last}）：\n${logs}`)
 }
 
 let logs = ''
@@ -144,12 +204,13 @@ describe('serve.ts 真启动一次：关键路由确实挂上了', () => {
     if (child.exitCode == null) child.kill('SIGKILL')
   })
 
-  it('启动到 /api/health 200', async () => {
+  it('启动到 /api/health 200', async (ctx) => {
     const { env } = bootFixture()
     child = spawn(join(REPO, 'node_modules/.bin/tsx'), [join(REPO, 'src/serve.ts')], { env, cwd: REPO, stdio: ['ignore', 'pipe', 'pipe'] })
     child.stdout?.on('data', (b) => { logs += String(b) })
     child.stderr?.on('data', (b) => { logs += String(b) })
     await waitHealthy()
+    requireBackend(ctx)
     // 紧接着、不给它任何喘息时间——这一次的答案就是宿主会缓起来的那一份。
     firstToolNames = await listToolsOnce()
   }, BOOT_TIMEOUT_MS)
@@ -157,31 +218,37 @@ describe('serve.ts 真启动一次：关键路由确实挂上了', () => {
   // 可选能力包必须在 listen 之前装完。装在 listen 之后就有一个窗口期，窗口里 `stream mcp`
   // 已经在整面转发、宿主已经把工具表缓起来了，而用户刚装的那个包一件工具都不在上面——
   // `/api/packages` 那一列却照常列着它，没有任何一处会喊。
-  it('health 一通、第一次 tools/list 就含可选能力包的工具', () => {
+  it('health 一通、第一次 tools/list 就含可选能力包的工具', (ctx) => {
+    requireBackend(ctx)
     expect(firstToolNames, `第一次 tools/list：${firstToolNames.join(', ')}\n后端日志：\n${logs}`)
       .toContain('demo_cap_verb')
   })
 
   // 挑的都是「挂上了就一定不返回 404」的组合：空库也回 200 + 空集合，不依赖任何数据。
   // `/api/tasks` 是当年真出事的那一条，排第一。
-  it.each([
-    ['/api/tasks', '当年在所有模式下都没挂，920 条测试无一发现'],
-    ['/api/channels', ''],
-    ['/api/plugins', ''],
-    ['/api/streams', ''],
+  const ROUTES_THAT_MUST_EXIST: Array<{ path: string; why?: string }> = [
+    { path: '/api/tasks', why: '当年在所有模式下都没挂，920 条测试无一发现' },
+    { path: '/api/channels' },
+    { path: '/api/plugins' },
+    { path: '/api/streams' },
     // 扩展安装引导那一格：dep 没接上时这条恒 404，而前端的表现只是"横幅永远不出现"——
     // 没有任何一处会喊。空 settings 也回 200 `{}`，所以它满足"挂上了就一定不是 404"。
-    ['/api/extension/onboarding', '安装引导的接线：漏了只表现为横幅永远不出现'],
-  ])('%s 挂上了', async (path) => {
-    const r = await get(path)
-    expect(r.status, `${path} → ${r.status}；后端日志：\n${logs}`).toBe(200)
-  })
+    { path: '/api/extension/onboarding', why: '安装引导的接线：漏了只表现为横幅永远不出现' },
+  ]
+  for (const { path, why } of ROUTES_THAT_MUST_EXIST) {
+    it(`${path} 挂上了${why ? `（${why}）` : ''}`, async (ctx) => {
+      requireBackend(ctx)
+      const r = await get(path)
+      expect(r.status, `${path} → ${r.status}；后端日志：\n${logs}`).toBe(200)
+    })
+  }
 
   // 能力包给了哪些工具，是「包」页那一列的数据源。这一条走**整条真链路**：装载器扫到夹具里
   // 那个包 → 动态 import → `host.mount()` 注册工具 → HttpDeps 那条 thunk → `/api/packages`。
   // 断掉其中任何一环（少一格类型、忘了注入、mount 排在读之后）都只表现为"那一列永远空着"，
   // 没有任何一处会喊。
-  it('/api/packages 上那个能力包报出它注册的工具', async () => {
+  it('/api/packages 上那个能力包报出它注册的工具', async (ctx) => {
+    requireBackend(ctx)
     const r = await get('/api/packages')
     expect(r.status, `后端日志：\n${logs}`).toBe(200)
     const rows = (JSON.parse(r.body) as { packages: Array<{ id: string; slots: { capability?: string; tools?: string[] } }> }).packages
@@ -199,7 +266,8 @@ describe('serve.ts 真启动一次：关键路由确实挂上了', () => {
   // 这一条走的也是整条真链路：`package.json#stream.credentials` → 扫描器 → `load.ts` →
   // `host.credentialDomains()` → bootstrap 的 `extraCookieDomains` → `requiredCookieDomains`
   // → 扩展读到的这个端点。
-  it('能力包申报的登录态域进了扩展的同步名单', async () => {
+  it('能力包申报的登录态域进了扩展的同步名单', async (ctx) => {
+    requireBackend(ctx)
     const r = await get('/api/ext/sync-config')
     expect(r.status, `后端日志：\n${logs}`).toBe(200)
     const cfg = JSON.parse(r.body) as { configured: boolean; requiredDomains?: string[] }
@@ -208,7 +276,8 @@ describe('serve.ts 真启动一次：关键路由确实挂上了', () => {
 
   // 反向对照：不填能力槽位的包**不该**长出这两格。恒发一个空数组的话，上面那条断言就分不出
   // "真装载了" 和 "路由给每一行都塞了个默认值"。
-  it('不填能力槽位的包既没有 capability 也没有 tools', async () => {
+  it('不填能力槽位的包既没有 capability 也没有 tools', async (ctx) => {
+    requireBackend(ctx)
     const r = await get('/api/packages')
     const rows = (JSON.parse(r.body) as { packages: Array<{ id: string; slots: Record<string, unknown> }> }).packages
     const plain = rows.find((p) => p.id === 'demo')
@@ -223,7 +292,8 @@ describe('serve.ts 真启动一次：关键路由确实挂上了', () => {
   // **断言的是"不是 200"，不是某个具体码**：未被 Stream 路由认领的路径会往下落给独立正门
   // （`src/http/standalone-page.ts`），它对 /api 前缀一律 404；换个环境落空形态又不一样。
   // **具体码是环境的性质，"没人用 200 兜底"才是这条要钉的性质。**
-  it('不存在的 /api/* 不返回 200——证明上面那串 200 不是兜底 handler 给的', async () => {
+  it('不存在的 /api/* 不返回 200——证明上面那串 200 不是兜底 handler 给的', async (ctx) => {
+    requireBackend(ctx)
     const r = await get('/api/definitely-not-a-real-route')
     expect(r.status, `落空路径回了 ${r.status}；后端日志：\n${logs}`).not.toBe(200)
   })
