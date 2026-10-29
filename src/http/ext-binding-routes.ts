@@ -43,6 +43,8 @@ export interface ExtBindingRoutesDeps {
   sourceIp?: (c: Context) => string | undefined
   /** 扩展配对口防爆破与限流；不给 = 不限。 */
   pairingGuard?: PairingGuard
+  /** 撤销成功后的回调（嵌入方在这里同步摘掉自己的在线视图）。 */
+  onRevoked?: (bindingId: string) => void
 }
 
 /**
@@ -129,6 +131,7 @@ export function mountExtBindingRoutes(app: Hono, deps: ExtBindingRoutesDeps): vo
     const id = c.req.param('id')
     if (!deps.store.revoke(id)) return c.json({ error: '没有这条扩展绑定' }, 404)
     deps.registry.kick(id, REVOKED_CLOSE_CODE, 'revoked')
+    deps.onRevoked?.(id)
     return c.body(null, 204)
   })
 }

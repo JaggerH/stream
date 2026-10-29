@@ -77,4 +77,29 @@ describe('ExtRelayRegistry', () => {
   it('relay(id) of an unknown binding throws instead of handing out a fresh relay', () => {
     expect(() => make({}).relay('ext:nope')).toThrow(/ext:nope/)
   })
+
+  // 撤销绑定先删表行、后 kick 连接：kick 发 offline 事件时表里已经查不到这条绑定了，
+  // 事件必须仍带 deviceId（嵌入方按 deviceId 折叠上下线，丢了这个字段事件就等于没发）。
+  it('offline events carry the device a binding belonged to at connect time, even after the store row is gone', () => {
+    const changes: Array<{ bindingId: string; deviceId?: string; online: boolean }> = []
+    const bindings: Record<string, string> = { 'ext:a': 'linux:nas' }
+    const reg = make(bindings)
+    reg.onChange((ch) => changes.push(ch))
+    const s = sock()
+    reg.connect('ext:a', s)
+    delete bindings['ext:a'] // 模拟「先撤销、后 kick」：deviceOf 已查不出这条绑定
+    reg.disconnect('ext:a', s)
+    expect(changes.at(-1)).toMatchObject({ bindingId: 'ext:a', deviceId: 'linux:nas', online: false })
+  })
+
+  it('kick after the store row is gone still names the device', () => {
+    const changes: Array<{ bindingId: string; deviceId?: string; online: boolean }> = []
+    const bindings: Record<string, string> = { 'ext:a': 'linux:nas' }
+    const reg = make(bindings)
+    reg.onChange((ch) => changes.push(ch))
+    reg.connect('ext:a', sock())
+    delete bindings['ext:a']
+    expect(reg.kick('ext:a', 4003, 'revoked')).toBe(true)
+    expect(changes.at(-1)).toMatchObject({ bindingId: 'ext:a', deviceId: 'linux:nas', online: false })
+  })
 })

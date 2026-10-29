@@ -68,6 +68,9 @@ export class ExtRelayRegistry {
   private readonly relays = new Map<string, ExtRelay>()
   private readonly connectedAt = new Map<string, number>()
   private readonly sockets = new Map<string, ExtSocket & { close?: (code: number, reason: string) => void }>()
+  // 连接时记下的「这条绑定属于哪台设备」。撤销绑定先删绑定表行、后 kick 连接，kick 发 offline
+  // 事件时 deviceOf 已查不出这条绑定——嵌入方按 deviceId 折叠上下线，丢了这个字段事件就等于没发。
+  private readonly deviceByBinding = new Map<string, string>()
   private readonly localRelayHooks: Array<(r: ExtRelay) => void> = []
   readonly local: LocalExtRelay
 
@@ -85,6 +88,10 @@ export class ExtRelayRegistry {
       if (isLocalBinding(bindingId)) for (const fn of this.localRelayHooks) fn(r)
     }
     r.connect(socket, info)
+    if (!isLocalBinding(bindingId)) {
+      const dev = this.deviceOf(bindingId)
+      if (dev) this.deviceByBinding.set(bindingId, dev)
+    }
     this.sockets.set(bindingId, socket)
     const at = (this.deps.now ?? Date.now)()
     this.connectedAt.set(bindingId, at)
@@ -141,6 +148,11 @@ export class ExtRelayRegistry {
     return isLocalBinding(bindingId) ? LOCAL_DEVICE : this.deps.deviceOf(bindingId)
   }
 
+  /** offline 事件里报的设备：优先用连接时记下的（撤销删行之后 deviceOf 查不出），其次再查绑定表。 */
+  private knownDeviceOf(bindingId: string): string | undefined {
+    return this.deviceByBinding.get(bindingId) ?? this.deviceOf(bindingId)
+  }
+
   /** 这条绑定是哪个节点。兼容槽与没记过节点的配对绑定（老扩展）没有。 */
   nodeOf(bindingId: string): string | undefined {
     if (bindingId === LOCAL_BINDING) return undefined
@@ -153,7 +165,7 @@ export class ExtRelayRegistry {
     if (this.sockets.get(bindingId) !== socket) return
     this.sockets.delete(bindingId)
     this.connectedAt.delete(bindingId)
-    this.emitChange({ bindingId, deviceId: this.deviceOf(bindingId), nodeId: this.nodeOf(bindingId), online: false, at: (this.deps.now ?? Date.now)() })
+    this.emitChange({ bindingId, deviceId: this.knownDeviceOf(bindingId), nodeId: this.nodeOf(bindingId), online: false, at: (this.deps.now ?? Date.now)() })
   }
 
   /** 撤销：断开并忘掉。返回它当时在不在线。 */
@@ -165,8 +177,10 @@ export class ExtRelayRegistry {
     this.connectedAt.delete(bindingId)
     // 本机的 relay 不忘：门面挂在它们身上的监听要一直在。
     if (!isLocalBinding(bindingId)) this.relays.delete(bindingId)
+    const deviceId = this.knownDeviceOf(bindingId)
+    this.deviceByBinding.delete(bindingId)
     if (!s) return false
-    this.emitChange({ bindingId, deviceId: this.deviceOf(bindingId), nodeId: this.nodeOf(bindingId), online: false, at: (this.deps.now ?? Date.now)() })
+    this.emitChange({ bindingId, deviceId, nodeId: this.nodeOf(bindingId), online: false, at: (this.deps.now ?? Date.now)() })
     try { s.close?.(code, reason) } catch { /* 已经断了 */ }
     return true
   }

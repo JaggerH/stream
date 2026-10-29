@@ -53,6 +53,8 @@ async function hostApp(
     log?: (l: string) => void
     trustedProxies?: string[]
     rateLimit?: { pairing?: { maxFailures?: number; cooldownMs?: number; burst?: number; refillPerSecond?: number } }
+    onDeviceRevoked?: (deviceId: string) => void
+    onBindingRevoked?: (bindingId: string) => void
   },
 ): Promise<{ port: number; upgrades: boolean[] }> {
   const gateway = deviceGateway(stream, {
@@ -63,6 +65,8 @@ async function hostApp(
     ...(opts.log ? { log: opts.log } : {}),
     ...(opts.trustedProxies ? { trustedProxies: opts.trustedProxies } : {}),
     ...(opts.rateLimit ? { rateLimit: opts.rateLimit } : {}),
+    ...(opts.onDeviceRevoked ? { onDeviceRevoked: opts.onDeviceRevoked } : {}),
+    ...(opts.onBindingRevoked ? { onBindingRevoked: opts.onBindingRevoked } : {}),
   })
   const app = new Hono()
   for (const m of gateway.mounts) app.route(m.path, m.app)
@@ -304,6 +308,51 @@ describe('deviceGateway（宿主自建 server + Hono，basePath /api/stream）',
     await vi.waitFor(() => {
       expect(changes).toContainEqual({ kind: 'device', deviceId, name: '冻住的机器', platform: 'linux', online: false, at: expect.any(Number) })
     }, { timeout: 2000 })
+  })
+
+  // 管理口撤销的回调：撤销先删表行、后断连接，offline 事件对「已删的行」不够用——嵌入方要有
+  // 一个同步摘掉自己在线视图的入口。删设备要连带报出它名下的每一条绑定。
+  it('DELETE /devices/:id 与 /ext/bindings/:id 触发撤销回调（删设备连带报出名下绑定）', async () => {
+    const stream = await tempStream()
+    const revokedDevices: string[] = []
+    const revokedBindings: string[] = []
+    const { port } = await hostApp(stream, {
+      isAdmin: () => true,
+      onDeviceRevoked: (id) => revokedDevices.push(id),
+      onBindingRevoked: (id) => revokedBindings.push(id),
+    })
+
+    const code = await json(port, 'POST', '/api/stream/devices/pairing-code')
+    const dev = await json(port, 'POST', '/api/stream/devices/pair', { code: code.body!.code, name: '测试机', platform: 'linux' })
+    const deviceId = dev.body!.deviceId as string
+    const extCode = await json(port, 'POST', `/api/stream/devices/${deviceId}/ext-pairing-code`)
+    const extOrigin = `chrome-extension://${STREAM_EXTENSION_ID}`
+    const extPair = await json(port, 'POST', '/api/ext/pair', { code: extCode.body!.code }, { origin: extOrigin })
+    const bindingId = extPair.body!.bindingId as string
+
+    // 撤一条不存在的绑定：404，回调不触发
+    expect((await json(port, 'DELETE', '/api/stream/ext/bindings/ext:nope')).status).toBe(404)
+    expect(revokedBindings).toEqual([])
+
+    // 撤销绑定 → onBindingRevoked
+    expect((await json(port, 'DELETE', `/api/stream/ext/bindings/${encodeURIComponent(bindingId)}`)).status).toBe(204)
+    expect(revokedBindings).toEqual([bindingId])
+
+    // 删除设备 → onDeviceRevoked（绑定已被撤，名下没有别的绑定）
+    expect((await json(port, 'DELETE', `/api/stream/devices/${encodeURIComponent(deviceId)}`)).status).toBe(204)
+    expect(revokedDevices).toEqual([deviceId])
+
+    // 再来一台带绑定未被撤的：删设备要连带报出绑定
+    const code2 = await json(port, 'POST', '/api/stream/devices/pairing-code')
+    const dev2 = await json(port, 'POST', '/api/stream/devices/pair', { code: code2.body!.code, name: '第二台', platform: 'linux' })
+    const deviceId2 = dev2.body!.deviceId as string
+    const extCode2 = await json(port, 'POST', `/api/stream/devices/${deviceId2}/ext-pairing-code`)
+    const binding2 = (await json(port, 'POST', '/api/ext/pair', { code: extCode2.body!.code }, { origin: extOrigin })).body!.bindingId as string
+    revokedDevices.length = 0
+    revokedBindings.length = 0
+    expect((await json(port, 'DELETE', `/api/stream/devices/${encodeURIComponent(deviceId2)}`)).status).toBe(204)
+    expect(revokedDevices).toEqual([deviceId2])
+    expect(revokedBindings).toEqual([binding2])
   })
 
   it('网关日志里没有设备 token 与配对码（签码、配对、连上、断开各走一遍）', async () => {

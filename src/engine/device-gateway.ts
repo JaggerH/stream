@@ -50,6 +50,13 @@ export interface DeviceGatewayOptions {
    * **缺省不信任任何头**——直连时那个头只是调用方自己打的字。
    */
   trustedProxies?: string[]
+  /**
+   * 管理口撤销的回调：删设备 / 撤扩展绑定的 DELETE 路由成功后调（删设备还会对它名下尚存的绑定
+   * 逐条调 {@link onBindingRevoked}）。撤销先删表行、后断连接，随后的 offline 事件对「已经删掉的
+   * 行」不再有意义——嵌入方要在这里把自己的在线视图同步摘掉，别只靠事件折叠。
+   */
+  onDeviceRevoked?: (deviceId: string) => void
+  onBindingRevoked?: (bindingId: string) => void
   /** 限流参数（测试注入用）；缺省见 `rate-limit.ts`。 */
   rateLimit?: { pairing?: PairingGuardOptions; verify?: TokenBucketOptions }
   log?: (line: string) => void
@@ -128,9 +135,15 @@ export function deviceGateway(stream: Stream, opts: DeviceGatewayOptions): Devic
     // 身份 / 环境目标（browser-identity D7）：只收身份表里见过的账号、节点上标过的环境。表打不开 = 一律拒。
     ...(siteIdentities ? { knownIdentity: (f: string, a: string) => siteIdentities!.list({ facility: f }).some((i) => i.accountId === a) } : {}),
     ...(browserNodes ? { knownEnvironment: (e: string) => browserNodes!.list().some((n) => n.environment === e) } : {}),
-    // 设备没了，挂在它上面的 Chrome 也就没有执行位置可言——一并撤销并断开。
+    // 设备没了，挂在它上面的 Chrome 也就没有执行位置可言——一并撤销并断开。撤销回调先于
+    // revokeDevice 逐条报出绑定（revokeDevice 删行，之后就没处查这台设备有哪些绑定了）。
     onRevoked: (id) => {
-      for (const b of extBindings.revokeDevice(id)) harvest.extRelays.kick(b, REVOKED_CLOSE_CODE, 'revoked')
+      opts.onDeviceRevoked?.(id)
+      for (const b of extBindings.forDevice(id).map((x) => x.bindingId)) {
+        opts.onBindingRevoked?.(b)
+        harvest.extRelays.kick(b, REVOKED_CLOSE_CODE, 'revoked')
+      }
+      extBindings.revokeDevice(id)
     },
   })
   mountIdentityRoutes(app, { identities: () => kernel.siteIdentities })
@@ -143,6 +156,7 @@ export function deviceGateway(stream: Stream, opts: DeviceGatewayOptions): Devic
     extId: STREAM_EXTENSION_ID,
     sourceIp,
     pairingGuard: extPairGuard,
+    onRevoked: (b) => opts.onBindingRevoked?.(b),
     ...(browserNodes ? { nodes: browserNodes } : {}),
   })
   // profile 认领（browser-identity D3）：没有节点表就无处可记，整组不挂。
