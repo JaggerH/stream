@@ -179,7 +179,7 @@ export interface AgentConfig {
  * 所以这个数字有两道闸门：装配期的自检（对不上直接 throw，见 `apply` 里那段）+ `agent.test.ts`
  * 里钉住它的断言。往表里加一格 → 两处都得改，任一处没改都是当场红。
  */
-export const MCP_EXTRAS_DEP_COUNT = 51
+export const MCP_EXTRAS_DEP_COUNT = 52
 
 export const agentPlugin = {
   name: 'agent',
@@ -684,6 +684,7 @@ export const agentPlugin = {
       pageShot: ctx.harvest.pageShot,
       pageAct: ctx.harvest.pageAct,
       pageLogin: ctx.harvest.pageLogin,
+      deviceChrome: ctx.harvest.deviceChrome, // cdp_*(target:device:<id>/chrome) rides that device's own extension binding
       secretSource: config.secretSource,
       // ctx.search（搜索扇出）：content_search / price_search / video_search
       contentSearch: ctx.search.contentSearch,

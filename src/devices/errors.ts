@@ -29,6 +29,21 @@ export class DeviceOffline extends DeviceError implements DeclaresEnvironmentUna
   }
 }
 
+/**
+ * `device:<id>/chrome` 档（openspec embeddable-device-gateway）：那台设备此刻没有在线的扩展绑定。
+ * 与 `DeviceOffline` 同判据——什么都没发出去——但 code 固定为 `device-browser-offline`：
+ * 嵌入方（把 Stream 当库用的宿主）靠这个码把它跟别的失败分开（挂起等设备回来，而不是换路执行）。
+ */
+export class DeviceBrowserOffline extends DeviceError implements DeclaresEnvironmentUnavailable {
+  readonly code = 'device-browser-offline'
+  readonly retryable = true
+  /** 采集侧：什么都没发出，本轮跳过而不是判源故障（shared/failure/environment.ts）。 */
+  readonly environmentUnavailable = true
+  constructor(deviceId: string) {
+    super(deviceId, `设备 ${deviceId} 的浏览器不在线——没有在线的扩展绑定，这次没有发出任何请求`)
+  }
+}
+
 export class DeviceFetchQueueTimeout extends DeviceError implements DeclaresEnvironmentUnavailable {
   readonly code = 'device-fetch-queue-timeout'
   readonly retryable = true

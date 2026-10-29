@@ -12,15 +12,16 @@ describe('cdpToolSpecs —— 描述按宿主真有的档位生成', () => {
   // `data-stream-el` 不属于这份名单：它是 `ref` 的选择器属性，chrome-only 那份里同样会出现
   // （见 actDescription 里 ref 那句，不挂在任何 tier 开关下面），放进「只属于别的档」的名单
   // 会在下一次把它挪进 chrome-only 缺失回路时炸出一条假红。
-  const OTHER_TIER_MARKERS = ['facility:', 'desktop', 'app:<process>', 'window:<id>', 'a11y'] as const
+  const OTHER_TIER_MARKERS = ['facility:', 'desktop', 'app:<process>', 'window:<id>', 'a11y', 'device:'] as const
 
-  it('chrome-only 宿主：四段描述里不出现 facility: / desktop / app:', () => {
+  it('chrome-only 宿主：四段描述里不出现 facility: / desktop / app: / device:', () => {
     for (const spec of cdpToolSpecs(['chrome'])) {
       const d = spec.description
       expect(d, `${spec.name} 提到了 facility:`).not.toMatch(/facility:/)
       expect(d, `${spec.name} 提到了 desktop`).not.toMatch(/desktop/i)
       expect(d, `${spec.name} 提到了 app:<process>`).not.toMatch(/app:<process>/)
       expect(d, `${spec.name} 提到了 window:<id>`).not.toMatch(/window:<id>/)
+      expect(d, `${spec.name} 提到了 device:`).not.toMatch(/device:/i)
       // 原生窗口那一档的专有名词也不许漏出来（它们只在那一档成立）。
       expect(d, `${spec.name} 提到了 a11y`).not.toMatch(/a11y/i)
     }
@@ -35,18 +36,19 @@ describe('cdpToolSpecs —— 描述按宿主真有的档位生成', () => {
     expect(names).toEqual(expect.arrayContaining(['target', 'kind', 'domain', 'ref', 'targetUrl', 'confirmed']))
   })
 
-  it('Stream（三档齐全）：三档在描述里都点到名', () => {
+  it('Stream（四档齐全）：四档在描述里都点到名', () => {
     const all = cdpToolSpecs(ALL_CDP_TIERS)
     const joined = all.map((s) => s.description).join('\n')
     for (const marker of OTHER_TIER_MARKERS) expect(joined).toContain(marker)
-    // 逐个动词也要对得上自己的面：cdp_look 三档都列，cdp_act 的 target 一栏也是这三档。
+    // 逐个动词也要对得上自己的面：cdp_look 四档都列，cdp_act 的 target 一栏也是这四档。
     const look = all.find((s) => s.name === 'cdp_look')!.description
-    for (const m of ['`chrome`', '`facility:<name>`', '`desktop`']) expect(look).toContain(m)
+    for (const m of ['`chrome`', '`facility:<name>`', '`desktop`', '`device:<deviceId>/chrome[:<tabId>]`']) expect(look).toContain(m)
     const act = all.find((s) => s.name === 'cdp_act')!.description
     const targetSegment = act.split('`target`: ')[1]!.split(' `domain` is the hostname')[0]!
     const targetTokens = targetSegment.replace(/\.$/, '').split(' / ')
     expect(targetTokens).toContain('chrome:<tabId>')
     expect(targetTokens).toContain('facility:<name>')
+    expect(targetTokens).toContain('device:<deviceId>/chrome[:<tabId>]')
     expect(cdpToolSpecs(ALL_CDP_TIERS).find((s) => s.name === 'cdp_act')!.parameters.map((p) => p.name)).toContain('exe')
   })
 

@@ -17,11 +17,12 @@
  * DSH 的参数格式都行。
  */
 
-/** 一档"面"。`desktop` 一档同时覆盖 `desktop` / `app:<process>` / `window:<id>` 三种写法（同一个 Stream Desktop）。 */
-export type CdpTier = 'chrome' | 'facility' | 'desktop'
+/** 一档"面"。`desktop` 一档同时覆盖 `desktop` / `app:<process>` / `window:<id>` 三种写法（同一个 Stream Desktop）；
+ *  `device` 一档覆盖 `device:<deviceId>/chrome[:<tabId>]`（某台配对设备的扩展浏览器）。 */
+export type CdpTier = 'chrome' | 'facility' | 'desktop' | 'device'
 
-/** Stream 后端三档齐全。插件只传 `['chrome']`。 */
-export const ALL_CDP_TIERS: readonly CdpTier[] = ['chrome', 'facility', 'desktop']
+/** Stream 后端四档齐全。插件只传 `['chrome']`。 */
+export const ALL_CDP_TIERS: readonly CdpTier[] = ['chrome', 'facility', 'desktop', 'device']
 
 export interface CdpParamSpec {
   name: string
@@ -44,6 +45,7 @@ const TARGET_FORM: Record<CdpTier, string> = {
   chrome: 'chrome:<tabId>',
   facility: 'facility:<name>',
   desktop: 'desktop / app:<process>[/<title>] / window:<id>',
+  device: 'device:<deviceId>/chrome[:<tabId>]',
 }
 
 /** 把若干句子接成一段：空串（= 这一档不在）直接掉出去，不留双空格。 */
@@ -58,11 +60,13 @@ const LOOK_BULLET: Record<CdpTier, string> = {
     '• `facility:<name>` — the harvest tab Stream is driving for that facility (e.g. facility:xhs). {value:null, live:false} if it has no live tab.',
   desktop:
     '• `desktop` / `app:<process>[/<title>]` / `window:<id>` — a NATIVE window (not a web page). `js` is then a JSON a11y query like {"role":"Button"}, NOT JavaScript — there is no DOM and no JS to run. Returns every match, so a name collision is visible (chrome://extensions has TWO buttons named 重新加载: the browser toolbar\'s and the extension card\'s). Reading only SCOPES to the window; it never steals focus. AN EMPTY RESULT IS NOT PROOF THE ELEMENT IS ABSENT: Chromium/Electron apps (QQ, VS Code, Discord…) build their a11y tree LAZILY — a window that isn\'t in the foreground answers every query with an empty array and no error. When that is the case the reply carries an extra `unbuilt` field explaining it; treat that read as NOT DONE (foreground the window and re-read — do not go rewrite the query), and treat an empty result WITHOUT `unbuilt` as a genuine absence. Qt/Win32 apps (Telegram, explorer) keep a full tree in the background, which is what makes unattended desktop harvest possible at all. Title match is a SUBSTRING and only needed to disambiguate — when an app: target matches several windows it refuses with `ambiguous-window` listing every candidate\'s id rather than picking one. Two windows can share process AND title (two Chrome profiles each showing 扩展程序 - Google Chrome), and then no title tells them apart: list with cdp_pages({target:\'desktop\'}) and address the one you want as `window:<id>` (the id wins over any process/title). An id lives as long as its window — use it for this session\'s calls, never write it into a recipe.',
+  device:
+    "• `device:<deviceId>/chrome[:<tabId>]` — the browser of a PAIRED device (its own Chrome, via that device's online extension binding). SAME semantics as the `chrome` tier: pass `url` to open+eval there (tabId numbers are that device's own), `inventory`/`frame`/`ref` all work, kind:'open' opens a tab on that device. Every call rides THAT device, so while it has no online extension binding the call fails with `device-browser-offline` — an environment state, not an action failure: wait for the device (stream_devices shows it) instead of retrying or switching targets.",
 }
 
 /** 列条目的顺序：原生窗口那条极长，放在最后。`target` 一栏的枚举则按 `ALL_CDP_TIERS`
  *  （那是清单不是段落）。 */
-const LOOK_BULLET_ORDER: readonly CdpTier[] = ['chrome', 'facility', 'desktop']
+const LOOK_BULLET_ORDER: readonly CdpTier[] = ['chrome', 'facility', 'device', 'desktop']
 
 function lookDescription(has: (t: CdpTier) => boolean, tiers: readonly CdpTier[]): string {
   const bullets = LOOK_BULLET_ORDER.filter((t) => tiers.includes(t))
@@ -112,10 +116,17 @@ function actDescription(has: (t: CdpTier) => boolean, tiers: readonly CdpTier[])
     `\`target\`: ${actable}.`,
     "`domain` is the hostname you believe the page is on — re-checked against the browser's own record before acting.",
     // ref 的「chrome-only」是一句**相对于别的档**的话：只有 chrome 一档时它无从对比，
-    // 而 "(facility harvest pages refuse it)" 更是直接点名一个不存在的面。
+    // 而 "(facility harvest pages refuse it)" 更是直接点名一个不存在的面。device chrome
+    // 的编号来自同一套 inventory，接了 device 档就得把话说全。
     'Instead of a `selector` you may pass `ref:<n>`, a number from a `cdp_look({inventory:true})` listing — it expands to the selector `[data-stream-el="<n>"]`, so it is' +
       (tiers.length > 1
-        ? ' chrome-only' + (has('facility') ? ' (facility harvest pages refuse it)' : '') + ' and'
+        ? ' chrome-only' +
+          (has('device')
+            ? ` (device chrome takes it too${has('facility') ? '; facility harvest pages refuse it' : ''})`
+            : has('facility')
+              ? ' (facility harvest pages refuse it)'
+              : '') +
+          ' and'
         : '') +
       ' mutually exclusive with `selector`.',
     'A `ref` inside an iframe (cross-origin included) is found and clicked there automatically. For a `selector` inside an iframe, pass `frame` (frame id from the inventory, or a piece of the frame URL) — without it selectors match the top document only; `expect` is then checked in that same frame.',
@@ -144,6 +155,8 @@ function pagesDescription(has: (t: CdpTier) => boolean): string {
   return join([
     'Enumerate (and for chrome, close) the addressable pages of a target.',
     '`target:"chrome"` lists the session-group tabs [{tabId,url,title,origin,active,openerTabId?,popup?}] — including tabs that a Stream-opened tab opened itself (`openerTabId` says which); pass `close:<tabId>` to close one (returns {closed}).',
+    has('device') &&
+      '`target:"device:<deviceId>/chrome"` lists the tabs of THAT device\'s browser [{tabId,url,title}] and `close:<tabId>` closes one there — the ids are that device\'s own.',
     has('desktop') &&
       '`target:"desktop"` lists NATIVE windows [{id,process,title,pid,foreground}] — identify the target before acting, then address it as `app:<process>/<title>` or, when that is ambiguous (same process and title twice), as `window:<id>` with the listed `id` (Windows: the HWND; macOS: the CGWindowID).',
     singlePage.length > 0 &&

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { parseCdpTarget, parseAppAddress } from './cdp-target.ts'
+import { parseCdpTarget, parseAppAddress, parseDeviceChrome } from './cdp-target.ts'
 
 describe('parseCdpTarget', () => {
   it('parses chrome with no address', () => {
@@ -50,7 +50,7 @@ describe('desktop / app 两档', () => {
     expect(parseAppAddress('code.exe/a/b — VS Code')).toEqual({ process: 'code.exe', title: 'a/b — VS Code' })
   })
 
-  it('未知 scheme 的提示里列出全部六档，别让人猜', () => {
+  it('未知 scheme 的提示里列出全部档位，别让人猜', () => {
     expect(() => parseCdpTarget('cloak:xhs')).toThrow(/desktop, app, window/)
   })
 
@@ -60,5 +60,20 @@ describe('desktop / app 两档', () => {
     expect(parseCdpTarget('window:396088')).toEqual({ scheme: 'window', address: '396088' })
     expect(parseCdpTarget('window:win-3')).toEqual({ scheme: 'window', address: 'win-3' })
     expect(() => parseCdpTarget('window')).toThrow(/needs a window id/)
+  })
+})
+
+describe('device 档（openspec embeddable-device-gateway）', () => {
+  it('device:<deviceId>/chrome[:<tabId>]——deviceId 里的冒号不参与切分，chrome 段按 / 切', () => {
+    expect(parseCdpTarget('device:linux:nas/chrome')).toEqual({ scheme: 'device', address: 'linux:nas/chrome' })
+    expect(parseDeviceChrome('linux:nas/chrome')).toEqual({ deviceId: 'linux:nas', chrome: 'chrome' })
+    expect(parseDeviceChrome('linux:nas/chrome:7')).toEqual({ deviceId: 'linux:nas', chrome: 'chrome:7' })
+  })
+
+  it('地址形状不对就拒：缺 /chrome 段、chrome 段写成别的名字', () => {
+    expect(() => parseDeviceChrome('linux:nas')).toThrow(/chrome/)
+    expect(() => parseDeviceChrome('linux:nas/firefox')).toThrow(/chrome/)
+    expect(() => parseCdpTarget('device:linux:nas')).toThrow(/chrome/)
+    expect(() => parseCdpTarget('device')).toThrow(/chrome/)
   })
 })

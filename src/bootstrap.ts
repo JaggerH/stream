@@ -542,6 +542,8 @@ export async function bootstrap(
     onDebug: opts.onDebug,
     notify: notifyDefect,
     broadcast: opts.broadcast,
+    // device:<id>/chrome 档的 kind:'login' 也要秘密来源（openspec secret-fill）——与 agent 域同一份。
+    ...(opts.secretSource ? { secretSource: opts.secretSource } : {}),
     // 介入域（下面 llm 之后才建）：**经 config 传 thunk，不写 inject、也不在插件里读 `ctx.intervention`**
     // ——Cordis 不许绕过 inject 惰性取服务（`cannot get property "intervention" without inject`，
     // 活体 2026-09-11 一次搜索当场撞上）；而 inject 它会让本域等一个比自己晚挂的域。同 netdisk 域那条

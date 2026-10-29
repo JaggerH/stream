@@ -1,5 +1,5 @@
 export interface CdpTarget {
-  scheme: 'chrome' | 'facility' | 'desktop' | 'app' | 'window'
+  scheme: 'chrome' | 'facility' | 'desktop' | 'app' | 'window' | 'device'
   address?: string
 }
 
@@ -15,7 +15,20 @@ export function parseAppAddress(address: string): { process: string; title?: str
   return title ? { process, title } : { process }
 }
 
-/** Parse a target URI: `chrome` | `chrome:<tabId>` | `facility:<name>` | `desktop` | `app:<process>[/<title>]` | `window:<id>`.
+/** `device:<deviceId>/chrome[:<tabId>]` 的 address 拆开。deviceId 自己带冒号（`linux:nas`），
+ *  所以解析器只切**第一个冒号**拿 scheme，这里拿到的是剩下的整段；deviceId 与 chrome 段按
+ *  第一个 `/` 切开，chrome 段必须是 `chrome` 或 `chrome:<tabId>`。 */
+export function parseDeviceChrome(address: string): { deviceId: string; chrome: string } {
+  const slash = address.indexOf('/')
+  const deviceId = slash === -1 ? '' : address.slice(0, slash).trim()
+  const chrome = slash === -1 ? '' : address.slice(slash + 1).trim()
+  if (!deviceId || !/^chrome(:\d+)?$/.test(chrome)) {
+    throw new Error(`target 'device' needs an address like <deviceId>/chrome or <deviceId>/chrome:<tabId>, e.g. device:linux:nas/chrome`)
+  }
+  return { deviceId, chrome }
+}
+
+/** Parse a target URI: `chrome` | `chrome:<tabId>` | `facility:<name>` | `desktop` | `app:<process>[/<title>]` | `window:<id>` | `device:<deviceId>/chrome[:<tabId>]`.
  *  scheme = the terminal (which page), the part after `:` is the terminal-local address.
  *  Throws on an unknown scheme, a missing required address, or a forbidden address.
  *
@@ -48,7 +61,14 @@ export function parseCdpTarget(target: string): CdpTarget {
       // app: 怎么写都是歧义，只有 id 分得开。id 活到窗口关掉为止，**别写进 recipe**。
       if (!address) throw new Error(`target 'window' needs a window id from cdp_pages({target:'desktop'}), e.g. window:396088`)
       return { scheme, address }
+    case 'device':
+      // 那台设备（配对的桌面 agent 名下）的扩展浏览器。deviceId 里的冒号不参与 scheme 切分
+      // （切第一个冒号后整段都是 address），地址形状在这里当场验——坏形状在解析期就报，
+      // 不等派发到 device 档才炸。
+      if (!address) throw new Error(`target 'device' needs an address like <deviceId>/chrome, e.g. device:linux:nas/chrome`)
+      parseDeviceChrome(address)
+      return { scheme, address }
     default:
-      throw new Error(`unknown target scheme '${scheme}'; known: chrome, facility, desktop, app, window`)
+      throw new Error(`unknown target scheme '${scheme}'; known: chrome, facility, desktop, app, window, device`)
   }
 }

@@ -112,7 +112,7 @@ export type McpExtrasDeps = Pick<AgentDomain, 'searchAgent' | 'webSearch' | 'int
   & Pick<
     HarvestService,
     'extLauncher' | 'extRelay' | 'browserCapability' | 'harvestBrowser'
-    | 'pageLook' | 'pageShot' | 'pageAct' | 'pageLogin' | 'desktopDriver' | 'makeSee' | 'recipeOverrides'
+    | 'pageLook' | 'pageShot' | 'pageAct' | 'pageLogin' | 'deviceChrome' | 'desktopDriver' | 'makeSee' | 'recipeOverrides'
     // run_action_recipe 的浏览器档骑它——和采集同一个执行入口，凭据注入/限速/冷却全在里面。
     | 'sessionRecipes'
   >
@@ -809,6 +809,9 @@ export function buildMcpExtras(boot: McpExtrasDeps): McpExtras {
     // 原生窗口档：直接骑 harvest 域那个 desktopDriver（今天它只喂 kind:'desktop' 的 source）。
     // 没连 agent 时它返回 undefined，router 随即报 agent-disconnected。
     desktop: boot.desktopDriver,
+    // device:<deviceId>/chrome 档：那台设备在线扩展绑定上的 chrome 面。**构建在 harvest 域**
+    // （lane 与 onDebug/DebugBox 接线都在那边，见 HarvestService.deviceChrome 的头注），这里只转发一格。
+    deviceChrome: boot.deviceChrome,
   })
 
   return {

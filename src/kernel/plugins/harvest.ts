@@ -34,7 +34,12 @@ import { FacilityRateLimiter } from '../../replay/facility-rate-limit.ts'
 import { FacilityCooldown } from '../../replay/facility-cooldown.ts'
 import { BlockEpisodeLog } from '../../replay/block-episodes.ts'
 import type { RecipeSessionSpec } from '../../replay/recipe.ts'
-import type { ActResult, ActionSpec } from '../../replay/interactive-gate.ts'
+import type { ActResult, ActionSpec, LaneAction } from '../../replay/interactive-gate.ts'
+import { DeviceOffline, DeviceIncapable, DeviceBrowserOffline } from '../../devices/errors.ts'
+import { InteractiveLane } from '../../replay/interactive-lane.ts'
+import { makeExtRawPage } from '../../replay/browser-ext-drive.ts'
+import type { ChromeSurfaceDeps } from '../../../shared/browser-relay/cdp-chrome.ts'
+import type { DeviceChromeSurface } from '../../mcp/cdp-router.ts'
 import type { SecretSource } from '../../../shared/browser-relay/secret-fill.ts'
 import type { RawItem } from '../../content/normalize.ts'
 
@@ -105,6 +110,15 @@ export interface HarvestService {
   pageAct: (action: ActionSpec & { facility: string }, confirmed?: boolean) => Promise<ActResult | null>
   /** `cdp_act({kind:'login'})` 打在 facility 上（openspec `secret-fill`）。 */
   pageLogin: (action: ActionSpec & { facility: string }, source: SecretSource | undefined, confirmed?: boolean) => Promise<ActResult | null>
+  /**
+   * `device:<deviceId>/chrome` 档（openspec embeddable-device-gateway）：那台设备在线扩展绑定上的
+   * chrome 档依赖。surface 按 deviceId 缓存——每台设备一条专用 lane（`InteractiveLane('mcp', null, relay)`），
+   * 不与本机 MCP lane / 采集 lane 混用；绑定断开重连是同一个 `ExtRelay` 实例，lane 不用重建，
+   * 绑定被顶掉/撤销时挂在其上的命令以 `ExtRelayDisconnected` 失败（与 transports 同款处理）。
+   * 选取规则与本机 `LocalExtRelay` 一致（默认绑定在线用默认，否则最近连上的）；没有在线绑定 →
+   * 抛 `DeviceBrowserOffline`（固定错误码 `device-browser-offline`，环境态不是动作失败）。
+   */
+  deviceChrome: (deviceId: string) => DeviceChromeSurface
   /** 显式收尾一个 facility 名下的所有标签（前端离开该频道时调）。正常终点。 */
   closeFacilityTabs: (facility: string) => Promise<void>
   /** 关掉闲置超时的 lane，返回关掉了谁。兜的是收尾回调跑不到的异常路径。 */
@@ -135,6 +149,8 @@ export interface HarvestConfig {
    *  缺席就是 `WsHostRelay` 自己的默认（180s）——见该字段在 `types.ts` 的头注。 */
   hostSessionWaitMs?: number
   onDebug?: (entry: DebugEntry) => void
+  /** `device:<id>/chrome` 档 `kind:'login'` 的秘密来源（openspec `secret-fill`）。缺席 = 那个动作拒绝。 */
+  secretSource?: SecretSource
   /**
    * 介入域的现取口（bootstrap 递 `() => kernel.intervention`）。**经 config 传、不走 inject、
    * 也不能在这里读 `ctx.intervention`**：Cordis 不允许绕过 inject 惰性取服务（活体 2026-09-11
@@ -299,6 +315,60 @@ export const harvestPlugin = {
     // 这一次调用落在哪个 Chrome：执行上下文说了算（没有上下文 = 本机）。
     const bindingOf = () => pickBrowser(extRelays)
     const transportFor = (_spec: RecipeSessionSpec, bindingId: string = bindingOf()) => transportOf(bindingId)
+
+    // device:<id>/chrome 档（openspec embeddable-device-gateway）：每台设备一条专用 lane 骑在
+    // 它的在线扩展绑定上（接口约束见 HarvestService.deviceChrome 的头注）。只有这里能造它：
+    // makeExtensionLauncher 的 onDebug 在本域 config 上，丢掉 DebugBox 会让这条链路上的静默
+    // 失败不留痕（browser-ext.ts 的头注：两条造 driver 的路都得接）。
+    const deviceSurfaces = new Map<string, DeviceChromeSurface>()
+    const deviceChrome = (deviceId: string): DeviceChromeSurface => {
+      const cached = deviceSurfaces.get(deviceId)
+      if (cached) return cached
+      let bindingId: string
+      try {
+        bindingId = extRelays.pick(deviceId)
+      } catch (e) {
+        if (e instanceof DeviceOffline || e instanceof DeviceIncapable) throw new DeviceBrowserOffline(deviceId)
+        throw e
+      }
+      const relay = extRelays.relay(bindingId)
+      const launcher = makeExtensionLauncher(relay, { onDebug: config.onDebug })
+      const lane = new InteractiveLane('mcp', null, relay)
+      const surf: DeviceChromeSurface = {
+        // 开一张临时标签跑 js：与本机 MCP 面的 chromeCdp 同构（见 mcp-extras 同名格的头注），
+        // 区别只有两个——骑的是那台设备的 relay；interactive 留下的标签回执 target 是
+        // `device:<id>/chrome:<tabId>`（不是 chrome:，后续调用好按原地址寻址回去）。
+        chromeCdp: async (url, js, opts) => {
+          const interactive = opts?.interactive === true
+          const { rawPage, close } = await launcher.launch(url, 'load', { interactive })
+          const page = rawPage as { tabId?: number; evalExpr: (e: string) => Promise<unknown> }
+          try {
+            // 清单要跨 iframe——那不是一段 js 能做完的，交给 lane（同 mcp-extras）。
+            const value = opts?.inventory && page.tabId != null ? await lane.inventory(page.tabId) : await page.evalExpr(js)
+            return interactive ? { value, target: `device:${deviceId}/chrome:${page.tabId}`, kept: true } : { value }
+          } finally {
+            if (!interactive) await close()
+          }
+        },
+        chromeLook: (tabId, js, frame) => lane.look(tabId, js, frame),
+        chromeInventory: (tabId) => lane.inventory(tabId),
+        chromeShot: async (tabId) => {
+          const res = (await makeExtRawPage(relay, tabId).cdp('Page.captureScreenshot', {
+            format: 'jpeg',
+            quality: 60,
+          })) as { data?: string } | undefined
+          return res?.data ?? null
+        },
+        chromeAct: (action, confirmed) => lane.act(action, { confirmed }),
+        chromeLogin: (action: LaneAction, confirmed) => lane.login(action, config.secretSource, { confirmed }),
+        chromeOpen: (url) => relay.openTab(url),
+        chromeTabs: () => relay.list(),
+        chromeCloseTab: (tabId) => relay.closeTab(tabId),
+      }
+      deviceSurfaces.set(deviceId, surf)
+      return surf
+    }
+
     // The registry bounds the TABS we open: idle lanes get reaped when a facility/global lane cap
     // is hit (a live-leased lane is never touched). There is no memory ceiling — the tabs live in
     // the user's Chrome, so they are not this container's RAM to police.
@@ -664,6 +734,7 @@ export const harvestPlugin = {
       pageShot,
       pageAct,
       pageLogin,
+      deviceChrome,
       closeFacilityTabs,
       reapIdleLanes,
       claimedTabs,

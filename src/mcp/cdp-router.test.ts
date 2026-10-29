@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
 import { makeCdpRouter } from './cdp-router.ts'
+import { DeviceBrowserOffline } from '../devices/errors.ts'
 import { SESSION_BUSY_REASON, USER_ABORTED_REASON } from '../replay/desktop-failure.ts'
 import { WsHostRelay, HostSessionQueueTimeout, HostAbortedByUser, type HostSocket } from '../http/host-relay.ts'
 import { makeDesktopDriver } from '../replay/desktop-driver.ts'
@@ -121,7 +122,7 @@ describe('makeCdpRouter', () => {
     const d = deps(); const r = makeCdpRouter(d)
     await r.look({ target: 'chrome:42', js: 'document.title', frame: 'gamemp' })
     expect(d.chromeLook).toHaveBeenCalledWith(42, 'document.title', 'gamemp')
-    await expect(r.look({ target: 'facility:xhs', js: '1', frame: 'x' })).rejects.toThrow(/frame 只在 chrome 档/)
+    await expect(r.look({ target: 'facility:xhs', js: '1', frame: 'x' })).rejects.toThrow(/frame 只在 chrome \/ device chrome 档/)
     await expect(r.look({ target: 'chrome:42', inventory: true, frame: 'x' })).rejects.toThrow(/跨全部 iframe/)
     await expect(r.look({ target: 'chrome', url: 'https://x', js: '1', frame: 'x' })).rejects.toThrow(/已开着的标签/)
   })
@@ -129,7 +130,7 @@ describe('makeCdpRouter', () => {
     const d = deps(); const r = makeCdpRouter(d)
     await r.act({ target: 'chrome:9', kind: 'click', domain: 'x', selector: '#b', frame: 'F1' })
     expect(d.chromeAct).toHaveBeenCalledWith(expect.objectContaining({ tabId: 9, frame: 'F1', selector: '#b' }), undefined)
-    await expect(r.act({ target: 'facility:xhs', kind: 'click', domain: 'x', frame: 'F1' })).rejects.toThrow(/frame 只在 chrome 档/)
+    await expect(r.act({ target: 'facility:xhs', kind: 'click', domain: 'x', frame: 'F1' })).rejects.toThrow(/frame 只在 chrome \/ device chrome 档/)
   })
   it('look: inventory 与 js 同给是错——只会有一个生效，别猜是哪个', async () => {
     const r = makeCdpRouter(deps())
@@ -158,7 +159,7 @@ describe('makeCdpRouter', () => {
   })
   it('act: facility 给 ref 被拒（采集页不开放按编号动作）', async () => {
     const d = deps(); const r = makeCdpRouter(d)
-    await expect(r.act({ target: 'facility:xhs', kind: 'click', domain: 'x', ref: 3 })).rejects.toThrow(/只在 chrome 档有效/)
+    await expect(r.act({ target: 'facility:xhs', kind: 'click', domain: 'x', ref: 3 })).rejects.toThrow(/只在 chrome \/ device chrome 档有效/)
     expect(d.facilityAct).not.toHaveBeenCalled()
   })
   it('pages: chrome lists, chrome close closes, facility single', async () => {
@@ -443,5 +444,104 @@ describe('makeCdpRouter — login（openspec secret-fill）', () => {
     const r = makeCdpRouter(d)
     await r.act({ ...spec, target: 'facility:xhs' })
     expect(d.facilityLogin).toHaveBeenCalledWith(expect.objectContaining({ facility: 'xhs', kind: 'login' }), true)
+  })
+})
+
+describe('makeCdpRouter — device:<id>/chrome 档（openspec embeddable-device-gateway）', () => {
+  /** 两台「设备」各一套假 chrome deps（chromeLogin 一格算在设备面上，不在 CdpRouterDeps）。
+   *  device:A 的调用绝不能落到 B 头上——按 deviceId 缓存正好让这个断言有处落。 */
+  function deviceDeps() {
+    const surfaces = new Map<string, ReturnType<typeof makeSurface>>()
+    const makeSurface = () => ({
+      chromeCdp: vi.fn(async (_u: string, _j: string, _o?: { interactive?: boolean; inventory?: boolean }) => ({ value: 'dev-opened', tabId: 31 })),
+      chromeLook: vi.fn(async (_t: number, _j: string, _f?: string) => 'dev-looked'),
+      chromeInventory: vi.fn(async (_t: number) => ({ items: ['dev'] })),
+      chromeShot: vi.fn(async (_t: number): Promise<string | null> => 'DEV'),
+      chromeAct: vi.fn(async (_a: unknown, _c?: boolean) => ({ status: 'done' as const })),
+      chromeOpen: vi.fn(async (url: string) => ({ tabId: 31, title: 'T', url, created: true })),
+      chromeTabs: vi.fn(async () => [{ tabId: 31, url: 'u', title: 't' }]),
+      chromeCloseTab: vi.fn(async (_t: number) => {}),
+      chromeLogin: vi.fn(async () => ({ status: 'done' as const, result: { navigated: true, cleared: true } })),
+    })
+    return {
+      surfaces,
+      deviceChrome: vi.fn((deviceId: string) => {
+        let s = surfaces.get(deviceId)
+        if (!s) { s = makeSurface(); surfaces.set(deviceId, s) }
+        return s
+      }),
+    }
+  }
+
+  it('look/shot/act/pages 全落在这台设备自己的 deps 上，别的设备一根手指都不碰', async () => {
+    const dd = deviceDeps()
+    const r = makeCdpRouter({ ...deps(), deviceChrome: dd.deviceChrome })
+    expect(await r.look({ target: 'device:linux:A/chrome:7', js: 'x' })).toEqual({ value: 'dev-looked' })
+    expect(dd.surfaces.get('linux:A')!.chromeLook).toHaveBeenCalledWith(7, 'x')
+    expect(await r.shot({ target: 'device:linux:A/chrome:7' })).toEqual({ shot: 'DEV' })
+    await r.act({ target: 'device:linux:A/chrome:7', kind: 'click', domain: 'x.com', selector: '#a', confirmed: true })
+    expect(dd.surfaces.get('linux:A')!.chromeAct).toHaveBeenCalledWith(expect.objectContaining({ tabId: 7, kind: 'click' }), true)
+    expect(await r.pages({ target: 'device:linux:A/chrome' })).toEqual({ pages: [{ tabId: 31, url: 'u', title: 't' }] })
+    expect(dd.surfaces.has('linux:B')).toBe(false)
+  })
+
+  it('look 带 url：临时标签跑 js 落到这台设备的 chromeCdp；frame 透传', async () => {
+    const dd = deviceDeps()
+    const r = makeCdpRouter({ ...deps(), deviceChrome: dd.deviceChrome })
+    await r.look({ target: 'device:linux:A/chrome', url: 'https://x', js: '1', interactive: true })
+    expect(dd.surfaces.get('linux:A')!.chromeCdp).toHaveBeenCalledWith('https://x', '1', { interactive: true })
+    await r.look({ target: 'device:linux:A/chrome:7', js: 'x', frame: 'iframe-1' })
+    expect(dd.surfaces.get('linux:A')!.chromeLook).toHaveBeenCalledWith(7, 'x', 'iframe-1')
+  })
+
+  it("kind:'open' 在 device 档不要 tabId——在那台设备上开一张新标签", async () => {
+    const dd = deviceDeps()
+    const r = makeCdpRouter({ ...deps(), deviceChrome: dd.deviceChrome })
+    await r.act({ target: 'device:linux:A/chrome', kind: 'open', domain: 'x', targetUrl: 'https://x' })
+    expect(dd.surfaces.get('linux:A')!.chromeOpen).toHaveBeenCalledWith('https://x')
+  })
+
+  it('ref 编号在 device 档同样展开成 selector（与 chrome 档同一条规矩）', async () => {
+    const dd = deviceDeps()
+    const r = makeCdpRouter({ ...deps(), deviceChrome: dd.deviceChrome })
+    await r.act({ target: 'device:linux:A/chrome:7', kind: 'click', domain: 'x.com', ref: 5 })
+    expect(dd.surfaces.get('linux:A')!.chromeAct).toHaveBeenCalledWith(expect.objectContaining({ selector: '[data-stream-el="5"]' }), undefined)
+  })
+
+  it('没有在线绑定：deviceChrome 抛的 DeviceBrowserOffline 原样冒出来（code=device-browser-offline）', async () => {
+    const r = makeCdpRouter({ ...deps(), deviceChrome: () => { throw new DeviceBrowserOffline('linux:A') } })
+    await expect(r.look({ target: 'device:linux:A/chrome:7', js: 'x' })).rejects.toMatchObject({ code: 'device-browser-offline' })
+    await expect(r.shot({ target: 'device:linux:A/chrome:7' })).rejects.toMatchObject({ code: 'device-browser-offline' })
+  })
+
+  it('宿主没接 deviceChrome：明说「没有设备这一档」，不静默落到别的档', async () => {
+    const r = makeCdpRouter(deps())
+    await expect(r.look({ target: 'device:linux:A/chrome:7', js: 'x' })).rejects.toThrow(/设备这一档/)
+    await expect(r.pages({ target: 'device:linux:A/chrome' })).rejects.toThrow(/设备这一档/)
+  })
+
+  it('login 走这台设备的 chromeLogin（tabId 来自 chrome 段）；没导航又没清掉时关那张标签', async () => {
+    const dd = deviceDeps()
+    const surface = dd.deviceChrome('linux:A')
+    surface.chromeLogin = vi.fn(async () => ({ status: 'done' as const, result: { navigated: false, cleared: false } }))
+    const r = makeCdpRouter({ ...deps(), deviceChrome: dd.deviceChrome })
+    const out = await r.act({ target: 'device:linux:A/chrome:7', kind: 'login', domain: 'a.example', secret: 's', passwordSelector: '#p' })
+    expect(surface.chromeLogin).toHaveBeenCalledWith(expect.objectContaining({ tabId: 7, kind: 'login' }), undefined)
+    expect(surface.chromeCloseTab).toHaveBeenCalledWith(7)
+    expect(out).toMatchObject({ closed: true })
+  })
+
+  it('login 进行中：同一张 device 标签的读取立即被拒，别的设备照常；结束后放开', async () => {
+    let finish!: (v: unknown) => void
+    const dd = deviceDeps()
+    const surface = dd.deviceChrome('linux:A')
+    surface.chromeLogin = vi.fn(() => new Promise<any>((res) => { finish = res }))
+    const r = makeCdpRouter({ ...deps(), deviceChrome: dd.deviceChrome })
+    const running = r.act({ target: 'device:linux:A/chrome:7', kind: 'login', domain: 'a.example', secret: 's', passwordSelector: '#p', confirmed: true })
+    await expect(r.look({ target: 'device:linux:A/chrome:7', js: 'x' })).rejects.toThrow(/secret-fill-in-progress/)
+    await expect(r.look({ target: 'device:linux:B/chrome:7', js: 'x' })).resolves.toBeDefined()
+    finish({ status: 'done', result: { navigated: true, cleared: true } })
+    await running
+    await expect(r.look({ target: 'device:linux:A/chrome:7', js: 'x' })).resolves.toBeDefined()
   })
 })

@@ -21,6 +21,8 @@ async function mount(opts: {
   llmForTask?: LlmForTask
   /** 在挂载之前往内置包目录里写点东西（装载是挂载期一次性做的，写晚了就赶不上）。 */
   seed?: (packagesDir: string) => void
+  /** 绑定 id → 设备 id：device 档的 `extRelays.pick` 靠它把设备映射到自己的绑定。 */
+  bindings?: Record<string, string>
 } = {}) {
   const root = mkdtempSync(join(tmpdir(), 'stream-harvest-'))
   const packagesDir = join(root, 'packages')
@@ -47,6 +49,14 @@ async function mount(opts: {
     dataDir,
     log: () => {},
     ...(opts.llmForTask && { llmForTask: opts.llmForTask }),
+    ...(opts.bindings && {
+      extBindings: {
+        get: (id: string) => (opts.bindings![id] ? { deviceId: opts.bindings![id]! } : undefined),
+        forDevice: (dev: string) => Object.entries(opts.bindings!).filter(([, d]) => d === dev).map(([bindingId]) => ({ bindingId })),
+        defaultOf: () => undefined,
+        clearDefault: () => {},
+      },
+    }),
   }
   await kernel.plugin(harvestPlugin, harvestConfig)
   return { kernel, dataDir, packagesDir, harvestConfig }
@@ -282,6 +292,46 @@ describe('harvestPlugin —— secret_params 的宿主接线', () => {
       if (/只有内置包|宿主没有接凭据读口/.test((e as Error).message)) blockedByGate3 = true
     }
     expect(blockedByGate3, 'readSecret / isBuiltinRecipe 有一格没接上').toBe(false)
+    await quiesceKernel(kernel)
+  })
+})
+
+describe('harvestPlugin —— device:<id>/chrome 档（openspec embeddable-device-gateway）', () => {
+  it('设备没有在线绑定 → DeviceBrowserOffline（固定码 device-browser-offline），什么都不发出去', async () => {
+    const { kernel } = await mount({ bindings: { 'ext:d1': 'linux:nas' } })
+    const h = kernel.harvest
+    let err: unknown
+    try { h.deviceChrome('linux:nas') } catch (e) { err = e }
+    expect(err).toMatchObject({ code: 'device-browser-offline', retryable: true })
+    // 「这台设备压根没有浏览器绑定」与「有绑定但都不在线」折成同一个码：调用方的下一步一样
+    // （等设备），而分码只会让它去猜该不该换路。
+    expect(() => h.deviceChrome('linux:nobrowser')).toThrow(expect.objectContaining({ code: 'device-browser-offline' }))
+    await quiesceKernel(kernel)
+  })
+
+  it('绑定连上后：surface 骑在那台设备自己的 relay 上（命令发到它的 socket），按 deviceId 缓存', async () => {
+    const { kernel } = await mount({ bindings: { 'ext:d1': 'linux:nas', 'ext:d2': 'linux:other' } })
+    const h = kernel.harvest
+    const sent: Record<string, string[]> = { 'ext:d1': [], 'ext:d2': [] }
+    const connect = (bindingId: string) => h.extRelays.connect(bindingId, {
+      send: (raw: string) => {
+        sent[bindingId]!.push(raw)
+        const m = JSON.parse(raw) as { id: number; op: string }
+        const result = m.op === 'list' ? { tabs: [{ tabId: bindingId === 'ext:d1' ? 11 : 22, url: 'u', title: 't' }] } : {}
+        queueMicrotask(() => h.extRelays.handleMessage(bindingId, JSON.stringify({ id: m.id, result })))
+      },
+    })
+    connect('ext:d1')
+    connect('ext:d2')
+
+    const nas = h.deviceChrome('linux:nas')
+    expect(await nas.chromeTabs()).toEqual([{ tabId: 11, url: 'u', title: 't' }])
+    expect((JSON.parse(sent['ext:d1']![0]!) as { op: string }).op).toBe('list')
+    expect(sent['ext:d2']).toEqual([])
+    expect(await h.deviceChrome('linux:other').chromeTabs()).toEqual([{ tabId: 22, url: 'u', title: 't' }])
+
+    // 每台设备一份 surface（各一条专用 lane），第二次取到的是同一个
+    expect(h.deviceChrome('linux:nas')).toBe(nas)
     await quiesceKernel(kernel)
   })
 })

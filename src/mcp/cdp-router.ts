@@ -3,7 +3,7 @@ import type { DesktopDriver } from '../replay/desktop-driver.ts'
 import { DesktopUnavailable, SESSION_BUSY_REASON, userAbortedReason } from '../replay/desktop-failure.ts'
 import { HostSessionQueueTimeout, HostAbortedByUser, INTERACTIVE_SESSION_WAIT_MS } from '../http/host-relay.ts'
 import { desktopAct, desktopLook, desktopMatch, desktopOpen, desktopPages, desktopShot } from './desktop-surface.ts'
-import { parseCdpTarget } from './cdp-target.ts'
+import { parseCdpTarget, parseDeviceChrome } from './cdp-target.ts'
 import { ReadLocks, SecretFillRefused, type LoginResult } from '../../shared/browser-relay/secret-fill.ts'
 import type { LaneAction } from '../replay/interactive-gate.ts'
 import {
@@ -29,6 +29,18 @@ export interface CdpRouterDeps extends ChromeSurfaceDeps {
   /** 原生窗口这一档。**没连 Stream Desktop 时返回 undefined**——这一档随即报
    *  `agent-disconnected`，而不是静默降级成别的面（降级会让调用方以为动作生效了）。 */
   desktop?: () => DesktopDriver | undefined
+  /**
+   * `device:<deviceId>/chrome` 档（openspec embeddable-device-gateway）：那台设备的 chrome 档依赖，
+   * 骑它的在线扩展绑定。**没在线绑定就抛 `DeviceBrowserOffline`**（固定错误码 `device-browser-offline`
+   * ——「设备没就绪」是环境态，调用方挂起等它回来，而不是换路执行）；登录动作跟 chrome 档一样
+   * 经 `chromeLogin`（openspec `secret-fill`）。缺席 = 这个宿主没有设备这一档。
+   */
+  deviceChrome?: (deviceId: string) => DeviceChromeSurface
+}
+
+/** 设备档的 chrome 面 = chrome 档七格 + 可选的 login（与 deps.chromeLogin 同款，openspec `secret-fill`）。 */
+export interface DeviceChromeSurface extends ChromeSurfaceDeps {
+  chromeLogin?: (action: LaneAction, confirmed?: boolean) => Promise<ActResult>
 }
 
 export type LookArgs = { target: string; js?: string; url?: string; interactive?: boolean; inventory?: boolean; frame?: string }
@@ -147,24 +159,42 @@ export function makeCdpRouter(deps: CdpRouterDeps): CdpRouter {
   // 登录动作期间按标签拒绝读取（openspec `secret-fill` D4）。锁在这一层：四个动词都从这里过，后端是唯一的路。
   const locks = new ReadLocks()
   const lockKey = (scheme: string, address: string | undefined): string | undefined =>
-    (scheme === 'chrome' || scheme === 'facility') && address ? `${scheme}:${address}` : undefined
+    (scheme === 'chrome' || scheme === 'facility' || scheme === 'device') && address ? `${scheme}:${address}` : undefined
   const stuck = (r: ActResult | null): boolean => {
     const res = (r as { result?: Partial<LoginResult> } | null)?.result
     return !!res && res.navigated === false && res.cleared === false
   }
 
+  /** 设备档的入口守卫：解析地址、取那台设备的面。**「没接」和「没在线」必须分开**——前者是
+   *  宿主没装配这一档（装配问题），后者是 `DeviceBrowserOffline`（环境态），下一步完全不同。 */
+  const deviceOf = (address: string | undefined): { deviceId: string; chrome: string; surf: DeviceChromeSurface } => {
+    if (!deps.deviceChrome) throw new Error(`这个宿主没有设备这一档（device:<deviceId>/chrome）——没装配 deviceChrome`)
+    if (!address) throw new Error(`target 'device' needs an address like <deviceId>/chrome, e.g. device:linux:nas/chrome`)
+    const { deviceId, chrome } = parseDeviceChrome(address)
+    return { deviceId, chrome, surf: deps.deviceChrome(deviceId) }
+  }
+  /** chrome 段 `chrome:<tabId>` → tabId；光 `chrome`（没指名标签）返回 undefined。 */
+  const deviceTabId = (chrome: string): string | undefined => (chrome.startsWith('chrome:') ? chrome.slice('chrome:'.length) : undefined)
+
   async function login(scheme: string, address: string | undefined, spec: ActionSpec, confirmed: boolean | undefined) {
     const key = lockKey(scheme, address)
-    if (!key) throw new Error(`cdp_act: login 要一张具体的标签——chrome:<tabId> 或 facility:<name>`)
+    if (!key) throw new Error(`cdp_act: login 要一张具体的标签——chrome:<tabId>、device:<id>/chrome:<tabId> 或 facility:<name>`)
+    const dev = scheme === 'device' ? deviceOf(address) : undefined
     return locks.hold(key, async () => {
-      if (scheme === 'chrome') {
-        if (!deps.chromeLogin) throw new SecretFillRefused('secret-source-missing', '这个宿主不支持 login')
-        const tabId = chromeTabId(address, 'act')
-        const r = await deps.chromeLogin({ ...spec, tabId }, confirmed)
-        // 没导航、也没清掉：密码还在框里。关掉这张标签是唯一稳妥的收尾；关不掉就一直锁着（hold 的 keep）。
+      if (scheme === 'chrome' || scheme === 'device') {
+        // chrome 档的 holder 是 deps；device 档的是那台设备的面。同一套语义（openspec `secret-fill`）：
+        // 没接 login → secret-source-missing；卡住（没导航也没清掉）→ 关掉那张标签，关不掉就一直锁着。
+        const holder: Pick<DeviceChromeSurface, 'chromeLogin' | 'chromeCloseTab'> = scheme === 'chrome' ? deps : dev!.surf
+        const tabStr = scheme === 'chrome' ? address : deviceTabId(dev!.chrome)
+        const tabId = Number(tabStr)
+        if (!tabStr || !Number.isFinite(tabId)) {
+          throw new Error(`cdp_act: login 要一张具体的标签——${scheme === 'chrome' ? 'chrome:<tabId>' : 'device:<id>/chrome:<tabId>'}`)
+        }
+        if (!holder.chromeLogin) throw new SecretFillRefused('secret-source-missing', '这个宿主不支持 login')
+        const r = await holder.chromeLogin({ ...spec, tabId }, confirmed)
         if (stuck(r)) {
           try {
-            await deps.chromeCloseTab(tabId)
+            await holder.chromeCloseTab(tabId)
             return { ...r, closed: true } as ActResult
           } catch {
             return r
@@ -187,10 +217,24 @@ export function makeCdpRouter(deps: CdpRouterDeps): CdpRouter {
       if (isDesktop(scheme) && inventory) {
         throw new Error(`cdp_look: 原生窗口档没有 DOM，inventory 不适用——那一档的 a11y query 本来就是清单`)
       }
-      if (frame && scheme !== 'chrome') throw new Error(`cdp_look: frame 只在 chrome 档有效（${scheme} 档没有 iframe 这回事）`)
+      if (frame && scheme !== 'chrome' && scheme !== 'device') throw new Error(`cdp_look: frame 只在 chrome / device chrome 档有效（${scheme} 档没有 iframe 这回事）`)
       if (scheme === 'chrome') {
         return chromeLookVerb(deps, {
           address,
+          js: resolved,
+          url,
+          interactive,
+          ...(inventory ? { inventory } : {}),
+          ...(frame ? { frame } : {}),
+        })
+      }
+      if (scheme === 'device') {
+        // device 档与 chrome 档同语义，只是面换成那台设备的：chrome 段的 tabId（有则传）
+        // 就是 chromeLookVerb 的 address，`device:<id>/chrome` + url 照样开临时标签。
+        const { chrome, surf } = deviceOf(address)
+        const tabId = deviceTabId(chrome)
+        return chromeLookVerb(surf, {
+          ...(tabId ? { address: tabId } : {}),
           js: resolved,
           url,
           interactive,
@@ -220,6 +264,11 @@ export function makeCdpRouter(deps: CdpRouterDeps): CdpRouter {
           return windowShotFallback(chromeTabId(address, 'shot'), e as Error)
         }
       }
+      if (scheme === 'device') {
+        // device 档不回落到原生窗口：那台设备的 Chrome 不在本机桌面上，窗口档够不着。
+        const { chrome, surf } = deviceOf(address)
+        return chromeShotVerb(surf, { address: deviceTabId(chrome) })
+      }
       if (scheme === 'facility') return { shot: await deps.facilityShot(address!) }
       if (isDesktop(scheme)) {
         const d = desktopDriver()
@@ -235,17 +284,23 @@ export function makeCdpRouter(deps: CdpRouterDeps): CdpRouter {
         return login(scheme, address, spec, confirmed) as Promise<ActResult | { live: false }>
       }
       locks.assertFree(lockKey(scheme, address))
-      if (spec.frame && scheme !== 'chrome') throw new Error(`cdp_act: frame 只在 chrome 档有效`)
+      if (spec.frame && scheme !== 'chrome' && scheme !== 'device') throw new Error(`cdp_act: frame 只在 chrome / device chrome 档有效`)
       if (ref !== undefined) {
         // 「ref 只在 chrome 档有效」是一条**跨档**的规矩，所以守在路由这一层；展开本身
-        // （编号 → `[data-stream-el=...]`）是 chrome 档的语义，交给共享库。
-        if (scheme !== 'chrome') {
+        // （编号 → `[data-stream-el=...]`）是 chrome 档的语义，交给共享库。device chrome
+        // 的编号来自同一套 inventory，同一条规矩覆盖它。
+        if (scheme !== 'chrome' && scheme !== 'device') {
           if (spec.selector) throw new Error(`cdp_act: ref 与 selector 二选一（ref 展开后就是一个 selector）`)
-          throw new Error(`cdp_act: ref 编号只在 chrome 档有效——facility 采集页不开放按编号动作`)
+          throw new Error(`cdp_act: ref 编号只在 chrome / device chrome 档有效——facility 采集页不开放按编号动作`)
         }
         spec = expandRef(spec, ref)
       }
       if (scheme === 'chrome') return chromeActVerb(deps, { address, confirmed, spec })
+      if (scheme === 'device') {
+        const { chrome, surf } = deviceOf(address)
+        const tabId = deviceTabId(chrome)
+        return chromeActVerb(surf, { ...(tabId ? { address: tabId } : {}), confirmed, spec })
+      }
       if (scheme === 'facility') {
         const r = await deps.facilityAct({ ...spec, facility: address! }, confirmed)
         return r ?? { live: false }
@@ -266,12 +321,16 @@ export function makeCdpRouter(deps: CdpRouterDeps): CdpRouter {
     },
 
     async pages({ target, close }) {
-      const { scheme } = parseCdpTarget(target)
+      const { scheme, address } = parseCdpTarget(target)
       if (isDesktop(scheme)) {
         const d = desktopDriver()
         return withDesktopSession(d, () => desktopPages(d))
       }
       if (scheme === 'chrome') return chromePagesVerb(deps, { close })
+      if (scheme === 'device') {
+        const { surf } = deviceOf(address)
+        return chromePagesVerb(surf, { close })
+      }
       // facility: a single managed page, nothing to list/close
       return { pages: [{ target }] }
     },
