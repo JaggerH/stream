@@ -11,6 +11,7 @@ import { PAIRED_PLATFORMS, type DeviceStore, type PairedPlatform } from '../devi
 import type { FacilityDeviceStore } from '../devices/facility-devices.ts'
 import { LOCAL_DEVICE } from '../devices/run-context.ts'
 import { targetFields, targetFrom, type Target } from '../devices/target.ts'
+import type { PairingGuard } from './rate-limit.ts'
 import type { HostRelayRegistry } from './host-registry.ts'
 
 export const TOKEN_EXEMPT_ROUTES: ReadonlyArray<{ method: string; path: string }> = [
@@ -44,6 +45,10 @@ export interface DeviceRoutesDeps {
   knownIdentity?: (facility: string, accountId: string) => boolean
   /** 环境目标只收某个节点上标过的环境。没注入 = 环境目标一律拒。 */
   knownEnvironment?: (environment: string) => boolean
+  /** 取这次请求的来源地址（限流 / 锁定的键）。缺省 = 连接地址，受信代理头见 `client-ip.ts`。 */
+  sourceIp?: (c: Context) => string | undefined
+  /** 配对口防爆破与限流；不给 = 不限（只给老调用方与单测留的口子，网关与 serve 都会传）。 */
+  pairingGuard?: PairingGuard
 }
 
 export function mountDeviceRoutes(app: Hono, deps: DeviceRoutesDeps): void {
@@ -59,17 +64,28 @@ export function mountDeviceRoutes(app: Hono, deps: DeviceRoutesDeps): void {
   })
 
   app.post('/devices/pair', async (c) => {
+    // 公网入口：先过来源的令牌桶 / 冷却，再看码。冷却期里正确的码同样换不到 token。
+    const source = deps.sourceIp?.(c)
+    if (deps.pairingGuard && !deps.pairingGuard.allow(source)) {
+      return c.json({ error: 'too-many-attempts' }, 429, { 'Retry-After': String(deps.pairingGuard.retryAfterSeconds(source) || 60) })
+    }
     let body: unknown
     try { body = await c.req.json() } catch { return c.json({ error: 'body 不是合法 JSON' }, 400) }
     const { code, name, platform } = (body ?? {}) as { code?: unknown; name?: unknown; platform?: unknown }
     if (typeof code !== 'string' || (name !== undefined && typeof name !== 'string')) {
+      deps.pairingGuard?.fail(source)
       return c.json({ error: 'code 必须是字符串，name 可选且必须是字符串' }, 400)
     }
     if (platform !== undefined && (typeof platform !== 'string' || !PAIRED_PLATFORMS.has(platform))) {
+      deps.pairingGuard?.fail(source)
       return c.json({ error: 'platform 只能是 android 或 linux' }, 400)
     }
     const r = deps.store.pair(code, name ?? '', (platform ?? 'android') as PairedPlatform)
-    if (!r.ok) return c.json({ error: r.reason }, 403)
+    if (!r.ok) {
+      deps.pairingGuard?.fail(source)
+      return c.json({ error: r.reason }, 403)
+    }
+    deps.pairingGuard?.succeed(source)
     return c.json({ deviceId: r.deviceId, deviceToken: r.deviceToken })
   })
 

@@ -6,6 +6,7 @@ import { join } from 'node:path'
 import { mountExtBindingRoutes } from './ext-binding-routes.ts'
 import { ExtBindingStore } from '../devices/ext-binding-store.ts'
 import { NodeStore } from '../devices/node-store.ts'
+import { PairingGuard } from './rate-limit.ts'
 
 const EXT_ID = 'dmhlfkdjljnilhnfajjpaobehenbokij'
 let store: ExtBindingStore
@@ -115,5 +116,35 @@ describe('extension binding routes', () => {
     expect((await app2.request('/ext/bindings/local:node_l/default', { method: 'PUT' })).status).toBe(204)
     expect(nodes.defaultOf('local')?.nodeId).toBe('node_l')
     expect((await app2.request('/ext/bindings/local:node_zz/default', { method: 'PUT' })).status).toBe(404)
+  })
+
+  it('配对码防爆破：同一来源连错到阈值 → 冷却期内 429，正确的码也换不到 token', async () => {
+    let t = 1_000_000
+    const guard = new PairingGuard({ now: () => t, maxFailures: 3, failureWindowMs: 60_000, cooldownMs: 30_000, burst: 100, refillPerSecond: 0 })
+    let src = '203.0.113.9'
+    const app2 = new Hono()
+    mountExtBindingRoutes(app2, {
+      store,
+      registry: { isOnline: () => false, kick: () => true },
+      devices: { name: (id) => (id === 'linux:nas' ? 'NAS' : undefined) },
+      isAdmin: () => true,
+      backendUrls: () => [],
+      extId: EXT_ID,
+      sourceIp: () => src,
+      pairingGuard: guard,
+    })
+    const mintCode = async () => (await (await app2.request('/devices/linux:nas/ext-pairing-code', { method: 'POST' })).json()) as { code: string }
+    const pairOn = (body: unknown) =>
+      app2.request('/ext/pair', { method: 'POST', headers: { 'content-type': 'application/json', Origin: `chrome-extension://${EXT_ID}` }, body: JSON.stringify(body) })
+
+    const { code } = await mintCode()
+    const wrong = code === '000000' ? '111111' : '000000'
+    for (let i = 0; i < 3; i++) expect((await pairOn({ code: wrong })).status).toBe(403)
+    expect((await pairOn({ code })).status).toBe(429)
+
+    src = '198.51.100.7'
+    expect((await pairOn({ code })).status).toBe(200)
+    t += 30_000
+    expect((await pairOn({ code: wrong })).status).toBe(403)
   })
 })

@@ -45,13 +45,24 @@ async function tempStream(): Promise<Stream> {
 }
 
 /** 宿主侧的最小装配：Hono 挂网关的每一条 mounts，upgrade 交给 gateway.handleUpgrade，回端口号。 */
-async function hostApp(stream: Stream, opts: { isAdmin: () => boolean; pingIntervalMs?: number; log?: (l: string) => void }): Promise<{ port: number; upgrades: boolean[] }> {
+async function hostApp(
+  stream: Stream,
+  opts: {
+    isAdmin: () => boolean
+    pingIntervalMs?: number
+    log?: (l: string) => void
+    trustedProxies?: string[]
+    rateLimit?: { pairing?: { maxFailures?: number; cooldownMs?: number; burst?: number; refillPerSecond?: number } }
+  },
+): Promise<{ port: number; upgrades: boolean[] }> {
   const gateway = deviceGateway(stream, {
     basePath: '/api/stream',
     isAdmin: () => opts.isAdmin(),
     backendUrls: () => ['http://198.51.100.7:1234'],
     ...(opts.pingIntervalMs ? { pingIntervalMs: opts.pingIntervalMs } : {}),
     ...(opts.log ? { log: opts.log } : {}),
+    ...(opts.trustedProxies ? { trustedProxies: opts.trustedProxies } : {}),
+    ...(opts.rateLimit ? { rateLimit: opts.rateLimit } : {}),
   })
   const app = new Hono()
   for (const m of gateway.mounts) app.route(m.path, m.app)
@@ -284,5 +295,25 @@ describe('deviceGateway（宿主自建 server + Hono，basePath /api/stream）',
     expect(all).not.toContain(String(code.body!.code))
     // 连接建立与断开在日志里看得见（帮排查），但只带 origin 不带凭证
     expect(all).toContain('device connected')
+  })
+
+  // 公网入口：嵌入方告诉网关「信任哪个反向代理的 X-Forwarded-For」，限流按真实来源算。
+  it('受信代理头：按 X-Forwarded-For 的来源锁定配对口，冷却期内正确的码也换不到 token', async () => {
+    const stream = await tempStream()
+    const { port } = await hostApp(stream, {
+      isAdmin: () => true,
+      trustedProxies: ['127.0.0.1'],
+      rateLimit: { pairing: { maxFailures: 3, cooldownMs: 30_000, burst: 100, refillPerSecond: 0 } },
+    })
+    const code = await json(port, 'POST', '/api/stream/devices/pairing-code')
+    const real = String(code.body!.code)
+    const wrong = real === '000000' ? '111111' : '000000'
+    const pair = (body: unknown, xff: string) =>
+      json(port, 'POST', '/api/stream/devices/pair', body, { 'x-forwarded-for': xff })
+
+    for (let i = 0; i < 3; i++) expect((await pair({ code: wrong }, '203.0.113.9')).status).toBe(403)
+    expect((await pair({ code: real }, '203.0.113.9')).status).toBe(429)
+    // 冷却只针对这个来源；代理追加的另一跳照样能换到 token
+    expect((await pair({ code: real }, '198.51.100.7')).status).toBe(200)
   })
 })

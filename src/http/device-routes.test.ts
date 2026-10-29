@@ -7,6 +7,7 @@ import { mountDeviceRoutes } from './device-routes.ts'
 import { DeviceStore } from '../devices/device-store.ts'
 import { FacilityDeviceStore } from '../devices/facility-devices.ts'
 import { HostRelayRegistry } from './host-registry.ts'
+import { PairingGuard } from './rate-limit.ts'
 
 let store: DeviceStore
 let registry: HostRelayRegistry
@@ -226,5 +227,54 @@ describe('device routes', () => {
     if (!r.ok) throw new Error('expected ok')
     expect((await app2.request(`/devices/${encodeURIComponent(r.deviceId)}`, { method: 'DELETE' })).status).toBe(204)
     expect(revoked).toEqual([r.deviceId])
+  })
+})
+
+describe('配对码防爆破（公网入口）', () => {
+  /** 可拨的钟 */
+  function clock(start = 1_000_000) {
+    let t = start
+    return { now: () => t, advance: (ms: number) => (t += ms) }
+  }
+
+  const mountWithGuard = (src: () => string) => {
+    const c = clock()
+    const guard = new PairingGuard({ now: c.now, maxFailures: 3, failureWindowMs: 60_000, cooldownMs: 30_000, burst: 100, refillPerSecond: 0 })
+    const app2 = new Hono()
+    mountDeviceRoutes(app2, { store, registry, isAdmin: () => true, backendUrls: () => [], sourceIp: () => src(), pairingGuard: guard })
+    return { app2, c }
+  }
+
+  it('同一来源连错到阈值 → 冷却期内 429，正确的码也换不到 token；别的来源不受影响', async () => {
+    let src = '203.0.113.9'
+    const { app2 } = mountWithGuard(() => src)
+    const { code } = (await (await app2.request('/devices/pairing-code', { method: 'POST' })).json()) as { code: string }
+    const wrong = code === '000000' ? '111111' : '000000'
+    const pair = (body: unknown) =>
+      app2.request('/devices/pair', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
+
+    for (let i = 0; i < 3; i++) expect((await pair({ code: wrong })).status).toBe(403)
+    const blocked = await pair({ code })
+    expect(blocked.status).toBe(429)
+    expect(blocked.headers.get('retry-after')).toBe('30')
+
+    // 冷却只针对这个来源：同一个码换一台机器（另一个来源）照样能换到 token
+    src = '198.51.100.7'
+    expect((await pair({ code })).status).toBe(200)
+  })
+
+  it('成功一次清掉失败计数；窗口外的失败不算数', async () => {
+    let src = '203.0.113.9'
+    const { app2, c } = mountWithGuard(() => src)
+    const { code } = (await (await app2.request('/devices/pairing-code', { method: 'POST' })).json()) as { code: string }
+    const wrong = code === '000000' ? '111111' : '000000'
+    const pair = (body: unknown) =>
+      app2.request('/devices/pair', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
+    await pair({ code: wrong })
+    await pair({ code: wrong })
+    c.advance(61_000) // 前两次出窗
+    await pair({ code: wrong })
+    // 窗口里只剩 1 次，没到 3
+    expect((await pair({ code })).status).toBe(200)
   })
 })

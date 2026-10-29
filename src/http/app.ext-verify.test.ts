@@ -53,6 +53,19 @@ describe('POST /api/ext/verify', () => {
     expect(res.status).toBe(403)
   })
 
+  // 公网入口：这一口没有 token，按来源限流（令牌桶）。
+  it('同一来源打太快：429，不再签 proof', async () => {
+    const app = fixture.build(undefined, {
+      extRelayAuth: { token: EXT_TOKEN, extId: EXT_ID },
+      verifyRateLimit: { capacity: 2, refillPerSecond: 0.0001 },
+    })
+    expect((await verify(app, { nonce: NONCE })).status).toBe(200)
+    expect((await verify(app, { nonce: NONCE })).status).toBe(200)
+    const limited = await verify(app, { nonce: NONCE })
+    expect(limited.status).toBe(429)
+    expect(await limited.json()).toEqual({ error: 'too-many-requests' })
+  })
+
   it('网页来源拒（浏览器强制 Origin，伪造不了 chrome-extension://）', async () => {
     const res = await verify(build(), { nonce: NONCE }, { origin: 'https://evil.example' })
     expect(res.status).toBe(403)

@@ -35,6 +35,8 @@ import { localNodeBinding } from './ext-relay-registry.ts'
 import { EXT_RELAY_PROTOCOL } from './ext-relay.ts'
 import { extVerifyProof, extVerifyProofForBinding } from './ext-verify.ts'
 import { unknownKey, unknownKeyMessage } from './strict-input.ts'
+import { clientIp } from './client-ip.ts'
+import { EXT_VERIFY_LIMIT, TokenBucket } from './rate-limit.ts'
 import { randomBytes } from 'node:crypto'
 
 /** `POST /ext/verify` 认识的字段。 */
@@ -58,6 +60,12 @@ export interface ExtPublicRoutesDeps {
   claimedTabs?: (bindingId?: string) => number[]
   /** debug bus。缺席 = 只收不回（同 app.ts 的 `deps.debug?.record ?? noop`）。 */
   debug?: { record(entry: DebugEntry): void }
+  /** 受信的反向代理地址（只有连接来自它们时才读 `X-Forwarded-For`）。缺省不信任任何头。 */
+  trustedProxies?: string[]
+  /** 取来源地址（限流键）。缺省按连接地址与受信代理头；测试可注入。 */
+  sourceIp?: (c: Context) => string | undefined
+  /** `/ext/verify` 的令牌桶；缺省每挂载一份 `EXT_VERIFY_LIMIT`。 */
+  verifyLimiter?: TokenBucket
 }
 
 function errorBody(code: 'validation_error' | 'unavailable', message: string): { error: { code: string; message: string } } {
@@ -72,6 +80,8 @@ function strictBody(c: Context, body: unknown, allowed: readonly string[]): Resp
 }
 
 export function mountExtPublicRoutes(app: Hono, deps: ExtPublicRoutesDeps): void {
+  const limiter = deps.verifyLimiter ?? new TokenBucket(EXT_VERIFY_LIMIT)
+  const sourceIp = deps.sourceIp ?? ((c: Context) => clientIp(c, deps.trustedProxies ?? []))
   /**
    * 「证明你也知道那把 secret」——扩展在**交出 token 之前**打这一口。
    *
@@ -90,6 +100,8 @@ export function mountExtPublicRoutes(app: Hono, deps: ExtPublicRoutesDeps): void
   app.post('/ext/verify', async (c) => {
     const auth = deps.auth
     if (!auth) return c.json({ error: 'ext relay disabled' }, 404)
+    // 公网入口：这一口没有 token，按来源限流。每次扩展连接打一次，正常用量远低于阈值。
+    if (!limiter.take(sourceIp(c))) return c.json({ error: 'too-many-requests' }, 429, { 'Retry-After': '1' })
     const origin = c.req.header('Origin') ?? ''
     if (!isExtensionOrigin(origin, auth.extId)) return c.json({ error: 'forbidden' }, 403)
     const body = (await c.req.json().catch(() => null)) as { nonce?: unknown } | null

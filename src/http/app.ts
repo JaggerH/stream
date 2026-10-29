@@ -115,6 +115,7 @@ import { authorizeAccess, peerAddress, isLoopbackAddress, isTrustedHost, isTrust
 import { tokenEqual } from './secrets.ts'
 import { TOKEN_EXEMPT_ROUTES } from './device-routes.ts'
 import { mountExtPublicRoutes } from './ext-public-routes.ts'
+import { EXT_VERIFY_LIMIT, TokenBucket, type TokenBucketOptions } from './rate-limit.ts'
 import { callSitesOf, PROVIDER_DEFAULT_SOURCE, PLANNED_PROVIDERS } from '../providers/seed.ts'
 import { identityServes } from '../providers/system/types.ts'
 import { PROVIDER_CALLSITES } from '../providers/callsites.ts'
@@ -306,6 +307,11 @@ export interface HttpDeps {
     /** 配对绑定的 token 哈希（`ExtBindingStore.tokenHashOf`）：verify 带 `binding` 时拿它当 key（design D7）。 */
     tokenHashOf?: (bindingId: string) => string | undefined
   }
+  /** 受信的反向代理地址：只有连接来自它们时才读 `X-Forwarded-For`（`/api/ext/verify` 的限流键）。
+   *  缺省不信任任何头。 */
+  trustedProxies?: string[]
+  /** `/api/ext/verify` 的令牌桶参数（测试注入）；缺省 `EXT_VERIFY_LIMIT`。 */
+  verifyRateLimit?: TokenBucketOptions
   /** **没有路由消费它，serve.ts 也不接线——这一格只为看门狗存在。**
    *  `src/http/app.ext-cookies.test.ts` 塞一个假的进来，断言已撤销的 `POST /api/ext/cookies`
    *  不但 404、而且没有偷偷往里写。删掉它就把那条断言的后半截拆了。 */
@@ -1262,6 +1268,8 @@ export function createHttpApp(deps: HttpDeps): Hono {
     ...(deps.extRelayAuth ? { auth: deps.extRelayAuth } : {}),
     ...(deps.claimedTabs ? { claimedTabs: deps.claimedTabs } : {}),
     ...(deps.debug ? { debug: deps.debug } : {}),
+    ...(deps.trustedProxies ? { trustedProxies: deps.trustedProxies } : {}),
+    verifyLimiter: new TokenBucket({ ...EXT_VERIFY_LIMIT, ...deps.verifyRateLimit }),
   })
   app.route('/api', extPublic)
 

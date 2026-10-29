@@ -11,6 +11,7 @@
 import type { Context, Hono } from 'hono'
 import type { ExtBindingStore } from '../devices/ext-binding-store.ts'
 import { LOCAL_DEVICE } from '../devices/run-context.ts'
+import type { PairingGuard } from './rate-limit.ts'
 
 /** 撤销时用的关闭码，与设备撤销同一个——扩展据此停止重连。 */
 export const REVOKED_CLOSE_CODE = 4003
@@ -38,6 +39,10 @@ export interface ExtBindingRoutesDeps {
     clearDefault(nodeId: string): boolean
     defaultOf(deviceId: string): { nodeId: string } | undefined
   }
+  /** 取这次请求的来源地址（限流 / 锁定的键）。缺省 = 连接地址，受信代理头见 `client-ip.ts`。 */
+  sourceIp?: (c: Context) => string | undefined
+  /** 扩展配对口防爆破与限流；不给 = 不限。 */
+  pairingGuard?: PairingGuard
 }
 
 /**
@@ -50,16 +55,27 @@ export interface ExtBindingRoutesDeps {
  * 挪到门之前就少一道 rebinding 防线。
  */
 export function extPairHandler(
-  deps: Pick<ExtBindingRoutesDeps, 'store' | 'devices' | 'extId'>,
+  deps: Pick<ExtBindingRoutesDeps, 'store' | 'devices' | 'extId' | 'sourceIp' | 'pairingGuard'>,
 ): (c: Context) => Promise<Response> {
   return async (c) => {
+    const source = deps.sourceIp?.(c)
+    if (deps.pairingGuard && !deps.pairingGuard.allow(source)) {
+      return c.json({ error: 'too-many-attempts' }, 429, { 'Retry-After': String(deps.pairingGuard.retryAfterSeconds(source) || 60) })
+    }
     if (!isExtensionOrigin(c.req.header('Origin') ?? '', deps.extId)) return c.json({ error: 'forbidden' }, 403)
     let body: unknown
     try { body = await c.req.json() } catch { return c.json({ error: 'body 不是合法 JSON' }, 400) }
     const { code, name, browser, platform } = (body ?? {}) as Record<string, unknown>
-    if (typeof code !== 'string') return c.json({ error: 'code 必须是字符串' }, 400)
+    if (typeof code !== 'string') {
+      deps.pairingGuard?.fail(source)
+      return c.json({ error: 'code 必须是字符串' }, 400)
+    }
     const r = deps.store.pair(code, { name, browser, platform })
-    if (!r.ok) return c.json({ error: r.reason }, 403)
+    if (!r.ok) {
+      deps.pairingGuard?.fail(source)
+      return c.json({ error: r.reason }, 403)
+    }
+    deps.pairingGuard?.succeed(source)
     return c.json({ bindingId: r.bindingId, token: r.token, deviceId: r.deviceId, deviceName: deps.devices.name(r.deviceId) ?? r.deviceId })
   }
 }

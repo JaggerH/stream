@@ -21,6 +21,8 @@ import type { Duplex } from 'node:stream'
 import { REVOKED_CLOSE_CODE, extPairHandler, mountExtBindingRoutes } from '../http/ext-binding-routes.ts'
 import { mountExtPublicRoutes } from '../http/ext-public-routes.ts'
 import { mountDeviceRoutes } from '../http/device-routes.ts'
+import { clientIp } from '../http/client-ip.ts'
+import { EXT_VERIFY_LIMIT, PairingGuard, TokenBucket, type PairingGuardOptions, type TokenBucketOptions } from '../http/rate-limit.ts'
 import { mountIdentityRoutes } from '../http/identity-routes.ts'
 import { mountNodeRoutes } from '../http/node-routes.ts'
 import { closeRelayServer, extRelayHandler } from '../http/ext-relay.ts'
@@ -43,6 +45,13 @@ export interface DeviceGatewayOptions {
   backendUrls: () => string[]
   /** 中继心跳周期（缺省跟随两条中继自己的默认）。测试用。 */
   pingIntervalMs?: number
+  /**
+   * 受信的反向代理地址：只有连接来自这些地址时才读 `X-Forwarded-For` 作为来源（限流 / 锁定的键）。
+   * **缺省不信任任何头**——直连时那个头只是调用方自己打的字。
+   */
+  trustedProxies?: string[]
+  /** 限流参数（测试注入用）；缺省见 `rate-limit.ts`。 */
+  rateLimit?: { pairing?: PairingGuardOptions; verify?: TokenBucketOptions }
   log?: (line: string) => void
 }
 
@@ -82,6 +91,13 @@ export function deviceGateway(stream: Stream, opts: DeviceGatewayOptions): Devic
   const { deviceStore, extBindings, facilityDevices, nodes: browserNodes, identities: siteIdentities } = devices
   const pkgs = kernel.packages
 
+  // 公网入口的限流（ingress）：来源取自连接地址；只有受信代理追加的 X-Forwarded-For 才算数。
+  const trustedProxies = opts.trustedProxies ?? []
+  const sourceIp = (c: Context) => clientIp(c, trustedProxies)
+  const devicePairGuard = new PairingGuard(opts.rateLimit?.pairing)
+  const extPairGuard = new PairingGuard(opts.rateLimit?.pairing)
+  const verifyLimiter = new TokenBucket({ ...EXT_VERIFY_LIMIT, ...opts.rateLimit?.verify })
+
   const app = new Hono()
   // 四个 mount 用**相对**路径注册，宿主 `app.route(basePath, gateway.app)` 后得到完整路径；
   // serve 的 basePath 是 '/api'，最终绝对路径与从前逐字节一致。
@@ -90,6 +106,8 @@ export function deviceGateway(stream: Stream, opts: DeviceGatewayOptions): Devic
     registry: harvest.hostRelays,
     isAdmin: opts.isAdmin,
     backendUrls: () => opts.backendUrls(),
+    sourceIp,
+    pairingGuard: devicePairGuard,
     ...(facilityDevices ? { bindings: facilityDevices } : {}),
     // 只收有包认领的 facility；调用时才问（包热装卸会变）。
     knownFacility: (f) => pkgs.networkForFacility(f) !== undefined,
@@ -110,6 +128,8 @@ export function deviceGateway(stream: Stream, opts: DeviceGatewayOptions): Devic
     isAdmin: opts.isAdmin,
     backendUrls: () => opts.backendUrls(),
     extId: STREAM_EXTENSION_ID,
+    sourceIp,
+    pairingGuard: extPairGuard,
     ...(browserNodes ? { nodes: browserNodes } : {}),
   })
   // profile 认领（browser-identity D3）：没有节点表就无处可记，整组不挂。
@@ -148,10 +168,14 @@ export function deviceGateway(stream: Stream, opts: DeviceGatewayOptions): Devic
     store: extBindings,
     devices: { name: (id) => deviceStore.list().find((d) => d.deviceId === id)?.name },
     extId: STREAM_EXTENSION_ID,
+    sourceIp,
+    pairingGuard: extPairGuard,
   }))
   mountExtPublicRoutes(extApp, {
     auth: { token: stream.secrets.extToken, extId: STREAM_EXTENSION_ID, tokenHashOf: (id) => extBindings.tokenHashOf(id) },
     claimedTabs: harvest.claimedTabs,
+    sourceIp,
+    verifyLimiter,
     // 嵌入方没有 debug bus（serve 那份在 `src/http/app.ts`）——缺席时 debug-log 只收不回，
     // 与 app.ts 的 `deps.debug?.record ?? noop` 同款。要接就在 DeviceGatewayOptions 里加一格。
   })
