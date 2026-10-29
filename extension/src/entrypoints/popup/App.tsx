@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Plus, Radar, Cookie, Pencil, Check, Radio, RefreshCw, Link2 } from 'lucide-react'
+import { Plus, Radar, Cookie, Check, Radio, RefreshCw, Link2 } from 'lucide-react'
 import { getConfig, setConfig, PROBE_CANDIDATES, syncableDomains, type Config } from '../../lib/config.ts'
 import { getRadar, getBrowserCapability, type RadarResult } from '../../lib/stream-api.ts'
 import { relayHealth, type CapabilitySnapshot, type RelayHealth } from '../../lib/relay-health.ts'
+import { bindingBadge, isActiveBinding, type BindingOnlineState } from '../../lib/binding-badge.ts'
 import {
   extTransport, toCandidates, toChannelSummaries, getChannels, createChannel, type RawChannel,
 } from '../../lib/subscribe-shell.ts'
@@ -23,7 +24,6 @@ import { Item, ItemContent, ItemTitle, ItemDescription, ItemActions } from '@/co
 import { Button } from '@/components/acrylic/button.tsx'
 import { Badge } from '@/components/acrylic/badge.tsx'
 import { Separator } from '@/components/acrylic/separator.tsx'
-import { InputGroup, InputGroupInput, InputGroupAddon, InputGroupButton } from '@/components/acrylic/input-group.tsx'
 import { Combobox } from '@/components/acrylic/combobox.tsx'
 
 /**
@@ -54,13 +54,16 @@ async function probeDefaultUrl(candidates: string[] = PROBE_CANDIDATES): Promise
   return peer?.baseUrl ?? ''
 }
 
-/** 问 SW「中继连着吗」。SW 不可达也算离线——而这次询问本身就会把它唤醒并重走连接流程。 */
-async function queryRelay(): Promise<boolean> {
+/** 一条绑定的在线状态；`id` 用来单独认出本机那条（下面的不 ready 提示只对它有意义）。 */
+type BindingOnline = BindingOnlineState & { id: string }
+
+/** 问 SW「每条绑定的中继连没连上」。SW 不可达也算全离线——而这次询问本身就会把它唤醒并重走连接流程。 */
+async function queryBindings(): Promise<BindingOnline[]> {
   try {
-    const r = (await chrome.runtime.sendMessage({ type: 'relay-status' })) as { connected?: boolean } | undefined
-    return Boolean(r?.connected)
+    const r = (await chrome.runtime.sendMessage({ type: 'bindings-status' })) as { bindings?: BindingOnline[] } | undefined
+    return r?.bindings ?? []
   } catch {
-    return false
+    return []
   }
 }
 
@@ -68,7 +71,6 @@ type Tab = 'radar' | 'cookie' | 'streams'
 
 export default function App() {
   const [cfg, setCfg] = useState<Config | null>(null)
-  const [editUrl, setEditUrl] = useState(false)
   const [url, setUrl] = useState('')
   const [radar, setRadar] = useState<RadarResult | null>(null)
   const [channels, setChannels] = useState<RawChannel[]>([])
@@ -78,9 +80,12 @@ export default function App() {
   const [syncing, setSyncing] = useState(false)
   const [sync, setSync] = useState<SyncResult | { error: string } | null>(null)
   const [tab, setTab] = useState<Tab>('radar')
-  // ext-relay WS 健康：null=查询中，true=在线，false=离线。查询会唤醒 SW 触发重连，
-  // 所以 false 时隔 2s 复查一次，捕捉「唤醒后刚连上」的窗口。
-  const [relayUp, setRelayUp] = useState<boolean | null>(null)
+  // 全部绑定的中继在线状态：null=还在查（徽标画 checking…）。**不许默认画成 connected**：
+  // 查询要走一次 SW 往返（SW 睡着时还得等它醒），先亮一颗绿点再翻黄，比诚实地说 "checking…"
+  // 更容易被读成"好着呢"。徽标按它汇总（lib/binding-badge.ts）；本机那条的在线与否另外
+  // 喂给下面的不 ready 提示。
+  const [bindings, setBindings] = useState<BindingOnline[] | null>(null)
+  const relayUp = bindings === null ? null : Boolean(bindings.find((b) => b.id === 'local')?.connected)
   // 后端对浏览器采集能力的快判。**只在我们这条没连上时才需要**——它存在的意义是把
   // "没连上"这个歧义答案拆成掉线 / 被别的浏览器占着 / 从没连上过（见 lib/relay-health.ts）。
   // null = 还没查 / 查不到（老后端没这一口、或后端够不着），两者都按"读不到"处理。
@@ -105,13 +110,15 @@ export default function App() {
   useEffect(() => {
     let cancelled = false
     ;(async () => {
-      let up = await queryRelay()
-      if (!up) {
+      let states = await queryBindings()
+      // 还有可连的绑定没连上 ⇒ 2s 后复查一次：这次询问会唤醒 SW 触发重连，
+      // 捕捉「唤醒后刚连上」的窗口。
+      if (states.some((b) => isActiveBinding(b) && !b.connected)) {
         await new Promise((r) => setTimeout(r, 2000))
         if (cancelled) return
-        up = await queryRelay()
+        states = await queryBindings()
       }
-      if (!cancelled) setRelayUp(up)
+      if (!cancelled) setBindings(states)
     })()
     return () => {
       cancelled = true
@@ -148,12 +155,13 @@ export default function App() {
       // token + 验身份，本机实测在百毫秒量级，这里给到 6s 再放弃。
       for (let i = 0; i < 6; i++) {
         await new Promise((r) => setTimeout(r, 1000))
-        if (await queryRelay()) {
-          setRelayUp(true)
+        const states = await queryBindings()
+        if (states.some((b) => b.id === 'local' && b.connected)) {
+          setBindings(states)
           return
         }
       }
-      setRelayUp(false)
+      setBindings(await queryBindings())
       if (cfg?.baseUrl) await getBrowserCapability(cfg).then(setCap).catch(() => {})
     } finally {
       setReconnecting(false)
@@ -215,8 +223,9 @@ export default function App() {
     })()
   }, [])
 
-  // `relayUp === null`（还在查）时不渲染它——见 header 里那颗点的注释。
+  // `relayUp === null`（还在查）时不渲染它——理由同上面 `bindings` 那行注释。
   const health = relayHealth(relayUp === true, cap)
+  const badge = bindingBadge(bindings)
 
   const shell = 'relative w-[340px] overflow-hidden text-[13px] text-foreground'
   if (!cfg)
@@ -240,7 +249,8 @@ export default function App() {
   async function saveUrl(next: string) {
     await setConfig({ baseUrl: next.replace(/\/$/, '') })
     setCfg(await getConfig())
-    setEditUrl(false)
+    // 本机绑定刚有地址：徽标立刻把它算进去，别等下次打开弹窗。
+    setBindings(await queryBindings())
   }
 
   async function applyConfig(patch: Partial<Config>) {
@@ -306,21 +316,9 @@ export default function App() {
           <Radio className="size-4 text-[var(--acr-blue)]" />
           <span className="font-semibold">Stream</span>
           <span className="ml-auto">
-            {cfg.baseUrl && !editUrl ? (
-              relayUp === null ? (
-                // 还在查。**不能默认画成 connected**：查询要走一次 SW 往返（SW 睡着时还得
-                // 等它醒），先亮一颗绿点再翻黄，比诚实地说"checking…"更容易被读成"好着呢"。
-                <Badge variant="secondary" size="sm" className="gap-1">
-                  <span className="size-1.5 rounded-full bg-[var(--acr-yellow,var(--acr-orange))]" /> checking…
-                </Badge>
-              ) : (
-                <Badge variant="secondary" size="sm" className="gap-1">
-                  <span className={`size-1.5 rounded-full ${TONE_DOT[health.tone]}`} /> {health.label}
-                </Badge>
-              )
-            ) : (
-              <Badge variant="outline" size="sm">offline</Badge>
-            )}
+            <Badge variant="secondary" size="sm" className="gap-1">
+              <span className={`size-1.5 rounded-full ${TONE_DOT[badge.tone]}`} /> {badge.label}
+            </Badge>
           </span>
         </header>
 
@@ -332,31 +330,6 @@ export default function App() {
         )}
 
         <div className="flex flex-col gap-3 p-3.5">
-        {editUrl || !cfg.baseUrl ? (
-          <UrlEditor initial={cfg.baseUrl} onSave={saveUrl} onCancel={() => setEditUrl(false)} />
-        ) : (
-          <div className="flex items-center gap-2 text-xs text-muted-foreground">
-            <span className="truncate">{cfg.baseUrl}</span>
-            <Button icon size="mini" variant="ghost" aria-label="Edit URL" className="ml-auto" onClick={() => setEditUrl(true)}>
-              <Pencil />
-            </Button>
-          </div>
-        )}
-        {!cfg.baseUrl && (
-          <p className="text-xs text-[var(--acr-orange)]">
-            {hostStatus?.paired === false
-              ? // 三种病因里唯一能在这里查出来的一种：native host 没注册，问题跟后端在不在
-                // 跑无关——给出的下一步也必须是能解决*这一种*病因的那个命令，而不是笼统地
-                // 让用户"检查 Stream"。
-                <>Native host not registered — run <code>stream-desktop --register</code>, then reopen this popup.</>
-              : hostStatus?.paired
-                ? // Host 注册着，但没有任何候选证出 proof：要么 Stream 没在跑，要么这个口上
-                  // 坐着别的进程——这里分不出这两种，也不该假装分得出。
-                  'Native host is registered, but no Stream instance answered — make sure Stream is running, then enter its URL above.'
-                : 'No Stream found at 127.0.0.1:8900 — enter its URL above.'}
-          </p>
-        )}
-
         {/* 连接状态。**只在不 ready 时出现**，而不 ready 时一定出现：以前这里唯一的信号是
             右上角一颗黄点加两个字（"ws off"），它说了"坏了"却没说"坏在哪、我该干什么"，
             而那三种病因的下一步互相之间毫无关系（见 lib/relay-health.ts 的头注）。 */}
@@ -400,7 +373,7 @@ export default function App() {
             </div>
 
             {tab === 'streams' ? (
-              <BindingsPanel />
+              <BindingsPanel hostStatus={hostStatus} onSaveUrl={saveUrl} />
             ) : tab === 'radar' ? (
             /* Radar */
             <div className="flex flex-col gap-2">
@@ -467,7 +440,7 @@ export default function App() {
         {!cfg.baseUrl && (
           <>
             <Separator />
-            <BindingsPanel />
+            <BindingsPanel hostStatus={hostStatus} onSaveUrl={saveUrl} />
           </>
         )}
 
@@ -501,17 +474,5 @@ function StatusBanner({ health, busy, onReconnect }: { health: RelayHealth; busy
         </Button>
       )}
     </div>
-  )
-}
-
-function UrlEditor({ initial, onSave, onCancel }: { initial: string; onSave: (v: string) => void; onCancel: () => void }) {
-  const [v, setV] = useState(initial || 'http://127.0.0.1:8900')
-  return (
-    <InputGroup>
-      <InputGroupInput value={v} onChange={(e) => setV(e.target.value)} placeholder="http://127.0.0.1:8900" onKeyDown={(e) => { if (e.key === 'Enter') onSave(v); if (e.key === 'Escape') onCancel() }} />
-      <InputGroupAddon align="inline-end">
-        <InputGroupButton onClick={() => onSave(v)} aria-label="Save URL"><Check /></InputGroupButton>
-      </InputGroupAddon>
-    </InputGroup>
   )
 }

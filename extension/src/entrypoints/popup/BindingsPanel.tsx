@@ -5,7 +5,7 @@ import { isPairableAddress, isPlaintextRemote } from '../../lib/pair-code.ts'
 import { Button } from '@/components/acrylic/button.tsx'
 import { Badge } from '@/components/acrylic/badge.tsx'
 import { Item, ItemContent, ItemTitle, ItemDescription, ItemActions } from '@/components/acrylic/item.tsx'
-import { InputGroup, InputGroupInput } from '@/components/acrylic/input-group.tsx'
+import { InputGroup, InputGroupInput, InputGroupAddon, InputGroupButton } from '@/components/acrylic/input-group.tsx'
 
 /** What the SW hands the popup for each binding — never the token. */
 type BindingView = Omit<Binding, 'token'> & { connected: boolean; pending: string[] }
@@ -19,8 +19,16 @@ function ask<T>(msg: Record<string, unknown>): Promise<T> {
  * Streams tab (design D7): every Stream this browser serves. The local one comes from the
  * native host and needs nothing here; others are added with a one-time code that Stream minted
  * for a device, and each new cookie domain such a Stream asks for waits here for approval.
+ *
+ * 本机那条没被自动发现（`baseUrl` 为空）时，地址输入就长在它自己那一行里——以前顶上单独
+ * 一行「本机 Stream 地址 + 编辑笔」，和这里列出的每条绑定地址重复了。
  */
-export function BindingsPanel() {
+export function BindingsPanel({ hostStatus, onSaveUrl }: {
+  /** 本机没被自动发现时 native host 的病因（App 启动时查过；null=没查/不需要）。 */
+  hostStatus?: { paired: boolean; reason?: string } | null
+  /** 保存手填的本机地址（沿用 App 的 saveUrl：写 config、重读、刷新徽标）。 */
+  onSaveUrl?: (v: string) => void | Promise<void>
+} = {}) {
   const [list, setList] = useState<BindingView[] | null>(null)
   const [baseUrl, setBaseUrl] = useState('')
   const [code, setCode] = useState('')
@@ -82,7 +90,31 @@ export function BindingsPanel() {
                 <Badge variant="secondary" size="sm">{b.connected ? 'connected' : 'offline'}</Badge>
               )}
             </ItemTitle>
-            <ItemDescription className="truncate">{b.baseUrl || 'not found yet'}</ItemDescription>
+            {b.kind === 'local' && !b.baseUrl ? (
+              // 本机没被自动发现：地址编辑就放在「本机」这一条里，病因提示跟着它一起。
+              <div className="mt-1 flex flex-col gap-1.5">
+                {onSaveUrl && (
+                  <UrlEditor
+                    initial={b.baseUrl}
+                    onSave={(v) => { void Promise.resolve(onSaveUrl(v)).then(() => refresh()) }}
+                  />
+                )}
+                <p className="text-[11px] text-[var(--acr-orange)]">
+                  {hostStatus?.paired === false
+                    ? // 三种病因里唯一能在这里查出来的一种：native host 没注册，问题跟后端在不在
+                      // 跑无关——给出的下一步也必须是能解决*这一种*病因的那个命令，而不是笼统地
+                      // 让用户"检查 Stream"。
+                      <>Native host not registered — run <code>stream-desktop --register</code>, then reopen this popup.</>
+                    : hostStatus?.paired
+                      ? // Host 注册着，但没有任何候选证出 proof：要么 Stream 没在跑，要么这个口上
+                        // 坐着别的进程——这里分不出这两种，也不该假装分得出。
+                        'Native host is registered, but no Stream instance answered — make sure Stream is running, then enter its URL above.'
+                      : 'No Stream found at 127.0.0.1:8900 — enter its URL above.'}
+                </p>
+              </div>
+            ) : (
+              <ItemDescription className="truncate">{b.baseUrl || 'not found yet'}</ItemDescription>
+            )}
             {b.revoked && (
               <p className="text-[11px] text-[var(--acr-orange)]">
                 That Stream revoked this browser. Remove it here; pair again if you still need it.
@@ -162,5 +194,18 @@ export function BindingsPanel() {
         )}
       </div>
     </div>
+  )
+}
+
+/** 手填本机地址。只在自动发现失败时出现在「本机」那一条里，所以没有"取消"可回。 */
+function UrlEditor({ initial, onSave, onCancel }: { initial: string; onSave: (v: string) => void; onCancel?: () => void }) {
+  const [v, setV] = useState(initial || 'http://127.0.0.1:8900')
+  return (
+    <InputGroup>
+      <InputGroupInput value={v} onChange={(e) => setV(e.target.value)} placeholder="http://127.0.0.1:8900" onKeyDown={(e) => { if (e.key === 'Enter') onSave(v); if (e.key === 'Escape') onCancel?.() }} />
+      <InputGroupAddon align="inline-end">
+        <InputGroupButton onClick={() => onSave(v)} aria-label="Save URL"><Check /></InputGroupButton>
+      </InputGroupAddon>
+    </InputGroup>
   )
 }

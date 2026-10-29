@@ -100,7 +100,7 @@ export default defineBackground(() => {
     if (msg?.type === 'relay-reconnect') {
       // 弹窗那个「立刻重连」。它**不是恢复的前提**——退避重连一直在跑（见 driver.ts
       // forceReconnect 的头注），这里只是把最坏 30s 的等待折叠掉。回的是"这就去试"，
-      // 不是"已连上"：连上与否由 open 事件决定，弹窗自己复查 relay-status。
+      // 不是"已连上"：连上与否由 open 事件决定，弹窗自己复查 bindings-status。
       send({ result: forceReconnect(typeof msg.id === 'string' ? msg.id : undefined) })
       return // 同步应答
     }

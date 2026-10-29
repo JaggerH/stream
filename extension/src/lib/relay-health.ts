@@ -47,7 +47,7 @@ export interface RelayHealth {
 }
 
 /**
- * @param swConnected 本扩展 SW 的中继是否在线（`relay-status` 消息的回答）；SW 不可达算 false。
+ * @param swConnected 本扩展 SW 的中继是否在线（`bindings-status` 里本机那条的回答）；SW 不可达算 false。
  * @param cap 后端快判；取不到（后端够不着）传 null。
  */
 export function relayHealth(swConnected: boolean, cap: CapabilitySnapshot | null): RelayHealth {
