@@ -243,8 +243,11 @@ export interface McpExtras {
    *
    *  **它是 `web_search` 的另一半**：搜索给回的是一串 URL，没有这一条就只能干看着。
    *  和 `stream_fetch_url` 分工不同——那条是**媒体**导向（平台页 / 直链的可下载媒体），
-   *  对一个普通网页返回的是空 media，不是正文。 */
-  readUrl?: (url: string) => Promise<{ text?: string } | null>
+   *  对一个普通网页返回的是空 media，不是正文。
+   *
+   *  `published`（如有）是页面元数据里的发布日期，已规范成 YYYY-MM-DD（`fetchArticleText`
+   *  出）；认不出就不带——下游靠「在不在」分辨认没认出。 */
+  readUrl?: (url: string) => Promise<{ text?: string; published?: string } | null>
   /** 采集能力诊断：扩展现在连着吗 / 以前装过吗 / 采集该骑哪个 Chrome。present 时暴露
    *  `harvest_capability`。返回的就是 `POST /api/browser-capability/diagnose` 那个结构
    *  （快判字段 + `chrome` 块），**MCP 侧不另造形状**（spec 2026-07-29 §5）。 */
@@ -635,6 +638,7 @@ export function toolCatalog(service: StreamServiceLike, extras: McpExtras): Tool
       description:
         'Read a web page as TEXT (article extraction: local reader first, paid fallback only if it declines). This is how you follow up a web_search hit. ' +
         'Returns {url, text, chars, truncated} — or {error} when the page yields no article text (paywall, JS-only app, login wall, a bare file). ' +
+        '`publishedAt` (YYYY-MM-DD), when present, is the page\'s own publish date from its metadata (JSON-LD datePublished, article:published_time, <time datetime>) — not guessed from the text; absent means the page does not state one. ' +
         'NOT the same as stream_fetch_url: that one extracts downloadable MEDIA from platform pages / direct links and returns nothing useful for an ordinary web page.',
       schema: { url: z.string().describe('the page URL to read') },
       run: async ({ url }) =>
@@ -653,6 +657,8 @@ export function toolCatalog(service: StreamServiceLike, extras: McpExtras): Tool
               truncated,
               // 截断也要**说出来**：半篇文章被无声吃掉，模型会拿前半截当全文下结论。
               text: truncated ? `${text.slice(0, READ_URL_MAX_CHARS)}\n…（已截断，全文 ${text.length} 字）` : text,
+              // 页面元数据里的发布时间（如有）：YYYY-MM-DD；认不出就不带这个字段。
+              ...(got?.published ? { publishedAt: got.published } : {}),
             }
           } catch (e) {
             // 守卫的拒绝要带原因回到模型手里（不是「没抓到正文」的误报，也不是裸异常）；

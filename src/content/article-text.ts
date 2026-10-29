@@ -53,6 +53,20 @@ function proseLength(markdown: string): number {
   return markdown.replace(/!\[[^\]]*\]\([^)]*\)/g, '').replace(/\s+/g, ' ').trim().length
 }
 
+/** 页面元数据里的发布时间 → 裸 `YYYY-MM-DD`；认不出（不是带日的完整日期）→ undefined。
+ *  Defuddle 已在抽三种来源（JSON-LD datePublished / article:published_time / <time datetime>），
+ *  但输出形状不一（纯日期、带时间带时区、`+00:00` 拼接的猜测时区）——这里只认里面含
+ *  `YYYY-MM-DD` 的，其余当没有：年份、年月这类残缺日期对「时间窗过滤」是误导，宁缺毋滥。 */
+function normalizePublishedDate(published: string | undefined): string | undefined {
+  if (!published) return undefined
+  const m = /(\d{4})-(\d{2})-(\d{2})/.exec(published)
+  if (!m) return undefined
+  // 真日历（2 月 30 号这类不存在的日期不要）
+  const t = Date.parse(`${m[1]}-${m[2]}-${m[3]}T00:00:00Z`)
+  if (!Number.isFinite(t)) return undefined
+  return `${m[1]}-${m[2]}-${m[3]}`
+}
+
 /** 抓这个 URL 的正文 markdown-lite；`null` = 这一档没拿到正文（死链 / 不是文章 / Defuddle
  *  抽空 / 只剩导航页脚的空壳）——调用方（`article-defuddle` 成员）据此 decline。
  *
@@ -61,10 +75,11 @@ function proseLength(markdown: string): number {
  *
  *  复用 `extractArticle()`——**同一份实现、同一份缓存**（article 30d / 死链负缓存 1d），
  *  阅读器那条路（`/api/enrich?source=link`）和这里共享，不各抓一遍。 */
-export async function fetchArticleText(url: string, articles: Pick<ArticleCache, 'extract'>): Promise<{ text: string; title?: string } | null> {
+export async function fetchArticleText(url: string, articles: Pick<ArticleCache, 'extract'>): Promise<{ text: string; title?: string; published?: string } | null> {
   const article = await articles.extract(url)
   if (!article?.html) return null
   const text = htmlToMarkdown(article.html)
   if (proseLength(text) < MIN_ARTICLE_CHARS) return null
-  return { text, title: article.title }
+  const published = normalizePublishedDate(article.published)
+  return { text, title: article.title, ...(published ? { published } : {}) }
 }

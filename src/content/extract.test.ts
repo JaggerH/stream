@@ -80,3 +80,37 @@ describe('一个实例一张缓存', () => {
     expect(hits).toBe(2)
   })
 })
+
+// 页面元数据里的发布时间（`Article.published`）——JSON-LD datePublished、
+// article:published_time、<time datetime> 三种来源各认得出（Defuddle 的优先级就是 JSON-LD 在前）。
+describe('articles.extract — 页面元数据的发布时间', () => {
+  const BODY = '<article><p>Real body paragraph one with enough words to be scored as content here.</p>'
+    + '<p>Second paragraph also with a fair number of words to keep the scorer happy.</p></article>'
+
+  it('JSON-LD datePublished', async () => {
+    mockPage(`<!DOCTYPE html><html><head><title>A</title><script type="application/ld+json">{"@type":"NewsArticle","datePublished":"2026-09-28T08:00:00Z"}</script></head><body>${BODY}</body></html>`)
+    const a = await articles.extract('https://example.com/meta-1')
+    expect(a?.published).toBeTruthy()
+    expect(a!.published!.slice(0, 10)).toBe('2026-09-28')
+  })
+
+  it('meta article:published_time', async () => {
+    mockPage(`<!DOCTYPE html><html><head><title>B</title><meta property="article:published_time" content="2026-09-28T09:30:00+08:00"></head><body>${BODY}</body></html>`)
+    const a = await articles.extract('https://example.com/meta-2')
+    expect(a?.published).toBeTruthy()
+    expect(a!.published!.slice(0, 10)).toBe('2026-09-28')
+  })
+
+  it('<time datetime>', async () => {
+    mockPage(`<!DOCTYPE html><html><head><title>C</title></head><body>${BODY}<time datetime="2026-09-28T00:00:00Z">Sep 28, 2026</time></body></html>`)
+    const a = await articles.extract('https://example.com/meta-3')
+    expect(a?.published).toBeTruthy()
+    expect(a!.published!.slice(0, 10)).toBe('2026-09-28')
+  })
+
+  it('页面没写日期 → published 为空', async () => {
+    mockPage(`<!DOCTYPE html><html><head><title>D</title></head><body>${BODY}</body></html>`)
+    const a = await articles.extract('https://example.com/meta-4')
+    expect(a?.published ?? '').toBe('')
+  })
+})

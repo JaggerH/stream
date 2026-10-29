@@ -24,16 +24,16 @@ export interface ArticleFetchInvoker {
 /** `article-extract` 行 → article 分支的 `fetch` dep。全员干净 decline → 原样返回
  *  `{ text: undefined, ladder }`，上层落成「抓到了页面，但没有可用正文」（此时这句话是对的）；
  *  有成员真的失败 → 抛 `LadderError`，把 member+reason 带出去，不能被悄悄吞成"没有正文"。 */
-export function makeArticleFetchDep(executor: ArticleFetchInvoker): (url: string) => Promise<{ text?: string; ladder: LadderTrace }> {
+export function makeArticleFetchDep(executor: ArticleFetchInvoker): (url: string) => Promise<{ text?: string; published?: string; ladder: LadderTrace }> {
   return async (url) => {
     const res = await executor.invoke('article-extract', url)
     const ladder = ladderTrace(res ?? null)
     const seq = res && res.strategy === 'sequential' ? res : null
-    const won = seq?.value as { text?: string } | null
+    const won = seq?.value as { text?: string; published?: string } | null
     if (!won?.text) {
       const reason = realFailureReason(seq?.misses ?? [])
       if (reason) throw new LadderError(`article-extract: ${reason}`, ladder)
     }
-    return { text: won?.text, ladder }
+    return { text: won?.text, ...(won?.published ? { published: won.published } : {}), ladder }
   }
 }

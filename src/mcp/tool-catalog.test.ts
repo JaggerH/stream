@@ -78,6 +78,18 @@ describe('toolCatalog — read_url', () => {
     const out = (await tool.run({ url: 'https://example.com/a' })) as { error?: string }
     expect(out.error).toBeTruthy()
   })
+
+  // 页面元数据里的发布时间（datePublished 等）随结果带出——对话侧按时间窗过滤内容时，
+  // 正文里认不出的日期元数据认得出。没抓到时字段不出现（缺 = 没认出，不是 1970）。
+  it('readUrl 带 published → 结果带 publishedAt；没带 → 字段不出现', async () => {
+    const tool = catalog({ readUrl: async () => ({ text: '正文', published: '2026-09-28' }) }).find((t) => t.name === 'read_url')!
+    const out = (await tool.run({ url: 'https://example.com/a' })) as { publishedAt?: string }
+    expect(out.publishedAt).toBe('2026-09-28')
+
+    const bare = catalog({ readUrl: async () => ({ text: '正文' }) }).find((t) => t.name === 'read_url')!
+    const out2 = (await bare.run({ url: 'https://example.com/a' })) as { publishedAt?: string }
+    expect('publishedAt' in out2).toBe(false)
+  })
 })
 
 describe('toolCatalog — search agent tools', () => {

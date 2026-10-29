@@ -97,4 +97,32 @@ describe('fetchArticleText', () => {
     extractArticle.mockResolvedValue({ sourceUrl: 'u', html: `<p>短文</p><img src="${longUrl}">` })
     await expect(fetchArticleText('u', articles)).resolves.toBeNull()
   })
+
+  // 页面元数据里的发布时间随正文一起带出（消费方：细判按时间窗过滤，正文里认不出的日期
+  // 元数据认得出）。Defuddle 只认「年月日齐」的三种来源（JSON-LD datePublished /
+  // article:published_time / <time datetime>），这里的职责是把它规范成裸 YYYY-MM-DD。
+  it('published 规范成 YYYY-MM-DD 随正文带出；三种常见形状都认', async () => {
+    extractArticle.mockResolvedValue({ sourceUrl: 'u', html: `<p>${LONG_ZH}</p>`, published: '2026-09-28T08:00:00Z' })
+    await expect(fetchArticleText('u', articles)).resolves.toEqual({ text: LONG_ZH, title: undefined, published: '2026-09-28' })
+    extractArticle.mockResolvedValue({ sourceUrl: 'u', html: `<p>${LONG_ZH}</p>`, published: '2026-09-28' })
+    await expect(fetchArticleText('u', articles)).resolves.toEqual({ text: LONG_ZH, title: undefined, published: '2026-09-28' })
+    // Defuddle 的 <time> 分支会把 datetime 拼上它猜的时区
+    extractArticle.mockResolvedValue({ sourceUrl: 'u', html: `<p>${LONG_ZH}</p>`, published: '2026-09-28T00:00:00+00:00' })
+    await expect(fetchArticleText('u', articles)).resolves.toEqual({ text: LONG_ZH, title: undefined, published: '2026-09-28' })
+  })
+
+  it('published 不是带日的完整日期（年份、年月、乱字符串、缺失）→ 不带这个字段', async () => {
+    for (const published of ['2026', '2026-09', '28 Sep', '去年秋天', '']) {
+      extractArticle.mockResolvedValue({ sourceUrl: 'u', html: `<p>${LONG_ZH}</p>`, published })
+      const got = await fetchArticleText('u', articles)
+      expect(got).toEqual({ text: LONG_ZH, title: undefined })
+    }
+    extractArticle.mockResolvedValue({ sourceUrl: 'u', html: `<p>${LONG_ZH}</p>` })
+    await expect(fetchArticleText('u', articles)).resolves.toEqual({ text: LONG_ZH, title: undefined })
+  })
+
+  it('抓不到正文 → null（published 有没有都一样，别为日期单独放行空壳）', async () => {
+    extractArticle.mockResolvedValue({ sourceUrl: 'u', html: '', published: '2026-09-28' })
+    await expect(fetchArticleText('u', articles)).resolves.toBeNull()
+  })
 })

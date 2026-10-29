@@ -58,6 +58,28 @@ describe('makeArticleFetchDep', () => {
     expect(got.text).toBe('网页正文')
   })
 
+  // 成员带出的元数据发布时间（页面元数据里的 datePublished，已规范成 YYYY-MM-DD）原样透传；
+  // 没带时结果里不出现这个字段——消费方靠「在不在」分辨认没认出。
+  it('成员带 published → 透传；没带 → 字段不出现', async () => {
+    const withDate: InvokeResult = {
+      strategy: 'sequential', provider: 'article-extract', value: { text: '网页正文', published: '2026-09-28' }, via: 'article-defuddle',
+      misses: [],
+      timings: [],
+    }
+    const fetch = makeArticleFetchDep(fakeInvoker(async () => withDate))
+    expect(await fetch('https://example.com/a')).toMatchObject({ text: '网页正文', published: '2026-09-28' })
+
+    const noDate: InvokeResult = {
+      strategy: 'sequential', provider: 'article-extract', value: { text: '网页正文' }, via: 'article-defuddle',
+      misses: [],
+      timings: [],
+    }
+    const fetch2 = makeArticleFetchDep(fakeInvoker(async () => noDate))
+    const got2 = await fetch2('https://example.com/a')
+    expect(got2.text).toBe('网页正文')
+    expect('published' in got2).toBe(false)
+  })
+
   it('梯子走法（ladder）原样带出——即便真失败也要带出走法（失败恰恰最需要它）', async () => {
     const res: InvokeResult = {
       strategy: 'sequential', provider: 'article-extract', value: null, via: null,
