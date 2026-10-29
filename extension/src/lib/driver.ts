@@ -1350,11 +1350,16 @@ export function sameUrl(a: string, b: string): boolean {
  * openTab 的回执。刚建出来的 tab 常常还没有 title（文档没提交），而调用方要拿 title 去拼原生
  * 窗口的 a11y 地址 `app:chrome.exe/<title>`——空 title 等于地址拼不出来。所以轮询到 title 有值，
  * 至多约 2s。超时就回当时的值：**字段一定在**（title 可为空串），让调用方自己决定退不退。
+ *
+ * 判据是「非空**且 ≠ 当前 url**」：文档提交前 Chromium 拿 URL 当 title 占位，「非空」判据会被
+ * 占位符瞬间满足、等待空转退出，回执把整条 URL 当 title 报上去——负载越重解析越晚，越容易撞
+ * （与 src/cdp-binding/ops.ts 的 openReceipt 同一条坑，判据保持一致）。无标题页的终态本来就是
+ * title === url（占位符不消失），这种页面等满 2s 后回同一个值。
  */
 async function openReceipt(tabId: number, created: boolean): Promise<{ tabId: number; title: string; url: string; created: boolean }> {
   const deadline = Date.now() + 2000
   let tab = await chrome.tabs.get(tabId)
-  while (!tab.title && Date.now() < deadline) {
+  while ((!tab.title || tab.title === tab.url) && Date.now() < deadline) {
     await new Promise((r) => setTimeout(r, 100))
     try {
       tab = await chrome.tabs.get(tabId)

@@ -6,7 +6,7 @@ import { describe, it, expect, vi } from 'vitest'
 
 type FakeTab = { id: number; url: string; title: string; windowId: number; groupId?: number }
 
-function makeChrome(state: { tabs: FakeTab[]; windows: number[]; nextId?: number; titleAfter?: number }) {
+function makeChrome(state: { tabs: FakeTab[]; windows: number[]; nextId?: number; titleAfter?: number; titleSequence?: string[] }) {
   const calls = {
     updated: [] as number[],
     focused: [] as number[],
@@ -40,8 +40,14 @@ function makeChrome(state: { tabs: FakeTab[]; windows: number[]; nextId?: number
           const t = state.tabs.find((x) => x.id === id)
           if (!t) throw new Error(`No tab with id: ${id}`)
           getCount += 1
+          // titleSequence：第 N 次 get 给第 N 个 title（用完停在最后一个）——模拟真 Chromium 的
+          // 时间线：文档提交前 title 是整条 URL（占位），解析完才换成真 title。
+          if (state.titleSequence) {
+            const next = state.titleSequence[Math.min(getCount, state.titleSequence.length) - 1]
+            if (next !== undefined) t.title = next
+          }
           // titleAfter：第 N 次 get 之后才有 title——模拟"刚建出来的 tab 还没标题"
-          if (state.titleAfter != null && getCount >= state.titleAfter) t.title = t.title || 'Extensions'
+          else if (state.titleAfter != null && getCount >= state.titleAfter) t.title = t.title || 'Extensions'
           return { ...t }
         }),
         create: vi.fn(async ({ url }: { url: string }) => {
@@ -107,7 +113,7 @@ function makeChrome(state: { tabs: FakeTab[]; windows: number[]; nextId?: number
   }
 }
 
-async function load(state: { tabs: FakeTab[]; windows: number[]; nextId?: number; titleAfter?: number }) {
+async function load(state: { tabs: FakeTab[]; windows: number[]; nextId?: number; titleAfter?: number; titleSequence?: string[] }) {
   const m = makeChrome(state)
   vi.stubGlobal('chrome', m.chrome)
   vi.resetModules()
@@ -175,6 +181,17 @@ describe('dispatch op:openTab', () => {
 
   it('waits for a title to show up (the caller needs it to build app:chrome.exe/<title>)', async () => {
     const { dispatch } = await load({ tabs: [], windows: [1], nextId: 8, titleAfter: 3 })
+    const r = (await dispatch({ id: 3, op: 'openTab', url: 'chrome://extensions' })).result as Receipt
+    expect(r.title).toBe('Extensions')
+  })
+
+  it('waits out the URL placeholder — a title that equals the tab url is Chromium parking, not a title', async () => {
+    // 文档提交前 title 是整条 URL（占位），负载下解析被推迟得越晚占位越常见——把占位当真 title
+    // 回出去，调用方拼出的 a11y 地址就是错的。与 src/cdp-binding/ops.ts 的 openReceipt 同一条判据。
+    const { dispatch } = await load({
+      tabs: [], windows: [1], nextId: 8,
+      titleSequence: ['chrome://extensions', 'chrome://extensions', 'Extensions'],
+    })
     const r = (await dispatch({ id: 3, op: 'openTab', url: 'chrome://extensions' })).result as Receipt
     expect(r.title).toBe('Extensions')
   })
