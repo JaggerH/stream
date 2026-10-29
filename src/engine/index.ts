@@ -26,7 +26,9 @@ import { callerFetchGuardPolicy, configureCallerFetchGuard } from '../net/caller
 
 export type { StreamRuntime } from './runtime.ts'
 export { createRuntime } from './runtime.ts'
-export type { StreamDevices } from './devices.ts'
+export type { StreamDevices, DeviceChange, DeviceSnapshot } from './devices.ts'
+export { deviceGateway } from './device-gateway.ts'
+export type { DeviceGateway, DeviceGatewayOptions } from './device-gateway.ts'
 export type { StreamCapabilities } from './capabilities.ts'
 export type { StreamTools, ToolAnnotations, ToolCallContext, ToolDescriptor, ToolProgress, ToolResult } from './tools.ts'
 import { createTools, type StreamTools } from './tools.ts'

@@ -29,6 +29,10 @@ describe('@streamapp/engine 公开面', () => {
     expect(exportedNames(src)).toEqual(
       [
         'CreateStreamOptions',
+        'DeviceChange',
+        'DeviceGateway',
+        'DeviceGatewayOptions',
+        'DeviceSnapshot',
         'Stream',
         'StreamCapabilities',
         'StreamDevices',
@@ -43,6 +47,7 @@ describe('@streamapp/engine 公开面', () => {
         'ToolResult',
         'createRuntime',
         'createStream',
+        'deviceGateway',
       ].sort(),
     )
   })
