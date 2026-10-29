@@ -16,8 +16,14 @@ import { defineConfig } from 'vitest/config'
 // 时区钉成 CI 那个（`.github/workflows/test.yml` 的 `TZ`）：排期与丢班判定的用例按本地时区算整点，
 // 在 UTC 的机器上跑会挂 7 条。worker 进程继承这里的环境。
 process.env.TZ = 'Asia/Shanghai'
+// 跑测试会在系统临时目录里留两个工具缓存：Node 的编译缓存（worker 启动时建）与 tsx 自己的
+// 缓存（测试里 spawn 的 tsx 进程建）。它们不是测试数据，但会污染「全量跑完 TMPDIR 里剩什么」
+// 的检查；关掉即可，代价只是重复跑时多一点编译时间。
+process.env.NODE_DISABLE_COMPILE_CACHE ??= '1'
+process.env.TSX_DISABLE_CACHE ??= '1'
 export default defineConfig({
   test: {
+    setupFiles: ['./src/test-setup.ts'],
     // sidequest 不外部化：它的 inline runner 会在运行期原生 import jobs 清单（→ stream-task-job.ts
     // → task-routes.ts 的进程级路由表）。外部化时那份 import 绕开 vite，造出第二份模块图——
     // 路由表登记在 vite 那份上，job 跑在原生那份上，永远 "no route for this job"（双实例测试

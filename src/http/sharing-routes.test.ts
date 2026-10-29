@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { Hono } from 'hono'
+import { mkdtempSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { randomUUID } from 'node:crypto'
@@ -16,7 +17,7 @@ function app() {
   const store = new UserStore(':memory:')
   store.putStream({ id: 's1', label: 'S1', strategy: 'fanout', cadence_seconds: 3600, members: [{ plugin: 'rsshub', source: 'a', params: {} }], options: {} })
   store.putChannel({ id: 'mine', label: 'Mine', present: 'timeline', stream_ids: ['s1'], options: {} })
-  const runs = new ImportRunStore(join(tmpdir(), `ir-${randomUUID()}.json`))
+  const runs = new ImportRunStore(join(mkdtempSync(join(tmpdir(), 'ir-')), 'runs.json'))
   const a = new Hono()
   registerSharingRoutes(a, {
     store, registry: new Registry([]), identities: new ProviderIdentityTable(), plugins: [{ id: 'rsshub' } as never], recipePackages: () => [],

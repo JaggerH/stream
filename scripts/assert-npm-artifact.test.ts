@@ -26,7 +26,9 @@ afterEach(() => {
 /** 在临时包目录里跑闸；返回 { code, out }，非 0 不抛（退出码正是被测契约）。 */
 function runGate(): { code: number; out: string } {
   try {
-    const out = execFileSync(process.execPath, [SCRIPT], { cwd: dir, encoding: 'utf8', stdio: 'pipe' })
+    // TMPDIR 指进本用例的临时目录：闸会 spawn tsx 跑 `recipe-release-plan.ts --check`，而 tsx
+    // 会在系统临时目录里建 `tsx-<uid>` 管道目录——指进来就跟着 dir 一起删。
+    const out = execFileSync(process.execPath, [SCRIPT], { cwd: dir, env: { ...process.env, TMPDIR: dir }, encoding: 'utf8', stdio: 'pipe' })
     return { code: 0, out }
   } catch (e) {
     const err = e as { status: number; stdout: string; stderr: string }
@@ -284,7 +286,13 @@ describe('assert-npm-artifact', () => {
     writeStreamCodePkg()
     mkdirSync(join(dir, 'dist'))
     writeFileSync(join(dir, 'dist', 'index.js'), 'export {}')
-    const out = execFileSync(process.execPath, [SCRIPT, dir], { cwd: tmpdir(), encoding: 'utf8', stdio: 'pipe' })
+    const out = execFileSync(process.execPath, [SCRIPT, dir], {
+      cwd: tmpdir(),
+      // 同上：闸会 spawn tsx，TMPDIR 指进本用例的临时目录，tsx 的管道目录跟着一起删。
+      env: { ...process.env, TMPDIR: dir },
+      encoding: 'utf8',
+      stdio: 'pipe',
+    })
     expect(out).toContain('放行')
   })
 })

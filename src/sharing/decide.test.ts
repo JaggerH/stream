@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
+import { mkdtempSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { randomUUID } from 'node:crypto'
 import { UserStore } from '../store/user-store.ts'
 import { ProviderBindings } from '../providers/bindings.ts'
 import { ImportRunStore, type ImportItem, type ImportRun } from './import-run-store.ts'
@@ -12,7 +12,7 @@ import { SYSTEM_IDENTITIES } from '../providers/system/index.ts'
 const dirOf = (store: UserStore) => new ProviderDirectory(store, SYSTEM_IDENTITIES)
 
 function mkRuns(): ImportRunStore {
-  return new ImportRunStore(join(tmpdir(), `ir-${randomUUID()}.json`))
+  return new ImportRunStore(join(mkdtempSync(join(tmpdir(), 'ir-')), 'runs.json'))
 }
 function mkRun(items: ImportItem[]): ImportRun {
   return { id: 'imp-t', at: '2026-07-24T00:00:00.000Z', meta: { title: 'T', revision: '1.0.0' }, remaps: {}, recipeDecisions: {}, netdiskBindings: [], items }

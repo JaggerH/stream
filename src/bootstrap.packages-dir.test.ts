@@ -57,7 +57,8 @@ describe('嵌入方从陌生 cwd 起 createStream', () => {
         cwd: tmpdir(), // 嵌入方的真实处境：工作目录与 Stream 仓库无关
         timeout: 100_000,
         encoding: 'utf8',
-        env: { ...process.env, STREAM_NO_SCHEDULER: '1' },
+        // TMPDIR 指进本用例的临时目录：tsx 的 `tsx-<uid>` 管道目录跟着它一起删。
+        env: { ...process.env, TMPDIR: dir, STREAM_NO_SCHEDULER: '1' },
       })
       const n = Number(/SOURCES=(-?\d+)/.exec(out)?.[1])
       expect(n).toBeGreaterThan(50)

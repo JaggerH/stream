@@ -106,7 +106,9 @@ function bootFixture(): { env: NodeJS.ProcessEnv } {
 `,
   )
   writeFileSync(join(root, 'config.yaml'), `packages_dir: ${pkgs}\nmanage_containers: false\n`)
-  const env: NodeJS.ProcessEnv = { ...process.env, STREAM_PORT: String(PORT), STREAM_DATA_DIR: root, CONFIG_PATH: join(root, 'config.yaml'), STREAM_NO_SCHEDULER: '1' }
+  // TMPDIR 也指进 root：tsx 会在系统临时目录里建自己的 `tsx-<uid>` 管道目录，指进来就跟着
+  // root 一起删，不会留在外面。
+  const env: NodeJS.ProcessEnv = { ...process.env, TMPDIR: root, STREAM_PORT: String(PORT), STREAM_DATA_DIR: root, CONFIG_PATH: join(root, 'config.yaml'), STREAM_NO_SCHEDULER: '1' }
   // 子进程必须**不带** VITEST，否则 serve.ts 底部那个 `if (!process.env.VITEST)` 会让 main() 不跑，
   // 于是端口上没人听、这条测试超时——而症状看起来像"启动很慢"，会把人带去查性能。
   delete env.VITEST
