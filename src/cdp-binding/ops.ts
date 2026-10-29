@@ -471,7 +471,11 @@ export class CdpRelayOps {
     }
     let now = await info()
     const deadline = Date.now() + 2_000
-    while (!now.title && Date.now() < deadline) {
+    // 文档提交前 Chromium 拿 URL 当 title 占位（实测时间线：'' → URL → 真 title；无标题页停在
+    // URL 不再变）。只看「非空」会被占位符瞬间满足——负载下文档还没解析，回执就把整条 URL
+    // 当 title 报出去。判据必须是「不是占位符」；真 title 恰好等于 URL 的页面落回 2s 上限，
+    // 返回的也是同一个值。
+    while ((!now.title || now.title === now.url) && Date.now() < deadline) {
       await this.sleep(50)
       now = await info()
     }
