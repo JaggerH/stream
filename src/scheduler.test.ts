@@ -400,7 +400,10 @@ describe('Scheduler', () => {
       const sched = new Scheduler({
         registry: new Registry([mk('src-a')]), streams: [],
         adapters: new Map([['fake', fakeAdapter]]),
-        resolveCreds: async () => ({}), vaultRoot: join(dir, 'vault'), dedup,
+        resolveCreds: async () => ({}), vaultRoot: join(dir, 'vault'),
+        // vault off 的理由见下面 slow-tick 用例的注释：假时钟下 tick 悬挂在真实 fs 上，
+        // 会跨过 afterEach 的 dedup.close()，泄漏的错误落进后面用例的 console.error spy。
+        vaultEnabled: false, dedup,
         rng: () => 1,
       })
       const tick = vi.spyOn(sched, 'tick')
@@ -424,7 +427,8 @@ describe('Scheduler', () => {
       const sched = new Scheduler({
         registry: new Registry([mk('src-a')]), streams: [fanoutStream],
         adapters: new Map([['fake', { id: 'fake', init: async () => {}, fetch }]]),
-        resolveCreds: async () => ({}), vaultRoot: join(dir, 'vault'), dedup,
+        resolveCreds: async () => ({}), vaultRoot: join(dir, 'vault'),
+        vaultEnabled: false, dedup, // vault off：理由同上，别让 tick 悬挂在真实 fs 上跨过拆卸
         rng: () => 1, // jitter pinned to full cadence → first fire exactly at cadence
       })
       sched.start()
@@ -445,7 +449,8 @@ describe('Scheduler', () => {
       const sched = new Scheduler({
         registry: new Registry([mk('src-a')]), streams: [fanoutStream],
         adapters: new Map([['fake', { id: 'fake', init: async () => {}, fetch }]]),
-        resolveCreds: async () => ({}), vaultRoot: join(dir, 'vault'), dedup,
+        resolveCreds: async () => ({}), vaultRoot: join(dir, 'vault'),
+        vaultEnabled: false, dedup, // vault off：理由同上
         rng: () => 0, // → first fire at 0.5 × cadence
       })
       sched.start()
