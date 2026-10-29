@@ -22,7 +22,9 @@ interface DeviceGatewayOptions {
 }
 interface DeviceGateway {
   readonly basePath: string
-  app: Hono                                            // 宿主 app.route(basePath, gateway.app)
+  app: Hono                                            // 管理面（相对 basePath）
+  extApp: Hono                                         // 扩展写死的 /api/ext/*（相对 '/api'）
+  mounts: Array<{ path: string; app: Hono }>           // 宿主逐条 app.route(m.path, m.app)
   handleUpgrade(req, socket, head): boolean            // 宿主 server 'upgrade' 里调；false = 不是自己的路径
   close(): void
 }
@@ -35,6 +37,13 @@ deviceGateway(stream: Stream, opts: DeviceGatewayOptions): DeviceGateway
    网关把它们挂在一个内部 Hono 上，宿主 `app.route(basePath, sub)`。serve 的 `basePath` 是 `/api`，
    最终绝对路径逐字节不变；`TOKEN_EXEMPT_ROUTES`（访问守卫的豁免表，键是完整路径）因此不用动。
    四个 mount 的测试改为挂到 `/api` 子 app 上再请求，断言原样。
+1b. **扩展那几口另走一套固定路径（X2-R1）。** 扩展把 `/api/ext/pair|verify|claimed-tabs|debug-log`
+   与 WS `/api/ext` 写死在自己代码里（`extension/src/lib/*`），不跟着宿主的 basePath 走：网关挂在
+   `/api/stream` 上时，扩展仍会去打 `/api/ext/verify`，只挂 `app` 就 404、永远连不上。所以网关另出
+   一份 `extApp`（`ext-public-routes.ts` 的相对路由 + `extPairHandler`），宿主挂到 `/api`；
+   `handleUpgrade` 除 `${basePath}/ext` 外也认 `/api/ext`。`mounts` 把这两份收成一个数组，
+   宿主逐条挂就不会漏（serve 的 basePath 就是 `/api`，那几口由 `app.ts` 注册在访问门之前，
+   `mounts` 因此只有一条）。桌面端不在其中：它的地址是可配的（`STREAM_HOST_URL`），不需要固定路径。
 2. **握手逻辑不复制。** `attachExtRelay` / `attachHostRelay` 的 upgrade 监听器各抽出一个内部
    `handle(req, socket, head): boolean`（false = 路径不归我），原来的「自挂 server」用法变成
    `server.on('upgrade', (req, s, h) => handle(req, s, h))`，网关的 `handleUpgrade` 直接调两个

@@ -9,11 +9,17 @@
  *
  * 设备自己调用的口不经 `isAdmin`：`/devices/pair` 与 `/ext/pair` 只认一次性配对码，两条 WS 只认
  * 设备 / 绑定 token——`isAdmin` 只落在签码、列设备、撤销、改绑定、对设备下 op 这些管理类端点上。
+ *
+ * **两套路径**：管理面跟着宿主的 `basePath` 走（`app`）；扩展的路径写死在它自己代码里
+ * （`${origin}/api/ext/pair|verify|claimed-tabs|debug-log` 与 WS `/api/ext`），所以另有一份挂在
+ * `/api` 上的 `extApp`，`handleUpgrade` 也认 `/api/ext`。宿主逐条挂 `mounts` 就不会漏——漏了的表现
+ * 是扩展配对成功、却永远连不上（2026-10-29 X2-R1）。
  */
 import { Hono, type Context } from 'hono'
 import type { IncomingMessage, Server } from 'node:http'
 import type { Duplex } from 'node:stream'
-import { REVOKED_CLOSE_CODE, mountExtBindingRoutes } from '../http/ext-binding-routes.ts'
+import { REVOKED_CLOSE_CODE, extPairHandler, mountExtBindingRoutes } from '../http/ext-binding-routes.ts'
+import { mountExtPublicRoutes } from '../http/ext-public-routes.ts'
 import { mountDeviceRoutes } from '../http/device-routes.ts'
 import { mountIdentityRoutes } from '../http/identity-routes.ts'
 import { mountNodeRoutes } from '../http/node-routes.ts'
@@ -42,10 +48,27 @@ export interface DeviceGatewayOptions {
 
 export interface DeviceGateway {
   readonly basePath: string
-  /** 配对、设备、扩展绑定、节点、facility 绑定、身份这几组 HTTP 路由。宿主 app.route(basePath, gateway.app)。 */
+  /** 配对、设备、扩展绑定、节点、facility 绑定、身份这几组 HTTP 路由（相对 basePath）。
+   *  宿主 app.route(basePath, gateway.app)；**只挂这一份不够**，见 `mounts`。 */
   app: Hono
-  /** 宿主的 http server 'upgrade' 事件里调：路径是 `${basePath}/host` 或 `${basePath}/ext` 就接管并返回
-   *  true，否则 false 留给别人（不碰 socket）。 */
+  /**
+   * 扩展**写死在代码里**的那几口（`${origin}/api/ext/pair|verify|claimed-tabs|debug-log`），
+   * 相对 `/api` 注册：宿主 app.route('/api', gateway.extApp)。
+   *
+   * 为什么单独一份：扩展拼的是绝对路径（`extension/src/lib/backend-identity.ts`、`driver.ts`），
+   * 它不认识宿主的 basePath。`stream serve` 的 basePath 恰好就是 '/api'，那几口由
+   * `src/http/app.ts` 注册在访问门之前（那里写着理由），所以 serve 不需要这一份；嵌入方把网关
+   * 挂到别的 basePath 上时必须挂上它——否则扩展配对成功、`/api/ext/verify` 却 404，永远连不上
+   * （2026-10-29 X2-R1 真机验收撞到的就是这个）。
+   */
+  extApp: Hono
+  /**
+   * 宿主要挂的全部 (前缀, 子应用)：逐条 `app.route(m.path, m.app)` 即可，**别只挂第一条**。
+   * basePath 是 '/api' 时只有一条（serve 的情形，扩展那几口由 app.ts 提供）；否则两条。
+   */
+  mounts: ReadonlyArray<{ readonly path: string; readonly app: Hono }>
+  /** 宿主的 http server 'upgrade' 事件里调：路径是 `${basePath}/host` / `${basePath}/ext`，或扩展
+   *  写死的 `/api/ext`（配对绑定连的就是这一条）就接管并返回 true，否则 false 留给别人（不碰 socket）。 */
   handleUpgrade(req: IncomingMessage, socket: Duplex, head: Buffer): boolean
   close(): void
 }
@@ -117,10 +140,29 @@ export function deviceGateway(stream: Stream, opts: DeviceGatewayOptions): Devic
     })
   }
 
+  // 扩展写死的路径（`${origin}/api/ext/*`）。扩展在**连上中继之前**要先让后端自证身份
+  // （`POST /api/ext/verify`），连上后立刻对账孤儿标签、报生命周期事件——这几口不在这一份里，
+  // 嵌入方就永远连不上（X2-R1）。pair 与它们同一份实现、同一个处理器（见 extPairHandler 的头注）。
+  const extApp = new Hono()
+  extApp.post('/ext/pair', extPairHandler({
+    store: extBindings,
+    devices: { name: (id) => deviceStore.list().find((d) => d.deviceId === id)?.name },
+    extId: STREAM_EXTENSION_ID,
+  }))
+  mountExtPublicRoutes(extApp, {
+    auth: { token: stream.secrets.extToken, extId: STREAM_EXTENSION_ID, tokenHashOf: (id) => extBindings.tokenHashOf(id) },
+    claimedTabs: harvest.claimedTabs,
+    // 嵌入方没有 debug bus（serve 那份在 `src/http/app.ts`）——缺席时 debug-log 只收不回，
+    // 与 app.ts 的 `deps.debug?.record ?? noop` 同款。要接就在 DeviceGatewayOptions 里加一格。
+  })
+
   // 本机 token → 本机节点（不带 nodeId 的老扩展 → 兼容槽）；配对 token → 那条绑定，换节点来连 4004
   // （device-execution D7、browser-identity D1/D2，判法在 resolveExtToken）。
   const extHandler = extRelayHandler(harvest.extRelays, {
     path: `${base}/ext`,
+    // 配对绑定连的是扩展写死的 `/api/ext`（不认识 basePath）。basePath 本来就是 '/api' 时
+    // 这一条与上面重复，Set 会去重。
+    alsoPaths: ['/api/ext'],
     resolveToken: (t, hs) => resolveExtToken(t, hs, { localToken: stream.secrets.extToken, bindings: extBindings, log }),
     log,
     ...(opts.pingIntervalMs ? { pingIntervalMs: opts.pingIntervalMs } : {}),
@@ -154,6 +196,8 @@ export function deviceGateway(stream: Stream, opts: DeviceGatewayOptions): Devic
   return {
     basePath: base,
     app,
+    extApp,
+    mounts: base === '/api' ? [{ path: base, app }] : [{ path: base, app }, { path: '/api', app: extApp }],
     handleUpgrade: (req, socket, head) => extHandler.handle(req, socket, head) || hostHandler.handle(req, socket, head),
     close: () => {
       closeRelayServer(extHandler.wss)

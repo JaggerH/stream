@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createServer } from 'node:http'
 import { serve } from '@hono/node-server'
-import { randomBytes } from 'node:crypto'
+import { randomBytes, createHash, createHmac } from 'node:crypto'
 import type { AddressInfo } from 'node:net'
 import type { Duplex } from 'node:stream'
 import { Hono } from 'hono'
@@ -17,6 +17,7 @@ import { createStream, type Stream } from './index.ts'
 import { readConfig } from '../bootstrap.ts'
 import { deviceGateway } from './device-gateway.ts'
 import { EXT_RELAY_PROTOCOL } from '../http/ext-relay.ts'
+import { EXT_VERIFY_PREFIX } from '../http/ext-verify.ts'
 import { HOST_RELAY_PROTOCOL } from '../http/host-relay.ts'
 import { STREAM_EXTENSION_ID } from '../ext-id.ts'
 import type { DeviceChange } from './devices.ts'
@@ -43,7 +44,7 @@ async function tempStream(): Promise<Stream> {
   return stream
 }
 
-/** 宿主侧的最小装配：Hono 挂网关，upgrade 交给 gateway.handleUpgrade，回端口号。 */
+/** 宿主侧的最小装配：Hono 挂网关的每一条 mounts，upgrade 交给 gateway.handleUpgrade，回端口号。 */
 async function hostApp(stream: Stream, opts: { isAdmin: () => boolean; pingIntervalMs?: number; log?: (l: string) => void }): Promise<{ port: number; upgrades: boolean[] }> {
   const gateway = deviceGateway(stream, {
     basePath: '/api/stream',
@@ -53,7 +54,7 @@ async function hostApp(stream: Stream, opts: { isAdmin: () => boolean; pingInter
     ...(opts.log ? { log: opts.log } : {}),
   })
   const app = new Hono()
-  app.route('/api/stream', gateway.app)
+  for (const m of gateway.mounts) app.route(m.path, m.app)
   const server = serve({ fetch: app.fetch, hostname: '127.0.0.1', port: 0 })
   const upgrades: boolean[] = []
   server.on('upgrade', (req, socket: Duplex, head) => { upgrades.push(gateway.handleUpgrade(req, socket, head)) })
@@ -192,6 +193,56 @@ describe('deviceGateway（宿主自建 server + Hono，basePath /api/stream）',
     await vi.waitFor(() => {
       expect(changes).toContainEqual({ kind: 'binding', bindingId, deviceId, online: false, at: expect.any(Number) })
     })
+  })
+
+  // X2-R1：真机验收撞到的缺口。扩展连中继前先 POST `${origin}/api/ext/verify` 让后端自证身份
+  // （backend-identity.ts / driver.ts 的 connect()），那几条路径在扩展里是**写死的绝对路径**，
+  // 不跟着宿主的 basePath 走。这条用例照扩展的真实顺序走一遍：配对 → verify（带 binding）→
+  // 开 WS → 绑定在线，并且全程只用固定 `/api/ext/*`（宿主挂的是 `/api/stream`）。
+  it('照扩展真实顺序：ext 配对 → POST /api/ext/verify（带 binding）拿到合法 proof → 开 /api/ext 的 WS → binding online', async () => {
+    const stream = await tempStream()
+    const { port } = await hostApp(stream, { isAdmin: () => true })
+    const changes: DeviceChange[] = []
+    stream.devices.onChange((c) => changes.push(c))
+    const extOrigin = `chrome-extension://${STREAM_EXTENSION_ID}`
+
+    // 先有一台已配对设备，再签 ext 配对码
+    const code = await json(port, 'POST', '/api/stream/devices/pairing-code')
+    const dev = await json(port, 'POST', '/api/stream/devices/pair', { code: code.body!.code, name: '测试机', platform: 'linux' })
+    const deviceId = dev.body!.deviceId as string
+    const extCode = await json(port, 'POST', `/api/stream/devices/${deviceId}/ext-pairing-code`)
+
+    // 1) 配对：扩展打的是 `${origin}/api/ext/pair`
+    const extPair = await json(port, 'POST', '/api/ext/pair', { code: extCode.body!.code }, { origin: extOrigin })
+    expect(extPair.status).toBe(200)
+    const bindingId = extPair.body!.bindingId as string
+    const token = extPair.body!.token as string
+
+    // 2) 后端自证身份：`${origin}/api/ext/verify`，带 binding。扩展侧拿 sha256hex(token) 当 HMAC key。
+    const nonce = randomBytes(16).toString('hex')
+    const verify = await json(port, 'POST', '/api/ext/verify', { nonce, binding: bindingId }, { origin: extOrigin })
+    expect(verify.status).toBe(200)
+    const key = createHash('sha256').update(token).digest('hex')
+    const expected = createHmac('sha256', key).update(`${EXT_VERIFY_PREFIX}${nonce}`).digest('hex')
+    expect(verify.body).toMatchObject({ proof: expected, protocol: EXT_RELAY_PROTOCOL })
+    // 别的扩展拿不到 proof（Origin 精确匹配，口径与 app.ts 一致）
+    const other = await json(port, 'POST', '/api/ext/verify', { nonce, binding: bindingId }, { origin: `chrome-extension://${'b'.repeat(32)}` })
+    expect(other.status).toBe(403)
+
+    // 3) 连上后立刻对账孤儿标签、报生命周期事件——两口的路径同样是写死的
+    expect((await json(port, 'GET', '/api/ext/claimed-tabs?binding=' + encodeURIComponent(bindingId))).status).toBe(200)
+    expect((await json(port, 'POST', '/api/ext/debug-log', { event: 'onStartup', summary: '扩展启动' }, { origin: extOrigin })).status).toBe(200)
+
+    // 4) 开 WS：`ws://<host>/api/ext`（不是 /api/stream/ext）
+    const ws = await new Promise<WebSocket>((resolve, reject) => {
+      const s = new WebSocket(`ws://127.0.0.1:${port}/api/ext`, [EXT_RELAY_PROTOCOL, token], { origin: extOrigin })
+      s.on('open', () => resolve(s)); s.on('error', reject)
+    })
+    await vi.waitFor(() => {
+      expect(changes).toContainEqual({ kind: 'binding', bindingId, deviceId, online: true, at: expect.any(Number) })
+    })
+    expect(stream.devices.online().bindings.map((b) => b.bindingId)).toContain(bindingId)
+    ws.close()
   })
 
   it('心跳：不回 pong 的设备在两个周期内 offline（pingIntervalMs 小值）', async () => {

@@ -505,7 +505,8 @@ export async function routes(io: RouteIo): Promise<Hono> {
   // 网关实例由调用方（serve.ts）建好、随 io 递进来——attachRelayServers 挂 upgrade 要用同一份
   // （网关握着 ProfileClaims 的接线，两份实例就会双重登记认领钩子）。
   const gateway = io.gateway
-  app.route(gateway.basePath, gateway.app)
+  // 逐条挂（不是只挂 app）：网关可能还要在**扩展写死的** `/api/ext/*` 上答话，见 `mounts` 的头注。
+  for (const m of gateway.mounts) app.route(m.path, m.app)
   // 任务面（store/ledger/编译口）的装配在实例后台（`src/engine/background.ts`）：store 与
   // 账本由实例打开（两边各开一份 sqlite 连接就是两套状态），路由经 `tasks.assembly` 只读。
   // 查询档（scheduler=false）下 `builtins` 缺席 → 内置任务清单诚实地报空；store/ledger 开不

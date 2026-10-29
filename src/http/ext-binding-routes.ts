@@ -40,6 +40,30 @@ export interface ExtBindingRoutesDeps {
   }
 }
 
+/**
+ * `/ext/pair` 的处理器：扩展拿一次性码换绑定 token。
+ *
+ * 单独导出是因为它要出现在**两处**：本文件所在的管理面 app（挂在宿主的 basePath 下），以及设备
+ * 网关给嵌入方准备的固定路径 app（`${origin}/api/ext/pair`——扩展的路径写死，见
+ * `ext-public-routes.ts` 头注）。两处必须同一份实现；**别把它挪进 `ext-public-routes.ts`**：
+ * 这里的这一条在访问门**之后**（`TOKEN_EXEMPT_ROUTES` 按路径放行，Host/Origin 检查仍在），
+ * 挪到门之前就少一道 rebinding 防线。
+ */
+export function extPairHandler(
+  deps: Pick<ExtBindingRoutesDeps, 'store' | 'devices' | 'extId'>,
+): (c: Context) => Promise<Response> {
+  return async (c) => {
+    if (!isExtensionOrigin(c.req.header('Origin') ?? '', deps.extId)) return c.json({ error: 'forbidden' }, 403)
+    let body: unknown
+    try { body = await c.req.json() } catch { return c.json({ error: 'body 不是合法 JSON' }, 400) }
+    const { code, name, browser, platform } = (body ?? {}) as Record<string, unknown>
+    if (typeof code !== 'string') return c.json({ error: 'code 必须是字符串' }, 400)
+    const r = deps.store.pair(code, { name, browser, platform })
+    if (!r.ok) return c.json({ error: r.reason }, 403)
+    return c.json({ bindingId: r.bindingId, token: r.token, deviceId: r.deviceId, deviceName: deps.devices.name(r.deviceId) ?? r.deviceId })
+  }
+}
+
 export function mountExtBindingRoutes(app: Hono, deps: ExtBindingRoutesDeps): void {
   /** 这条绑定落在哪个已知节点上：本机节点从 id 上读，配对绑定看它记下的 `nodeId`。节点表里没有 = 没有。 */
   const nodeOf = (bindingId: string): { nodeId: string; deviceId: string } | undefined => {
@@ -59,16 +83,7 @@ export function mountExtBindingRoutes(app: Hono, deps: ExtBindingRoutesDeps): vo
     return c.json({ ...deps.store.createPairingCode(id), backends: deps.backendUrls?.(c) ?? [] })
   })
 
-  app.post('/ext/pair', async (c) => {
-    if (!isExtensionOrigin(c.req.header('Origin') ?? '', deps.extId)) return c.json({ error: 'forbidden' }, 403)
-    let body: unknown
-    try { body = await c.req.json() } catch { return c.json({ error: 'body 不是合法 JSON' }, 400) }
-    const { code, name, browser, platform } = (body ?? {}) as Record<string, unknown>
-    if (typeof code !== 'string') return c.json({ error: 'code 必须是字符串' }, 400)
-    const r = deps.store.pair(code, { name, browser, platform })
-    if (!r.ok) return c.json({ error: r.reason }, 403)
-    return c.json({ bindingId: r.bindingId, token: r.token, deviceId: r.deviceId, deviceName: deps.devices.name(r.deviceId) ?? r.deviceId })
-  })
+  app.post('/ext/pair', extPairHandler(deps))
 
   app.get('/ext/bindings', (c) =>
     c.json({ bindings: deps.store.list().map((b) => ({ ...b, default: isDefault(b), online: deps.registry.isOnline(b.bindingId) })) }),

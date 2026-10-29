@@ -683,6 +683,12 @@ function asTarget(t: ExtRelay | ExtRelayTarget): ExtRelayTarget {
  */
 export interface ExtRelayAttachOptions {
   path?: string
+  /**
+   * 额外认领的路径（同一条中继、同一套握手）。扩展把 `/api/ext` **写死**在自己代码里
+   * （`driver.ts` 的 `connect()`），所以网关挂在别的 basePath 上时也必须答得出这一条——
+   * 见 `src/engine/device-gateway.ts`。缺省空。
+   */
+  alsoPaths?: readonly string[]
   log?: (line: string) => void
   /** 心跳周期，缺省 {@link RELAY_PING_MS}；测试用 */
   pingIntervalMs?: number
@@ -715,6 +721,7 @@ export function extRelayHandler(
   ) & ExtRelayAttachOptions,
 ): RelayHandler {
   const { path = '/api/ext', log = console.log } = opts
+  const owned = new Set([path, ...(opts.alsoPaths ?? [])])
   const target = asTarget(relay)
   // 只给了一把 token（插件、老调用点）= 只有本机绑定。
   const token = opts.token
@@ -732,7 +739,7 @@ export function extRelayHandler(
   })
   const handle: RelayUpgradeHandle = (req, socket, head) => {
     const pathname = new URL(req.url ?? '', 'http://localhost').pathname
-    if (pathname !== path) return false // 不是自己的路径：留给其他 WSS 的 upgrade 监听器
+    if (!owned.has(pathname)) return false // 不是自己的路径：留给其他 WSS 的 upgrade 监听器
     // exactOptionalPropertyTypes：req.headers.* 天然是 `string | undefined`，直接铺给一个
     // `origin?: string` 的可选字段会被判成"显式赋了 undefined"而不是"没给"——同上一处的坑，
     // 只在真有值时才带这个键。

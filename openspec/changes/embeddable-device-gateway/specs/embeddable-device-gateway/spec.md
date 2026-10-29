@@ -3,16 +3,21 @@
 ### Requirement: 设备网关是实例公共入口的一部分
 
 系统 SHALL 提供 `deviceGateway(stream, opts)`：把设备配对与管理、扩展绑定、浏览器节点、站点身份四组
-HTTP 路由，以及扩展中继与宿主中继两条 WS 端点，装成一个可挂到宿主应用上的网关。宿主 SHALL 通过
-`app.route(opts.basePath, gateway.app)` 挂 HTTP 路由（`basePath` 缺省 `/api`），并在宿主 http server 的
-`upgrade` 事件里调 `gateway.handleUpgrade(req, socket, head)`：路径属于 `${basePath}/ext` 或
-`${basePath}/host` 时 SHALL 接管并返回 true，否则 SHALL 返回 false 且不触碰 socket。`gateway.close()`
-SHALL 关闭两条中继的 WebSocket 服务与认领登记。
+HTTP 路由，以及扩展中继与宿主中继两条 WS 端点，装成一个可挂到宿主应用上的网关。宿主 SHALL 逐条挂上
+`gateway.mounts` 里的每个 `(path, app)`（`basePath` 缺省 `/api`），并在宿主 http server 的 `upgrade`
+事件里调 `gateway.handleUpgrade(req, socket, head)`：路径属于 `${basePath}/ext`、`${basePath}/host`，
+或扩展写死的 `/api/ext` 时 SHALL 接管并返回 true，否则 SHALL 返回 false 且不触碰 socket。
+`gateway.close()` SHALL 关闭两条中继的 WebSocket 服务与认领登记。
 
 #### Scenario: 宿主挂上网关后设备可以配对并连上
 - **WHEN** 宿主把网关挂在自定义前缀（如 `/api/stream`）上，调用管理口签发配对码，设备用码换取 token 后向
   `${basePath}/host` 发起 WS 握手
 - **THEN** 握手成功，实例的宿主中继注册表里出现这台设备，且所有请求都落在宿主自己的 server 上
+
+#### Scenario: 配对绑定这一路的扩展连得上（X2-R1）
+- **WHEN** 宿主把网关挂在 `/api/stream` 上，扩展用一次性码完成 `/api/ext/pair`，随后按它自己写死的
+  顺序打 `/api/ext/verify`（带 binding）、`/api/ext/claimed-tabs`、`/api/ext/debug-log`，再连 `/api/ext`
+- **THEN** verify 回一条能被 `sha256hex(token)` 验过的 proof，其余几口照常应答，WS 握手成功且绑定上线
 
 #### Scenario: 不属于自己的路径让出来
 - **WHEN** 宿主的 server 上有发往其他路径的 upgrade 请求

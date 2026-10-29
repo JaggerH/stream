@@ -1,5 +1,5 @@
 import { Hono, type Context, type MiddlewareHandler } from 'hono'
-import { randomBytes, randomUUID } from 'node:crypto'
+import { randomUUID } from 'node:crypto'
 import type { CookieHealth } from '../credentials/pushed-cookie-store.ts'
 import { buildIdentity, type BuildIdentity } from './build-identity.ts'
 import { registerResolveRoutes } from './resolve-routes.ts'
@@ -111,14 +111,10 @@ import { fetchUrl, makeResolveByLink, type FetchUrlDeps } from './fetch-url.ts'
 import { toClientItem, sortKeyOf, encodeCursor, decodeCursor, isAfterCursor } from './client-item.ts'
 import { attachStoryGroups } from '../story-fold/project.ts'
 import type { StoryFoldStore } from '../story-fold/store.ts'
-import { EXT_RELAY_PROTOCOL } from './ext-relay.ts'
-import { localNodeBinding } from './ext-relay-registry.ts'
-import { cleanNodeId } from '../../shared/browser-relay/handshake.ts'
-import { extVerifyProof, extVerifyProofForBinding } from './ext-verify.ts'
 import { authorizeAccess, peerAddress, isLoopbackAddress, isTrustedHost, isTrustedOrigin, lanUrls } from './access-guard.ts'
 import { tokenEqual } from './secrets.ts'
 import { TOKEN_EXEMPT_ROUTES } from './device-routes.ts'
-import { isExtensionOrigin } from './ext-binding-routes.ts'
+import { mountExtPublicRoutes } from './ext-public-routes.ts'
 import { callSitesOf, PROVIDER_DEFAULT_SOURCE, PLANNED_PROVIDERS } from '../providers/seed.ts'
 import { identityServes } from '../providers/system/types.ts'
 import { PROVIDER_CALLSITES } from '../providers/callsites.ts'
@@ -689,10 +685,6 @@ const SHARE_SAVE_KEYS = [...SHARE_VERIFY_KEYS, 'dest', 'subdir', 'bind'] as cons
 // —— 以下是同一张网铺到 app.ts 其余写入面的那一批。每份名单照旧 = 对应 handler **实际读的
 //    那几个键**，多一个会把正常调用挡在门外、少一个会留下一处静默丢弃。
 
-/** `POST /api/ext/verify` 认识的字段。 */
-const EXT_VERIFY_KEYS = ['nonce', 'binding'] as const
-/** `POST /api/ext/debug-log` 认识的字段。 */
-const EXT_DEBUG_LOG_KEYS = ['event', 'summary', 'fields', 'ok'] as const
 /** `POST /api/events/read` 认识的字段（`EventsService.markRead` 的两种选法）。 */
 const EVENTS_READ_KEYS = ['ids', 'all'] as const
 /** `POST /api/sources/preview` 认识的字段。 */
@@ -1260,43 +1252,18 @@ export function createHttpApp(deps: HttpDeps): Hono {
     })
   })
 
-  /**
-   * 「证明你也知道那把 secret」——扩展在**交出 token 之前**打这一口。
-   *
-   * 这里曾经是 `POST /api/ext/token`，直接把 ext-relay secret 发给对方。**别把它加回来。**
-   * 那条路的方向是反的：扩展向对端索取凭证，于是本机任何进程抢到这个口就拿到了这条通道的
-   * 全部能力（任意页面 `Runtime.evaluate`）。现在 token 由扩展经 native messaging 从
-   * `data/ext-relay-token` 自取（只有同一个用户读得到），这一口只负责让后端**证明**自己也
-   * 知道它——回的是 `HMAC-SHA256(token, VERIFY_PREFIX + nonce)`，不是 token 本身。
-   *
-   * 仍然保留 Origin 门控：proof 虽然不是 secret，但没必要让任意扩展拿它当预言机。
-   * 同 `/api/health` 注册在门之前——扩展拿不到 api_token，而网页伪造不了
-   * `chrome-extension://` Origin（浏览器强制 Origin 头，fetch/XHR/WS 均不可自设）。
-   * 必须是 POST：扩展带 host_permissions 时 GET 走非 CORS 路径、Chrome 不附 Origin 头
-   * （实测 Sec-Fetch-Mode: cors 但无 Origin）；非 GET 请求浏览器强制带 Origin，两端才对得上。
-   */
-  app.post('/api/ext/verify', async (c) => {
-    const auth = deps.extRelayAuth
-    if (!auth) return c.json({ error: 'ext relay disabled' }, 404)
-    const origin = c.req.header('Origin') ?? ''
-    if (!isExtensionOrigin(origin, auth.extId)) return c.json({ error: 'forbidden' }, 403)
-    const body = (await c.req.json().catch(() => null)) as { nonce?: unknown } | null
-    const gate = strictBody(c, body, EXT_VERIFY_KEYS)
-    if (gate) return gate
-    // nonce 由客户端出，服务端只签不解释；但**必须是它自己给的那个**才防得住重放，
-    // 所以空/非串一律拒，绝不用默认值兜底签一个可预测的挑战。
-    if (!body || typeof body.nonce !== 'string' || body.nonce.length < 16) {
-      return c.json({ error: 'nonce required (>=16 chars)' }, 400)
-    }
-    const binding = (body as { binding?: unknown }).binding
-    if (binding !== undefined) {
-      if (typeof binding !== 'string') return c.json({ error: 'binding must be a string' }, 400)
-      // 不认识的绑定也照样签一个（随机 key）：回 404 就等于告诉对方哪些 id 存在。
-      const key = auth.tokenHashOf?.(binding) ?? randomBytes(32).toString('hex')
-      return c.json({ proof: extVerifyProofForBinding(key, body.nonce), protocol: EXT_RELAY_PROTOCOL })
-    }
-    return c.json({ proof: extVerifyProof(auth.token, body.nonce), protocol: EXT_RELAY_PROTOCOL })
+  // 扩展在**连上中继之前 / 对账时**要打的那几口（verify / claimed-tabs / debug-log）。
+  // 实现搬到 `ext-public-routes.ts`，与设备网关共用同一份：那几口的路径在扩展里是写死的绝对
+  // 路径，嵌入方（网关挂在自己的 basePath 上）也必须答得出来，否则配对绑定这一路在嵌入模式下
+  // 永远连不上（2026-10-29 X2-R1）。**注册位置不动**：仍在访问门之前，理由随各路由搬进了那个文件。
+  // 那个模块用相对路径注册（网关那边挂在固定 '/api' 上），这里套一层把它放回 `/api`。
+  const extPublic = new Hono()
+  mountExtPublicRoutes(extPublic, {
+    ...(deps.extRelayAuth ? { auth: deps.extRelayAuth } : {}),
+    ...(deps.claimedTabs ? { claimedTabs: deps.claimedTabs } : {}),
+    ...(deps.debug ? { debug: deps.debug } : {}),
   })
+  app.route('/api', extPublic)
 
   // ext-relay 连接状态探针：诊断"扩展现在连着吗"的第一步就该是打这个口，而不是让用户
   // 点图标/重启 gateway/重载扩展地猜（2026-07-27 一次误诊耗了四轮，真凶在别处）。
@@ -1306,20 +1273,6 @@ export function createHttpApp(deps: HttpDeps): Hono {
     const status = deps.extRelayStatus
     if (!status) return c.json({ error: 'ext relay disabled' }, 404)
     return c.json(status())
-  })
-
-  // 后端此刻还骑着哪些浏览器标签。lane→tab 的映射只在进程内存里，后端一重启就全丢了——
-  // 扩展靠这一口回收留在用户 Chrome 里的孤儿采集标签（它自己判断收不收、怎么收，红线在那边）。
-  // **空集合和「问不到」必须分开**：空集合 = 一个都不认（后端刚重启的常态，该收就收），
-  // dep 没接线 = 503，扩展见到非 200 一律什么都不做。同 relay-status 注册在门之前：
-  // 扩展的对账不该依赖它先拿到凭证。
-  app.get('/api/ext/claimed-tabs', (c) => {
-    if (!deps.claimedTabs) return c.json(errorBody('unavailable', 'facility sessions not available'), 503)
-    // 每个扩展绑定只拿自己那个 Chrome 里的标签对账（design D7）；不带 = 本机兼容槽，与以前一致。
-    // 本机节点带 `node`（browser-identity D2）而不是 `binding=local:…`——老后端不认 `node`，回的是本机全集，
-    // 不会把在跑的标签当孤儿。形状不对的 node 当没带。
-    const node = cleanNodeId(c.req.query('node'))
-    return c.json({ tabIds: deps.claimedTabs(c.req.query('binding') || (node ? localNodeBinding(node) : undefined)) })
   })
 
   /*
@@ -1334,44 +1287,8 @@ export function createHttpApp(deps: HttpDeps): Hono {
    * "推那条路还活着"，在 pull 出问题时去修一条早就没人走的路。
    */
 
-  // 扩展 SW 的关键生命周期事件 → debug bus 的 `ext-cdp` channel（`GET /api/debug/log?channel=ext-cdp`）。
-  // **走 HTTP 不走 relay 的 WS**：要记的那几件事（onStartup 触发、账本清空、认领旧组）全发生在
-  // connect 之前，走 WS 就等于永远记不到最需要的那一刻。
-  // 只收扩展自己的低频事件（浏览器/扩展每次启动至多各一次），高频路径（每个 tab 的 add/remove）
-  // 不许往这里打。同 /api/ext/verify 用 Origin 门控、注册在门之前：扩展拿不到 api_token。
-  app.post('/api/ext/debug-log', async (c) => {
-    if (!/^chrome-extension:\/\/[a-p]{32}$/.test(c.req.header('Origin') ?? '')) {
-      return c.json({ error: 'forbidden' }, 403)
-    }
-    const body = await c.req.json().catch(() => undefined) as
-      { event?: unknown; summary?: unknown; fields?: unknown; ok?: unknown } | undefined
-    const gate = strictBody(c, body, EXT_DEBUG_LOG_KEYS)
-    if (gate) return gate
-    const event = typeof body?.event === 'string' ? body.event : undefined
-    if (!event) return c.json(errorBody('validation_error', 'event required'), 400)
-    const at = Date.now()
-    recordDebug({
-      id: `ext-cdp:${event}@${at}`,
-      at,
-      channel: 'ext-cdp',
-      key: event,
-      title: `扩展：${event}`,
-      summary: typeof body?.summary === 'string' ? body.summary : event,
-      // ok **由扩展申报**，缺省 true（生命周期事件 onStartup / ledger-cleared 都不是故障）。
-      // 慢命令那两条要报 false，否则 DebugBox 的 failedOnly 会只留下后端侧的 relay-timeout
-      // 而藏掉配对的 slow-command —— 而"有 timeout、没 slow-command"正是"命令没送到 SW"的
-      // 判据，等于一个过滤器凭空造出一个错误结论。
-      ok: body?.ok !== false,
-      fields: Array.isArray(body?.fields)
-        ? (body.fields as unknown[])
-            .filter((f): f is { label: string; value: unknown } =>
-              !!f && typeof (f as { label?: unknown }).label === 'string')
-            .slice(0, 12)
-            .map((f) => ({ label: f.label, value: String(f.value) }))
-        : [],
-    })
-    return c.json({ ok: true })
-  })
+  // 扩展 SW 的生命周期事件（`POST /api/ext/debug-log`）与上面那一口同在 `ext-public-routes.ts`，
+  // 理由见那个文件的头注（走 HTTP 不走 WS：要记的事都发生在 connect 之前）。
 
   // 浏览器采集能力快判：`state` 直接对应三行引导（ready / disconnected / never-seen，见 spec §5）。
   // 扩展跑在 Chrome 里，所以"有没有 Chrome"和"有没有扩展"是同一条信号 —— 这里不需要探测任何东西，

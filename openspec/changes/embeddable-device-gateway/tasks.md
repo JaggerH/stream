@@ -30,3 +30,13 @@
 
 - [x] 1. `src/engine/index.ts` 导出 `deviceGateway` 与类型；exports.guard 快照更新
 - [x] 2. 全量 `flock /tmp/stream-heavy.lock node_modules/.bin/vitest run src shared` + `tsc --noEmit -p .`（环境性失败名单不变）；rebase、push、提交说明即交付记录
+
+## 计划 6：返修 X2-R1（扩展连不上嵌入方）
+
+- [x] 1. `src/http/ext-public-routes.ts`：`/ext/verify`（含 binding 分支）、`/ext/claimed-tabs`、`/ext/debug-log` 从 `app.ts` 搬进共用模块，鉴权口径逐字不变；`app.ts` 改为挂这个模块（仍在访问门之前）
+- [x] 2. `ext-binding-routes.ts` 导出 `extPairHandler`；网关的固定路径 app 与 basePath app 共用同一个处理器
+- [x] 3. 网关：`extApp`（相对 `/api`）+ `mounts`；`extRelayHandler` 加 `alsoPaths`，`handleUpgrade` 也认扩展写死的 `/api/ext`
+- [x] 4. `routes()` 改为逐条挂 `mounts`（basePath `/api` 时仍是一条，serve 行为不变）
+- [x] 5. 网关测试加「照扩展真实顺序」一条：`/api/ext/pair` → `/api/ext/verify`（带 binding，proof 对 `sha256hex(token)`）→ claimed-tabs / debug-log → `/api/ext` WS → binding online；`hostApp` 改为逐条挂 `mounts`
+- [x] 6. 全量 `vitest run` + `tsc --noEmit`（环境性失败名单不变：`serve.routes` / 真包计数 / 网络相关共 14 条，基线同样红）
+
