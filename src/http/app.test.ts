@@ -660,20 +660,24 @@ describe('HTTP API', () => {
 
     it('proxies image url successfully (mimicking /api/img)', async () => {
       const app = build()
-      // The handler fetches via getImageNoReferer (native node http(s), NOT global fetch) so it can
-      // send NO Referer — RSSHub's request-rewriter patches global fetch to inject a self-origin
-      // Referer that xhs's CDN 403s. Spy on that module boundary (node builtins aren't spyable).
+      // The handler fetches via getImageWithFallback (native node http(s), NOT global fetch) so it
+      // can send NO Referer — RSSHub's request-rewriter patches global fetch to inject a
+      // self-origin Referer that xhs's CDN 403s. Spy on **the seam the route actually calls**:
+      // app.ts imports getImageWithFallback and calls it directly, so a spy on the inner
+      // getImageNoReferer never intercepts (same-module calls don't go through the namespace
+      // object) and the test would hit the real network. The no-Referer behaviour itself is
+      // covered in image-fetch.test.ts.
       const imageFetch = await import('./image-fetch.ts')
       const body = Readable.from([Buffer.from('image-bytes')])
       const getSpy = vi
-        .spyOn(imageFetch, 'getImageNoReferer')
+        .spyOn(imageFetch, 'getImageWithFallback')
         .mockResolvedValue({ status: 200, contentType: 'image/png', body })
 
       const r = await app.request('/api/media/image?url=https://example.com/pic.png')
       expect(r.status).toBe(200)
       expect(await r.text()).toBe('image-bytes')
       expect(r.headers.get('content-type')).toBe('image/png')
-      expect(getSpy).toHaveBeenCalledWith('https://example.com/pic.png', expect.any(AbortSignal), 3, undefined)
+      expect(getSpy).toHaveBeenCalledWith('https://example.com/pic.png', expect.any(AbortSignal), undefined)
       getSpy.mockRestore()
     })
 
