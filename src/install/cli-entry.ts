@@ -60,6 +60,10 @@ if (opts.command) {
       selfEntry: process.argv[1],
       streamVersion: typeof __STREAM_CLI_VERSION__ === 'string' ? __STREAM_CLI_VERSION__ : 'dev',
     })
+  } else if (opts.command.kind === 'cdp-bind') {
+    // 独立长驻进程：不 chdir 到资源目录、不 import 后端（见 cdp-bind-command.ts 头注）。
+    const { runCdpBindCommand } = await import('./cdp-bind-command.ts')
+    process.exitCode = await runCdpBindCommand(opts.command)
   } else {
     const { runAddCommand, runRemoveCommand, runUpdateCommand, runRestartCommand } = await import('./add-command.ts')
     // `--port` 优先于环境里的 STREAM_BACKEND_URL，理由同上面 mcp 那格：探的是哪个后端就装到哪个后端。

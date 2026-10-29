@@ -34,6 +34,12 @@ export type CliCommand =
    * `yes` = 跳过"先看会做什么"那一步直接执行（无人值守：调度中心的 `command` 执行体填的就是它）。
    */
   | { kind: 'recipe-run'; sourceId: string; params: Record<string, string>; yes: boolean; json: boolean }
+  /**
+   * `stream cdp-bind --server <url> --state <file> [--cdp <url>]`：用 CDP 驱动一台没有装扩展的
+   * Chromium，对外讲扩展中继的同一套协议。**配对码只从 stdin 读**（不进命令行 / 环境变量）；
+   * 有状态文件时直接重连，不再要码。
+   */
+  | { kind: 'cdp-bind'; cdpUrl?: string; serverUrl: string; stateFile: string }
 
 /**
  * 装 / 更 / 卸完要不要重启后端。缺席 = 运行时再决定（有待重启项且 stdin 是终端才问）；
@@ -41,7 +47,7 @@ export type CliCommand =
  */
 export type RestartFlag = 'yes' | 'no'
 
-const SUBCOMMANDS = ['mcp', 'add', 'remove', 'update', 'restart', 'recipe'] as const
+const SUBCOMMANDS = ['mcp', 'add', 'remove', 'update', 'restart', 'recipe', 'cdp-bind'] as const
 
 /**
  * `<包名>[@<版本>]` 的拆法。**scope 那个 `@` 不是分隔符**——`@streamapp/netdisk` 拆成
@@ -192,6 +198,36 @@ export function parseCliArgs(argv: string[]): CliOptions {
           continue
         }
         out.command = { kind: 'recipe-contribute', sourceId: id, ...(step && { step }), ...(area && { area }) }
+      } else if (a === 'cdp-bind') {
+        // 这条命令的 flag 只对自己有意义（--server / --state / --cdp），就地吃完；碰到别的
+        // （`--data` / `--port`）就停、交还外层——它们对这条命令没意义，外层会报 unknown。
+        let cdpUrl: string | undefined
+        let serverUrl: string | undefined
+        let stateFile: string | undefined
+        let bad = false
+        while (i + 1 < argv.length) {
+          const raw = argv[i + 1]!
+          const eq = raw.indexOf('=')
+          const [flag, inline] = eq > 0 ? [raw.slice(0, eq), raw.slice(eq + 1)] : [raw, undefined]
+          if (flag !== '--cdp' && flag !== '--server' && flag !== '--state') break
+          const val = inline ?? argv[i + 2]
+          if (!val || (inline === undefined && val.startsWith('-'))) {
+            out.error = `${flag} 要一个值`
+            bad = true
+            break
+          }
+          if (flag === '--cdp') cdpUrl = val
+          else if (flag === '--server') serverUrl = val
+          else stateFile = resolve(val)
+          i += inline === undefined ? 2 : 1
+        }
+        if (bad) continue
+        if (!serverUrl || !stateFile) {
+          out.error = '用法：stream cdp-bind --server <url> --state <file> [--cdp <url>]'
+          continue
+        }
+        out.command = { kind: 'cdp-bind', ...(cdpUrl ? { cdpUrl } : {}), serverUrl, stateFile }
+        continue
       } else if (a === 'update') {
         // 包名可以有零到多个，`--yes` 在它们前后都认；碰到别的 flag 就停、交还外层循环
         // （`--data` / `--port` 对这条命令有意义）。
@@ -274,6 +310,10 @@ export const HELP = `stream — 自托管的信息流层
   stream recipe contribute <id> [--step <label> | --area <名字>]
                                             把本机学到的落地方式贡献回这份 recipe 的包
                                             （有 gh 就开 PR，没有就开一个预填好的 issue）
+  stream cdp-bind --server <url> --state <file> [--cdp <url>]
+                                            用 CDP 驱动一台没有装扩展的 Chromium，对外讲扩展
+                                            中继的同一套协议（长驻进程；配对码从 stdin 读，
+                                            有状态文件后不再要码）
 
   --port, -p <n>     监听端口（默认 8900）——对 mcp / add / remove / update / restart 是它们
                      探 / 打的那个后端的端口

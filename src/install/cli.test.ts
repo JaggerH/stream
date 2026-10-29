@@ -161,6 +161,29 @@ describe('子命令', () => {
     expect(parseCliArgs(['recipe', 'contribute', 'wechat-send', '--step', 'L', '--area', '气泡区']).error).toMatch(/--step 和 --area 只能给一个/)
     expect(parseCliArgs(['recipe', 'contribute', 'wechat-send', '--area', '气泡区', '--step', 'L']).error).toMatch(/--step 和 --area 只能给一个/)
   })
+
+  // `stream cdp-bind`：长驻进程，配对码只从 stdin 读——**没有** `--code` 这类 flag，也不读环境变量。
+  it('cdp-bind --server <url> --state <file> [--cdp <url>]', () => {
+    expect(parseCliArgs(['cdp-bind', '--server', 'http://127.0.0.1:8900', '--state', '/tmp/s.json']).command)
+      .toEqual({ kind: 'cdp-bind', serverUrl: 'http://127.0.0.1:8900', stateFile: '/tmp/s.json' })
+    expect(parseCliArgs(['cdp-bind', '--server', 'http://127.0.0.1:8900', '--state', '/tmp/s.json', '--cdp', 'http://127.0.0.1:9333']).command)
+      .toEqual({ kind: 'cdp-bind', cdpUrl: 'http://127.0.0.1:9333', serverUrl: 'http://127.0.0.1:8900', stateFile: '/tmp/s.json' })
+    // `--flag=value` 的写法同样认（与别的子命令一致）
+    expect(parseCliArgs(['cdp-bind', '--server=http://127.0.0.1:8900', '--state=/tmp/s.json']).command)
+      .toMatchObject({ kind: 'cdp-bind', serverUrl: 'http://127.0.0.1:8900' })
+    // 状态文件折算成绝对路径（进程可能被 systemd 从别的 cwd 拉起来）
+    expect((parseCliArgs(['cdp-bind', '--server', 'http://127.0.0.1:8900', '--state', 'rel/s.json']).command as { stateFile: string }).stateFile)
+      .toBe(resolve('rel/s.json'))
+  })
+
+  it('cdp-bind 缺参数 → 报用法；配对码没有 flag 可给（只从 stdin 读）', () => {
+    expect(parseCliArgs(['cdp-bind']).error).toMatch(/cdp-bind --server <url> --state <file>/)
+    expect(parseCliArgs(['cdp-bind', '--server', 'http://127.0.0.1:8900']).error).toMatch(/--state/)
+    expect(parseCliArgs(['cdp-bind', '--server']).error).toMatch(/--server 要一个值/)
+    // `--code` 不认：进 unknown，由调用方报错退出（不静默吞掉——吞掉的表现是"配对码没生效"）
+    const o = parseCliArgs(['cdp-bind', '--server', 'http://127.0.0.1:8900', '--state', '/tmp/s.json', '--code', '123456'])
+    expect(o.unknown).toContain('--code')
+  })
 })
 
 describe('包名@版本 的拆法', () => {

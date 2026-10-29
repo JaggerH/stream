@@ -7,6 +7,10 @@ import { execFileSync } from 'node:child_process'
 const ALLOWED = [
   'src/http/host-relay.ts',            // WS ping
   'shared/browser-relay/relay.ts',     // WS ping（原 src/http/ext-relay.ts，随重构搬到 shared/）
+  // CDP 绑定那条中继的**客户端**心跳：与上面两处同一条协议、同一个周期（20s ping，两个周期没
+  // 应答就断开重连）。它是连接自己的看门狗，不是调度任务——收编进 src/tasks/ 等于让调度中心
+  // 去管一条 WebSocket 的存活。
+  'src/cdp-binding/binding.ts',
   'src/event-source/relay.ts',         // WS ping（与 host-relay 同类）
   'src/loop-lag.ts',                   // 事件循环延迟采样
   // 一条 agent 会话自己的心跳/看门狗：每个实例一根，`unref()` 过，终态的每条路（finish / failRun /
