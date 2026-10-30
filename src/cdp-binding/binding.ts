@@ -44,13 +44,15 @@ export interface CdpBindingOptions {
   /** 测试缝。 */
   fetchImpl?: typeof fetch
   WebSocketImpl?: typeof WebSocket
-  /** 中继断线退避的起点 / 上限（缺省 1s / 30s）。 */
+  /** 中继断线退避的起点 / 上限（缺省 250ms / 30s）。起点很短：醒来后第一次重连不该等一秒。 */
   reconnectMs?: number
   maxReconnectMs?: number
   /** CDP 断开后的重试间隔（缺省 1s）。 */
   cdpRetryMs?: number
   /** 心跳周期（缺省 20s，与扩展一致）。 */
   pingIntervalMs?: number
+  /** 墙钟（测试缝）。进程被冻住过时它一次前进很多——心跳据此立刻重连，不等 socket 自己报错。 */
+  now?: () => number
 }
 
 export interface CdpBinding {
@@ -71,10 +73,14 @@ export async function startCdpBinding(opts: CdpBindingOptions): Promise<CdpBindi
   const serverUrl = serverUrlOf(opts.serverUrl)
   const log = opts.log ?? ((line: string) => console.error(line))
   const Impl = opts.WebSocketImpl ?? WebSocket
-  const reconnectMs = opts.reconnectMs ?? 1_000
+  const now = opts.now ?? Date.now
+  const reconnectMs = opts.reconnectMs ?? 250
   const maxReconnectMs = opts.maxReconnectMs ?? 30_000
   const cdpRetryMs = opts.cdpRetryMs ?? 1_000
   const pingIntervalMs = opts.pingIntervalMs ?? 20_000
+  // 墙钟一次前进这么多 = 进程被冻住过（虚拟机挂起 / 合盖 / SIGSTOP）。此刻的连接多半已经
+  // 半开：服务端可能早就把它判死了，只是 FIN 还没到。不等它，立刻重连。
+  const wallJumpMs = Math.max(5_000, pingIntervalMs)
 
   let state = readCdpBindingState(opts.stateFile)
   if (state) {
@@ -153,7 +159,29 @@ export async function startCdpBinding(opts: CdpBindingOptions): Promise<CdpBindi
       }
       // 心跳照扩展中继的规矩：每个周期 ping 一次；上一轮 ping 之后既没 pong 也没任何帧
       // = 对端冻住了（挂起 / 断网但没有 FIN），terminate 掉走重连。
+      // 先看墙钟：进程自己被冻住过时，定时器会在醒来那一刻补跑，而 socket 可能还半开着、
+      // 服务端却早已判死——这时立刻重连，别等下一轮 ping 的 20 s。
+      let lastWall = now()
       heartbeat = setInterval(() => {
+        const wall = now()
+        const jumped = wall - lastWall > wallJumpMs
+        lastWall = wall
+        if (jumped) {
+          // 醒来时浏览器那一侧的定时器也一起补跑了：它那条 WS 多半已被它自己判死（或者正半开着）。
+          // 留着它去连中继，等于挂一条死管道——命令发出去没人接、每条都要等超时。连 CDP 一起重来。
+          log('[cdp-binding] 墙钟跳变（进程被冻住过）——中继与浏览器连接一并重连')
+          const conn = cdp
+          cdp = null
+          ops?.dispose()
+          ops = null
+          try {
+            conn?.close()
+          } catch {
+            /* 已经死了 */
+          }
+          finish('retry')
+          return
+        }
         if (!alive) {
           log('[cdp-binding] 中继心跳无应答——断开重连')
           finish('retry')

@@ -179,8 +179,7 @@ describe('CDP 绑定的生命周期', () => {
     }
   })
 
-  it('重启：有状态文件就不再要配对码（一次都不问），照样先 verify', async () => {
-    const cdp = await fakeCdp()
+  it('重启：有状态文件就不再要配对码（一次都不问），照样先 verify', async () => {    const cdp = await fakeCdp()
     const relay = await fakeRelay()
     try {
       const file = stateFile()
@@ -202,6 +201,40 @@ describe('CDP 绑定的生命周期', () => {
       expect(ask).not.toHaveBeenCalled()
       expect(relay.pairs).toHaveLength(0)
       expect(relay.verifies).toHaveLength(1)
+    } finally {
+      await relay.close()
+      await cdp.close()
+    }
+  })
+
+  // 沙箱挂起会把进程冻住：醒来时 socket 还是半开的——服务端可能早判死了、FIN 却没到，
+  // 心跳也还"活着"。墙钟一次前进很多就是这件事的签名，据此立刻重连，不等 20s 的 pong 超时。
+  it('墙钟跳变（进程被冻住过）→ 立刻重连，不等对端关闭或心跳超时', async () => {
+    const cdp = await fakeCdp()
+    const relay = await fakeRelay()
+    try {
+      const file = stateFile()
+      writeCdpBindingState(file, { token: TOKEN, nodeId: 'node_11111111-2222-4333-8444-555555555555', bindingId: BINDING })
+      let clock = 1_000_000
+      const b = await startCdpBinding({
+        cdpUrl: cdp.url,
+        serverUrl: relay.url,
+        stateFile: file,
+        log: () => {},
+        reconnectMs: 20,
+        cdpRetryMs: 20,
+        pingIntervalMs: 30,
+        now: () => clock,
+      })
+      bindings.push(b)
+      await vi.waitFor(() => expect(relay.connections()).toBe(1))
+      // 对端什么都不做：不关连接、照常回 pong。只有墙钟跳变能把这条连接判掉。
+      clock += 60_000
+      await vi.waitFor(() => expect(relay.connections()).toBe(2), { timeout: 2_000 })
+      // 浏览器那条 WS 醒来后同样是可疑的（它那一侧的定时器也补跑了）：一并丢掉重连，
+      // 不能带着一条死管道去连中继——那会让每条命令都等到超时。
+      await vi.waitFor(() => expect(cdp.connections()).toBe(1), { timeout: 2_000 })
+      expect(b.online).toBe(true)
     } finally {
       await relay.close()
       await cdp.close()
