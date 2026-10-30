@@ -22,10 +22,11 @@ export type DeviceChange =
   | { kind: 'device'; deviceId: string; name: string; platform: string; online: boolean; at: number }
   | { kind: 'binding'; bindingId: string; deviceId: string; nodeId?: string; online: boolean; at: number }
 
-/** `online()` 的快照：嵌入方启动时先读一次再订阅 `onChange`。 */
+/** `online()` 的快照：嵌入方启动时先读一次再订阅 `onChange`。`connectedAt` 是该连接的建立时刻
+ *  （毫秒，可选）：嵌入方可用它区分「挂起前就在、可能已被冻死的旧连接」和「挂起后重新建立的连接」。 */
 export interface DeviceSnapshot {
-  devices: Array<{ deviceId: string; name: string; platform: string }>
-  bindings: Array<{ bindingId: string; deviceId: string; nodeId?: string }>
+  devices: Array<{ deviceId: string; name: string; platform: string; connectedAt?: number }>
+  bindings: Array<{ bindingId: string; deviceId: string; nodeId?: string; connectedAt?: number }>
 }
 
 export interface StreamDevices {
@@ -78,10 +79,10 @@ export function wireDeviceChanges(devices: StreamDevices, harvest: HarvestServic
     return () => { listeners.delete(listener) }
   }
   devices.online = (): DeviceSnapshot => ({
-    devices: harvest.hostRelays.devices().map((d) => ({ deviceId: d.hello.deviceId, name: d.hello.name, platform: d.hello.platform })),
+    devices: harvest.hostRelays.devices().map((d) => ({ deviceId: d.hello.deviceId, name: d.hello.name, platform: d.hello.platform, connectedAt: d.connectedAt })),
     bindings: harvest.extRelays.statuses()
       .filter((s) => s.online && s.deviceId !== '?')
-      .map((s) => ({ bindingId: s.bindingId, deviceId: s.deviceId, ...(harvest.extRelays.nodeOf(s.bindingId) ? { nodeId: harvest.extRelays.nodeOf(s.bindingId) } : {}) })),
+      .map((s) => ({ bindingId: s.bindingId, deviceId: s.deviceId, ...(harvest.extRelays.nodeOf(s.bindingId) ? { nodeId: harvest.extRelays.nodeOf(s.bindingId) } : {}), ...(s.connectedAt !== null ? { connectedAt: s.connectedAt } : {}) })),
   })
 }
 

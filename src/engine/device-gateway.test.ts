@@ -145,8 +145,9 @@ describe('deviceGateway（宿主自建 server + Hono，basePath /api/stream）',
     await vi.waitFor(() => {
       expect(changes).toContainEqual({ kind: 'device', deviceId, name: '测试机', platform: 'linux', online: true, at: expect.any(Number) })
     })
-    // 快照：启动时先读一次的口
-    expect(stream.devices.online().devices.map((d) => d.deviceId)).toContain(deviceId)
+    // 快照：启动时先读一次的口；connectedAt 是该连接的建立时刻
+    const snapDevice = stream.devices.online().devices.find((d) => d.deviceId === deviceId)
+    expect(snapDevice?.connectedAt).toEqual(expect.any(Number))
     ws.close()
     await vi.waitFor(() => {
       expect(changes).toContainEqual({ kind: 'device', deviceId, name: '测试机', platform: 'linux', online: false, at: expect.any(Number) })
@@ -202,8 +203,10 @@ describe('deviceGateway（宿主自建 server + Hono，basePath /api/stream）',
     open1.close()
     await new Promise((r) => setTimeout(r, 100))
     expect(changes.some((c) => c.kind === 'binding' && c.bindingId === bindingId && !c.online)).toBe(false)
-    // 快照里这条绑定在线
-    expect(stream.devices.online().bindings.map((b) => b.bindingId)).toContain(bindingId)
+    // 快照里这条绑定在线，且带连接建立时刻
+    const snapBinding = stream.devices.online().bindings.find((b) => b.bindingId === bindingId)
+    expect(snapBinding).toBeDefined()
+    expect(snapBinding?.connectedAt).toEqual(expect.any(Number))
     open2.close()
     await vi.waitFor(() => {
       expect(changes).toContainEqual({ kind: 'binding', bindingId, deviceId, online: false, at: expect.any(Number) })

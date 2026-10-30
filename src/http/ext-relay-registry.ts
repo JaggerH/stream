@@ -270,12 +270,13 @@ export class ExtRelayRegistry {
   }
 
   /** 面板与诊断用：每条已知 relay 的在线状态。 */
-  statuses(): Array<{ bindingId: string; deviceId: string; online: boolean; since: string | null }> {
+  statuses(): Array<{ bindingId: string; deviceId: string; online: boolean; since: string | null; connectedAt: number | null }> {
     return [...this.relays.entries()].map(([bindingId, r]) => ({
       bindingId,
       deviceId: this.deviceOf(bindingId) ?? '?',
       online: r.connected,
       since: r.status().since,
+      connectedAt: this.connectedAt.get(bindingId) ?? null,
     }))
   }
 }
