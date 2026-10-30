@@ -732,9 +732,14 @@ export function hostRelayHandler(
       }
       clearTimeout(helloTimer)
       deviceId = hello.deviceId
+      // 顶掉旧连接时把这件事写进日志：挂起醒来后「重连了但没有 online 事件」的排查看的就是这一行。
+      const replaced = registry.isOnline(hello.deviceId)
       registry.connect(socket, hello)
       if (boundDevice !== undefined) onDeviceSeen?.(boundDevice)
-      log(`[host-relay] device connected ${hello.deviceId} (${hello.platform}, ${hello.name}, v${hello.agentVersion}, ${hello.ops.length} ops)`)
+      log(
+        `[host-relay] device connected ${hello.deviceId} (${hello.platform}, ${hello.name}, v${hello.agentVersion}, ${hello.ops.length} ops)` +
+          (replaced ? ' — replaced a live connection' : ''),
+      )
     })
     const teardown = () => {
       clearTimeout(helloTimer)

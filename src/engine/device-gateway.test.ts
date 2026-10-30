@@ -163,7 +163,7 @@ describe('deviceGateway（宿主自建 server + Hono，basePath /api/stream）',
     stranger.terminate()
   })
 
-  it('扩展绑定：签 ext 配对码 → ext/pair → 连 /api/stream/ext → binding online；新连接顶掉旧连接只发一次 online', async () => {
+  it('扩展绑定：签 ext 配对码 → ext/pair → 连 /api/stream/ext → binding online；新连接顶掉旧连接再发一次 online', async () => {
     const stream = await tempStream()
     const { port } = await hostApp(stream, { isAdmin: () => true })
     const changes: DeviceChange[] = []
@@ -191,14 +191,14 @@ describe('deviceGateway（宿主自建 server + Hono，basePath /api/stream）',
     })
     const onlineCount = () => changes.filter((c) => c.kind === 'binding' && c.bindingId === bindingId && c.online).length
 
-    // 新连接顶掉旧连接：只多一条 online，旧连接随后关闭不再发 offline
+    // 新连接顶掉旧连接：**再发一条 online**（嵌入方靠它把挂起期间压成离线的行当场拉回来），
+    // 旧连接随后关闭不再发 offline
     const open2 = await new Promise<WebSocket>((resolve, reject) => {
       const ws = new WebSocket(`ws://127.0.0.1:${port}/api/stream/ext`, [EXT_RELAY_PROTOCOL, token], { origin: `chrome-extension://${STREAM_EXTENSION_ID}` })
       ws.on('open', () => resolve(ws)); ws.on('error', reject)
     })
     await vi.waitFor(() => expect(open2.readyState).toBe(WebSocket.OPEN))
-    await new Promise((r) => setTimeout(r, 100))
-    expect(onlineCount()).toBe(1)
+    await vi.waitFor(() => expect(onlineCount()).toBe(2))
     open1.close()
     await new Promise((r) => setTimeout(r, 100))
     expect(changes.some((c) => c.kind === 'binding' && c.bindingId === bindingId && !c.online)).toBe(false)

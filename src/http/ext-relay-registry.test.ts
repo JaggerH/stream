@@ -92,6 +92,23 @@ describe('ExtRelayRegistry', () => {
     expect(changes.at(-1)).toMatchObject({ bindingId: 'ext:a', deviceId: 'linux:nas', online: false })
   })
 
+  // 设备挂起醒来时，绑定往往在服务端判死之前就重连上了——那条旧 socket 还半开着。新握手必须
+  // **发一条 online**（嵌入方可能已被压成离线），并当场关掉旧的半开连接，不等心跳。
+  it('a reconnect that replaces a half-open socket still emits online, and closes the old one', () => {
+    const changes: Array<{ bindingId: string; online: boolean }> = []
+    const reg = make({ 'ext:a': 'linux:nas' })
+    reg.onChange((ch) => changes.push(ch))
+    const closed: Array<[number, string]> = []
+    const a = { send: () => {}, close: (code: number, reason: string) => void closed.push([code, reason]) }
+    reg.connect('ext:a', a)
+    reg.connect('ext:a', sock())
+    expect(changes.filter((c) => c.online).map((c) => c.bindingId)).toEqual(['ext:a', 'ext:a'])
+    expect(closed).toEqual([[1001, 'replaced by a newer connection']])
+    // 被顶掉的旧 socket 随后关闭：不发 offline（它已经不是当前那条了）
+    reg.disconnect('ext:a', a)
+    expect(changes.at(-1)?.online).toBe(true)
+  })
+
   it('kick after the store row is gone still names the device', () => {
     const changes: Array<{ bindingId: string; deviceId?: string; online: boolean }> = []
     const bindings: Record<string, string> = { 'ext:a': 'linux:nas' }

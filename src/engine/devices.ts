@@ -16,7 +16,8 @@ import { errText } from '../err-text.ts'
 import type { HarvestService } from '../kernel/plugins/harvest.ts'
 
 /** 设备 / 绑定的上下线事件（openspec `embeddable-device-gateway`）。由两条中继注册表在连接建立 /
- *  断开时发出；同一设备新连接顶掉旧连接只发一次 online。 */
+ *  断开时发出；**每次握手成功都发一条 online**，包括新连接顶掉旧连接的重连——嵌入方按事件折在线
+ *  状态，挂起醒来后要靠它当场翻回在线，不能等自己的兜底对账。 */
 export type DeviceChange =
   | { kind: 'device'; deviceId: string; name: string; platform: string; online: boolean; at: number }
   | { kind: 'binding'; bindingId: string; deviceId: string; nodeId?: string; online: boolean; at: number }

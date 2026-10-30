@@ -80,7 +80,7 @@ export class ExtRelayRegistry {
   }
 
   connect(bindingId: string, socket: ExtSocket & { close?: (code: number, reason: string) => void }, info?: ExtHandshake): void {
-    const wasOnline = this.sockets.has(bindingId)
+    const prev = this.sockets.get(bindingId)
     let r = this.relays.get(bindingId)
     if (!r) {
       r = this.deps.makeRelay(bindingId)
@@ -95,8 +95,18 @@ export class ExtRelayRegistry {
     this.sockets.set(bindingId, socket)
     const at = (this.deps.now ?? Date.now)()
     this.connectedAt.set(bindingId, at)
-    // 新连接顶掉旧连接：绑定本来就在线，只换 socket，不重发 online。
-    if (!wasOnline) this.emitChange({ bindingId, deviceId: this.deviceOf(bindingId), nodeId: this.nodeOf(bindingId), online: true, at })
+    // 新连接顶掉旧连接：旧 socket 立刻关掉，不等心跳判死。先换 sockets 再关——旧 socket 的
+    // teardown 靠身份认出「已被顶替」，不会发 offline。
+    if (prev && prev !== socket) {
+      try {
+        prev.close?.(1001, 'replaced by a newer connection')
+      } catch {
+        /* 已经断了 */
+      }
+    }
+    // **每次握手成功都发一条 online**（含顶掉旧连接的重连）：嵌入方按事件折状态，绑定挂起期间
+    // 可能已被压成离线，重连不发事件就只能等它自己的兜底对账。事件幂等。
+    this.emitChange({ bindingId, deviceId: this.deviceOf(bindingId), nodeId: this.nodeOf(bindingId), online: true, at })
     if (info?.nodeId) {
       const deviceId = this.deviceOf(bindingId)
       // 节点表写不进去不影响这条连接：表只服务默认节点与留痕，relay 本身已经能用了。
@@ -126,8 +136,8 @@ export class ExtRelayRegistry {
   // ── 上下线事件（openspec embeddable-device-gateway）───────────────────────────
   private readonly changeListeners: Array<(ch: ExtChange) => void> = []
 
-  /** 绑定连上 / 断开时叫一声。同一绑定新连接顶掉旧连接只发一次 online（被顶掉的旧 socket 关闭是
-   *  no-op）；撤销走 kick，自然发 offline。监听器抛错只记日志，不影响连接。 */
+  /** 绑定连上 / 断开时叫一声。**每次握手成功都发一条 online**（含顶掉旧连接的重连）；被顶掉的
+   *  旧 socket 关闭是 no-op。撤销走 kick，自然发 offline。监听器抛错只记日志，不影响连接。 */
   onChange(fn: (ch: ExtChange) => void): void {
     this.changeListeners.push(fn)
   }

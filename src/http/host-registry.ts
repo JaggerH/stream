@@ -104,7 +104,7 @@ export class HostRelayRegistry {
 
   /** A device finished its handshake. Returns that device's relay. */
   connect(socket: HostSocket, hello: HostHello, now: number = Date.now()): WsHostRelay {
-    const wasLive = this.live.has(hello.deviceId)
+    const prev = this.live.get(hello.deviceId)
     let relay = this.relays.get(hello.deviceId)
     if (!relay) {
       relay = new WsHostRelay(this.relayOpts)
@@ -112,8 +112,19 @@ export class HostRelayRegistry {
     }
     relay.connect(socket)
     this.live.set(hello.deviceId, { hello, socket, ops: new Set(hello.ops), connectedAt: now })
-    // 新连接顶掉旧连接：设备本来就在线，只换 socket，不重发 online。
-    if (!wasLive) this.emitChange({ deviceId: hello.deviceId, name: hello.name, platform: hello.platform, online: true, at: now })
+    // 新连接顶掉旧连接：旧 socket 立刻关掉，不等心跳判死（设备被冻住 / 断网时它会半开着）。
+    // 先换 live 再关：旧 socket 的 close 处理器靠 socket 身份认出「已被顶替」，不会发 offline。
+    if (prev && prev.socket !== socket) {
+      try {
+        prev.socket.close?.(1001, 'replaced by a newer connection')
+      } catch {
+        /* 已经断了 */
+      }
+    }
+    // **每次都发 online**，包括顶掉旧连接的重连：嵌入方按事件折在线状态，设备挂起期间它可能
+    // 已经把行压成离线（厂商说挂起），重连不发事件就只能等它自己的兜底对账（一个心跳周期一拍）
+    // ——那正是恢复后「重连上了但表不翻」的来源。事件幂等，消费方行已在线时无变化。
+    this.emitChange({ deviceId: hello.deviceId, name: hello.name, platform: hello.platform, online: true, at: now })
     return relay
   }
 
@@ -187,8 +198,9 @@ export class HostRelayRegistry {
   // ── 上下线事件（openspec embeddable-device-gateway）───────────────────────────
   private readonly changeListeners: Array<(ch: HostChange) => void> = []
 
-  /** 设备连上 / 断开时叫一声。同一设备新连接顶掉旧连接只发一次 online（顶掉的旧 socket 关闭是 no-op）；
-   *  心跳判死走 close → disconnect，自然发 offline。监听器抛错只记日志，不影响连接。 */
+  /** 设备连上 / 断开时叫一声。**每次握手成功都发一条 online**（含顶掉旧连接的重连——挂起醒来后
+   *  嵌入方要靠它当场把行拉回在线）；被顶掉的旧 socket 关闭是 no-op。心跳判死走 close → disconnect，
+   *  自然发 offline。监听器抛错只记日志，不影响连接。 */
   onChange(fn: (ch: HostChange) => void): void {
     this.changeListeners.push(fn)
   }

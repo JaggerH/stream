@@ -87,6 +87,24 @@ describe('HostRelayRegistry', () => {
     expect(reg.devices()).toHaveLength(1)
   })
 
+  // 设备挂起醒来时，新连接往往在服务端判死之前就到了——旧 socket 还半开着。新握手必须
+  // **发一条 online**（嵌入方可能已被压成离线），并当场关掉旧的半开连接，不等心跳。
+  it('a reconnect that replaces a half-open socket still emits online, and closes the old one', () => {
+    const reg = new HostRelayRegistry()
+    const changes: Array<{ deviceId: string; online: boolean }> = []
+    reg.onChange((c) => changes.push(c))
+    const closed: Array<[number, string]> = []
+    const a = { send: () => {}, close: (code: number, reason: string) => void closed.push([code, reason]) }
+    reg.connect(a, hello())
+    reg.connect(fakeSocket().socket, hello())
+    expect(changes.filter((c) => c.online).map((c) => c.deviceId)).toEqual(['desktop:pc', 'desktop:pc'])
+    expect(closed).toEqual([[1001, 'replaced by a newer connection']])
+    // 被顶掉的旧 socket 随后关闭：不发 offline（它已经不是当前那条了）
+    reg.disconnect(a, 'desktop:pc')
+    expect(changes.at(-1)?.online).toBe(true)
+    expect(reg.deviceFor('desktop')).toBeDefined()
+  })
+
   it('a stale socket closing does not drop the device that replaced it', () => {
     const reg = new HostRelayRegistry()
     const a = fakeSocket()
