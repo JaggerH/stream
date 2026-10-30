@@ -81,7 +81,7 @@ export async function startCdpBinding(opts: CdpBindingOptions): Promise<CdpBindi
   // 墙钟一次前进这么多 = 进程被冻住过（虚拟机挂起 / 合盖 / SIGSTOP）。此刻的连接多半已经
   // 半开：服务端可能早就把它判死了，只是 FIN 还没到。不等它，立刻重连。
   // 阈值由节拍推出、明显大于节拍（1.5 倍）：定时器只会晚到，正常节拍醒来最多差一点节拍；
-  // 阈值若等于节拍，机器没被冻住也会每拍误判（RM5 撞过：节拍 20s、阈值 20s，每 20s 重连）。
+  // 阈值若等于节拍，机器没被冻住也会每拍误判（实测：节拍 20s、阈值 20s，每 20s 重连一次）。
   const wallJumpMs = Math.max(5_000, pingIntervalMs * 1.5)
 
   let state = readCdpBindingState(opts.stateFile)
