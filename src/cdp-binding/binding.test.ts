@@ -241,6 +241,47 @@ describe('CDP 绑定的生命周期', () => {
     }
   })
 
+  // 阈值必须明显大于心跳节拍、并由节拍推出来：阈值 = 节拍（20s）时，定时器每个节拍醒来
+  // `now - lastWall` 都会略超阈值（真实定时器只会晚到不会早到）——机器从没被冻住也每拍重连
+  // 一次（RM5 实测：服务端 ext-relay 每 20s 互顶一次）。这里节拍用 5s，每个节拍墙钟只前进
+  // 5s+1ms——旧实现（阈值 = 节拍）第一拍就会误判重连。
+  it('正常运行跨多个心跳节拍 → 不误判墙钟跳变（阈值明显大于节拍）', async () => {
+    vi.useFakeTimers()
+    try {
+      const cdp = await fakeCdp()
+      const relay = await fakeRelay()
+      try {
+        const file = stateFile()
+        writeCdpBindingState(file, { token: TOKEN, nodeId: 'node_11111111-2222-4333-8444-555555555555', bindingId: BINDING })
+        let clock = 1_000_000
+        const b = await startCdpBinding({
+          cdpUrl: cdp.url,
+          serverUrl: relay.url,
+          stateFile: file,
+          log: () => {},
+          reconnectMs: 20,
+          cdpRetryMs: 20,
+          pingIntervalMs: 5_000,
+          now: () => clock,
+        })
+        bindings.push(b)
+        await vi.waitFor(() => expect(relay.connections()).toBe(1))
+        // 跨 6 个节拍：每拍醒来墙钟前进 5001ms（节拍 5000ms + 定时器晚到的 1ms）。
+        for (let i = 0; i < 6; i++) {
+          clock += 5_001
+          await vi.advanceTimersByTimeAsync(5_000)
+        }
+        expect(relay.connections()).toBe(1)
+        expect(cdp.connections()).toBe(1)
+      } finally {
+        await relay.close()
+        await cdp.close()
+      }
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('没有状态文件又没给配对码读取方式 → 起不来（不是悄悄连一个没配对的 token）', async () => {
     await expect(
       startCdpBinding({ serverUrl: 'http://127.0.0.1:1', stateFile: stateFile(), log: () => {} }),
