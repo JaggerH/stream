@@ -66,6 +66,7 @@ describe('attachHostRelay (v2)', () => {
     const { registry, url } = await start()
     const a = new WebSocket(url, [HOST_RELAY_PROTOCOL, TOKEN])
     await new Promise((r) => a.on('open', r))
+    const aClosed = new Promise<number>((r) => a.on('close', (code) => r(code)))
     a.send(JSON.stringify(helloFrame))
     await until(() => registry.devices().length === 1)
     const b = new WebSocket(url, [HOST_RELAY_PROTOCOL, TOKEN])
@@ -82,8 +83,8 @@ describe('attachHostRelay (v2)', () => {
     expect(aGot).toHaveLength(0)
     b.send(JSON.stringify({ id: frame.id, result: ['ok'] }))
     await expect(p).resolves.toEqual(['ok'])
-    a.close()
-    await new Promise((r) => a.on('close', r))
+    // 顶掉旧连接时服务端主动关它（1001），不等心跳——挂起醒来的那条半开连接不会一直占着
+    await expect(aClosed).resolves.toBe(1001)
     await new Promise((r) => setTimeout(r, 50))
     expect(registry.devices()).toHaveLength(1)
     b.close()
