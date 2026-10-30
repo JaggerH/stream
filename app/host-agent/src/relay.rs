@@ -66,8 +66,20 @@ impl SessionEnd {
     }
 }
 
-/// 起步 1s：后端 `docker restart` 一般几秒内就回来，第一次重试快一点能少丢一轮采集。
-pub const BACKOFF_BASE: Duration = Duration::from_secs(1);
+/// 墙钟跳变：两次采样之间前进得比 `limit` 还多。进程被冻住过（虚拟机挂起、合盖、SIGSTOP）
+/// 就是这个样子——醒来时定时器补跑，而 socket 多半已经半开（服务端可能早判死了，FIN 还没到）。
+/// 判据是纯函数，单测不用真把进程冻住。时钟往回走（NTP 校时）不算跳变。
+pub fn wall_jump(last: std::time::SystemTime, now: std::time::SystemTime, limit: Duration) -> bool {
+    now.duration_since(last).is_ok_and(|d| d > limit)
+}
+
+/// 墙钟一次前进这么多就当作「被冻住过」。正常运行时 20ms 的心跳不可能间隔这么久；
+/// 真被冻住（沙箱挂起按分钟算）时它一定命中。
+pub const WALL_JUMP_LIMIT: Duration = Duration::from_secs(5);
+
+/// 起步 250ms：后端 `docker restart` 一般几秒内就回来，第一次重试快一点能少丢一轮采集。
+/// 醒来重连也走这条路——挂起恢复时每多等 1s 都是界面上多转一秒的圈（与 cdp-bind 同值）。
+pub const BACKOFF_BASE: Duration = Duration::from_millis(250);
 /// 上限 30s：后端长时间不在（用户根本没起）时不要空转刷日志，30s 一次足够快地自愈。
 pub const BACKOFF_MAX: Duration = Duration::from_secs(30);
 
@@ -160,6 +172,16 @@ mod tests {
 
     fn ms(n: u64) -> Duration {
         Duration::from_millis(n)
+    }
+
+    /// 墙钟跳变：进程被冻住过才判真；正常 20ms 的节拍、时钟往回校都不算。
+    #[test]
+    fn wall_clock_jump_is_detected_only_when_time_leapt_forward() {
+        let t0 = std::time::SystemTime::UNIX_EPOCH + Duration::from_secs(1_000);
+        let after = |secs: u64| t0 + Duration::from_secs(secs);
+        assert!(wall_jump(t0, after(10), WALL_JUMP_LIMIT), "冻住 10s 要判出来");
+        assert!(!wall_jump(t0, after(1), WALL_JUMP_LIMIT), "正常的 20ms 节拍不能误判");
+        assert!(!wall_jump(after(10), t0, WALL_JUMP_LIMIT), "时钟往回走（校时）不算跳变");
     }
 
     /// 连不上要按 1→2→4…翻倍，且封顶——否则后端长时间不在时要么空转刷屏，要么等到天荒地老。

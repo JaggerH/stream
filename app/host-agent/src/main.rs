@@ -46,7 +46,7 @@ mod see_detect;
 mod windows;
 
 use futures_util::{SinkExt, StreamExt};
-use relay::{SessionEnd, Supervisor};
+use relay::{wall_jump, SessionEnd, Supervisor, WALL_JUMP_LIMIT};
 use serde_json::{json, Value};
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::http::header::SEC_WEBSOCKET_PROTOCOL;
@@ -697,6 +697,9 @@ async fn run_session<D: protocol::Desktop>(
     let mut hot = tokio::time::interval(std::time::Duration::from_millis(20));
     // 最后一次收到任何帧（含 Ping/Pong）的时刻；握手完成就算第一次"听到"对端。
     let mut last_heard = std::time::Instant::now();
+    // 墙钟采样：进程被冻住过（沙箱挂起）时，醒来这一刻它一次前进很多——连接多半已半开，
+    // 立刻结束会话去重连，不等 60s 的静默判死（那是给「对端还活着但不说话」准备的）。
+    let mut last_wall = std::time::SystemTime::now();
     loop {
         let msg = tokio::select! {
             m = rx.next() => match m {
@@ -713,6 +716,12 @@ async fn run_session<D: protocol::Desktop>(
                 continue;
             }
             _ = hot.tick() => {
+                let wall = std::time::SystemTime::now();
+                if wall_jump(last_wall, wall, WALL_JUMP_LIMIT) {
+                    eprintln!("[host-agent] 墙钟跳变——进程被冻住过，立即重连");
+                    break;
+                }
+                last_wall = wall;
                 // 静默判死放在心跳里：不为它另起一个计时器，20ms 的粒度对 60s 的上限绰绰有余。
                 // 以 Disconnected 结束——对监督循环而言它就是"连上过、然后断了"，照常复位退避重连。
                 if session.silence_limit.is_some_and(|limit| last_heard.elapsed() >= limit) {
