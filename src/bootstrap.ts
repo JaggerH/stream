@@ -534,6 +534,9 @@ export async function bootstrap(
     recipeProbe: deployment.recipe_probe ?? true,
     dataDir,
     log,
+    // `call` 步骤（东财验证码 → ddddocr）的取址 + 唤醒。packages 域已经在本域之前装完，
+    // 这里交出去的是那个实例本身（resolver 的绑定在域内是活的，不是装配期快照）。
+    backendTargets: kernel.packages.targets,
     ...(opts.runtime && { discoverChrome: opts.runtime.chrome.discover }),
     browserLanes: config.browser_lanes,
     harvestBrowser: config.harvest_browser,

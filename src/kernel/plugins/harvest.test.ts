@@ -48,6 +48,8 @@ async function mount(opts: {
   const harvestConfig = {
     dataDir,
     log: () => {},
+    // 与 bootstrap 同一条接线：`call` 步骤的取址 + standby 唤醒。
+    backendTargets: kernel.packages.targets,
     ...(opts.llmForTask && { llmForTask: opts.llmForTask }),
     ...(opts.bindings && {
       extBindings: {
@@ -61,6 +63,30 @@ async function mount(opts: {
   await kernel.plugin(harvestPlugin, harvestConfig)
   return { kernel, dataDir, packagesDir, harvestConfig }
 }
+
+describe('harvestPlugin —— call 步骤的后端取址', () => {
+  /**
+   * `call` 那一格（东财登录的验证码识别）靠宿主把自己那份 `pluginTargets` 递给
+   * `callPluginService`：host 档下地址只在 standby 唤醒之后才存在，少递这一格的话
+   * `targets?.target()` 恒空 —— 报错长得像"容器没起来"，实际是构造 runner 时把带 targets 的
+   * 那个包装函数换回了裸函数（2026-10-24 的 per-instance 重构，2026-10-26 起东财每天失败）。
+   */
+  it('runner 的 call 出口带着本实例的 targets（withAwake 与取址都真的走了）', async () => {
+    const { kernel } = await mount()
+    const targets = kernel.packages.targets
+    const awake = vi.spyOn(targets.standby, 'withAwake')
+    const resolve = vi.spyOn(targets, 'target').mockReturnValue(null)
+    const call = (kernel.harvest.sessionRecipes as unknown as {
+      runner: { call?: (s: string, p: string, b: { image: string }) => Promise<unknown> }
+    }).runner.call
+    expect(call, 'sessionRecipes 的 runner 没拿到 call 出口').toBeDefined()
+
+    await expect(call!('ddddocr', '/ocr', { image: 'x' })).rejects.toThrow('解析不到地址')
+    expect(awake).toHaveBeenCalledWith('ddddocr', expect.any(Function))
+    expect(resolve).toHaveBeenCalledWith('ddddocr')
+    await quiesceKernel(kernel)
+  })
+})
 
 describe('harvestPlugin', () => {
   it('挂成 ctx.harvest：运输面一整套都在，dispose 后消失', async () => {

@@ -19,6 +19,7 @@ import { discoverChromeCandidates, nodeDiscoverFs } from '../../browser/discover
 import { harvestBrowserStatus, type HarvestBrowserStatus } from '../../browser/harvest-browser.ts'
 import { makeExtensionLauncher } from '../../replay/browser-ext.ts'
 import { callPluginService } from '../../replay/call-service.ts'
+import type { PluginTargets } from '../../plugins/plugin-target.ts'
 import { makeDesktopDriver, type DesktopDriver, type EnsureAppSpec } from '../../replay/desktop-driver.ts'
 import { makeSeeResolver, type SeeResolver } from '../../replay/desktop-see.ts'
 import { RecipeOverrideStore } from '../../replay/desktop-override-store.ts'
@@ -138,6 +139,17 @@ export interface HarvestConfig {
   recipeProbe?: boolean
   /** 本机 Chrome 的发现（runtime 的那份，进程级：它读 PATH）。缺省 = 按真进程环境现找。 */
   discoverChrome?: () => Promise<import('../../browser/discover-chrome.ts').ChromeCandidate[]>
+  /**
+   * 本实例的插件后端取址 + standby 钩子（bootstrap 递 `kernel.packages.targets`）。
+   *
+   * **`call` 步骤的出口必须带着它**：host 档下容器地址只在 standby 唤醒之后才存在，
+   * `callPluginService` 少这一格 → `targets?.target()` 恒空 → 报"服务解析不到地址"，
+   * 看起来像容器没起来，实际是宿主没接线（2026-10-24 per-instance 重构漏的这一处）。
+   *
+   * 经 config 传而不是 `inject: ['packages']`：本域只吃这一格取址面，不该顺带把包的装载/激活
+   * 顺序也绑进来；单测里 packages 域本来就会挂，两种接法都对。
+   */
+  backendTargets?: PluginTargets
   /** 可写状态根目录（能力缓存 / 撞墙台账 / 失败现场截图都落在它下面）。 */
   dataDir: string
   log: (...args: unknown[]) => void
@@ -520,7 +532,11 @@ export const harvestPlugin = {
         // `call` 步骤的出口。**地址在这一侧解析，recipe 只给得出一个服务名**——那一格的
         // 第 1 条边界（见 `src/replay/recipe.ts`）：recipe 是能从 npm 装的第三方数据，给它
         // 拼 URL 的能力就是给它一个外泄原语。
-        callPluginService,
+        //
+        // **必须包一层把 targets 递进去**，不能直接把 `callPluginService` 传出去：runner 的
+        // 回调签名只有 (service, path, body)，裸函数会让第 4 个参数恒为 undefined ——
+        // 于是 withAwake 不唤醒、取址恒空，东财的验证码识别永远报「服务解析不到地址」。
+        (service, path, body) => callPluginService(service, path, body, config.backendTargets),
       ),
       // recipe 一次性抽取的落点。目标 ref 与"哪些键是 secret"都由 executor 从**这份 recipe 自己的**
       // manifest 声明里取，这里只负责落盘——所以这个函数拿不到、也不需要知道是谁在写。
