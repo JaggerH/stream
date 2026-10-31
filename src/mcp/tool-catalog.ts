@@ -364,18 +364,33 @@ export function toolCatalog(service: StreamServiceLike, extras: McpExtras): Tool
       name: 'stream_search',
       annotations: RO,
       description:
-        'NAVIGATE the source tree — discover WHICH sources exist and how to call them. Returns SOURCES (id + category + capabilities + call schema), NOT their content. To actually retrieve content from the user\'s configured sources, use content_search instead. Narrow by `categories` (one or MANY — a site/question can span several branches; use stream_categories to see them) and/or an `intent` string; set searchable=true to get only query-capable sources vs any source (to browse/subscribe). Either intent or categories should be given.',
+        'NAVIGATE the source tree — discover WHICH sources exist and how to call them. Returns SOURCES (id + category + capabilities + call schema), NOT their content. To actually retrieve content from the user\'s configured sources, use content_search instead. Narrow by `categories` (one or MANY — a site/question can span several branches; use stream_categories to see them) and/or an `intent` string; set searchable=true to get only query-capable sources vs any source (to browse/subscribe). Either intent or categories should be given. ' +
+        'Each result\'s `id` and `params_schema` are exactly what `subscribe_source` takes as its `source_id` and `params` — pass them through as-is rather than guessing param names. ' +
+        'On an EMPTY result the tool returns `{ results: [], note }`: read the note before retrying — it explains what to try next (and when to stop searching).',
       schema: {
         intent: z.string().optional(),
         categories: z.array(z.string()).optional(),
         k: z.number().optional(),
         searchable: z.boolean().optional(),
       },
-      run: ({ intent, categories, k, searchable }) =>
-        service.search((intent as string) ?? '', k as number | undefined, {
+      run: async ({ intent, categories, k, searchable }) => {
+        const hits = service.search((intent as string) ?? '', k as number | undefined, {
           searchable: searchable as boolean | undefined,
           category: categories as string[] | undefined,
-        }),
+        })
+        // 空手而归时明说并给出路（订阅改版 S2）：回裸 `[]` 模型只会换关键词无限重试。
+        // 非空原样返回数组（HTTP 口径不动——包装只在这一层）。
+        if (Array.isArray(hits) && hits.length === 0) {
+          return {
+            results: [],
+            note:
+              'No source matches this intent. Do NOT keep re-searching with new keywords — the registry has no match, not a wording problem. Category names must be taken from stream_categories (guessing a topic word usually misses). ' +
+              'If the user\'s goal is really ONE specific web page (a project\'s release/changelog page, a blog index, a person\'s profile page, an RSS/Atom URL), subscribe that page directly: subscribe_source({ source_id: "browser-page", params: { url: "<page URL>" } }) — a headless browser opens that page every tick; it needs a browser device and is slower and more fragile than a dedicated source. ' +
+              'If even that does not fit, say so plainly and offer alternatives (e.g. note the site for onboarding) — never force a semantically wrong subscription or invent a source id.',
+          }
+        }
+        return hits
+      },
     },
     {
       name: 'stream_sources',

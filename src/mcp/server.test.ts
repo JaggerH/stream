@@ -130,6 +130,39 @@ describe('MCP server (real client over InMemoryTransport)', () => {
     expect(text(r)).toContain('bili')
   })
 
+  // 搜不到时不再回裸 `[]`——那会让模型换个关键词无限重试（活体 G1/D1 各 12/9 次全空转）。
+  // 空结果必须自带出路：明说没匹配、别死磕关键词、给通用兜底源的订阅形状、劝退硬订。
+  // 注意这只证明「note 说了这些」，证明不了「模型照做了」——后者只能活体看副作用。
+  it('stream_search 空结果返回 { results: [], note }，note 给出下一步与兜底', async () => {
+    const r = await client.callTool({ name: 'stream_search', arguments: { intent: 'zzz-no-such-thing' } })
+    const body = JSON.parse(text(r))
+    expect(body.results).toEqual([])
+    expect(body.note).toContain('stream_categories')
+    expect(body.note).toContain('browser-page')
+    expect(body.note).toContain('subscribe_source')
+    expect(body.note).toMatch(/do not/i)
+    expect(body.note).toMatch(/never force/i)
+  })
+
+  // 非空结果保持原数组形状（HTTP 口径不动，别让消费方两头适配）。
+  it('stream_search 非空结果仍是裸数组', async () => {
+    const r = await client.callTool({ name: 'stream_search', arguments: { intent: 'bilibili' } })
+    const body = JSON.parse(text(r))
+    expect(Array.isArray(body)).toBe(true)
+  })
+
+  // 描述是模型唯一的用法说明书：id/params_schema → subscribe_source 的映射、空结果读 note，
+  // 以及 params 形状取自 params_schema（别猜字段名）。钉住，防止被静默删掉。
+  it('stream_search / subscribe_source 的描述互相指路（映射 + 空结果 + params_schema）', async () => {
+    const tools = (await client.listTools()).tools
+    const search = tools.find((t) => t.name === 'stream_search')!.description!
+    expect(search).toContain('params_schema')
+    expect(search).toContain('subscribe_source')
+    expect(search).toMatch(/results: \[\], note/)
+    const subscribe = tools.find((t) => t.name === 'subscribe_source')!.description!
+    expect(subscribe).toContain('params_schema')
+  })
+
   it('stream_sources searches sources across all plugins, grouped by plugin', async () => {
     const r = await client.callTool({ name: 'stream_sources', arguments: { query: 'bilibili' } })
     const body = JSON.parse(text(r))

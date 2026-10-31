@@ -169,7 +169,7 @@ export function toolSpecs(service: StreamServiceLike, extras: McpExtras): ToolSp
   add({
     name: 'subscribe_source',
     description:
-      'Subscribe to a source: create a persisted, scheduled Stream from a source id (+ its params). The source id comes from resolve_intent or stream_search. Confirm with the user before subscribing.' +
+      'Subscribe to a source: create a persisted, scheduled Stream from a source id (+ its params). The source id comes from resolve_intent or stream_search. `params` must follow the source\'s `params_schema` from the search result — pass the whole schema-shaped object, do not guess field names. Confirm with the user before subscribing.' +
       ' Pass `channel` when the user said where it should go (the channel NAME they used is fine); omit it and the stream lands in 「对话订的」, a review bucket for assistant-made subscriptions.' +
       " Do NOT invent a name: pass the candidate's own `title` as a placeholder and Stream replaces it with the real feed name after the first harvest.",
     schema: {
