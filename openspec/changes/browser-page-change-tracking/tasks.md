@@ -16,4 +16,4 @@
 - [x] 6. `packages/browser/manifests.yaml`：`track_changes` 参数 + 描述改事实口径（保留「需要在线浏览器
   设备」，有 feed 优先 feed-url）
 - [x] 7. `src/mcp/tool-catalog.ts`：`stream_search` 空 note 里 browser-page 那句改成事实口径
-- [x] 8. `pnpm test` 全量（除既有 WorkBuddy 闸失败）+ typecheck 0
+- [x] 8. `pnpm test` 全量（除导出闸测试的既有失败）+ typecheck 0
