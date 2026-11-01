@@ -8,7 +8,7 @@
  * （`SourceHealthList` / `SourceRepairPage`，spec 2026-09-12 §4）、设备（`DevicesSettings`：
  * 配对码与二维码、设备列表、撤销——配对码只在本机生成，这一页正是在本机打开的；各设备下的浏览器 profile、
  * 识别 profile、身份表、Stream 在后台打开着的 profile，以及账号在哪里执行）、设置
- * （`SettingsPage`：采集浏览器、远程访问令牌、音频归档）、WorkBuddy（Helper 账号与签到）。
+ * （`SettingsPage`：采集浏览器、远程访问令牌、音频归档）、签到 Helper（账号与每日签到）。
  *
  * **为什么是独立 bundle 而不是塞进主面板**：主 bundle 是**开页必载**的那一份，而这一页
  * 一次都用不到的人占绝大多数（装包、配凭据是偶发动作）。理由与影视/详情/研究那三份拆分
@@ -56,7 +56,7 @@ import { DevicesSettings } from '../components/DevicesSettings.tsx'
 import { FacilityDevicesSettings } from '../components/FacilityDevicesSettings.tsx'
 import { IdentitiesSettings } from '../components/devices/IdentitiesSettings.tsx'
 import { SettingsPage } from '../components/SettingsPage.tsx'
-import { WorkBuddySettings } from '../components/WorkBuddySettings.tsx'
+import { CheckinHelperSettings } from '../components/CheckinHelperSettings.tsx'
 import { PackagesPage } from '../components/packages/PackagesPage.tsx'
 import { PreviewModal } from '../components/PreviewModal.tsx'
 import { PreviewContext, type PreviewTarget } from '../lib/previewStage.ts'
@@ -81,7 +81,7 @@ function ManageShell({ backend, initial }: { backend: string; initial?: ManageTa
   // 一条能播的视频，PostItemRow 就会调 useVideoStage()，在外面渲染直接抛、整页白）。
   const [preview, setPreview] = useState<PreviewTarget | null>(null)
   const [openVideoId, setOpenVideoId] = useState<string | null>(null)
-  // 五页（包与插件 / 源健康 / 设备 / WorkBuddy / 设置）。
+  // 五页（包与插件 / 源健康 / 设备 / 签到 Helper / 设置）。
   const [view, setView] = useState<View>(() => toView(initial))
   useEffect(() => { pushView = setView; return () => { pushView = undefined } }, [])
   const tab = (page: View['page'], label: string): ReactElement => (
@@ -95,11 +95,11 @@ function ManageShell({ backend, initial }: { backend: string; initial?: ManageTa
     <PreviewContext.Provider value={{ openPreview: setPreview }}>
     <VideoStageProvider baseUrl={backend} openId={openVideoId} onOpenIdChange={setOpenVideoId}>
     <div className="flex h-full min-h-0 flex-col text-foreground">
-      <div role="tablist" className="flex gap-1 border-b px-2">{tab('packages', '包与插件')}{tab('source-health', '源健康')}{tab('phones', '设备')}{tab('workbuddy', 'WorkBuddy')}{tab('settings', '设置')}</div>
+      <div role="tablist" className="flex gap-1 border-b px-2">{tab('packages', '包与插件')}{tab('source-health', '源健康')}{tab('phones', '设备')}{tab('workbuddy', '签到 Helper')}{tab('settings', '设置')}</div>
       <div className="min-h-0 flex-1 overflow-y-auto">
         {view.page === 'packages' ? <PackagesPage apiBase={backend} />
           : view.page === 'settings' ? <div className="p-4"><SettingsPage conn={LOCAL} /></div>
-          : view.page === 'workbuddy' ? <WorkBuddySettings apiBase={backend} />
+          : view.page === 'workbuddy' ? <CheckinHelperSettings apiBase={backend} />
           : view.page === 'phones' ? (
             <div className="space-y-5 p-4">
               <DevicesSettings conn={LOCAL} />

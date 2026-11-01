@@ -160,9 +160,9 @@ Only `sha256(token)` is stored (`data/devices.json`, 0600). `/api/host` accepts 
 
 The pairing-code response carries `qr`: one JSON string, `{"stream":"pair","v":1,"backend":"http://<lan-ip>:<port>","backends":["http://<lan-ip>:<port>","http://<tailscale-ip>:<port>"],"code":"<6 digits>"}`, listing every address of this machine in `backends` (and the first of them in `backend`, for apps that predate `backends`); `qr` is an empty array when the machine has no address. The panel renders it as one QR code with the addresses listed under it. When the code lists more than one address, the app checks which ones answer `/api/health` and asks the user to pick, reachable ones first, LAN before Tailscale, each marked as such.
 
-## WorkBuddy Helper
+## Check-in Helper
 
-WorkBuddy Helper management uses `GET /api/workbuddy/state`; `POST /api/workbuddy/login/start` and `/login/poll`; `POST /api/workbuddy/checkin`; `POST /api/workbuddy/accounts/:id/checkin` and `/points`; `PUT` or `DELETE /api/workbuddy/accounts/:id`; and `POST /api/workbuddy/claim-schedule` to turn off Helper's own daily schedule before enabling Stream's `workbuddy:checkin` user task. The Stream backend proxies only these narrow operations. It never returns Helper's page token or WorkBuddy account credentials. A partial batch failure returns HTTP 502 with the failed account names.
+Check-in Helper management uses `GET /api/workbuddy/state`; `POST /api/workbuddy/login/start` and `/login/poll`; `POST /api/workbuddy/checkin`; `POST /api/workbuddy/accounts/:id/checkin` and `/points`; `PUT` or `DELETE /api/workbuddy/accounts/:id`; and `POST /api/workbuddy/claim-schedule` to turn off Helper's own daily schedule before enabling Stream's `workbuddy:checkin` user task. The Stream backend proxies only these narrow operations. It never returns Helper's page token or Helper account credentials. A partial batch failure returns HTTP 502 with the failed account names.
 
 ## Android app
 

@@ -40,12 +40,12 @@ describe('DSH 设置里的 Stream 分区', () => {
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('http://127.0.0.1:8900/api/access-token', expect.anything()))
   })
 
-  it('有一页「WorkBuddy」：从管理页能打开账号和每日签到', async () => {
+  it('有一页「签到 Helper」：从管理页能打开账号和每日签到', async () => {
     const el = document.createElement('div')
     document.body.appendChild(el)
     act(() => mount(el, { backend: 'http://127.0.0.1:8900' }))
-    fireEvent.click(await screen.findByRole('tab', { name: 'WorkBuddy' }))
-    expect(await screen.findByText('WorkBuddy 账号')).toBeTruthy()
+    fireEvent.click(await screen.findByRole('tab', { name: '签到 Helper' }))
+    expect(await screen.findByText('Helper 账号')).toBeTruthy()
     expect(screen.getByRole('checkbox', { name: '每日自动签到' })).toBeTruthy()
   })
 })

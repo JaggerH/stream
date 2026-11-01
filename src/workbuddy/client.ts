@@ -27,7 +27,7 @@ type Fetcher = (input: RequestInfo | URL, init?: RequestInit) => Promise<Respons
 
 /** Explicit projection: a future Helper response must not accidentally expose tokens via Stream. */
 function accountView(raw: HelperAccount): HelperAccount {
-  if (typeof raw?.id !== 'string' || raw.id === '') throw new Error('WorkBuddy Helper 返回了没有 id 的账号')
+  if (typeof raw?.id !== 'string' || raw.id === '') throw new Error('签到 Helper 返回了没有 id 的账号')
   return {
     id: raw.id,
     displayName: typeof raw.displayName === 'string' ? raw.displayName : raw.id,
@@ -55,7 +55,7 @@ export class HelperClient {
     const url = new URL(rawUrl)
     if (url.protocol !== 'http:' || !['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname)
       || url.username || url.password || url.pathname !== '/' || url.search || url.hash) {
-      throw new Error('WorkBuddy Helper 只能通过本机 HTTP 地址连接')
+      throw new Error('签到 Helper 只能通过本机 HTTP 地址连接')
     }
     this.origin = url.origin
     this.fetcher = fetcher
@@ -64,10 +64,10 @@ export class HelperClient {
   private async token(): Promise<string> {
     if (this.pageToken) return this.pageToken
     const response = await this.fetcher(`${this.origin}/`)
-    if (!response.ok) throw new Error(`WorkBuddy Helper 页面不可用（HTTP ${response.status}）`)
+    if (!response.ok) throw new Error(`签到 Helper 页面不可用（HTTP ${response.status}）`)
     const html = await response.text()
     const token = html.match(/<meta\s+name=["']app-token["']\s+content=["']([^"']+)["']/i)?.[1]
-    if (!token) throw new Error('WorkBuddy Helper 没有返回页面令牌；可能启用了 Basic Auth 或版本不兼容')
+    if (!token) throw new Error('签到 Helper 没有返回页面令牌；可能启用了 Basic Auth 或版本不兼容')
     this.pageToken = token
     return token
   }
@@ -91,7 +91,7 @@ export class HelperClient {
     }
     if (!response.ok) {
       const raw = await response.json().catch(() => ({})) as { error?: string }
-      throw new Error(`WorkBuddy Helper HTTP ${response.status}: ${raw.error ?? '请求失败'}`)
+      throw new Error(`签到 Helper HTTP ${response.status}: ${raw.error ?? '请求失败'}`)
     }
     return await response.json() as T
   }
@@ -99,7 +99,7 @@ export class HelperClient {
   async state(): Promise<HelperState> {
     const raw = await this.request<HelperState>('/api/state')
     if (!Array.isArray(raw.accounts) || typeof raw.settings?.scheduleEnabled !== 'boolean') {
-      throw new Error('WorkBuddy Helper 状态格式不兼容')
+      throw new Error('签到 Helper 状态格式不兼容')
     }
     const accounts = raw.accounts.map(accountView)
     return {
@@ -111,7 +111,7 @@ export class HelperClient {
   }
   async runAll(): Promise<{ accounts: HelperAccount[] }> {
     const raw = await this.request<{ accounts: HelperAccount[] }>('/api/run-all', 'POST', { version: 'cn' })
-    if (!Array.isArray(raw.accounts)) throw new Error('WorkBuddy Helper 签到结果格式不兼容')
+    if (!Array.isArray(raw.accounts)) throw new Error('签到 Helper 签到结果格式不兼容')
     return { accounts: raw.accounts.map(accountView) }
   }
   async checkin(id: string): Promise<{ account: HelperAccount }> {
@@ -134,7 +134,7 @@ export class HelperClient {
   }
   async loginPoll(loginId: string): Promise<{ status: string; message?: string; account?: HelperAccount }> {
     const raw = await this.request<{ status: string; message?: string; account?: HelperAccount }>('/api/login/poll', 'POST', { loginId })
-    if (raw.status !== 'pending' && raw.status !== 'complete') throw new Error('WorkBuddy Helper 登录状态格式不兼容')
+    if (raw.status !== 'pending' && raw.status !== 'complete') throw new Error('签到 Helper 登录状态格式不兼容')
     return {
       status: raw.status,
       ...(typeof raw.message === 'string' ? { message: raw.message } : {}),
@@ -147,10 +147,10 @@ export class HelperClient {
 }
 
 export function checkinOutcome(accounts: HelperAccount[], today: string): TaskOutcome {
-  if (accounts.length === 0) throw new Error('WorkBuddy Helper 没有启用的国内版账号')
+  if (accounts.length === 0) throw new Error('签到 Helper 没有启用的国内版账号')
   const failed = accounts.filter((a) => a.lastCheckinDate !== today || !['confirmed', 'already_done'].includes(a.lastCheckin ?? ''))
   if (failed.length) {
-    throw new Error(`WorkBuddy 签到失败：${failed.map((a) => `${a.displayName || a.id}${a.lastError ? `（${a.lastError}）` : ''}`).join('、')}`)
+    throw new Error(`Helper 批量签到失败：${failed.map((a) => `${a.displayName || a.id}${a.lastError ? `（${a.lastError}）` : ''}`).join('、')}`)
   }
   return {
     summary: `${accounts.length} 个账号已签到或今日已签` ,

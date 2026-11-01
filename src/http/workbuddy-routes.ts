@@ -1,7 +1,7 @@
 import type { Hono } from 'hono'
 import { checkinOutcome, type HelperClient } from '../workbuddy/client.ts'
 
-export function mountWorkBuddyRoutes(app: Hono, helper: HelperClient): void {
+export function mountCheckinHelperRoutes(app: Hono, helper: HelperClient): void {
   const safe = async (c: import('hono').Context, work: () => Promise<unknown>) => {
     try { return c.json(await work()) }
     catch (error) { return c.json({ error: error instanceof Error ? error.message : String(error) }, 502) }

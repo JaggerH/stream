@@ -17,7 +17,7 @@ const TASK_ID = 'workbuddy-daily-checkin'
 
 function message(error: unknown): string { return error instanceof Error ? error.message : String(error) }
 
-export function WorkBuddySettings({ apiBase }: { apiBase: string }) {
+export function CheckinHelperSettings({ apiBase }: { apiBase: string }) {
   const [state, setState] = useState<State | null>(null)
   const [task, setTask] = useState<TaskListItem | null>(null)
   const [enabled, setEnabled] = useState(false)
@@ -91,9 +91,9 @@ export function WorkBuddySettings({ apiBase }: { apiBase: string }) {
     if (enabled) await call('/claim-schedule', 'POST')
     if (task) await saveTask(apiBase, task, { schedule, enabled })
     else await putTask(apiBase, {
-      id: TASK_ID, label: 'WorkBuddy 每日签到', action: 'workbuddy:checkin',
+      id: TASK_ID, label: 'Helper 每日签到', action: 'workbuddy:checkin',
       schedule, timezone: 'Asia/Shanghai', args: [], serial: true, whenBusy: 'skip', maxAttempts: 1,
-      group: 'WorkBuddy', enabled,
+      group: '签到 Helper', enabled,
     })
     setNotice(enabled ? '已交给 Stream 定时执行' : '已暂停 Stream 定时签到')
   })
@@ -109,7 +109,7 @@ export function WorkBuddySettings({ apiBase }: { apiBase: string }) {
   })
 
   return <SettingsGroup className="p-4">
-    <SettingsSection title="WorkBuddy 账号" footnote="账号凭据保存在本机 WorkBuddy Helper；对话代理继续由原有工具负责。">
+    <SettingsSection title="Helper 账号" footnote="账号凭据保存在本机签到 Helper；对话代理继续由原有工具负责。">
       <SettingsBlock>
         <SettingsRow label="连接" control={<span className="text-[11px] text-muted-foreground">{state ? `已连接 · ${state.summary.accounts} 个账号` : '未连接'}</span>} />
         <SettingsRow label="账号" control={<div className="flex gap-2"><Button size="small" onClick={() => void beginLogin()} disabled={busy}>添加账号</Button><Button size="small" variant="neutral" onClick={() => void act(async () => {})} disabled={busy}>刷新</Button><Button size="small" variant="neutral" onClick={() => void act(async () => { await call('/checkin', 'POST') })} disabled={busy || !state?.accounts.some((a) => a.version === 'cn' && a.enabled)}>全部签到</Button></div>} />

@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { makeDailyCheckin } from './runtime.ts'
 
-describe('Stream WorkBuddy task action', () => {
+describe('Stream check-in Helper task action', () => {
   it('turns off the Helper schedule before requesting a batch', async () => {
     const calls: string[] = []
     const run = makeDailyCheckin({

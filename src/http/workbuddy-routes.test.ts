@@ -1,16 +1,16 @@
 import { describe, expect, it } from 'vitest'
 import { Hono } from 'hono'
 import { HelperClient } from '../workbuddy/client.ts'
-import { mountWorkBuddyRoutes } from './workbuddy-routes.ts'
+import { mountCheckinHelperRoutes } from './workbuddy-routes.ts'
 
-describe('WorkBuddy management routes', () => {
+describe('Check-in Helper management routes', () => {
   it('returns account status without relaying the Helper page token', async () => {
     const helper = new HelperClient('http://127.0.0.1:18080', async (input) => {
       if (String(input).endsWith('/api/state')) return Response.json({ accounts: [{ id: 'one', balance: 20, accessToken: 'secret-account-token' }], settings: { scheduleEnabled: false }, summary: { accounts: 1 }, serverTime: 'now' })
       throw new Error('unexpected request')
     })
     const app = new Hono()
-    mountWorkBuddyRoutes(app, helper)
+    mountCheckinHelperRoutes(app, helper)
     const response = await app.request('/api/workbuddy/state')
     expect(response.status).toBe(200)
     const body = await response.json()
@@ -31,7 +31,7 @@ describe('WorkBuddy management routes', () => {
       throw new Error('unexpected request')
     })
     const app = new Hono()
-    mountWorkBuddyRoutes(app, helper)
+    mountCheckinHelperRoutes(app, helper)
     expect((await app.request('/api/workbuddy/claim-schedule', { method: 'POST' })).status).toBe(200)
     expect(paths).toEqual(['/', '/api/settings'])
   })
@@ -48,7 +48,7 @@ describe('WorkBuddy management routes', () => {
       throw new Error(`unexpected ${path}`)
     })
     const app = new Hono()
-    mountWorkBuddyRoutes(app, helper)
+    mountCheckinHelperRoutes(app, helper)
     const response = await app.request('/api/workbuddy/checkin', { method: 'POST' })
     expect(response.status).toBe(502)
     expect(await response.json()).toMatchObject({ error: expect.stringContaining('two') })

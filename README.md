@@ -69,9 +69,9 @@ side effect, in this order:
 on transcription, connecting a chat host, installing skills, running a recipe from the command
 line — is **[cli/README.md](cli/README.md)** (the same page npm shows).
 
-## WorkBuddy daily credits
+## Check-in Helper daily credits
 
-Stream can manage accounts, balances, and daily check-in through a local [WorkBuddy Helper](https://github.com/autumnsentiment/workbuddy-helper) instance. Keep Helper on the backend machine's loopback address (`http://127.0.0.1:18080` by default); set `STREAM_WORKBUDDY_HELPER_URL` before starting Stream if its port differs. In Manage → WorkBuddy, add each account using Tencent's authorization page and save a Beijing-time schedule. Stream disables Helper's own daily schedule and records each run in its task ledger. Helper remains the credential vault; Stream does not import WorkBuddy account tokens. Check-in confirmation and points balance are shown separately, with the point-query time.
+Stream can manage accounts, balances, and daily check-in through a local [Check-in Helper](https://github.com/autumnsentiment/workbuddy-helper) instance. Keep Helper on the backend machine's loopback address (`http://127.0.0.1:18080` by default); set `STREAM_WORKBUDDY_HELPER_URL` before starting Stream if its port differs. In Manage → Check-in Helper, add each account using Tencent's authorization page and save a Beijing-time schedule. Stream disables Helper's own daily schedule and records each run in its task ledger. Helper remains the credential vault; Stream does not import Helper account tokens. Check-in confirmation and points balance are shown separately, with the point-query time.
 
 ## MCP usage
 

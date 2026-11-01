@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { WorkBuddySettings } from './WorkBuddySettings.tsx'
+import { CheckinHelperSettings } from './CheckinHelperSettings.tsx'
 
 const fetchMock = vi.fn()
 beforeEach(() => {
@@ -20,9 +20,9 @@ beforeEach(() => {
   vi.stubGlobal('fetch', fetchMock)
 })
 
-describe('WorkBuddy management', () => {
+describe('Check-in Helper management', () => {
   it('shows each account balance and signs up Stream as the only scheduler', async () => {
-    render(<WorkBuddySettings apiBase="http://127.0.0.1:8900" />)
+    render(<CheckinHelperSettings apiBase="http://127.0.0.1:8900" />)
     expect(await screen.findByText('我的号')).toBeTruthy()
     expect(screen.getByText(/120 积分/)).toBeTruthy()
     fireEvent.click(screen.getByRole('checkbox', { name: '每日自动签到' }))
@@ -40,7 +40,7 @@ describe('WorkBuddy management', () => {
       }], actions: ['workbuddy:checkin'] }))
       throw new Error(`unexpected ${path}`)
     })
-    render(<WorkBuddySettings apiBase="http://127.0.0.1:8900" />)
+    render(<CheckinHelperSettings apiBase="http://127.0.0.1:8900" />)
     await waitFor(() => expect((screen.getByRole('checkbox', { name: '每日自动签到' }) as HTMLInputElement).checked).toBe(true))
     expect(screen.getByRole('alert').textContent).toContain('offline')
   })

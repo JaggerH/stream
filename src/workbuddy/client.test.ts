@@ -6,7 +6,7 @@ const account = (id: string, lastCheckin: string, lastCheckinDate = '2026-10-29'
   lastCheckin, lastCheckinDate, balance: 100, lastPointsAt: '2026-10-29T01:00:00Z',
 })
 
-describe('WorkBuddy Helper client', () => {
+describe('Check-in Helper client', () => {
   it('rejects non-loopback services', () => {
     expect(() => new HelperClient('https://example.com')).toThrow(/本机/)
   })
