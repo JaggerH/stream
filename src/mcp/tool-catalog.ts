@@ -378,7 +378,7 @@ export function toolCatalog(service: StreamServiceLike, extras: McpExtras): Tool
           searchable: searchable as boolean | undefined,
           category: categories as string[] | undefined,
         })
-        // 空手而归时明说并给出路（订阅改版 S2）：回裸 `[]` 模型只会换关键词无限重试。
+        // 空手而归时明说并给出路（真模型复验）：回裸 `[]` 模型只会换关键词无限重试。
         // 非空原样返回数组（HTTP 口径不动——包装只在这一层）。
         if (Array.isArray(hits) && hits.length === 0) {
           return {

@@ -130,7 +130,7 @@ describe('MCP server (real client over InMemoryTransport)', () => {
     expect(text(r)).toContain('bili')
   })
 
-  // 搜不到时不再回裸 `[]`——那会让模型换个关键词无限重试（活体 G1/D1 各 12/9 次全空转）。
+  // 搜不到时不再回裸 `[]`——那会让模型换个关键词无限重试（真模型复验里两家各 12/9 次全空转）。
   // 空结果必须自带出路：明说没匹配、别死磕关键词、给通用兜底源的订阅形状、劝退硬订。
   // 注意这只证明「note 说了这些」，证明不了「模型照做了」——后者只能活体看副作用。
   it('stream_search 空结果返回 { results: [], note }，note 给出下一步与兜底', async () => {
