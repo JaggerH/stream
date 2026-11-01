@@ -73,10 +73,15 @@ describe('BrowserAdapter — track_changes', () => {
     expect(String(first[0].guid)).toMatch(/^https:\/\/example\.com\/changelog#[0-9a-f]{16}$/)
   })
 
-  it('emits 0 items when the normalized content is unchanged', async () => {
+  // The adapter never "swallows" a repeat itself: unchanged content re-emits under the SAME
+  // identity, and each stream's own dedup decides what is new. That is what lets two streams
+  // watch one url (see the two-stream test below) without the second losing its baseline.
+  it('re-emits unchanged content under the same identity instead of going silent', async () => {
     const a = new BrowserAdapter(changing(['same body', 'same body']))
-    await itemsOf(a, tracked)
-    expect(await itemsOf(a, tracked)).toHaveLength(0)
+    const first = await itemsOf(a, tracked)
+    const second = await itemsOf(a, tracked)
+    expect(second).toHaveLength(1)
+    expect(second[0].guid).toBe(first[0].guid)
   })
 
   it('emits exactly one item when the content substantively changes', async () => {
@@ -88,61 +93,118 @@ describe('BrowserAdapter — track_changes', () => {
     expect(second[0].guid).not.toBe(first[0].guid) // digest differs per content
   })
 
-  it('ignores noise-only changes: timestamps and relative ages', async () => {
+  it('keeps the identity stable across noise-only changes: timestamps and relative ages', async () => {
     const a = new BrowserAdapter(
       changing(['Released v2 — 2026-11-01 10:00', 'Released v2 — 2026-11-01 10:05 5 min ago']),
     )
-    await itemsOf(a, tracked)
-    expect(await itemsOf(a, tracked)).toHaveLength(0)
+    const first = await itemsOf(a, tracked)
+    const second = await itemsOf(a, tracked)
+    expect(second[0].guid).toBe(first[0].guid) // same digest → the pipeline's dedup writes 0
   })
 
-  it('ignores a title-only rewrite (title is not part of the content digest)', async () => {
+  it('keeps the identity stable across a title-only rewrite (title is not part of the digest)', async () => {
     let title = 'First'
     const t: PageRenderer = {
       render: async (url) => ({ url, title, text: 'stable body', html: '' }),
     }
     const a = new BrowserAdapter(t)
-    await itemsOf(a, tracked)
+    const first = await itemsOf(a, tracked)
     title = 'Second'
-    expect(await itemsOf(a, tracked)).toHaveLength(0)
+    const second = await itemsOf(a, tracked)
+    expect(second[0].guid).toBe(first[0].guid)
   })
 
-  it('caps emissions at 10 per page per rolling hour and stays silent after', async () => {
+  it('caps NEW digests at 6 per page per rolling 24h and stays silent after', async () => {
     let now = 0
-    const texts = Array.from({ length: 15 }, (_, i) => `state ${i}`)
+    const texts = Array.from({ length: 10 }, (_, i) => `state ${i}`)
     const a = new BrowserAdapter(changing(texts), { now: () => now })
-    for (let i = 0; i < 10; i++) {
-      expect(await itemsOf(a, tracked)).toHaveLength(1) // each distinct state within the cap emits
-      now += 60_000 // one harvest per minute, all inside one window
+    for (let i = 0; i < 6; i++) {
+      expect(await itemsOf(a, tracked)).toHaveLength(1) // each new digest within the cap emits
+      now += 3_600_000 // one harvest per hour, the manifest cadence
     }
-    for (let i = 0; i < 5; i++) {
+    for (let i = 0; i < 3; i++) {
       expect(await itemsOf(a, tracked)).toHaveLength(0) // cap reached: changes no longer emitted
-      now += 60_000
+      now += 3_600_000
     }
     now += CAP_WINDOW_MS // the window slides out
     expect(await itemsOf(a, tracked)).toHaveLength(1) // latest content wins
   })
 
-  it('does not count unchanged harvests against the cap', async () => {
+  it('never counts repeat digests against the cap — A→B→A spends one slot for A', async () => {
+    let now = 0
+    let text = 'A'
+    const a = new BrowserAdapter(
+      { render: async (url) => ({ url, title: 'T', text, html: '' }) },
+      { now: () => now },
+    )
+    await itemsOf(a, tracked) // A: slot 1
+    text = 'B'
+    await itemsOf(a, tracked) // B: slot 2
+    text = 'A'
+    expect(await itemsOf(a, tracked)).toHaveLength(1) // A again: emitted, no slot
+    for (let i = 0; i < 4; i++) {
+      text = `new ${i}`
+      expect(await itemsOf(a, tracked)).toHaveLength(1) // slots 3–6 still available
+    }
+    text = 'one too many'
+    expect(await itemsOf(a, tracked)).toHaveLength(0) // 6 new digests in the window: capped
+  })
+
+  it('serves two streams watching the same url: both baselines, both changes, one slot', async () => {
+    let now = 0
+    let text = 'v1 body'
+    const a = new BrowserAdapter(
+      { render: async (url) => ({ url, title: 'T', text, html: '' }) },
+      { now: () => now },
+    )
+    // Two streams = two identical fetches (dedup is per stream, downstream of the adapter).
+    const first = await itemsOf(a, tracked)
+    const second = await itemsOf(a, tracked) // the second stream's FIRST harvest
+    expect(second).toHaveLength(1) // it gets its baseline, not silence
+    expect(second[0].guid).toBe(first[0].guid)
+    text = 'v2 body'
+    now += 3_600_000
+    const change1 = await itemsOf(a, tracked)
+    const change2 = await itemsOf(a, tracked)
+    expect(change1).toHaveLength(1)
+    expect(change2[0].guid).toBe(change1[0].guid) // both streams see the change…
+    // …but the digest is new once: only 4 more new digests fit in this 24h window.
+    for (let i = 0; i < 4; i++) {
+      text = `state ${i}`
+      now += 3_600_000
+      expect(await itemsOf(a, tracked)).toHaveLength(1)
+    }
+    text = 'capped'
+    now += 3_600_000
+    expect(await itemsOf(a, tracked)).toHaveLength(0)
+  })
+
+  it('spends no cap slot on unchanged harvests', async () => {
     let now = 0
     let text = 'same'
     const a = new BrowserAdapter(
       { render: async (url) => ({ url, title: 'T', text, html: '' }) },
       { now: () => now },
     )
-    await itemsOf(a, tracked)
+    await itemsOf(a, tracked) // baseline 'same': the FIRST new digest, slot 1
     for (let i = 0; i < 20; i++) {
       now += 30_000
-      expect(await itemsOf(a, tracked)).toHaveLength(0) // 20 unchanged harvests, no slot burned
+      expect(await itemsOf(a, tracked)).toHaveLength(1) // re-emitted under the same identity
     }
-    text = 'changed'
-    expect(await itemsOf(a, tracked)).toHaveLength(1) // the change still emits (cap not exhausted)
+    for (let i = 0; i < 5; i++) {
+      text = `change ${i}` // slots 2–6 still there: unchanged harvests consumed none
+      now += 60_000
+      expect(await itemsOf(a, tracked)).toHaveLength(1)
+    }
+    text = 'capped'
+    expect(await itemsOf(a, tracked)).toHaveLength(0)
   })
 
-  it('normalizes whitespace-only differences away', async () => {
+  it('normalizes whitespace-only differences away (same identity)', async () => {
     const a = new BrowserAdapter(changing(['a  b\n\nc', ' a b c ']))
-    await itemsOf(a, tracked)
-    expect(await itemsOf(a, tracked)).toHaveLength(0)
+    const first = await itemsOf(a, tracked)
+    const second = await itemsOf(a, tracked)
+    expect(second[0].guid).toBe(first[0].guid)
   })
 
   it('accepts the string form "true" for track_changes', async () => {

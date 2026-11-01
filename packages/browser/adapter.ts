@@ -38,18 +38,23 @@ function contentDigest(text: string): string {
   return createHash('sha256').update(normalizePageText(text)).digest('hex').slice(0, 16)
 }
 
-/** Anti-flood cap: a page whose normalized text still differs on every render must not emit
- *  one timeline item per harvest. These bounds let such a page contribute at most 10 items per
- *  rolling hour (the manifest cadence is 3600s, so even a page that changes every tick is
- *  capped at ~10/day-of-change notifications per hour window). */
-const CAP_WINDOW_MS = 3_600_000
+/** Anti-flood cap, sized against the manifest's cadence: cadence_hint_seconds is 3600, so a
+ *  page is harvested AT MOST ~24 times a day — an hourly cap could never bind. A rolling 24h
+ *  window with 6 slots bounds a page that renders differently every tick to ≤6 notifications a
+ *  day (a quarter of the possible harvests), while a genuinely active changelog publishing
+ *  several updates a day still fits; anything tighter would drop real same-day changes until
+ *  the window slides, anything looser stops being flood protection. The cap counts NEW digests
+ *  only: a digest this url has emitted before is re-emitted freely (no slot) — per-stream dedup
+ *  swallows what each stream already has, so a repeat only ever serves streams that joined
+ *  after that content was current. */
+const CAP_WINDOW_MS = 86_400_000
 export { CAP_WINDOW_MS }
-const CAP_MAX_EMISSIONS = 10
+const CAP_MAX_NEW_DIGESTS = 6
 
-/** The adapter keeps NO durable state: the cap memory and the last-seen digest are in-process
- *  only (same tier as the adapter request cache). Losing them on restart is safe — the item
- *  identity (url + content digest) makes a repeated emission land on an id dedup already has,
- *  so a restart can produce at most a no-op, never a duplicate item. */
+/** The adapter's tracking memory is IN-PROCESS state, one instance per engine (same tier as
+ *  the adapter request cache): it only shapes the anti-flood budget, never item identity.
+ *  Item identity is `url#<digest>`, so a restart can at worst spend the fresh cap budget on
+ *  content each stream's dedup already has (a no-op per stream), never duplicate an item. */
 export interface BrowserAdapterOptions {
   /** injectable clock for cap-window tests */
   now?: () => number
@@ -62,8 +67,11 @@ export interface BrowserAdapterOptions {
  *
  * By default the item identity is the page address: one snapshot per page, later changes
  * produce nothing. With `track_changes: true` the identity becomes `url#<content digest>`:
- * a substantive change to the normalized body text yields exactly one new item, no change
- * yields none (a title-only rewrite is noise, not a change). Subject to the emission cap.
+ * every harvest emits the current content under that identity and each stream's dedup decides
+ * whether it is new — so two streams may watch the same url and each gets its own baseline,
+ * and a substantive change to the normalized body text yields exactly one new item per stream.
+ * A title-only rewrite is noise, not a change (same digest). New digests are subject to the
+ * per-page anti-flood cap; already-seen digests are not.
  *
  * The renderer is INJECTED and there is no default. Stream owns no browser of its own to fall
  * back on: rendering happens in the user's Chrome over the extension relay, wired in bootstrap
@@ -73,10 +81,10 @@ export interface BrowserAdapterOptions {
 export class BrowserAdapter implements Adapter {
   readonly id = 'browser'
   private readonly now: () => number
-  /** last digest EMITTED per url; only emissions update it, so a cap-suppressed change is
-   *  not swallowed forever — it becomes the "next change" once the window slides */
-  private readonly lastEmitted = new Map<string, string>()
-  private readonly emissions = new Map<string, number[]>()
+  /** every digest this url has EVER emitted (cap exemption + restart independence) */
+  private readonly seenDigests = new Map<string, Set<string>>()
+  /** when each NEW digest was emitted, for the rolling cap window */
+  private readonly newDigestTimes = new Map<string, number[]>()
   constructor(private readonly renderer: PageRenderer, opts: BrowserAdapterOptions = {}) {
     this.now = opts.now ?? Date.now
   }
@@ -97,27 +105,35 @@ export class BrowserAdapter implements Adapter {
       }
     }
     const digest = contentDigest(page.text)
-    if (this.lastEmitted.get(url) === digest) return { items: [] } // unchanged: nothing to report
-    if (!this.takeEmissionSlot(url)) return { items: [] } // over the anti-flood cap: stay silent
-    this.lastEmitted.set(url, digest)
+    if (this.seenDigests.get(url)?.has(digest)) {
+      // content already emitted under this identity: re-emit freely, each stream's dedup
+      // swallows what it has; this costs no cap slot
+      return { items: [{ ...item, guid: `${url}#${digest}` }], title: page.title.trim() || undefined }
+    }
+    if (!this.takeNewDigestSlot(url, digest)) return { items: [] } // over the anti-flood cap
     return {
       items: [{ ...item, guid: `${url}#${digest}` }],
       title: page.title.trim() || undefined,
     }
   }
 
-  /** One emission slot per changed-content harvest, bounded to CAP_MAX_EMISSIONS per page per
-   *  rolling CAP_WINDOW_MS. Over the cap the change is NOT queued: the next allowed emission
-   *  reports whatever the page shows then (latest content wins, stale changes are dropped). */
-  private takeEmissionSlot(url: string): boolean {
+  /** One cap slot per NEW digest, bounded to CAP_MAX_NEW_DIGESTS per page per rolling
+   *  CAP_WINDOW_MS. Over the cap the change is NOT queued and NOT memorized: the next allowed
+   *  slot reports whatever the page shows then (latest content wins, stale changes are
+   *  dropped). A suppressed digest stays unseen, so once the window slides it is emitted —
+   *  unless the page has moved on again, in which case only the newest content ever reports. */
+  private takeNewDigestSlot(url: string, digest: string): boolean {
     const now = this.now()
-    const recent = (this.emissions.get(url) ?? []).filter((t) => now - t < CAP_WINDOW_MS)
-    if (recent.length >= CAP_MAX_EMISSIONS) {
-      this.emissions.set(url, recent)
+    const recent = (this.newDigestTimes.get(url) ?? []).filter((t) => now - t < CAP_WINDOW_MS)
+    if (recent.length >= CAP_MAX_NEW_DIGESTS) {
+      this.newDigestTimes.set(url, recent)
       return false
     }
+    const seen = this.seenDigests.get(url) ?? new Set<string>()
+    seen.add(digest)
+    this.seenDigests.set(url, seen)
     recent.push(now)
-    this.emissions.set(url, recent)
+    this.newDigestTimes.set(url, recent)
     return true
   }
 }

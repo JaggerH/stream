@@ -1,7 +1,7 @@
 - id: browser-page
   adapter: browser
   title: 网页抓取
-  description: 使用无头浏览器直接加载并提取页面内容，作为 API 或 RSS 失效时的通用兜底获取方案。需要在线的浏览器设备；页面有 feed 时优先用 feed-url。默认单页快照（同一页面只产出一条）；加 track_changes 后按页面正文变化产出新条目（每小时每页至多 10 条，防噪声页面刷屏）。
+  description: 使用无头浏览器直接加载并提取页面内容，作为 API 或 RSS 失效时的通用兜底获取方案。需要在线的浏览器设备；页面有 feed 时优先用 feed-url。默认单页快照（同一页面只产出一条）；加 track_changes 后按页面正文变化产出新条目（滚动 24 小时内每页至多 6 条新内容，防噪声页面刷屏）。
   topics: [browser, fallback, webpage, 兜底, 浏览器]
   categories: [fallback]
   example_queries: []
@@ -23,5 +23,5 @@
       required: false
       description: >-
         emit a new item whenever the page's normalized body text substantively changes
-        (timestamps and whitespace ignored, rate-limited to 10 change items per page per hour);
-        without it the page is captured once and later changes are not reported
+        (timestamps and whitespace ignored, rate-limited to 6 new-content items per page per
+        rolling 24 hours); without it the page is captured once and later changes are not reported
