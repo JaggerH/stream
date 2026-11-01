@@ -89,7 +89,7 @@ describe('browser-page change tracking through the harvest pipeline', () => {
     h.close()
   })
 
-  // Rework R1: the adapter must not gate emissions on its own "last seen" memory — one engine
+  // The adapter must not gate emissions on its own "last seen" memory — one engine
   // has ONE adapter instance shared by every stream, and dedup is per stream. Two streams on
   // the same url each get their baseline, each sees the change once.
   it('two streams on one url each get the baseline and each the change', async () => {
