@@ -77,6 +77,35 @@ describe('parseFeed — Atom', () => {
   })
 })
 
+describe('parseFeed — tag matching is by exact local name', () => {
+  // A suffix match would read <subtitle> for `title` and <guid> for `id` — both real shapes
+  // (iTunes RSS subtitles; hybrid feeds carrying RSS guid alongside Atom id). First bug bit
+  // hardest when <subtitle> came FIRST, so the fixtures put the decoys first.
+  it('does not read <subtitle> as <title>, in either order', () => {
+    const f = parseFeed('<rss><channel><item><subtitle>teaser</subtitle><title>Real</title><guid>g</guid></item></channel></rss>')
+    expect(f.items[0]!.title).toBe('Real')
+    const rev = parseFeed('<rss><channel><item><title>Real</title><subtitle>teaser</subtitle><guid>g</guid></item></channel></rss>')
+    expect(rev.items[0]!.title).toBe('Real')
+  })
+
+  it('still matches namespaced tags (media:title, content:encoded)', () => {
+    const f = parseFeed('<rss><channel><item><media:title>Media title</media:title><title>Plain</title><guid>g</guid></item></channel></rss>')
+    expect(f.items[0]!.title).toBe('Media title') // first occurrence wins, prefix included
+    const body = parseFeed(RSS).items[0]!.description ?? ''
+    expect(body).toContain('Full body')
+  })
+
+  it('Atom identity is <id>, even when an RSS <guid> sits before it', () => {
+    const f = parseFeed('<feed><entry><guid>rss-guid</guid><id>atom-id</id><title>t</title></entry></feed>')
+    expect(f.items[0]!.guid).toBe('atom-id')
+  })
+
+  it('an element whose name merely contains the tag is not the tag', () => {
+    const f = parseFeed('<rss><channel><item><guide>not an id</guide><guid>real</guid></item></channel></rss>')
+    expect(f.items[0]!.guid).toBe('real')
+  })
+})
+
 describe('parseFeed — degenerate inputs', () => {
   it('an HTML page parses to zero items (adapter turns that into an error)', () => {
     expect(parseFeed('<html><body><h1>hello</h1></body></html>').items).toHaveLength(0)

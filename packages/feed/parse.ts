@@ -43,8 +43,13 @@ function decodeEntities(s: string): string {
 
 /** Inner text of a tag: CDATA sections verbatim, otherwise XML-escaped text decoded. */
 function inner(block: string, tag: string): string | undefined {
-  // Match the tag by local name (any namespace prefix), first occurrence wins.
-  const re = new RegExp(`<[^>]*:?${tag}(?:\\s[^>]*)?>([\\s\\S]*?)</[^>]*:?${tag}\\s*>`, 'i')
+  // Match the tag by STRICT local name (any namespace prefix, but the name itself must be
+  // exact): a suffix match would read <subtitle> for `title` and <guid> for `id` — both real
+  // shapes in hybrid feeds. First occurrence wins.
+  const re = new RegExp(
+    `<(?:[A-Za-z_][\\w.-]*:)?${tag}(?:\\s[^>]*)?>([\\s\\S]*?)</(?:[A-Za-z_][\\w.-]*:)?${tag}\\s*>`,
+    'i',
+  )
   const m = block.match(re)
   if (!m) return undefined
   const raw = m[1]
