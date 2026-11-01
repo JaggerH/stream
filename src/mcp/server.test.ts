@@ -131,16 +131,20 @@ describe('MCP server (real client over InMemoryTransport)', () => {
   })
 
   // 搜不到时不再回裸 `[]`——那会让模型换个关键词无限重试（真模型复验里两家各 12/9 次全空转）。
-  // 空结果必须自带出路：明说没匹配、别死磕关键词、给通用兜底源的订阅形状、劝退硬订。
-  // 注意这只证明「note 说了这些」，证明不了「模型照做了」——后者只能活体看副作用。
+  // 空结果必须自带出路：明说没匹配、别死磕关键词、先探常见 feed 地址（feed-url 源），
+  // browser-page 只按它实际能力说（单页快照、不追更新）、都订不了就如实说。
+  // 注意这只证明「note 说了这些」，证明不了「模型照做了」——后者只能真模型看副作用。
   it('stream_search 空结果返回 { results: [], note }，note 给出下一步与兜底', async () => {
     const r = await client.callTool({ name: 'stream_search', arguments: { intent: 'zzz-no-such-thing' } })
     const body = JSON.parse(text(r))
     expect(body.results).toEqual([])
     expect(body.note).toContain('stream_categories')
+    expect(body.note).toContain('feed-url')
+    expect(body.note).toContain('releases.atom')
     expect(body.note).toContain('browser-page')
     expect(body.note).toContain('subscribe_source')
-    expect(body.note).toMatch(/do not/i)
+    expect(body.note).toMatch(/does NOT pick up later changes/)
+    expect(body.note).toMatch(/do not|Do NOT/i)
     expect(body.note).toMatch(/never force/i)
   })
 

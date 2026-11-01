@@ -385,8 +385,9 @@ export function toolCatalog(service: StreamServiceLike, extras: McpExtras): Tool
             results: [],
             note:
               'No source matches this intent. Do NOT keep re-searching with new keywords — the registry has no match, not a wording problem. Category names must be taken from stream_categories (guessing a topic word usually misses). ' +
-              'If the user\'s goal is really ONE specific web page (a project\'s release/changelog page, a blog index, a person\'s profile page, an RSS/Atom URL), subscribe that page directly: subscribe_source({ source_id: "browser-page", params: { url: "<page URL>" } }) — a headless browser opens that page every tick; it needs a browser device and is slower and more fragile than a dedicated source. ' +
-              'If even that does not fit, say so plainly and offer alternatives (e.g. note the site for onboarding) — never force a semantically wrong subscription or invent a source id.',
+              'If the user wants UPDATES from a site or project (new posts, releases, changelog), the site very likely publishes a feed — probe for it before concluding there is none, using the feed-url source with the feed document URL (not a page): GitHub repos usually expose <repo>/releases.atom, blogs usually /feed, /index.xml or /rss.xml — e.g. subscribe_source({ source_id: "feed-url", params: { url: "<site>/feed" } }). ' +
+              'Only if there is a genuine ONE-SNAPSHOT need (read a single page once, no tracking of later changes) AND a browser device is online, browser-page can render it once: subscribe_source({ source_id: "browser-page", params: { url: "<page URL>" } }) — it takes one snapshot per page and does NOT pick up later changes, and it needs an online browser device, so it cannot follow updates. ' +
+              'If neither fits, say plainly that this cannot be followed today (you may record the site with note_unonboardable) — never force a semantically wrong subscription or invent a source id.',
           }
         }
         return hits

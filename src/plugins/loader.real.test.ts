@@ -14,17 +14,17 @@ import { loadPlugins } from './loader.ts'
 // the backend actually failed to start. This test closes that gap the same way
 // recipe-package.real.test.ts does for the recipe slot.
 //
-// 目录并轨后这里住着一批包（22 个填插件槽 + 其余纯 recipe 包），所以下面那个 22 同时也是
+// 目录并轨后这里住着一批包（23 个填插件槽 + 其余纯 recipe 包），所以下面那个 23 同时也是
 // `fillsPluginSlot` 这条判据的守卫：判据放宽了，数字立刻不对。
 //
-// 那 22 个里最容易看漏的是 `replay`：它只声明了 `normalizer`，没有清单、没有 recipe、没有代码、
+// 那 23 个里最容易看漏的是 `replay`：它只声明了 `normalizer`，没有清单、没有 recipe、没有代码、
 // 没有容器——目录看上去是空的，但 `fillsPluginSlot` 认 normalizer，所以它在名单里。第二类是
 // `eastmoney` / `xhs`：既有 recipe 数据又有代码槽位（eastmoney 还有凭证域），两个投影里都出现
 // ——那正是"按槽位判而不是按目录判"的意义。别照"目录里有什么文件"去数这个数字。
 const PACKAGES_DIR = fileURLToPath(new URL('../../packages', import.meta.url))
 
 describe('shipped plugins load (real packages/ directory)', () => {
-  // 22 = `packages/` 里填了插件类槽位（代码 / 容器 / 能力 / normalizer…）的包数。
+  // 23 = `packages/` 里填了插件类槽位（代码 / 容器 / 能力 / normalizer…）的包数。
   // 加或删一个填槽位的包就改这里；纯 recipe 数据包不算在内（`fillsPluginSlot` 不认它们）。
   // xueqiu / telegram 原本是纯 recipe 包，normalizer（及 xueqiu 的 detail enricher）归包后开了代码槽位。
   // groq / firecrawl 原本是纯 recipe 包，转写源 / 抓正文源从 builtin 搬进来后填了 Source 清单槽位（firecrawl 还有代码槽位）。
@@ -33,9 +33,10 @@ describe('shipped plugins load (real packages/ directory)', () => {
   // cloudflare 是新建的代码包：cf-whisper 转写源从 builtin 搬进来（Source 清单 + 代码槽位，第八批 2026-09-26）。
   // xunlei / shooter 同批新建：字幕搜刮的两家站从宿主搬进来（Source 清单 + 代码槽位）。
   // omdb 是新建的代码包：影视详情的 OMDb 两个源从 builtin 搬进来（Source 清单 + 代码槽位，第九批 2026-09-26）。
-  it('loads all 22 shipped plugin packages without throwing', () => {
+  // feed 是新建的清单包：通用 RSS / Atom 订阅源，只填 Source 清单槽位（没有代码）。
+  it('loads all 23 shipped plugin packages without throwing', () => {
     const plugins = loadPlugins(PACKAGES_DIR)
-    expect(plugins).toHaveLength(22)
+    expect(plugins).toHaveLength(23)
   })
 
   it('has exactly the expected set of plugin ids', () => {
@@ -49,6 +50,7 @@ describe('shipped plugins load (real packages/ directory)', () => {
       'builtin',
       'cloudflare',
       'eastmoney',
+      'feed',
       'firecrawl',
       'groq',
       'hackernews',

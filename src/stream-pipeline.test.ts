@@ -154,4 +154,19 @@ describe('persistItems — batched, dedup-guarded persist', () => {
     expect(committed).toBe(1)
     dedup.close()
   })
+
+  // A source whose item id is the PAGE URL (one item per page, id derives from guid alone)
+  // can never emit a second item: the page is still one page, so the id is unchanged and
+  // dedup swallows every re-harvest — even though the content changed. This is why a
+  // "single page" source tracks nothing over time; new-item identity must come from the
+  // FEED (per-entry guid), not from the address being watched.
+  it('page-as-id sources: same url, changed content → re-harvest writes 0 new items', async () => {
+    const dedup = new DedupStore(':memory:')
+    const page = (title: string) => [{ guid: 'https://example.com/changelog', title, link: 'https://example.com/changelog' }]
+    const first = await persistItems('s1', '/r', page('Release 1.0 out'), undefined, dedup)
+    expect(first.written).toBe(1)
+    const second = await persistItems('s1', '/r', page('Release 2.0 out'), undefined, dedup)
+    expect(second).toEqual({ fetched: 1, written: 0 }) // content changed, dedup can't see it
+    dedup.close()
+  })
 })

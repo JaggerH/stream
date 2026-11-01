@@ -1,0 +1,19 @@
+- id: feed-url
+  adapter: feed
+  title: 通用订阅（RSS / Atom）
+  description: 给一个 RSS 或 Atom 地址，服务端直接拉取解析，每个条目一条内容。不依赖浏览器与设备；地址必须是 feed 本身（页面地址不行，可先试页面旁常见的 /feed、/index.xml、/releases.atom 等）。
+  topics: [rss, atom, feed, 订阅, 博客, podcast, releases]
+  categories: [fallback, blog, news]
+  example_queries: []
+  capabilities: [timeline]
+  provides: [generic-feed]
+  key_param: url
+  priority: 50
+  auth:
+    type: none
+  cadence_hint_seconds: 3600
+  params_schema:
+    url:
+      type: string
+      required: true
+      description: the RSS 2.0 or Atom feed URL (the feed document itself, not a page)

@@ -1,7 +1,7 @@
 - id: browser-page
   adapter: browser
   title: 网页抓取
-  description: 使用无头浏览器直接加载并提取页面内容，作为 API 或 RSS 失效时的通用兜底获取方案。
+  description: 使用无头浏览器直接加载并提取页面内容，作为 API 或 RSS 失效时的通用兜底获取方案。单页快照：每次采集渲染同一页、不跟踪页面后续变化（追更新请用有 feed 的源）；且需要在线的浏览器设备。
   topics: [browser, fallback, webpage, 兜底, 浏览器]
   categories: [fallback]
   example_queries: []

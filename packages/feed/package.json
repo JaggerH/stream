@@ -1,0 +1,14 @@
+{
+  "name": "@streamapp/feed",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "stream": {
+    "id": "feed",
+    "name": "Feed URL",
+    "tagline": "直接订一个 RSS / Atom 地址",
+    "description": "Fetch and parse an RSS 2.0 or Atom feed URL server-side.",
+    "normalizer": "generic"
+  },
+  "license": "Apache-2.0"
+}

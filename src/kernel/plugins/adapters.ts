@@ -5,6 +5,7 @@ import type { Adapter } from '../../adapters/types.ts'
 import { BuiltinAdapter } from '../../adapters/builtin/adapter.ts'
 import { RssHubAdapter } from '../../rsshub-adapter.ts'
 import { BrowserAdapter } from '../../../packages/browser/adapter.ts'
+import { FeedAdapter } from '../../../packages/feed/adapter.ts'
 import { ReplayAdapter, sessionOutcomeToItems, facilityOf } from '../../adapters/replay/adapter.ts'
 import { makeFileRecipeStore, makeRecipePackageStore } from '../../replay/recipe-store.ts'
 import { ledgerIdsFrom } from '../../replay/feed-ledger.ts'
@@ -77,6 +78,7 @@ export interface AdaptersConfig {
  *  - `builtin` —— 进程内实现（`register()` 逐个挂，注册发生在 provider 域，那里才有那些依赖）；
  *  - `rsshub` —— 内嵌 RSSHub 路由；
  *  - `browser` —— 通用兜底：把一个公开 URL 在**用户自己的 Chrome** 里渲染出来读回正文；
+ *  - `feed` —— 通用订阅：服务端直接拉取一个 RSS / Atom 地址并解析（不依赖浏览器与设备）；
  *  - `replay` —— recipe 那条线（canonical browser recipe + legacy fetch/browser recipe）。
  *
  * 依赖全部经 inject 从内核取，没有一格是 bootstrap 现造的对象：
@@ -142,6 +144,9 @@ export const adaptersPlugin = {
           }
         },
       })],
+      // 通用订阅档：直接订一个 RSS / Atom 地址。服务端自己拉取解析（和 favicon / 正文抽取同一
+      // 条守卫通道），不依赖浏览器与设备；条目身份用 feed 自己的 per-entry guid/id，新条目即新条。
+      ['feed', new FeedAdapter()],
       ['replay', new ReplayAdapter({
         fetch: config.deviceFetch.send,
         // 分层查找:包内 recipe(builtin+user, user 覆盖)优先,miss 落回 legacy 平铺 <sourceId>.json。
