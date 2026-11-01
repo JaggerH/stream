@@ -143,7 +143,7 @@ describe('MCP server (real client over InMemoryTransport)', () => {
     expect(body.note).toContain('releases.atom')
     expect(body.note).toContain('browser-page')
     expect(body.note).toContain('subscribe_source')
-    expect(body.note).toMatch(/does NOT pick up later changes/)
+    expect(body.note).toMatch(/track_changes/)
     expect(body.note).toMatch(/do not|Do NOT/i)
     expect(body.note).toMatch(/never force/i)
   })
