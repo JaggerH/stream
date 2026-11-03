@@ -30,6 +30,23 @@ export { createRuntime } from './runtime.ts'
 export type { StreamDevices, DeviceChange, DeviceSnapshot } from './devices.ts'
 export { deviceGateway } from './device-gateway.ts'
 export type { DeviceGateway, DeviceGatewayOptions } from './device-gateway.ts'
+/** 设备回环转发入口（openspec `device-loopback-forward`）。 */
+export {
+  deviceForwardApp,
+  mountDeviceForward,
+  deviceForwardUpgrade,
+  mintForwardCredential,
+  verifyForwardCredential,
+  forwardSecretOf,
+  maskCredential,
+} from '../http/device-forward.ts'
+export type { ForwardScope, CredentialVerdict } from '../http/device-forward.ts'
+/** widget manifest schema + checkWidget + store（openspec `widget-manifest`）。 */
+export { WIDGET_SCHEMA, parseWidgetManifest, type WidgetManifest } from '../widgets/manifest.ts'
+export { checkWidget } from '../widgets/check.ts'
+export type { CheckResult, CheckOutput } from '../widgets/check.ts'
+export { createWidgetsStore, WidgetsStore } from '../widgets/store.ts'
+export { mountWidgetListPage } from '../widgets/page.ts'
 // 用 CDP 驱动一台没有装扩展的浏览器（openspec `cdp-binding`）：对外讲扩展中继的同一套协议。
 export { startCdpBinding } from '../cdp-binding/index.ts'
 export type { CdpBinding, CdpBindingOptions } from '../cdp-binding/index.ts'

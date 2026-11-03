@@ -34,6 +34,7 @@ import { cookieSlot } from '../credentials/cookie-slot.ts'
 import { STREAM_EXTENSION_ID } from '../ext-id.ts'
 import type { StreamDevices } from './devices.ts'
 import type { Stream } from './index.ts'
+import { mountDeviceForward, deviceForwardUpgrade, forwardSecretOf } from '../http/device-forward.ts'
 
 export interface DeviceGatewayOptions {
   /** 路径前缀，缺省 '/api'（与 serve 一致）。嵌入方可挂到别处，如 '/api/stream'。 */
@@ -254,6 +255,22 @@ export function deviceGateway(stream: Stream, opts: DeviceGatewayOptions): Devic
     ...(opts.pingIntervalMs ? { pingIntervalMs: opts.pingIntervalMs } : {}),
   })
 
+  // 转发入口（openspec device-loopback-forward）：HTTP 挂在网关 app 的 `fwd/*`（随 basePath
+  // 组合出 `${basePath}/fwd/...`），WS 升级并入 handleUpgrade 链。凭证密钥从 extToken 派生，
+  // 不新增落盘密钥。
+  const fwdDeps = {
+    directory: {
+      isOnline: (id: string) => harvest.hostRelays.isOnline(id),
+      portsOf: (id: string) => harvest.hostRelays.portsOf(id),
+      forwardRelay: (id: string, op: 'http.forward' | 'ws.forward') => harvest.hostRelays.forwardRelay(id, op),
+    },
+    secret: forwardSecretOf(stream.secrets.extToken),
+    sourceIp,
+    log,
+  }
+  mountDeviceForward(app, fwdDeps, { base: `${base}/fwd` })
+  const fwdHandler = deviceForwardUpgrade(fwdDeps, { base: `${base}/fwd` })
+
   return {
     basePath: base,
     app,
@@ -262,7 +279,7 @@ export function deviceGateway(stream: Stream, opts: DeviceGatewayOptions): Devic
     mounts: base === '/api'
       ? [{ path: base, app }]
       : [{ path: base, app }, { path: '/api', app: extApp }, { path: '/api', app: hostApp }],
-    handleUpgrade: (req, socket, head) => extHandler.handle(req, socket, head) || hostHandler.handle(req, socket, head),
+    handleUpgrade: (req, socket, head) => extHandler.handle(req, socket, head) || hostHandler.handle(req, socket, head) || fwdHandler(req, socket, head),
     close: () => {
       closeRelayServer(extHandler.wss)
       closeRelayServer(hostHandler.wss)
@@ -270,3 +287,4 @@ export function deviceGateway(stream: Stream, opts: DeviceGatewayOptions): Devic
     },
   }
 }
+export { deviceForwardUpgrade, mintForwardCredential, verifyForwardCredential, forwardSecretOf, maskCredential } from '../http/device-forward.ts'

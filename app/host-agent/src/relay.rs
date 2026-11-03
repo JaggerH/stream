@@ -123,18 +123,27 @@ impl Supervisor {
     }
 }
 
+pub const MAX_HELLO_PORTS: usize = 64;
+
 /// The `hello` the v2 relay requires as the first frame: which device this is and which ops it
 /// implements. The backend decides "unsupported" from `ops` before sending anything, so this list
-/// must be what `dispatch` actually handles.
-pub fn hello_frame(device_id: &str, platform: &str, name: &str, version: &str, ops: &[&str]) -> serde_json::Value {
-    serde_json::json!({
+/// must be what `dispatch` actually handles. `ports`（可转发回环端口，openspec device-loopback-forward）
+/// 缺省不出现——后端对没声明的设备一台端口都不许转。
+pub fn hello_frame(device_id: &str, platform: &str, name: &str, version: &str, ops: &[&str], ports: Option<&[u16]>) -> serde_json::Value {
+    let mut v = serde_json::json!({
         "type": "hello",
         "deviceId": device_id,
         "platform": platform,
         "name": name,
         "agentVersion": version,
         "ops": ops,
-    })
+    });
+    if let Some(arr) = ports {
+        if !arr.is_empty() {
+            v["ports"] = serde_json::to_value(arr).unwrap();
+        }
+    }
+    v
 }
 
 /// The ops this build can actually perform: every dispatched op, minus those a platform lacks
@@ -163,6 +172,7 @@ pub fn local_hello() -> serde_json::Value {
         &host,
         env!("CARGO_PKG_VERSION"),
         &declared_ops(),
+        None,
     )
 }
 
@@ -253,7 +263,7 @@ mod tests {
     /// names cross a process boundary with no compiler checking them, so they are pinned here.
     #[test]
     fn hello_frame_has_the_wire_shape_the_backend_parses() {
-        let v = hello_frame("desktop:pc", "windows", "PC", "0.1.0", &["click", "find"]);
+        let v = hello_frame("desktop:pc", "windows", "PC", "0.1.0", &["click", "find"], None);
         assert_eq!(v["type"], "hello");
         assert_eq!(v["deviceId"], "desktop:pc");
         assert_eq!(v["platform"], "windows");

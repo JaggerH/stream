@@ -49,6 +49,10 @@ import { ACTION_RUN_DOMAIN, projectActionRun } from '../mcp/action-run.ts'
 import type { RunStatus } from '../agent/search/types.ts'
 import { withCapabilityTools } from '../mcp/capability-tools.ts'
 import { mountConfigRows } from '../http/config-rows-routes.ts'
+import { mountWidgetListPage } from '../widgets/page.ts'
+import { createWidgetsStore } from '../widgets/store.ts'
+import { parseWidgetManifest } from '../widgets/manifest.ts'
+import { forwardSecretOf } from '../http/device-forward.ts'
 import { mountLiveRoutes } from '../http/live-routes.ts'
 import { LiveStreamService } from '../live/service.ts'
 import { mountResearchRoutes } from '../http/research-routes.ts'
@@ -509,6 +513,20 @@ export async function routes(io: RouteIo): Promise<Hono> {
   const gateway = io.gateway
   // 逐条挂（不是只挂 app）：网关可能还要在**扩展写死的** `/api/ext/*` 上答话，见 `mounts` 的头注。
   for (const m of gateway.mounts) app.route(m.path, m.app)
+  // widget 挂载面（openspec widget-manifest）：只读列表 + sandbox iframe + 凭证现取口。
+  // 挂载存储 data/widgets.json；manifest 每次从挂载目录现读（目录内容变了下一次请求就生效）。
+  mountWidgetListPage(app, {
+    store: createWidgetsStore(config),
+    secret: forwardSecretOf(extToken),
+    directory: {
+      isOnline: (id) => harvest.hostRelays.isOnline(id),
+      portsOf: (id) => harvest.hostRelays.portsOf(id),
+    },
+    manifestOf: (row) => {
+      try { return parseWidgetManifest(readFileSync(join(row.dir, 'widget.json'), 'utf8')) } catch { return null }
+    },
+    log: (line) => console.log(`[widgets] ${line}`),
+  })
   // 任务面（store/ledger/编译口）的装配在实例后台（`src/engine/background.ts`）：store 与
   // 账本由实例打开（两边各开一份 sqlite 连接就是两套状态），路由经 `tasks.assembly` 只读。
   // 查询档（scheduler=false）下 `builtins` 缺席 → 内置任务清单诚实地报空；store/ledger 开不

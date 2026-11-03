@@ -128,6 +128,33 @@ export interface HttpFetchResult {
   url: string
 }
 
+/**
+ * `http.forward` 的 args：把入口请求经设备连接转到**那台设备自己回环地址**上的 `port`。
+ * 与 `http.fetch`（出站代发，目标任意主机、私网拒绝）方向相反：这里的目标只能是设备回环，
+ * `port` 必须在该设备 `hello.ports` 里声明过，`cred` 是主实例为这次挂载签发的短期凭证
+ * （语义与校验在 `device-forward.ts`；设备侧只要求非空并原样放进转发请求头）。
+ */
+export interface HttpForwardArgs {
+  port: number
+  cred: string
+  method: string
+  /** 以 '/' 开头的路径，含查询串 */
+  path: string
+  headers: [string, string][]
+  /** base64 */
+  body?: string
+  timeoutMs: number
+}
+
+/** `ws.forward` 的 args：建一条到设备回环 `port` 的 WebSocket。建连之后双向数据走
+ *  `{type:'fwd-data', id, b64}` / `{type:'fwd-close', id}` 主动帧（与 `state`/`abort` 同一先例）。 */
+export interface WsForwardArgs {
+  port: number
+  cred: string
+  path: string
+  headers: [string, string][]
+}
+
 export interface FetchOpOptions {
   /**
    * 调用方的中止信号。只在**排队等名额**这一段生效：中止就摘出队列、以 `signal.reason` 拒绝，
@@ -144,6 +171,15 @@ export const DEVICE_FETCH_CONCURRENCY = 4
 interface Pending {
   op: string
   resolve: (v: unknown) => void
+  reject: (e: unknown) => void
+  timer: ReturnType<typeof setTimeout>
+}
+
+/** 一条 `ws.forward` 会话的后端侧登记。`resolve`/`reject` 只在建连回应时各用一次。 */
+interface ForwardWsSession {
+  onData: (b64: string) => void
+  onClose: () => void
+  resolve: () => void
   reject: (e: unknown) => void
   timer: ReturnType<typeof setTimeout>
 }
@@ -220,9 +256,19 @@ export class WsHostRelay implements HostRelay {
   private readonly fetchWaiters: Array<{ grant: () => void; reject: (e: unknown) => void }> = []
   private readonly fetchQueueWaitMs: number
 
-  constructor(opts?: { timeoutMs?: number; sessionWaitMs?: number; fetchQueueWaitMs?: number }) {
+  /**
+   * 建连中的/已建立的 `ws.forward` 会话，按 op 的 `id` 记。会话生命期：建连 op 回应之后一直
+   * 存在，直到任一侧发 `fwd-close`、设备断连（`rejectAll`）或连接被顶掉。**不设会话级超时**：
+   * 长活的构件连接是常态，死活由两端的 WS 心跳负责（入口侧 `keepRelayAlive`，设备侧中继 ping）。
+   */
+  private readonly forwardSessions = new Map<number, ForwardWsSession>()
+  /** `ws.forward` 建连 op 的回应上界：设备要在这之内真的连上回环端口。 */
+  private readonly wsForwardOpenTimeoutMs: number
+
+  constructor(opts?: { timeoutMs?: number; sessionWaitMs?: number; fetchQueueWaitMs?: number; wsForwardOpenTimeoutMs?: number }) {
     this.timeoutMs = opts?.timeoutMs ?? 30_000
     this.fetchQueueWaitMs = opts?.fetchQueueWaitMs ?? 30_000
+    this.wsForwardOpenTimeoutMs = opts?.wsForwardOpenTimeoutMs ?? 15_000
     // 一趟桌面 recipe 十几个 op、每个最多等 timeoutMs——排在它后面的默认给足够宽的窗口
     // （比单个 op 的超时宽一个数量级），不然长 recipe 天然会把后面排队的人挤到超时。
     this.sessionWaitMs = opts?.sessionWaitMs ?? 180_000
@@ -248,7 +294,7 @@ export class WsHostRelay implements HostRelay {
 
   /** Receive {id,result} | {id,error}, resolve/reject by id and clear its timer. Unknown id ignored. */
   handleMessage(raw: string): void {
-    let msg: { id?: number; result?: unknown; error?: string; code?: unknown; type?: string; reason?: string }
+    let msg: { id?: number; result?: unknown; error?: string; code?: unknown; type?: string; reason?: string; b64?: unknown }
     try {
       msg = JSON.parse(raw)
     } catch {
@@ -264,7 +310,34 @@ export class WsHostRelay implements HostRelay {
       this.rejectAll(new HostAbortedByUser(msg.reason))
       return
     }
+    // 设备主动发来的转发数据帧（无请求 id 语义之外的东西——`id` 指回 `ws.forward` 的 op id）。
+    if ((msg.type === 'fwd-data' || msg.type === 'fwd-close') && typeof msg.id === 'number') {
+      const s = this.forwardSessions.get(msg.id)
+      if (!s) return
+      if (msg.type === 'fwd-data') {
+        if (typeof msg.b64 === 'string') s.onData(msg.b64)
+        return
+      }
+      this.closeForwardSession(msg.id, s)
+      s.onClose()
+      return
+    }
     if (typeof msg.id !== 'number') return
+    // `ws.forward` 的建连回应：pending 里没有它（会话有自己的登记），按 id 认回会话。
+    if (this.pending.get(msg.id) === undefined) {
+      const s = this.forwardSessions.get(msg.id)
+      if (s) {
+        if (msg.error !== undefined) {
+          this.forwardSessions.delete(msg.id)
+          clearTimeout(s.timer)
+          s.reject(new HostOpError(msg.error, typeof msg.code === 'string' ? msg.code : undefined))
+        } else {
+          clearTimeout(s.timer)
+          s.resolve()
+        }
+        return
+      }
+    }
     const p = this.pending.get(msg.id)
     if (!p) return
     this.pending.delete(msg.id)
@@ -408,6 +481,29 @@ export class WsHostRelay implements HostRelay {
     }
   }
 
+  /**
+   * 经设备转发一个 HTTP 请求到**该设备回环地址**上的端口（`http.forward` op）。通道机械与
+   * `fetchOp` 完全同一套——独立并发上限、排队、不占 UI 会话租约——只是 op 名不同：这是入站
+   * 转发（目标只能是设备回环、只认声明端口），不是出站代发。语义见 openspec
+   * `device-loopback-forward`，入口侧的凭证 / 头剥离 / 限流在 `device-forward.ts`。
+   */
+  forwardOp(args: HttpForwardArgs, opts: FetchOpOptions = {}): Promise<HttpFetchResult> {
+    const { signal } = opts
+    if (signal?.aborted) return Promise.reject(signal.reason)
+    if (!this.socket) return Promise.reject(new HostRelayDisconnected())
+    const run = () => this.runForward(args, opts.onSent)
+    if (this.fetchInFlight < DEVICE_FETCH_CONCURRENCY) { this.fetchInFlight++; return run() }
+    return this.waitFetchSlot(signal).then(run)
+  }
+
+  private async runForward(args: HttpForwardArgs, onSent?: () => void): Promise<HttpFetchResult> {
+    try {
+      return (await this.dispatchParallel({ op: 'http.forward', args: args as unknown as Record<string, unknown> }, args.timeoutMs + 5_000, onSent)) as HttpFetchResult
+    } finally {
+      this.releaseFetchSlot()
+    }
+  }
+
   private waitFetchSlot(signal?: AbortSignal | null): Promise<void> {
     return new Promise((resolve, reject) => {
       const done = () => { clearTimeout(timer); signal?.removeEventListener('abort', onAbort) }
@@ -437,6 +533,54 @@ export class WsHostRelay implements HostRelay {
   private releaseFetchSlot(): void {
     this.fetchInFlight--
     this.fetchWaiters.shift()?.grant()
+  }
+
+  /**
+   * 建一条到设备回环端口的 WebSocket（`ws.forward` op）。返回会话句柄：`opened` 在设备真的连上
+   * 回环后 resolve（连不上、端口没声明以 op 错误拒绝）；`send`/`close` 把数据与关闭作为主动帧
+   * 发给设备。设备侧来的 `fwd-data`/`fwd-close` 经 {@link handleMessage} 回调 `handlers`。
+   * 设备断连（`rejectAll`）时所有会话以 `onClose` 收尾。
+   */
+  openForwardWs(
+    args: WsForwardArgs,
+    handlers: { onData: (b64: string) => void; onClose: () => void },
+  ): { id: number; opened: Promise<void>; send: (b64: string) => void; close: () => void } {
+    const socket = this.socket
+    if (!socket) return { id: -1, opened: Promise.reject(new HostRelayDisconnected()), send: () => {}, close: () => {} }
+    const id = this.nextId++
+    let resolve!: () => void
+    let reject!: (e: unknown) => void
+    const opened = new Promise<void>((res, rej) => { resolve = res; reject = rej })
+    const timer: ReturnType<typeof setTimeout> = setTimeout(() => {
+      this.forwardSessions.delete(id)
+      reject(new HostRelayTimeout('ws.forward'))
+    }, this.wsForwardOpenTimeoutMs)
+    timer.unref?.()
+    this.forwardSessions.set(id, { onData: handlers.onData, onClose: handlers.onClose, resolve, reject, timer })
+    try {
+      socket.send(JSON.stringify({ id, op: 'ws.forward', args, abortEpoch: this.abortEpoch }))
+    } catch (e) {
+      this.forwardSessions.delete(id)
+      clearTimeout(timer)
+      reject(e)
+    }
+    return {
+      id,
+      opened,
+      send: (b64: string) => {
+        try { socket.send(JSON.stringify({ type: 'fwd-data', id, b64 })) } catch { /* socket 已死：teardown 走 rejectAll */ }
+      },
+      close: () => {
+        try { socket.send(JSON.stringify({ type: 'fwd-close', id })) } catch { /* 同上 */ }
+        this.forwardSessions.delete(id)
+      },
+    }
+  }
+
+  /** 会话落定：从表里摘掉、清掉建连计时器。只清登记，不通知调用方（通知在各落定路径自己做）。 */
+  private closeForwardSession(id: number, s: ForwardWsSession): void {
+    this.forwardSessions.delete(id)
+    clearTimeout(s.timer)
   }
 
   /** 发一个 op、按 id 配回复，**不碰** `inFlight`/`advance`——那是 UI 单发尾锁的。断连由 `rejectAll` 统一拒。 */
@@ -537,6 +681,10 @@ export class WsHostRelay implements HostRelay {
     // abortEpoch 发出去，设备会收下，热键又只停了一半。
     const fetchQueued = this.fetchWaiters.splice(0)
     for (const w of fetchQueued) w.reject(err)
+    // 转发会话一并收尾：设备没了，对端的入口连接要立刻知道（onClose），不能挂着等它自己发现。
+    const forwards = [...this.forwardSessions.values()]
+    this.forwardSessions.clear()
+    for (const s of forwards) clearTimeout(s.timer)
     for (const p of this.pending.values()) {
       clearTimeout(p.timer)
       p.reject(err)
@@ -544,6 +692,9 @@ export class WsHostRelay implements HostRelay {
     this.pending.clear()
     this.inFlight = false
     for (const q of queued) q.reject(err)
+    // onClose 放最后：回调里可能同步开新会话/发帧——此刻 forwardSessions 已清空、socket 已为 null，
+    // 不会撞上正在收尾的这批。
+    for (const s of forwards) s.onClose()
     // 断连不清空会话租约状态：持有者自己的下一个 send() 会因为 !this.socket 立刻拒绝，
     // 冒泡回 withSession 的 fn，其 finally 照常 releaseSession——租约会自然让给下一个排队者，
     // 排队者的第一个 send() 同样立刻因无 socket 而拒绝，如此级联清空，不需要在这里手动介入。

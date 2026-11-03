@@ -9,6 +9,8 @@
     "dev": "scripts/dev.sh",
     "dev:stop": "scripts/dev-stop.sh",
     "serve": "tsx src/serve.ts",
+    "widget:check": "tsx src/widgets/cli.ts widget:check",
+    "widget:add": "tsx src/widgets/cli.ts widget:add",
     "mcp:stdio": "tsx src/mcp/stdio-entry.ts",
     "doctor": "tsx src/doctor/cli.ts",
     "plugins": "tsx src/plugins/cli.ts",

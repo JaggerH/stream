@@ -397,4 +397,20 @@ describe('deviceGateway（宿主自建 server + Hono，basePath /api/stream）',
     // 冷却只针对这个来源；代理追加的另一跳照样能换到 token
     expect((await pair({ code: real }, '198.51.100.7')).status).toBe(200)
   })
+
+  // 回环转发入口随网关一起挂上（device-loopback-forward）：挂在 `${basePath}/fwd/...` 下——
+  // 坏凭证 403（不是 404）说明入口真的在了；WS upgrade 路径被网关认领，坏凭证被 403 拒掉，
+  // 不会开成一条真连接。
+  it('转发入口随网关挂载：HTTP 坏凭证 403、WS upgrade 被拒不开连接', async () => {
+    const stream = await tempStream()
+    const { port } = await hostApp(stream, { isAdmin: () => true })
+    const fwd = await json(port, 'GET', '/api/stream/fwd/no-such-device/8765/not-a-credential/x')
+    expect(fwd.status).toBe(403)
+    expect(fwd.body!.error).toBe('credential-malformed')
+    await new Promise<void>((resolve, reject) => {
+      const ws = new WebSocket(`ws://127.0.0.1:${port}/api/stream/fwd/d/8765/bad/x`)
+      ws.on('open', () => reject(new Error('坏凭证的 upgrade 不该开成连接')))
+      ws.on('error', () => resolve())
+    })
+  })
 })

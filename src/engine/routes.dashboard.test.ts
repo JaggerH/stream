@@ -10,6 +10,7 @@ import { tmpdir } from 'node:os'
 import { createStream, type Stream } from './index.ts'
 import { routes } from './routes.ts'
 import { deviceGateway } from './device-gateway.ts'
+import { serve } from '@hono/node-server'
 import { readConfig } from '../bootstrap.ts'
 import { WsHub } from '../http/ws.ts'
 import { DebugLog } from '../http/debug-log.ts'
@@ -59,5 +60,23 @@ describe('sidequest 面板随 routes() 起（routes 层）', () => {
       expect(res, `面板 ${p} 应该有 HTTP 响应`).not.toBeNull()
       await res!.arrayBuffer().catch(() => {})
     }
+  })
+
+  // widget 页面随 routes() 挂上（widget-manifest）：本机回环免密，空表也给完整列表页。
+  it('/widgets 列表页可打开', async () => {
+    const cfg = { ...tempRoot('w'), deployment: { ...tempRoot('w').deployment, scheduler: false } }
+    const s = await createStream({ dataDir: join(cfg.packages_dir, '..'), config: cfg, log: () => {} })
+    open.push(s)
+    const app = await routes(io(s, 0, 0))
+    const server = serve({ fetch: app.fetch, hostname: '127.0.0.1', port: 0 })
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+    const p = (server.address() as import('node:net').AddressInfo).port
+    const res = await fetch(`http://127.0.0.1:${p}/widgets`)
+    expect(res.status).toBe(200)
+    const html = await res.text()
+    expect(html).toContain('<h1>Widgets</h1>')
+    expect(html).toContain('widget:add')
+    ;(server as unknown as import('node:http').Server).closeAllConnections?.()
+    await new Promise<void>((resolve) => (server as unknown as import('node:http').Server).close(() => resolve()))
   })
 })

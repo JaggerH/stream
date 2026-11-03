@@ -665,6 +665,9 @@ pub const OP_NAMES: &[&str] = &[
     "browser.profiles", "browser.claim",
 ];
 
+// 设备模式下新增两个转发 op：http.forward / ws.forward（openspec device-loopback-forward）。
+// 这两条不走桌面后端实现，而是由 main.rs 在会话循环里单独捕获、交给 forward.rs 执行。
+
 /// `status` op 的参数：`{ text }`，`null` = 清掉。收件人是指示条不是桌面，所以它在
 /// `main.rs` 的会话循环里、进 `dispatch` 之前就被拦下；这里只负责把 wire 形状解出来。
 pub fn status_arg(args: &Value) -> Option<String> {

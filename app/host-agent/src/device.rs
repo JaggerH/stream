@@ -298,8 +298,26 @@ pub async fn park(why: &str) -> Infallible {
     }
 }
 
-pub fn device_hello(device_id: &str, name: &str) -> Value {
-    relay::hello_frame(device_id, "linux", name, env!("CARGO_PKG_VERSION"), DEVICE_OPS)
+/// 可转发端口来自状态目录的 `forward-ports.json`（一个 JSON 整数数组；文件缺失 = 没有声明，
+/// 主实例对这台设备一台端口都不许转）。读失败的语义是「没配置」，不是错误——端口转发是
+/// 选择性能力，不该因为它把整台设备的连接挂掉。
+pub fn declared_ports(state_dir: &Path) -> Option<Vec<u16>> {
+    let raw = std::fs::read_to_string(state_dir.join("forward-ports.json")).ok()?;
+    let v: serde_json::Value = serde_json::from_str(&raw).ok()?;
+    let arr = v.as_array()?;
+    let mut out: Vec<u16> = Vec::new();
+    for p in arr {
+        let n = p.as_u64()?;
+        if n < 1 || n > 65535 || out.len() >= crate::relay::MAX_HELLO_PORTS { return None }
+        let port = n as u16;
+        if !out.contains(&port) { out.push(port) }
+    }
+    Some(out)
+}
+
+pub fn device_hello(device_id: &str, name: &str, state_dir: &Path) -> Value {
+    let ports = declared_ports(state_dir).map(crate::forward::ForwardPorts);
+    relay::hello_frame(device_id, "linux", name, env!("CARGO_PKG_VERSION"), DEVICE_OPS, ports.as_ref().map(|p| p.0.as_slice()))
 }
 
 #[cfg(test)]
@@ -396,13 +414,38 @@ mod tests {
 
     #[test]
     fn the_hello_declares_linux_and_only_http_fetch() {
-        let h = device_hello("linux:0b7c", "nas");
+        let dir = std::env::temp_dir().join(format!("stream-hello-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let h = device_hello("linux:0b7c", "nas", &dir);
         assert_eq!(h["type"], "hello");
         assert_eq!(h["deviceId"], "linux:0b7c");
         assert_eq!(h["platform"], "linux");
         assert_eq!(h["name"], "nas");
         assert_eq!(h["ops"], json!(["http.fetch"]));
         assert_eq!(h["agentVersion"], env!("CARGO_PKG_VERSION"));
+        // 没配 forward-ports.json：ports 不出现在 hello 里（fail closed）。
+        assert!(h.get("ports").is_none(), "{h}");
+        // 配了：原样进 hello（重复去重）。
+        std::fs::write(dir.join("forward-ports.json"), "[8765, 8765, 9000]").unwrap();
+        let h2 = device_hello("linux:0b7c", "nas", &dir);
+        assert_eq!(h2["ports"], json!([8765, 9000]), "{h2}");
+    }
+
+    /// forward-ports.json 的解析：合法、去重、越界与格式错 → None（一台端口都不许转）。
+    #[test]
+    fn declared_ports_parses_the_config_file() {
+        let dir = std::env::temp_dir().join(format!("stream-ports-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        // 缺文件 = None
+        assert!(declared_ports(&dir).is_none());
+        // 合法
+        std::fs::write(dir.join("forward-ports.json"), "[1024, 8765]").unwrap();
+        assert_eq!(declared_ports(&dir), Some(vec![1024, 8765]));
+        // 越界 / 非整数 / 不是数组：None（fail closed）
+        for bad in ["[0]", "[70000]", "[\"x\"]", "8765", "[1.5]"] {
+            std::fs::write(dir.join("forward-ports.json"), bad).unwrap();
+            assert!(declared_ports(&dir).is_none(), "bad = {bad}");
+        }
     }
 
     #[test]

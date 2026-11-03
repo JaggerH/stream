@@ -20,6 +20,8 @@ mod browser;
 mod datadir;
 #[cfg(target_os = "linux")]
 mod device;
+#[cfg(target_os = "linux")]
+mod forward;
 mod glide;
 #[cfg(target_os = "linux")]
 mod httpfetch;
@@ -94,6 +96,9 @@ pub struct Session {
     pub hello: Value,
     /// 设备模式才有：`http.fetch` 交给它并发执行。缺席时这个 op 和其他没声明的 op 一样落进 dispatch 报错。
     pub fetcher: Option<std::sync::Arc<FetcherLike>>,
+    /// 设备模式才有：`http.forward` / `ws.forward`（openspec device-loopback-forward）交给它。
+    /// 缺席 = 这台设备不参与回环转发（hello 里也没有 ports）。
+    pub forwarder: Option<std::sync::Arc<forward::Forwarder>>,
     /// token 是配对得来的 device token：握手 401 / 关闭码 4003 = 已被撤销，不是"后端还没起完"。
     pub paired: bool,
     /// 多久一帧都没收到就判这条连接已死、结束会话交给监督循环重连。`None` = 不判（本机模式）。
@@ -538,7 +543,7 @@ async fn main() {
             // 后端（AX 句柄）不是 Send，在这条线程里建。
             let mut backend = Backend::default();
             let mut supervisor = Supervisor::default();
-            let session = Session { url, token, hello: relay::local_hello(), fetcher: None, paired: false, silence_limit: None };
+            let session = Session { url, token, hello: relay::local_hello(), fetcher: None, forwarder: None, paired: false, silence_limit: None };
             let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().expect("tokio runtime");
             let _ = rt.block_on(supervise(&session, &mut backend, &mut supervisor, Some(&handle)));
         });
@@ -549,7 +554,7 @@ async fn main() {
     {
         let mut backend = Backend::default();
         let mut supervisor = Supervisor::default();
-        let session = Session { url, token, hello: relay::local_hello(), fetcher: None, paired: false, silence_limit: None };
+        let session = Session { url, token, hello: relay::local_hello(), fetcher: None, forwarder: None, paired: false, silence_limit: None };
         // 本机会话不以撤销结束（paired=false），这一行实际走不到；真走到了就如实退出，别装作还在跑。
         let why = supervise(&session, &mut backend, &mut supervisor, overlay_handle.as_ref()).await;
         eprintln!("[host-agent] {why}");
@@ -594,11 +599,18 @@ async fn run_device_mode(env: device::DeviceEnv) {
             }
         };
         eprintln!("[device] {}（{}）→ {ws}", pairing.device_id, env.name);
+        // 可转发端口：状态目录的 forward-ports.json；读不了/没配 = 空（一台端口都不许转）。
+        let forwarder = std::sync::Arc::new(
+            forward::Forwarder::new(device::declared_ports(&env.state_dir).unwrap_or_default())
+                .map_err(|e| { eprintln!("[device] {e}"); std::process::exit(2); })
+                .unwrap_or_else(|_| unreachable!()),
+        );
         let session = Session {
             url: ws.clone(),
             token: pairing.device_token.clone(),
-            hello: device::device_hello(&pairing.device_id, &env.name),
+            hello: device::device_hello(&pairing.device_id, &env.name, &env.state_dir),
             fetcher: Some(fetcher.clone()),
+            forwarder: Some(forwarder),
             paired: true,
             silence_limit: Some(PAIRED_SILENCE_LIMIT),
         };
@@ -689,6 +701,8 @@ async fn run_session<D: protocol::Desktop>(
     // 每个请求一个任务，回复经 channel 交回这里写 socket——写端只有这一个所有者。
     let (out_tx, mut out_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
     let mut fetches = tokio::task::JoinSet::new();
+    // ws.forward 会话：op id → 设备方向的收件通道。断开时清空（drop 让泵任务自己收尾）。
+    let mut forwards: std::collections::HashMap<u64, tokio::sync::mpsc::UnboundedSender<forward::FwdFrame>> = std::collections::HashMap::new();
     let mut end = SessionEnd::Disconnected;
     let mut policy = overlay::OverlayPolicy::new();
     // 20ms 的心跳，兼两件事：**收热键**（渲染层那头是同步 channel，跨线程送过来）和
@@ -784,6 +798,56 @@ async fn run_session<D: protocol::Desktop>(
             }
         }
 
+        // http.forward（openspec device-loopback-forward）：与 http.fetch 同一条并发执行路。
+        if op == "http.forward" {
+            if let Some(f) = &session.forwarder {
+                let (f, out) = (f.clone(), out_tx.clone());
+                fetches.spawn(async move {
+                    let _ = out.send(f.reply_http(id, &args).await.to_string());
+                });
+                while fetches.try_join_next().is_some() {}
+                continue;
+            }
+        }
+
+        // ws.forward：建连后登记会话，之后双向数据走 fwd-data / fwd-close 主动帧。
+        if op == "ws.forward" {
+            if let Some(f) = &session.forwarder {
+                let reply = match (serde_json::from_value::<forward::WsForwardArgs>(args.clone()), id.as_u64()) {
+                    (Ok(a), Some(n)) => match f.open_ws(n, a, out_tx.clone()).await {
+                        Ok(tx) => {
+                            forwards.insert(n, tx);
+                            json!({ "id": id, "result": { "ok": true } })
+                        }
+                        Err(e) => {
+                            let code = e.split(':').next().unwrap_or("connect-failed").to_string();
+                            json!({ "id": id, "error": e, "code": code })
+                        }
+                    },
+                    (Err(e), _) => json!({ "id": id, "error": format!("network: ws.forward 参数不对：{e}"), "code": "network" }),
+                    (_, None) => json!({ "id": id, "error": "network: ws.forward 缺数字 id", "code": "network" }),
+                };
+                if tx.send(Message::Text(reply.to_string())).await.is_err() {
+                    break;
+                }
+                continue;
+            }
+        }
+
+        // 后端 → 设备方向的转发数据帧（主动帧，无 op；与 status/abort 同一先例）。
+        if req.get("type").and_then(|v| v.as_str()) == Some("fwd-data") || req.get("type").and_then(|v| v.as_str()) == Some("fwd-close") {
+            if let Some(n) = req.get("id").and_then(|v| v.as_u64()) {
+                if req.get("type").and_then(|v| v.as_str()) == Some("fwd-close") {
+                    forwards.remove(&n); // drop 收件通道：泵任务给回环侧发 Close 并收尾
+                } else if let Some(tx) = forwards.get(&n) {
+                    if let Some(b64) = req.get("b64").and_then(|v| v.as_str()) {
+                        let _ = tx.send(forward::FwdFrame::Data(b64.to_string()));
+                    }
+                }
+            }
+            continue;
+        }
+
         if op == "status" {
             if let Some(o) = overlay {
                 if let Some(cmd) = policy.on_status(protocol::status_arg(&args)) {
@@ -825,6 +889,8 @@ async fn run_session<D: protocol::Desktop>(
     // 断开时还在跑的请求一律放弃：后端已经把它们判成 device-lost（状态未知、不重试），
     // 结果写不回一条已经不在的连接。
     fetches.abort_all();
+    // 转发会话一并收尾：清掉登记，泵任务看到通道关闭就给回环侧发 Close 并退出。
+    forwards.clear();
     // 断连立刻熄（连同任务文字）——后端都不在了还亮着就是撒谎。
     if let Some(o) = overlay {
         for cmd in policy.on_session_end() {
@@ -844,7 +910,7 @@ mod tests {
     use tokio_tungstenite::tungstenite::protocol::{frame::coding::CloseCode, CloseFrame};
 
     fn local_session(url: &str) -> Session {
-        Session { url: url.to_string(), token: "token".into(), hello: relay::local_hello(), fetcher: None, paired: false, silence_limit: None }
+        Session { url: url.to_string(), token: "token".into(), hello: relay::local_hello(), fetcher: None, forwarder: None, paired: false, silence_limit: None }
     }
 
     #[cfg(target_os = "linux")]
@@ -852,8 +918,9 @@ mod tests {
         Session {
             url: url.to_string(),
             token: "device-token".into(),
-            hello: relay::hello_frame("linux:abc", "linux", "nas", "0.1.0", &["http.fetch"]),
+            hello: relay::hello_frame("linux:abc", "linux", "nas", "0.1.0", &["http.fetch"], None),
             fetcher: Some(Arc::new(httpfetch::Fetcher::new(httpfetch::Guard::loopback_ok(), None).unwrap())),
+            forwarder: Some(Arc::new(forward::Forwarder::new(vec![]).unwrap())),
             paired: true,
             silence_limit: Some(PAIRED_SILENCE_LIMIT),
         }

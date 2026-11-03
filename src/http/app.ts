@@ -1368,6 +1368,12 @@ export function createHttpApp(deps: HttpDeps): Hono {
         await next()
         return
       }
+      // 设备回环转发入口（openspec device-loopback-forward）：凭证即凭据（短期 HMAC、绑定
+      // device+port、常量时间比较），与配对码同一档"码即凭据"。Host/Origin 检查仍然生效。
+      if (c.req.path.startsWith('/api/fwd/')) {
+        await next()
+        return
+      }
       const verdict = authorizeAccess({
         remoteAddress: peerAddress(c),
         bearer: c.req.header('Authorization'),

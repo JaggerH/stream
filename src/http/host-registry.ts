@@ -20,6 +20,12 @@ export interface HostHello {
   agentVersion: string
   /** The ops this agent implements. The driver checks this before sending anything. */
   ops: string[]
+  /**
+   * 允许主实例经设备连接转发到这台设备**回环地址**的端口（openspec `device-loopback-forward`）。
+   * 设备端自己的配置给出来的；缺省缺失 = 一台端口都不允许（fail closed）。agent 收到转发请求
+   * 后还会再校验一次——这格里的是"声明"，不是"唯一防线"。
+   */
+  ports?: number[]
 }
 
 /** What a phone reports about itself: sent right after `hello`, every 30 s, and on every
@@ -60,6 +66,23 @@ const PLATFORMS: ReadonlySet<string> = new Set(['windows', 'macos', 'android', '
 
 const nonEmpty = (v: unknown): v is string => typeof v === 'string' && v.length > 0
 
+/** 一台设备最多声明多少个可转发端口。配置文件是人写的，64 个足够任何合理用法。 */
+export const MAX_HELLO_PORTS = 64
+
+/** `hello.ports`：缺失 = undefined（fail closed）；数组 = 去重后的合法端口。任何一格不合法（非
+ *  整数、越界、超量）都是 `null`——与 hello 的其他字段同一条规矩：畸形不默认、要被点名。 */
+function parsePorts(v: unknown): number[] | null | undefined {
+  if (v === undefined) return undefined
+  if (!Array.isArray(v)) return null
+  if (v.length > MAX_HELLO_PORTS) return null
+  const out: number[] = []
+  for (const p of v) {
+    if (typeof p !== 'number' || !Number.isInteger(p) || p < 1 || p > 65535) return null
+    if (!out.includes(p)) out.push(p)
+  }
+  return out
+}
+
 /**
  * Parse the first frame of a connection. **Anything malformed is `null`, never a default**: a
  * `hello` with a missing `ops` turned into `[]` would make every op on that device fail as
@@ -79,7 +102,9 @@ export function parseHello(raw: string): HostHello | null {
   if (deviceId.trim().toLowerCase() === LOCAL_DEVICE) return null
   if (typeof platform !== 'string' || !PLATFORMS.has(platform)) return null
   if (!Array.isArray(ops) || !ops.every((o) => typeof o === 'string')) return null
-  return { deviceId, platform: platform as HostPlatform, name, agentVersion, ops: ops as string[] }
+  const ports = parsePorts(m.ports)
+  if (ports === null) return null
+  return { deviceId, platform: platform as HostPlatform, name, agentVersion, ops: ops as string[], ...(ports ? { ports } : {}) }
 }
 
 export function surfaceOf(p: HostPlatform): HostSurface {
@@ -95,6 +120,8 @@ interface Live {
 }
 
 export type DeviceFetchRelay = Pick<WsHostRelay, 'fetchOp' | 'connected'>
+/** 转发通道的窄视图（openspec `device-loopback-forward`）。 */
+export type DeviceForwardRelay = Pick<WsHostRelay, 'forwardOp' | 'openForwardWs' | 'connected'>
 
 export class HostRelayRegistry {
   private readonly relays = new Map<string, WsHostRelay>()
@@ -172,6 +199,17 @@ export class HostRelayRegistry {
   /** 一台在线且声明了 `http.fetch` 的设备的 HTTP 通道；否则 undefined。 */
   fetchRelay(id: string): DeviceFetchRelay | undefined {
     if (!this.hasOp(id, 'http.fetch')) return undefined
+    return this.relays.get(id)
+  }
+
+  /** 在线设备 `hello.ports` 的快照；离线 = undefined。缺了 `ports` 字段 = 空数组（同样一台都不许）。 */
+  portsOf(id: string): readonly number[] | undefined {
+    return this.live.get(id)?.hello.ports ?? []
+  }
+
+  /** 一台在线、声明了 `op`（`http.forward` / `ws.forward`）的设备的转发通道；否则 undefined。 */
+  forwardRelay(id: string, op: 'http.forward' | 'ws.forward'): DeviceForwardRelay | undefined {
+    if (!this.hasOp(id, op)) return undefined
     return this.relays.get(id)
   }
 
