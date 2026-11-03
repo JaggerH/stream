@@ -281,8 +281,17 @@ describe('WS 转发入口', () => {
     // 端口未声明的凭证：直接用 A 端口凭证打 B 端口
     const client = new WebSocket(`ws://127.0.0.1:${port}/api/fwd/linux:abc/8888/${credFor({ device: 'linux:abc', port: 8765 })}/ws`)
     const codes: number[] = []
+    const errors: string[] = []
+    // terminate() 收掉还没握手的连接时 ws 会发 error（"closed before established"）。
+    // 挂上监听记下来并断言——没监听的话 emit('error') 会直接变成 uncaught exception。
+    client.on('error', (e) => errors.push((e as Error).message))
     client.on('unexpected-response', (_req, res) => { codes.push(res.statusCode ?? 0); client.terminate() })
     await vi.waitFor(() => expect(codes).toEqual([403]))
+    // 不留半开连接：error（连接未建立）发过、连接落到 CLOSED。
+    await vi.waitFor(() => {
+      expect(errors).toContain('WebSocket was closed before the connection was established')
+      expect(client.readyState).toBe(WebSocket.CLOSED)
+    })
     server.close()
   })
 })
