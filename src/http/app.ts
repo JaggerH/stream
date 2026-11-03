@@ -1391,6 +1391,10 @@ export function createHttpApp(deps: HttpDeps): Hono {
     }
     app.use('/api/*', accessGate)
     app.use('/v1/*', accessGate)
+    // widget 面（openspec widget-manifest：/widgets 列表、/widgets/:id 详情）与 /api/* 过**同一道**
+    // 门，不另写判定——serve.ts 监听 0.0.0.0，列表页会泄露 widget 清单与设备名，详情页是通往
+    // 设备回环端口的入口。凭证现取口直接住在 /api/widgets/:id/credential，天然在 /api/* 门后。
+    app.use('/widgets/*', accessGate)
 
     // 令牌自身只从**本机**取得：手机要连，就得有人在这台机器上看一眼（或扫一眼二维码）。
     // 已经持 token 的外来请求也不给——它已经有了，再吐一遍只是多一个泄漏面。

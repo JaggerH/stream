@@ -1,8 +1,8 @@
 /**
  * widget 最小界面（openspec `widget-manifest`）：只读列表 + sandbox iframe。
  *
- * 挂在访问门之内的 `/api/widgets`（远程访问要 token，页脚本把 URL 里的 token 传给凭证口）。
- * iframe 地址指向转发入口（`device-loopback-forward`），凭证由页脚本向
+ * 列表与详情页挂在 `/widgets/*`，与 `/api/*` 过同一道访问门（远程访问要 token，页脚本把
+ * URL 里的 token 传给凭证口）。iframe 地址指向转发入口（`device-loopback-forward`），凭证由页脚本向
  * `/api/widgets/:id/credential` 现取、在过期前刷新。设备不在线给可读的失败页，不白屏。
  */
 import type { Hono } from 'hono'
@@ -100,9 +100,10 @@ export function mountWidgetListPage(app: Hono, deps: WidgetPageDeps): void {
     )
   })
 
-  // 凭证现取口：为 (device, port, widget id) 签一条短期凭证。挂在访问门之内——远程访问
-  // 要 token（页脚本从自己的 URL 透传），本机回环免密。
-  app.get('/widgets/:id/credential', (c) => {
+  // 凭证现取口：为 (device, port, widget id) 签一条短期凭证。住在 /api/* 之内——与
+  // /api/* 过同一道访问门（本机回环免密，远程要 token，页脚本从自己的 URL 透传），
+  // 不给 widget 另写一套判定。
+  app.get('/api/widgets/:id/credential', (c) => {
     const id = c.req.param('id')
     const row = rows()[id]
     if (!row) return c.json({ error: 'not-found' }, 404)
