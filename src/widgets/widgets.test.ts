@@ -2,9 +2,9 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { mkdtempSync, writeFileSync, mkdirSync, rmSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createServer, type Server } from 'node:http'
+import { createServer, type Server, type IncomingMessage, type ServerResponse } from 'node:http'
 import type { AddressInfo } from 'node:net'
-import { WIDGET_SCHEMA, parseWidgetManifest } from './manifest.ts'
+import { WIDGET_SCHEMA, WIDGET_DATA_PATH, parseWidgetManifest } from './manifest.ts'
 import { checkWidget } from './check.ts'
 import { WidgetsStore } from './store.ts'
 
@@ -151,6 +151,103 @@ describe('checkWidget', () => {
     expect(out.ok).toBe(false)
     expect(out.results[0]).toMatchObject({ rule: 'manifest', ok: false })
     expect(out.results[0].message).toContain('permissions')
+  })
+
+  // ── data 写入口（openspec `widget-data-ingress`）────────────────────────────
+
+  /** 起一个随端口的测试服务器（serve.command 用 `true`：端口由测试服务器占着，健康检查直接过）。 */
+  const startTestServer = async (handler: (req: IncomingMessage, res: ServerResponse) => void): Promise<{ server: Server; port: number }> => {
+    const server: Server = createServer(handler)
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+    return { server, port: (server.address() as AddressInfo).port }
+  }
+
+  it('data 无 serve：schema 照样放行（拒给检查器），data-ingress 一条不通过', async () => {
+    // 拒绝是检查器的规则而不是 schema：现存 widget.json 的解析行为不变。
+    expect(WIDGET_SCHEMA.safeParse({ ...VALID, data: { type: 'object' } }).success).toBe(true)
+    const dir = widgetDir('data-no-serve', {
+      'widget.json': JSON.stringify({ ...VALID, data: { type: 'object' } }),
+      'index.html': '<h1>hi</h1>',
+    })
+    const out = await checkWidget(dir)
+    expect(out.ok).toBe(false)
+    const byRule = Object.fromEntries(out.results.map((r) => [r.rule, r]))
+    expect(byRule['data-ingress'].ok).toBe(false)
+    expect(byRule['data-ingress'].message).toContain('数据无处可写')
+    expect(byRule['data-endpoint'].skipped).toBe(true)
+  })
+
+  it('data + serve 且端点回 2xx → 通过；没有 data 的 widget 两条新规则都 skipped，行为不变', async () => {
+    const { server, port } = await startTestServer((_q, res) => { res.end('ok') })
+    const withData = widgetDir('data-endpoint-ok', {
+      'widget.json': JSON.stringify({ ...VALID, data: { type: 'object' }, serve: { command: ['true'], port } }),
+      'ui/index.html': 'x',
+    })
+    const out = await checkWidget(withData, { timeoutMs: 3_000 })
+    expect(out.ok).toBe(true)
+    const byRule = Object.fromEntries(out.results.map((r) => [r.rule, r]))
+    expect(byRule['data-ingress'].ok).toBe(true)
+    expect(byRule['data-endpoint'].ok).toBe(true)
+
+    const plain = widgetDir('no-data-serve', {
+      'widget.json': JSON.stringify({ ...VALID, serve: { command: ['true'], port } }),
+      'ui/index.html': 'x',
+    })
+    const out2 = await checkWidget(plain, { timeoutMs: 3_000 })
+    const byRule2 = Object.fromEntries(out2.results.map((r) => [r.rule, r]))
+    expect(byRule2['data-ingress'].skipped).toBe(true)
+    expect(byRule2['data-endpoint'].skipped).toBe(true)
+    expect(out2.ok).toBe(true)
+    server.close()
+  })
+
+  it('data-endpoint：widget 校验数据后回 4xx 也是口在 → 通过', async () => {
+    const { server, port } = await startTestServer((req, res) => {
+      if (req.method === 'POST' && req.url === WIDGET_DATA_PATH) { res.statusCode = 400; res.end('bad data'); return }
+      res.end('ok')
+    })
+    const dir = widgetDir('data-endpoint-4xx', {
+      'widget.json': JSON.stringify({ ...VALID, data: { type: 'object', required: ['value'] }, serve: { command: ['true'], port } }),
+      'ui/index.html': 'x',
+    })
+    const out = await checkWidget(dir, { timeoutMs: 3_000 })
+    const ep = out.results.find((r) => r.rule === 'data-endpoint')!
+    expect(ep.ok).toBe(true)
+    expect(ep.message).toContain('400')
+    server.close()
+  })
+
+  it('data-endpoint：端点 404 → 不通过并指名路径', async () => {
+    const { server, port } = await startTestServer((req, res) => {
+      if (req.method === 'POST' && req.url === WIDGET_DATA_PATH) { res.statusCode = 404; res.end('nope'); return }
+      res.end('ok')
+    })
+    const dir = widgetDir('data-endpoint-404', {
+      'widget.json': JSON.stringify({ ...VALID, data: { type: 'object' }, serve: { command: ['true'], port } }),
+      'ui/index.html': 'x',
+    })
+    const out = await checkWidget(dir, { timeoutMs: 3_000 })
+    const ep = out.results.find((r) => r.rule === 'data-endpoint')!
+    expect(ep.ok).toBe(false)
+    expect(ep.message).toContain(WIDGET_DATA_PATH)
+    expect(out.ok).toBe(false)
+    server.close()
+  })
+
+  it('data-endpoint：端点连接失败（收到数据口请求直接断开）→ 不通过', async () => {
+    const { server, port } = await startTestServer((req, res) => {
+      if (req.method === 'POST' && req.url === WIDGET_DATA_PATH) { req.socket.destroy(); return }
+      res.end('ok')
+    })
+    const dir = widgetDir('data-endpoint-reset', {
+      'widget.json': JSON.stringify({ ...VALID, data: { type: 'object' }, serve: { command: ['true'], port } }),
+      'ui/index.html': 'x',
+    })
+    const out = await checkWidget(dir, { timeoutMs: 3_000 })
+    const ep = out.results.find((r) => r.rule === 'data-endpoint')!
+    expect(ep.ok).toBe(false)
+    expect(ep.message).toContain('连不上')
+    server.close()
   })
 })
 

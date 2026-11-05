@@ -3,14 +3,16 @@
  *
  * 规则：manifest（存在且 schema 合法）、entry（文件存在）、icon（声明了就存在）、
  * serve-port（合法且不是主实例端口）、serve-up（serve.command 在超时内起来并回应健康检查）、
- * permissions（字段本身合法）。整体 ok = 全部结果都通过（没声明 serve / permissions 的对应
+ * data-ingress（声明了 data 就必须有 serve）、data-endpoint（serve 还活着的时候向
+ * /.well-known/widget-data 发一次最小样例，只要求连得上且不是 404）、
+ * permissions（字段本身合法）。整体 ok = 全部结果都通过（没声明 serve / data / permissions 的对应
  * 规则按跳过 = 通过计）。
  */
 import { existsSync, readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { spawn, type ChildProcess } from 'node:child_process'
 import { request } from 'node:http'
-import { WIDGET_SCHEMA } from './manifest.ts'
+import { WIDGET_SCHEMA, WIDGET_DATA_PATH } from './manifest.ts'
 import type { WidgetManifest } from './manifest.ts'
 
 export interface CheckResult {
@@ -35,6 +37,9 @@ export interface CheckOpts {
 
 const DEFAULT_TIMEOUT_MS = 10_000
 
+/** data-endpoint 单次探测的等待上界：数据口是本地回环，两秒足够，不起轮询循环。 */
+const DATA_PROBE_TIMEOUT_MS = 2_000
+
 /** GET http://127.0.0.1:port/path 一次；连不上 reject。 */
 function probeOnce(port: number, path: string, timeoutMs: number): Promise<number> {
   return new Promise((resolve, reject) => {
@@ -46,6 +51,46 @@ function probeOnce(port: number, path: string, timeoutMs: number): Promise<numbe
     req.on('error', reject)
     req.end()
   })
+}
+
+/** POST http://127.0.0.1:port/path 一次，body 是 JSON；连不上 reject，否则给状态码。 */
+function postOnce(port: number, path: string, body: string, timeoutMs: number): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const req = request(
+      {
+        host: '127.0.0.1',
+        port,
+        path,
+        method: 'POST',
+        timeout: timeoutMs,
+        headers: { 'content-type': 'application/json', 'content-length': Buffer.byteLength(body) },
+      },
+      (res) => {
+        res.resume()
+        resolve(res.statusCode ?? 0)
+      },
+    )
+    req.on('timeout', () => { req.destroy(new Error('探测超时')) })
+    req.on('error', reject)
+    req.end(body)
+  })
+}
+
+/**
+ * 数据口探测（openspec `widget-data-ingress`）：按约定向 serve 端口发一份最小样例（空对象 JSON），
+ * 只要求「连得上、不是 404」。widget 收下与否由回 2xx 决定；它校验数据后回 4xx（400 之类）说明口
+ * 在，本条不拦。body 用空对象而不按 `data` 造样例：从任意 JSON Schema 生成实例需要一个生成器，
+ * 而区分「没实现（404）」与「实现了但嫌数据不对（4xx）」用空对象就够了。
+ */
+async function probeDataEndpoint(port: number): Promise<CheckResult> {
+  try {
+    const status = await postOnce(port, WIDGET_DATA_PATH, '{}', DATA_PROBE_TIMEOUT_MS)
+    return status === 404
+      ? { rule: 'data-endpoint', ok: false, message: `POST ${WIDGET_DATA_PATH} 返回 404：serve 起来了，但没有实现数据口` }
+      : { rule: 'data-endpoint', ok: true, message: `HTTP ${status}` }
+  } catch (e) {
+    return { rule: 'data-endpoint', ok: false, message: `POST ${WIDGET_DATA_PATH} 连不上：${e instanceof Error ? e.message : String(e)}` }
+  }
 }
 
 /** 起一个回环探测循环：每 250ms 探一次，任何 <500 的响应都算「起来了」。返回停服函数。 */
@@ -115,6 +160,9 @@ export async function checkWidget(dir: string, opts: CheckOpts = {}): Promise<Ch
     results.push({ rule: 'serve-port', ok: true, skipped: true })
   }
 
+  // 数据口的探测只能在下面 serve-up 那段进程窗口里现取，先占个位，好在 serve-up 之后按顺序入表。
+  let dataEndpoint: CheckResult | undefined
+
   // 5) serve-up：起 command、轮询健康检查、停服。spawn 失败 / 提前退出 / 超时都要说清。
   if (manifest.serve) {
     const [cmd, ...args] = manifest.serve.command
@@ -133,6 +181,8 @@ export async function checkWidget(dir: string, opts: CheckOpts = {}): Promise<Ch
       if (!health.ok && exited) results.push({ rule: 'serve-up', ok: false, message: `${exited}；command=${manifest.serve.command.join(' ')}` })
       else if (!health.ok) results.push({ rule: 'serve-up', ok: false, message: `${health.detail}；command=${manifest.serve.command.join(' ')}` })
       else results.push({ rule: 'serve-up', ok: true, message: health.detail })
+      // 声明了 data 就在进程还活着的这一段里探一次数据口（不另起第二次进程）。
+      if (manifest.data && health.ok) dataEndpoint = await probeDataEndpoint(manifest.serve.port)
       child.removeAllListeners()
       if (child.pid && child.exitCode === null && !child.killed) {
         try { child.kill('SIGTERM') } catch { /* 已退出 */ }
@@ -142,7 +192,24 @@ export async function checkWidget(dir: string, opts: CheckOpts = {}): Promise<Ch
     results.push({ rule: 'serve-up', ok: true, skipped: true })
   }
 
-  // 6) permissions：schema 已经整体校验过；这一条单独给结论（逐条报告的要求）。
+  // 6) data-ingress：`data` 是「数据往哪儿写」的声明，那个口只长在 serve 端口上——声明了 data
+  //    却没有 serve，数据无处可写。静态判定，不起进程。
+  if (!manifest.data) {
+    results.push({ rule: 'data-ingress', ok: true, skipped: true })
+  } else if (!manifest.serve) {
+    results.push({ rule: 'data-ingress', ok: false, message: `声明了 data 但没有 serve，数据无处可写（约定：POST http://127.0.0.1:<serve.port>${WIDGET_DATA_PATH}）` })
+  } else {
+    results.push({ rule: 'data-ingress', ok: true })
+  }
+
+  // 7) data-endpoint：探测结论，只要求「连得上、不是 404」（见 probeDataEndpoint）。没 data、
+  //    没 serve（原因在 data-ingress）、serve 没起来（原因在 serve-up）都记跳过。
+  results.push(dataEndpoint
+    ?? (manifest.data
+      ? { rule: 'data-endpoint', ok: true, skipped: true, message: manifest.serve ? 'serve 没起来，未探测（原因见 serve-up）' : '没有 serve 可探测（原因见 data-ingress）' }
+      : { rule: 'data-endpoint', ok: true, skipped: true }))
+
+  // 8) permissions：schema 已经整体校验过；这一条单独给结论（逐条报告的要求）。
   if (manifest.permissions !== undefined) {
     const re = PERMISSIONS_SHAPE.safeParse(parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>).permissions : undefined)
     results.push(re.success

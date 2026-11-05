@@ -52,6 +52,7 @@ describe('@streamapp/engine 公开面', () => {
         'ToolDescriptor',
         'ToolProgress',
         'ToolResult',
+        'WIDGET_DATA_PATH',
         'WIDGET_SCHEMA',
         'WidgetsStore',
         'callerFetchGuardConfigured',

@@ -42,7 +42,7 @@ export {
 } from '../http/device-forward.ts'
 export type { ForwardScope, CredentialVerdict } from '../http/device-forward.ts'
 /** widget manifest schema + checkWidget + store（openspec `widget-manifest`）。 */
-export { WIDGET_SCHEMA, parseWidgetManifest, type WidgetManifest } from '../widgets/manifest.ts'
+export { WIDGET_SCHEMA, WIDGET_DATA_PATH, parseWidgetManifest, type WidgetManifest } from '../widgets/manifest.ts'
 export { checkWidget } from '../widgets/check.ts'
 export type { CheckResult, CheckOutput } from '../widgets/check.ts'
 export { createWidgetsStore, WidgetsStore } from '../widgets/store.ts'

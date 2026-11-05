@@ -2,6 +2,7 @@
  * widget.json 描述文件的 zod schema（openspec `widget-manifest`）。
  * 字段：id / name / icon / version / entry / serve / size / data / permissions / preview。
  * 全部必填项显式；未知字段拒绝（strict）。
+ * `data` 的写入口是一条固定约定，见 `WIDGET_DATA_PATH`（openspec `widget-data-ingress`）。
  */
 import { z } from 'zod'
 
@@ -23,7 +24,22 @@ export const ID_SCHEMA = z.string().regex(/^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/, 'id
 /** size 枚举。 */
 export const SIZE_SCHEMA = z.enum(['card', 'half', 'full'])
 
-/** data：JSON Schema 对象（形状校验，不验语义）。 */
+/**
+ * 数据写入口（openspec `widget-data-ingress`）：宿主把数据写给一个 widget 的唯一约定路径。
+ * widget 在它 `serve.port` 的 HTTP 服务上实现 `POST /.well-known/widget-data`，收一份符合 `data`
+ * schema 的 JSON，回 2xx 表示收下。声明了 `data` 却没有 `serve` 的 widget 无处可写——检查器的
+ * `data-ingress` 规则就是查这一条。
+ */
+export const WIDGET_DATA_PATH = '/.well-known/widget-data'
+
+/**
+ * data：JSON Schema 对象（形状校验，不验语义）。
+ *
+ * 约定（见 {@link WIDGET_DATA_PATH}）：声明了本字段的 widget，宿主对该 widget 的 `serve` 端口发
+ * `POST /.well-known/widget-data`，`Content-Type: application/json`，body 是一份符合本 schema 的
+ * JSON；widget 回 2xx 表示收下，其余状态码一律视为失败（含它自己校验数据后回的 4xx）。
+ * 本仓库只定这条约定与检查它，不负责往这个口写数据。
+ */
 export const DATA_SCHEMA = z.record(z.string(), z.unknown())
 
 /** permissions.network 里的单条主机规则：主机名或 `*.` 后缀，小写。 */
@@ -74,6 +90,10 @@ export interface WidgetManifest {
   entry: string
   serve?: { command: string[]; port: number }
   size: 'card' | 'half' | 'full'
+  /**
+   * 数据形状（JSON Schema）。写了它就得有 `serve`：宿主只往那个端口的
+   * `POST /.well-known/widget-data` 送数据（`DATA_SCHEMA` / `WIDGET_DATA_PATH`）。
+   */
   data?: Record<string, unknown>
   permissions?: {
     model?: boolean
