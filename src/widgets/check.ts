@@ -1,18 +1,23 @@
 /**
- * widget 检查器（openspec `widget-manifest`）：逐条规则给出通过/失败与原因。
+ * widget 检查器（openspec `widget-manifest`）。
  *
- * 规则：manifest（存在且 schema 合法）、entry（文件存在）、icon（声明了就存在）、
- * serve-port（合法且不是主实例端口）、serve-up（serve.command 在超时内起来并回应健康检查）、
- * data-ingress（声明了 data 就必须有 serve）、data-endpoint（serve 还活着的时候向
- * /.well-known/widget-data 发一次最小样例，只要求连得上且不是 404）、
+ * 规则：manifest（存在且 schema 合法）、env（顶层没有 `env` / `environment`）、entry（文件存在）、
+ * icon（声明了就存在）、data-dir（声明了 `dataDir` 就必须是清单目录内的相对路径）、
+ * serve-port（合法且不是主实例端口）、serve-command（`serve.command` 的第一个词是白名单解释器或清单
+ * 目录内的相对路径，且参数不含 shell 元字符）、serve-up（serve.command 在超时内起来并回应健康检查；
+ * **serve-command 不通过时不启动**）、data-ingress（声明了 data 就必须有 serve）、data-endpoint（serve
+ * 还活着的时候向 /.well-known/widget-data 发一次最小样例，只要求连得上且不是 404）、
  * permissions（字段本身合法）。整体 ok = 全部结果都通过（没声明 serve / data / permissions 的对应
  * 规则按跳过 = 通过计）。
+ *
+ * `data-dir` / `env` / `serve-command` 三条归属规则见 openspec `widget-manifest-limits`：数据目录与环境
+ * 变量都属于宿主，清单只能声明位置；后端由哪个解释器起也归宿主管，检查器自己不起不该起的命令。
  */
 import { existsSync, readFileSync } from 'node:fs'
-import { join, resolve } from 'node:path'
+import { join, resolve, sep } from 'node:path'
 import { spawn, type ChildProcess } from 'node:child_process'
 import { request } from 'node:http'
-import { WIDGET_SCHEMA, WIDGET_DATA_PATH } from './manifest.ts'
+import { WIDGET_SCHEMA, WIDGET_DATA_PATH, SERVE_INTERPRETERS, SHELL_METACHARS, FORBIDDEN_ENV_FIELDS } from './manifest.ts'
 import type { WidgetManifest } from './manifest.ts'
 
 export interface CheckResult {
@@ -106,6 +111,56 @@ async function pollHealth(port: number, path: string, timeoutMs: number): Promis
   return { ok: false, detail: `健康检查 ${timeoutMs}ms 内没有得到 <500 的响应` }
 }
 
+/** 像绝对路径的写法：POSIX 前缀、UNC、Windows 盘符。 */
+const isAbsoluteLike = (s: string): boolean =>
+  s.startsWith('/') || s.startsWith('\\\\') || /^[a-zA-Z]:[\\/]/.test(s)
+
+/** 顶层的环境变量字段名（小写比对）。strict schema 本来也拒未知键，这一条是把原因指名。 */
+function envFieldsOf(parsed: unknown): string[] {
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return []
+  const allowed: readonly string[] = FORBIDDEN_ENV_FIELDS
+  return Object.keys(parsed as Record<string, unknown>).filter((k) => allowed.includes(k.toLowerCase()))
+}
+
+/** `dataDir` 的判据（openspec `widget-manifest-limits`）：非空、不是绝对路径、不含 `..` 段。通过返回 undefined。 */
+function dataDirProblem(value: unknown): string | undefined {
+  if (typeof value !== 'string' || value.trim() === '') return 'dataDir 必须是非空字符串（相对清单目录的路径）'
+  if (isAbsoluteLike(value)) return `dataDir 不能是绝对路径：${value}——数据目录由宿主映射，清单只能给相对清单目录的路径`
+  if (value.split(/[\\/]/).includes('..')) return `dataDir 不得含 ..：${value}——跳出清单目录的路径不是该 widget 自己的数据目录`
+  return undefined
+}
+
+/**
+ * `serve.command` 的判据（openspec `widget-manifest-limits`）：第一个词要么是白名单里的裸名
+ * （{@link SERVE_INTERPRETERS}），要么是清单目录内的相对路径；命令的任意元素都不得含 shell 元字符
+ * （命令参数不得含 shell 元字符：宿主可能在别处以 shell 字符串拉起后端，`a; b` 在那儿就不是它在这儿
+ * 看起来的那个意思）。通过返回 undefined。
+ */
+function serveCommandProblem(command: string[], abs: string): string | undefined {
+  const metas: readonly string[] = SHELL_METACHARS
+  const hit = metas.find((m) => command.some((w) => w.includes(m)))
+  if (hit !== undefined) {
+    const word = command.find((w) => w.includes(hit)) as string
+    return `命令参数不得含 shell 元字符（${hit}）：${word}`
+  }
+  const word = command[0]
+  if (word === undefined || word.trim() === '') return 'serve.command 的第一个词不能是空串'
+  if (isAbsoluteLike(word)) {
+    return `serve.command 的可执行文件不能是绝对路径：${word}——用解释器白名单（${[...SERVE_INTERPRETERS].join(' / ')}）或清单目录内的相对路径`
+  }
+  if (word.includes('/') || word.includes('\\')) {
+    if (word.split(/[\\/]/).includes('..')) return `serve.command 的可执行文件不得含 ..（跳出清单目录）：${word}`
+    const target = resolve(abs, word)
+    if (target !== abs && !target.startsWith(abs + sep)) return `serve.command 的可执行文件解析后不在清单目录内：${word}`
+    return undefined // 在目录内：存不存在由 serve-up 的 spawn 结果说
+  }
+  const names: readonly string[] = SERVE_INTERPRETERS
+  if (!names.includes(word)) {
+    return `serve.command 的第一个词「${word}」既不在解释器白名单（${[...SERVE_INTERPRETERS].join(' / ')}），也不是清单目录内的相对路径`
+  }
+  return undefined
+}
+
 export async function checkWidget(dir: string, opts: CheckOpts = {}): Promise<CheckOutput> {
   const results: CheckResult[] = []
   const abs = resolve(dir)
@@ -128,14 +183,23 @@ export async function checkWidget(dir: string, opts: CheckOpts = {}): Promise<Ch
     results.push({ rule: 'manifest', ok: false, message: `widget.json 不是合法 JSON：${e instanceof Error ? e.message : String(e)}` })
     return { ok: false, results }
   }
+  // 1b) env：看原始 JSON 的顶层键。strict schema 本来也会把 `env` / `environment` 拒在「未知字段」里，
+  //     但那条给不出「环境变量由宿主组装」这个原因——所以这里先指名，schema 的结论照旧各走各路。
+  const envKeys = envFieldsOf(parsed)
+  const envResult: CheckResult = envKeys.length === 0
+    ? { rule: 'env', ok: true }
+    : { rule: 'env', ok: false, message: `环境变量由宿主组装，清单不能注入（发现字段：${envKeys.join('、')}）` }
+
   const parsedShape = WIDGET_SCHEMA.safeParse(parsed)
   if (!parsedShape.success) {
     const first = parsedShape.error.issues[0]
     results.push({ rule: 'manifest', ok: false, message: `schema 校验失败：${first.path.join('.')} — ${first.message}` })
+    results.push(envResult)
     return { ok: false, results }
   }
   manifest = parsedShape.data as WidgetManifest
   results.push({ rule: 'manifest', ok: true })
+  results.push(envResult)
 
   // 2) entry：文件存在
   const entryPath = join(abs, manifest.entry)
@@ -150,7 +214,19 @@ export async function checkWidget(dir: string, opts: CheckOpts = {}): Promise<Ch
     results.push({ rule: 'icon', ok: true, skipped: true })
   }
 
-  // 4) serve-port：声明了 serve 才查
+  // 4) data-dir：`dataDir` 是「数据往哪儿写」的目录声明，归宿主管（openspec `widget-manifest-limits`）：
+  //     必须是清单目录内的相对路径，宿主把它映射成该 widget 唯一可写的数据目录。没声明 = 宿主给一份按
+  //     widget id 命名的目录，本条跳过。静态判定，不起进程、不创建目录。
+  if (manifest.dataDir !== undefined) {
+    const problem = dataDirProblem(manifest.dataDir)
+    results.push(problem === undefined
+      ? { rule: 'data-dir', ok: true, message: `宿主把 ${manifest.dataDir} 映射成该 widget 唯一可写的数据目录` }
+      : { rule: 'data-dir', ok: false, message: problem })
+  } else {
+    results.push({ rule: 'data-dir', ok: true, skipped: true, message: '未声明 dataDir：宿主给一份按 widget id 命名的数据目录' })
+  }
+
+  // 5) serve-port：声明了 serve 才查
   if (manifest.serve) {
     const p = manifest.serve.port
     if (p === backendPort) results.push({ rule: 'serve-port', ok: false, message: `端口 ${p} 与主实例端口冲突` })
@@ -163,8 +239,23 @@ export async function checkWidget(dir: string, opts: CheckOpts = {}): Promise<Ch
   // 数据口的探测只能在下面 serve-up 那段进程窗口里现取，先占个位，好在 serve-up 之后按顺序入表。
   let dataEndpoint: CheckResult | undefined
 
-  // 5) serve-up：起 command、轮询健康检查、停服。spawn 失败 / 提前退出 / 超时都要说清。
+  // 6) serve-command：第一个词与参数形状的静态判定（openspec `widget-manifest-limits`）。这一条不通过
+  //     就**不往下 spawn**：检查器不该是那条不该起的命令的执行者。
+  let commandOk = true
   if (manifest.serve) {
+    const problem = serveCommandProblem(manifest.serve.command, abs)
+    commandOk = problem === undefined
+    results.push(problem === undefined
+      ? { rule: 'serve-command', ok: true }
+      : { rule: 'serve-command', ok: false, message: `${problem}；command=${manifest.serve.command.join(' ')}` })
+  } else {
+    results.push({ rule: 'serve-command', ok: true, skipped: true })
+  }
+
+  // 7) serve-up：起 command、轮询健康检查、停服。spawn 失败 / 提前退出 / 超时都要说清。
+  if (manifest.serve && !commandOk) {
+    results.push({ rule: 'serve-up', ok: true, skipped: true, message: 'serve-command 不通过，检查器没有启动这条命令（原因见 serve-command）' })
+  } else if (manifest.serve) {
     const [cmd, ...args] = manifest.serve.command
     let child: ChildProcess | undefined
     let exited: string | undefined
@@ -192,7 +283,7 @@ export async function checkWidget(dir: string, opts: CheckOpts = {}): Promise<Ch
     results.push({ rule: 'serve-up', ok: true, skipped: true })
   }
 
-  // 6) data-ingress：`data` 是「数据往哪儿写」的声明，那个口只长在 serve 端口上——声明了 data
+  // 8) data-ingress：`data` 是「数据往哪儿写」的声明，那个口只长在 serve 端口上——声明了 data
   //    却没有 serve，数据无处可写。静态判定，不起进程。
   if (!manifest.data) {
     results.push({ rule: 'data-ingress', ok: true, skipped: true })
@@ -202,14 +293,24 @@ export async function checkWidget(dir: string, opts: CheckOpts = {}): Promise<Ch
     results.push({ rule: 'data-ingress', ok: true })
   }
 
-  // 7) data-endpoint：探测结论，只要求「连得上、不是 404」（见 probeDataEndpoint）。没 data、
-  //    没 serve（原因在 data-ingress）、serve 没起来（原因在 serve-up）都记跳过。
+  // 9) data-endpoint：探测结论，只要求「连得上、不是 404」（见 probeDataEndpoint）。没 data、
+  //    没 serve（原因在 data-ingress）、serve 没起来（原因在 serve-up）、serve 根本没被启动（原因在
+  //    serve-command）都记跳过。
   results.push(dataEndpoint
     ?? (manifest.data
-      ? { rule: 'data-endpoint', ok: true, skipped: true, message: manifest.serve ? 'serve 没起来，未探测（原因见 serve-up）' : '没有 serve 可探测（原因见 data-ingress）' }
+      ? {
+          rule: 'data-endpoint',
+          ok: true,
+          skipped: true,
+          message: !manifest.serve
+            ? '没有 serve 可探测（原因见 data-ingress）'
+            : !commandOk
+              ? 'serve 没有被启动，未探测（原因见 serve-command）'
+              : 'serve 没起来，未探测（原因见 serve-up）',
+        }
       : { rule: 'data-endpoint', ok: true, skipped: true }))
 
-  // 8) permissions：schema 已经整体校验过；这一条单独给结论（逐条报告的要求）。
+  // 10) permissions：schema 已经整体校验过；这一条单独给结论（逐条报告的要求）。
   if (manifest.permissions !== undefined) {
     const re = PERMISSIONS_SHAPE.safeParse(parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>).permissions : undefined)
     results.push(re.success

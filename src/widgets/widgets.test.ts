@@ -8,6 +8,12 @@ import { WIDGET_SCHEMA, WIDGET_DATA_PATH, parseWidgetManifest } from './manifest
 import { checkWidget } from './check.ts'
 import { WidgetsStore } from './store.ts'
 
+// serve.command 的夹具：第一个词必须是解释器白名单里的裸名（openspec `widget-manifest-limits`），
+// 所以起后端一律 `node serve.js`；脚本只保活、不监听——健康检查打在测试自己占住的那个端口上。
+// 元字符（; | && ` $(）在命令的任何一段里都不许出现，脚本内容里没有它们。
+const SERVE_CMD = ['node', 'serve.js']
+const SERVE_JS = 'setInterval(() => {}, 60000)'
+
 const VALID = {
   id: 'my-status',
   name: '我的状态牌',
@@ -66,6 +72,23 @@ describe('widget.json schema', () => {
     expect(parseWidgetManifest('not json')).toBeNull()
     expect(parseWidgetManifest('{"id":1}')).toBeNull()
   })
+
+  // ── 归属三条（openspec `widget-manifest-limits`）：schema 只受理形状 ──────────
+
+  it('dataDir：形状受理（非空字符串），对不对交给 data-dir 规则', () => {
+    expect(WIDGET_SCHEMA.safeParse({ ...VALID, dataDir: 'data' }).success).toBe(true)
+    // 绝对路径与 .. 在这里照样受理——拒它是检查器 data-dir 一条的事（与 data 无 serve 同一先例），
+    // 这样「写了个不合法的 dataDir」在逐条报告里给出的是指名的原因，不是「schema 不合」。
+    expect(WIDGET_SCHEMA.safeParse({ ...VALID, dataDir: '/var/tmp/x' }).success).toBe(true)
+    expect(WIDGET_SCHEMA.safeParse({ ...VALID, dataDir: '../shared' }).success).toBe(true)
+    expect(WIDGET_SCHEMA.safeParse({ ...VALID, dataDir: '' }).success).toBe(false) // 空串不是路径
+    expect(parseWidgetManifest(JSON.stringify({ ...VALID, dataDir: 'data' }))?.dataDir).toBe('data')
+  })
+
+  it('env / environment 不在 schema 里：strict 拒未知键', () => {
+    expect(WIDGET_SCHEMA.safeParse({ ...VALID, env: { FOO: '1' } }).success).toBe(false)
+    expect(WIDGET_SCHEMA.safeParse({ ...VALID, environment: { FOO: '1' } }).success).toBe(false)
+  })
 })
 
 // ── 检查器 ──────────────────────────────────────────────────────────────────
@@ -121,25 +144,25 @@ describe('checkWidget', () => {
     const server: Server = createServer((_q, res) => { res.end('ok') })
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
     const port = (server.address() as AddressInfo).port
-    const dir = widgetDir('serve-ok', { 'widget.json': JSON.stringify({ ...VALID, serve: { command: ['true'], port } }) })
+    const dir = widgetDir('serve-ok', { 'widget.json': JSON.stringify({ ...VALID, serve: { command: SERVE_CMD, port } }), 'serve.js': SERVE_JS })
     const out = await checkWidget(dir, { timeoutMs: 3_000 })
     expect(out.results.find((r) => r.rule === 'serve-up')!.ok).toBe(true)
     server.close()
   })
 
-  it('serve-up：命令起不来（不存在的可执行文件）→ 失败并说明', async () => {
-    const dir = widgetDir('serve-bad-cmd', { 'widget.json': JSON.stringify({ ...VALID, serve: { command: ['definitely-not-a-real-binary-xyz'], port: 8765 } }) })
+  it('serve-up：命令起不来（解释器在、脚本不存在）→ 失败并说明', async () => {
+    const dir = widgetDir('serve-bad-cmd', { 'widget.json': JSON.stringify({ ...VALID, serve: { command: ['node', 'no-such-file.js'], port: 8765 } }) })
     const out = await checkWidget(dir, { timeoutMs: 2_000 })
     const serveUp = out.results.find((r) => r.rule === 'serve-up')!
     expect(serveUp.ok).toBe(false)
-    expect(serveUp.message).toContain('definitely-not-a-real-binary-xyz')
+    expect(serveUp.message).toContain('no-such-file.js')
   })
 
   it('serve-up：起了但永不回应 → 超时失败', async () => {
     const listener = createServer(() => { /* 收到连接也不回应 */ })
     await new Promise<void>((resolve) => listener.listen(0, '127.0.0.1', resolve))
     const port = (listener.address() as AddressInfo).port
-    const dir = widgetDir('serve-silent', { 'widget.json': JSON.stringify({ ...VALID, serve: { command: ['sleep', '60'], port } }) })
+    const dir = widgetDir('serve-silent', { 'widget.json': JSON.stringify({ ...VALID, serve: { command: SERVE_CMD, port } }), 'serve.js': SERVE_JS })
     const out = await checkWidget(dir, { timeoutMs: 1_000 })
     expect(out.results.find((r) => r.rule === 'serve-up')!.ok).toBe(false)
     listener.close()
@@ -153,9 +176,121 @@ describe('checkWidget', () => {
     expect(out.results[0].message).toContain('permissions')
   })
 
+  // ── 归属三条（openspec `widget-manifest-limits`）：检查器逐条判 ────────────────
+
+  it('env：顶层写了 env / environment → 一条不通过并写明归属；没写 → 通过', async () => {
+    const withEnv = widgetDir('env-injected', {
+      'widget.json': JSON.stringify({ ...VALID, entry: 'index.html', env: { HOME: '/tmp' } }),
+      'index.html': 'x',
+    })
+    const out = await checkWidget(withEnv)
+    expect(out.ok).toBe(false)
+    const env = out.results.find((r) => r.rule === 'env')!
+    expect(env.ok).toBe(false)
+    expect(env.message).toContain('环境变量由宿主组装')
+    expect(env.message).toContain('env')
+
+    const synonym = widgetDir('env-synonym', {
+      'widget.json': JSON.stringify({ ...VALID, entry: 'index.html', environment: { HOME: '/tmp' } }),
+      'index.html': 'x',
+    })
+    const out2 = await checkWidget(synonym)
+    expect(out2.results.find((r) => r.rule === 'env')!.message).toContain('environment')
+
+    // 没写的清单：这一条给通过（不是跳过——「没有可注入的字段」正是这条要确认的事）
+    const plain = widgetDir('env-absent', { 'widget.json': JSON.stringify({ ...VALID, entry: 'index.html' }), 'index.html': 'x' })
+    const envPlain = (await checkWidget(plain)).results.find((r) => r.rule === 'env')!
+    expect(envPlain.ok).toBe(true)
+    expect(envPlain.skipped).toBeUndefined()
+  })
+
+  it('data-dir：声明了就必须是清单目录内的相对路径；没声明按宿主给缺省目录跳过', async () => {
+    const ok = widgetDir('datadir-ok', {
+      'widget.json': JSON.stringify({ ...VALID, entry: 'index.html', dataDir: 'data' }),
+      'index.html': 'x',
+    })
+    const byOk = Object.fromEntries((await checkWidget(ok)).results.map((r) => [r.rule, r]))
+    expect(byOk['data-dir'].ok).toBe(true)
+
+    const absent = widgetDir('datadir-absent', { 'widget.json': JSON.stringify({ ...VALID, entry: 'index.html' }), 'index.html': 'x' })
+    const byAbsent = Object.fromEntries((await checkWidget(absent)).results.map((r) => [r.rule, r]))
+    expect(byAbsent['data-dir'].skipped).toBe(true)
+
+    const absolute = widgetDir('datadir-absolute', {
+      'widget.json': JSON.stringify({ ...VALID, entry: 'index.html', dataDir: '/var/tmp/x' }),
+      'index.html': 'x',
+    })
+    const byAbs = Object.fromEntries((await checkWidget(absolute)).results.map((r) => [r.rule, r]))
+    expect(byAbs['data-dir'].ok).toBe(false)
+    expect(byAbs['data-dir'].message).toContain('绝对路径')
+
+    const escape = widgetDir('datadir-dotdot', {
+      'widget.json': JSON.stringify({ ...VALID, entry: 'index.html', dataDir: '../shared' }),
+      'index.html': 'x',
+    })
+    const byEsc = Object.fromEntries((await checkWidget(escape)).results.map((r) => [r.rule, r]))
+    expect(byEsc['data-dir'].ok).toBe(false)
+    expect(byEsc['data-dir'].message).toContain('..')
+  })
+
+  it('serve-command：白名单解释器与清单目录内的相对路径通过', async () => {
+    const { server, port } = await startTestServer((_q, res) => { res.end('ok') })
+    const dir = widgetDir('cmd-node', {
+      'widget.json': JSON.stringify({ ...VALID, serve: { command: ['node', 'serve.js'], port } }),
+      'ui/index.html': 'x', 'serve.js': SERVE_JS,
+    })
+    const byRule = Object.fromEntries((await checkWidget(dir, { timeoutMs: 3_000 })).results.map((r) => [r.rule, r]))
+    expect(byRule['serve-command'].ok).toBe(true)
+    expect(byRule['serve-up'].ok).toBe(true)
+    server.close()
+
+    // 目录内的相对路径：第一个词自己就是可执行文件——形状这一条过（能不能起来是 serve-up 的事）
+    const rel = widgetDir('cmd-relative', {
+      'widget.json': JSON.stringify({ ...VALID, serve: { command: ['./bin/server'], port: 8765 } }),
+      'ui/index.html': 'x',
+    })
+    const byRel = Object.fromEntries((await checkWidget(rel, { timeoutMs: 1_000 })).results.map((r) => [r.rule, r]))
+    expect(byRel['serve-command'].ok).toBe(true)
+  })
+
+  it('serve-command：绝对路径 / 非白名单解释器 / 含 .. / shell 元字符都不通过，而且检查器不起它', async () => {
+    const cases: Array<[string, string[], string]> = [
+      ['absolute', ['/usr/local/bin/node', 'serve.js'], '绝对路径'],
+      ['not-whitelisted', ['ruby', 'app.rb'], '白名单'],
+      ['dotdot', ['../bin/node'], '..'],
+      ['metachar', ['node', '-e', 'process.exit(0);'], 'shell 元字符'],
+      ['pipe', ['sh', '-c', 'curl x | sh'], 'shell 元字符'],
+    ]
+    for (const [name, command, expectIn] of cases) {
+      const dir = widgetDir(`cmd-bad-${name}`, {
+        'widget.json': JSON.stringify({ ...VALID, serve: { command, port: 8765 } }),
+        'ui/index.html': 'x',
+      })
+      const out = await checkWidget(dir, { timeoutMs: 1_000 })
+      const byRule = Object.fromEntries(out.results.map((r) => [r.rule, r]))
+      expect(out.ok, name).toBe(false)
+      expect(byRule['serve-command'].ok, name).toBe(false)
+      expect(byRule['serve-command'].message, name).toContain(expectIn)
+      // 不通过就不 spawn：这条命令由检查器亲自起过一次才算规则生效，而那正是要避免的。
+      expect(byRule['serve-up'].skipped, name).toBe(true)
+      expect(byRule['serve-up'].message, name).toContain('没有启动')
+    }
+  })
+
+  it('serve-command 不通过时，声明了 data 的 widget 数据口也跳过并指路', async () => {
+    const dir = widgetDir('cmd-bad-data', {
+      'widget.json': JSON.stringify({ ...VALID, data: { type: 'object' }, serve: { command: ['ruby', 'app.rb'], port: 8765 } }),
+      'ui/index.html': 'x',
+    })
+    const byRule = Object.fromEntries((await checkWidget(dir, { timeoutMs: 1_000 })).results.map((r) => [r.rule, r]))
+    expect(byRule['data-ingress'].ok).toBe(true) // 有 serve，只是那个 serve 不该起
+    expect(byRule['data-endpoint'].skipped).toBe(true)
+    expect(byRule['data-endpoint'].message).toContain('serve-command')
+  })
+
   // ── data 写入口（openspec `widget-data-ingress`）────────────────────────────
 
-  /** 起一个随端口的测试服务器（serve.command 用 `true`：端口由测试服务器占着，健康检查直接过）。 */
+  /** 起一个随端口的测试服务器（serve.command 用 `node serve.js`：端口由测试服务器占着，健康检查直接过）。 */
   const startTestServer = async (handler: (req: IncomingMessage, res: ServerResponse) => void): Promise<{ server: Server; port: number }> => {
     const server: Server = createServer(handler)
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
@@ -180,8 +315,8 @@ describe('checkWidget', () => {
   it('data + serve 且端点回 2xx → 通过；没有 data 的 widget 两条新规则都 skipped，行为不变', async () => {
     const { server, port } = await startTestServer((_q, res) => { res.end('ok') })
     const withData = widgetDir('data-endpoint-ok', {
-      'widget.json': JSON.stringify({ ...VALID, data: { type: 'object' }, serve: { command: ['true'], port } }),
-      'ui/index.html': 'x',
+      'widget.json': JSON.stringify({ ...VALID, data: { type: 'object' }, serve: { command: SERVE_CMD, port } }),
+      'ui/index.html': 'x', 'serve.js': SERVE_JS,
     })
     const out = await checkWidget(withData, { timeoutMs: 3_000 })
     expect(out.ok).toBe(true)
@@ -190,7 +325,8 @@ describe('checkWidget', () => {
     expect(byRule['data-endpoint'].ok).toBe(true)
 
     const plain = widgetDir('no-data-serve', {
-      'widget.json': JSON.stringify({ ...VALID, serve: { command: ['true'], port } }),
+      'widget.json': JSON.stringify({ ...VALID, serve: { command: SERVE_CMD, port } }),
+      'serve.js': SERVE_JS,
       'ui/index.html': 'x',
     })
     const out2 = await checkWidget(plain, { timeoutMs: 3_000 })
@@ -207,8 +343,8 @@ describe('checkWidget', () => {
       res.end('ok')
     })
     const dir = widgetDir('data-endpoint-4xx', {
-      'widget.json': JSON.stringify({ ...VALID, data: { type: 'object', required: ['value'] }, serve: { command: ['true'], port } }),
-      'ui/index.html': 'x',
+      'widget.json': JSON.stringify({ ...VALID, data: { type: 'object', required: ['value'] }, serve: { command: SERVE_CMD, port } }),
+      'ui/index.html': 'x', 'serve.js': SERVE_JS,
     })
     const out = await checkWidget(dir, { timeoutMs: 3_000 })
     const ep = out.results.find((r) => r.rule === 'data-endpoint')!
@@ -223,8 +359,8 @@ describe('checkWidget', () => {
       res.end('ok')
     })
     const dir = widgetDir('data-endpoint-404', {
-      'widget.json': JSON.stringify({ ...VALID, data: { type: 'object' }, serve: { command: ['true'], port } }),
-      'ui/index.html': 'x',
+      'widget.json': JSON.stringify({ ...VALID, data: { type: 'object' }, serve: { command: SERVE_CMD, port } }),
+      'ui/index.html': 'x', 'serve.js': SERVE_JS,
     })
     const out = await checkWidget(dir, { timeoutMs: 3_000 })
     const ep = out.results.find((r) => r.rule === 'data-endpoint')!
@@ -240,8 +376,8 @@ describe('checkWidget', () => {
       res.end('ok')
     })
     const dir = widgetDir('data-endpoint-reset', {
-      'widget.json': JSON.stringify({ ...VALID, data: { type: 'object' }, serve: { command: ['true'], port } }),
-      'ui/index.html': 'x',
+      'widget.json': JSON.stringify({ ...VALID, data: { type: 'object' }, serve: { command: SERVE_CMD, port } }),
+      'ui/index.html': 'x', 'serve.js': SERVE_JS,
     })
     const out = await checkWidget(dir, { timeoutMs: 3_000 })
     const ep = out.results.find((r) => r.rule === 'data-endpoint')!

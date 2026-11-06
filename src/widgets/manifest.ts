@@ -1,8 +1,10 @@
 /**
  * widget.json 描述文件的 zod schema（openspec `widget-manifest`）。
- * 字段：id / name / icon / version / entry / serve / size / data / permissions / preview。
+ * 字段：id / name / icon / version / entry / serve / size / data / dataDir / permissions / preview。
  * 全部必填项显式；未知字段拒绝（strict）。
  * `data` 的写入口是一条固定约定，见 `WIDGET_DATA_PATH`（openspec `widget-data-ingress`）。
+ * `dataDir` 声明数据目录、清单不提供环境变量注入面、`serve.command` 由哪个解释器起，是三条归属规则
+ * （openspec `widget-manifest-limits`）：形状由 schema 受理，对错由检查器判。
  */
 import { z } from 'zod'
 
@@ -41,6 +43,47 @@ export const WIDGET_DATA_PATH = '/.well-known/widget-data'
  * 本仓库只定这条约定与检查它，不负责往这个口写数据。
  */
 export const DATA_SCHEMA = z.record(z.string(), z.unknown())
+
+/**
+ * `dataDir`：该 widget **数据目录**的声明——一个相对清单目录的路径。
+ *
+ * 语义（openspec `widget-manifest-limits`）：宿主把这条相对路径映射成**这个 widget 唯一可写的数据
+ * 目录**；没写 `dataDir` 的 widget，宿主在它自己的数据目录下给一份按 widget `id` 命名的目录。也就是
+ * 说清单只能**声明位置**，不能指定宿主数据目录之外的地方：绝对路径与含 `..` 段的值都不是「widget 自己
+ * 的目录」，检查器的 `data-dir` 规则据此拒绝。
+ *
+ * schema 只受理形状（非空字符串），对错交给检查器——与 `data` 声明了却没有 `serve` 同一先例：现存
+ * `widget.json` 的解析行为不变，拒绝是检查器的规则，不是 schema 的。目录的创建、权限与内容迁移都不在
+ * 本能力内。
+ */
+export const DATA_DIR_SCHEMA = z.string().min(1, 'dataDir 必须是非空字符串（相对清单目录的路径）')
+
+/**
+ * 顶层不许出现的环境变量字段名（openspec `widget-manifest-limits`）：清单**不提供环境变量注入面**——
+ * `serve.command` 进程看见什么环境，由宿主组装，不由清单决定。strict schema 本来就把这两个键拒在
+ * 「不认识的字段」里；检查器的 `env` 规则把原因指名到这一条。键名不分大小写。
+ */
+export const FORBIDDEN_ENV_FIELDS = ['env', 'environment'] as const
+
+/**
+ * `serve.command` 第一个词允许的解释器裸名（openspec `widget-manifest-limits`）。
+ *
+ * 取这四个的依据是仓库现状：仓库里没有随代码发布的 `widget.json` 示例，清单与检查器的测试夹具用的解释器
+ * 只有 `node`（Stream 自身的运行时候）；`deno` / `bun` 是同类的 JS/TS 运行时，`python3` 是本仓库脚本
+ * （`scripts/*.py`）用的第二类运行时。裸名之外的另一律只允许**清单目录内的相对路径**
+ * （`./bin/server`）；绝对路径、解析后跳出清单目录的路径、非白名单的解释器（`ruby`、`sh`）都不通过。
+ * 要支持别的运行时是宿主部署的事，不是清单能要求的。
+ */
+export const SERVE_INTERPRETERS = ['node', 'python3', 'deno', 'bun'] as const
+
+/**
+ * `serve.command` 任意元素里都不许出现的 shell 元字符（openspec `widget-manifest-limits`）。
+ *
+ * 命令参数不得含 shell 元字符：宿主可能在别处以 shell 字符串拉起后端，一条写着 `a; b` 或 `x | y` 的
+ * 清单在那些地方就不是它在这里看起来的那个意思；就是不经 shell 起的时候，元字符也只会原样传给程序，
+ * 多半是写错了。
+ */
+export const SHELL_METACHARS = [';', '&&', '|', '`', '$('] as const
 
 /** permissions.network 里的单条主机规则：主机名或 `*.` 后缀，小写。 */
 const HOST_RULE = z
@@ -95,6 +138,12 @@ export interface WidgetManifest {
    * `POST /.well-known/widget-data` 送数据（`DATA_SCHEMA` / `WIDGET_DATA_PATH`）。
    */
   data?: Record<string, unknown>
+  /**
+   * 数据目录的声明（相对清单目录的路径）。写了宿主就把它映射成该 widget 唯一可写的数据目录；没写，
+   * 宿主在它自己的数据目录下给一份按本清单 `id` 命名的目录。取值对不对由检查器的 `data-dir` 判
+   * （见 {@link DATA_DIR_SCHEMA}）。
+   */
+  dataDir?: string
   permissions?: {
     model?: boolean
     credentials?: string[]
@@ -124,6 +173,8 @@ export const WIDGET_SCHEMA = z
       .optional(),
     size: SIZE_SCHEMA.default('card'),
     data: DATA_SCHEMA.optional(),
+    /** 形状受理（非空字符串），是不是「widget 自己的目录」由检查器的 `data-dir` 判。 */
+    dataDir: DATA_DIR_SCHEMA.optional(),
     permissions: PERMISSIONS_SCHEMA.optional(),
     preview: PREVIEW_SCHEMA.optional(),
   })
