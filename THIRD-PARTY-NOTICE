@@ -1,5 +1,15 @@
 # Third-party notices
 
+## Pinky — Apache-2.0
+
+The sensitive-action word tables (commit, money, install, call, setting, search, password,
+one-time-code and exclusion words in eleven UI languages) in
+`app/android/app/src/main/assets/policy/words.json`, and the initial app category entries in
+`app/android/app/src/main/assets/policy/apps.json`, are taken from the Pinky project's
+`internal/policy/words.go` and `internal/policy/apps.yaml`, with detection logic adapted in
+`app/android/app/src/main/java/com/streamapp/android/policy/`.
+Source and license: https://github.com/DIYgod/pinky (Apache-2.0).
+
 ## agent-desktop — Apache-2.0
 
 The Windows desktop package embeds the agent-desktop CLI, used as the
