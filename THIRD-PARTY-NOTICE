@@ -1,5 +1,11 @@
 # Third-party notices
 
+## agent-desktop — Apache-2.0
+
+The Windows desktop package embeds the agent-desktop CLI, used as the
+semantic accessibility backend for desktop automation.
+Source and license: https://github.com/vercel-labs/agent-desktop (Apache-2.0).
+
 ## PP-OCRv5 mobile — Apache-2.0
 
 The desktop OCR models are derived from PaddleOCR PP-OCRv5 mobile.

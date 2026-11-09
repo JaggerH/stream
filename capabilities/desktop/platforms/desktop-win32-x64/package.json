@@ -6,6 +6,7 @@
   "cpu": ["x64"],
   "files": [
     "bin/stream-desktop.exe",
+    "bin/agent-desktop.exe",
     "bin/ocr-det.onnx",
     "bin/ocr-rec.onnx",
     "bin/ocr-rec-dict.txt",

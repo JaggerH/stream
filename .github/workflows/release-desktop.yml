@@ -92,6 +92,26 @@ jobs:
           (cd bin && tr -d '\r' < ../../ort-win32-x64.sha256 | sha256sum -c -)
           test -f bin/onnxruntime.dll
 
+      # agent-desktop（内嵌）：语义 a11y 路的执行者随平台包出货，stream-desktop.exe 按同目录
+      # 找它（定位与版本自检在 app/host-agent/src/agent_desktop.rs）。下载 Release 包、按上游
+      # checksums 核验（清单是 CRLF，先剥 \r——与上面读屏模型那步同一个坑），解出
+      # agent-desktop.exe 落 bin/；包的 files 白名单必须带 bin/agent-desktop.exe，否则 publish
+      # 会静默漏掉它。版本 pin 1.2.x：升级 = 改这一个数 + 重跑 desktop-automation-backend 的
+      # Windows 真机清单。
+      - name: 拉内嵌的 agent-desktop 并核校验和
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          AD_VERSION: 1.2.0
+        run: |
+          cd capabilities/desktop/platforms/desktop-win32-x64
+          gh release download "v$AD_VERSION" --repo vercel-labs/agent-desktop \
+            --pattern "agent-desktop-v$AD_VERSION-x86_64-pc-windows-msvc.tar.gz" \
+            --pattern "checksums.txt" --dir ad-download --clobber
+          (cd ad-download && tr -d '\r' < checksums.txt | grep "agent-desktop-v$AD_VERSION-x86_64-pc-windows-msvc.tar.gz" | sha256sum -c -)
+          tar xzf "ad-download/agent-desktop-v$AD_VERSION-x86_64-pc-windows-msvc.tar.gz" -C bin
+          test -f bin/agent-desktop.exe
+
       # 已经在 registry 上就跳过，不是「宽容」而是**让整条流水线能重跑**：某一步挂了而 publish
       # 已经成功时，没有这一格就只能靠升版本号绕过去——一次失败烧掉一个版本号，而烧掉的那个
       # 还是已经发出去的好产物。
