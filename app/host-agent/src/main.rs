@@ -87,6 +87,14 @@ impl FetcherLike {
     }
 }
 
+/// `http.forward` / `ws.forward` 的执行者。与 `FetcherLike` 同一个做法：Linux 上是真的
+/// （`forward.rs`），其余平台用**不可构造**的类型占位——`Session` 的字段类型不分叉，
+/// 非 Linux 构造方只写 `None`。
+#[cfg(target_os = "linux")]
+type ForwarderLike = forward::Forwarder;
+#[cfg(not(target_os = "linux"))]
+pub enum ForwarderLike {}
+
 /// 一条会话要的全部输入。本机模式与设备模式只在这几个值上不同——WS 客户端、`host-relay.v2`
 /// 协议、监督循环是同一份（spec linux-device-agent：复用现有的协议与 WS 客户端实现）。
 pub struct Session {
@@ -98,7 +106,7 @@ pub struct Session {
     pub fetcher: Option<std::sync::Arc<FetcherLike>>,
     /// 设备模式才有：`http.forward` / `ws.forward`（openspec device-loopback-forward）交给它。
     /// 缺席 = 这台设备不参与回环转发（hello 里也没有 ports）。
-    pub forwarder: Option<std::sync::Arc<forward::Forwarder>>,
+    pub forwarder: Option<std::sync::Arc<ForwarderLike>>,
     /// token 是配对得来的 device token：握手 401 / 关闭码 4003 = 已被撤销，不是"后端还没起完"。
     pub paired: bool,
     /// 多久一帧都没收到就判这条连接已死、结束会话交给监督循环重连。`None` = 不判（本机模式）。
@@ -702,6 +710,8 @@ async fn run_session<D: protocol::Desktop>(
     let (out_tx, mut out_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
     let mut fetches = tokio::task::JoinSet::new();
     // ws.forward 会话：op id → 设备方向的收件通道。断开时清空（drop 让泵任务自己收尾）。
+    // 设备模式（Linux）才有；类型引用 `forward::FwdFrame`，非 Linux 连声明都要跟着门走。
+    #[cfg(target_os = "linux")]
     let mut forwards: std::collections::HashMap<u64, tokio::sync::mpsc::UnboundedSender<forward::FwdFrame>> = std::collections::HashMap::new();
     let mut end = SessionEnd::Disconnected;
     let mut policy = overlay::OverlayPolicy::new();
@@ -799,6 +809,7 @@ async fn run_session<D: protocol::Desktop>(
         }
 
         // http.forward（openspec device-loopback-forward）：与 http.fetch 同一条并发执行路。
+        #[cfg(target_os = "linux")]
         if op == "http.forward" {
             if let Some(f) = &session.forwarder {
                 let (f, out) = (f.clone(), out_tx.clone());
@@ -811,6 +822,7 @@ async fn run_session<D: protocol::Desktop>(
         }
 
         // ws.forward：建连后登记会话，之后双向数据走 fwd-data / fwd-close 主动帧。
+        #[cfg(target_os = "linux")]
         if op == "ws.forward" {
             if let Some(f) = &session.forwarder {
                 let reply = match (serde_json::from_value::<forward::WsForwardArgs>(args.clone()), id.as_u64()) {
@@ -835,6 +847,7 @@ async fn run_session<D: protocol::Desktop>(
         }
 
         // 后端 → 设备方向的转发数据帧（主动帧，无 op；与 status/abort 同一先例）。
+        #[cfg(target_os = "linux")]
         if req.get("type").and_then(|v| v.as_str()) == Some("fwd-data") || req.get("type").and_then(|v| v.as_str()) == Some("fwd-close") {
             if let Some(n) = req.get("id").and_then(|v| v.as_u64()) {
                 if req.get("type").and_then(|v| v.as_str()) == Some("fwd-close") {
@@ -890,6 +903,7 @@ async fn run_session<D: protocol::Desktop>(
     // 结果写不回一条已经不在的连接。
     fetches.abort_all();
     // 转发会话一并收尾：清掉登记，泵任务看到通道关闭就给回环侧发 Close 并退出。
+    #[cfg(target_os = "linux")]
     forwards.clear();
     // 断连立刻熄（连同任务文字）——后端都不在了还亮着就是撒谎。
     if let Some(o) = overlay {
