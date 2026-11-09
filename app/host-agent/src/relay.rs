@@ -248,11 +248,13 @@ mod tests {
         assert_eq!(s.after(&r), ms(200), "照常退避重试，不复位");
     }
 
-    /// 生产默认值就是扩展侧那套（1s 起、30s 封顶）——两端一致，排错不用记两套数。
+    /// 生产默认值与 `src/cdp-binding/binding.ts` 的重连退避同值（250ms 起、30s 封顶）——
+    /// 同一条语义（WS 重连指数退避）全仓一套数，排错不用记两份。起步为什么是 250ms
+    /// 而不是 1s，见 `BACKOFF_BASE` 上的注释（挂起恢复要立刻重连）。
     #[test]
-    fn production_defaults_match_the_extension_side() {
+    fn production_defaults_match_cdp_binding() {
         let mut s = Supervisor::default();
-        assert_eq!(s.after(&SessionEnd::ConnectFailed("x".into())), Duration::from_secs(1));
+        assert_eq!(s.after(&SessionEnd::ConnectFailed("x".into())), Duration::from_millis(250));
         for _ in 0..10 {
             s.after(&SessionEnd::ConnectFailed("x".into()));
         }
