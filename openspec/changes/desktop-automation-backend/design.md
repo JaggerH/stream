@@ -38,11 +38,17 @@ pub struct AgentDesktopBackend {
   `elements.clear()` 同口径）；窗口 id（hwnd）与 agent-desktop `window id` 的映射**惰性**：
   第一次需要 snapshot 时用 `list-windows --app <进程名>` 按 pid + title 对上，对不上 →
   本 op 回落 UIA（原因码 `window-not-found`），映射不作长期缓存（窗口会关）。
-- `find`：role/name 精确走 CLI 的 `find` 命令；`nameContains` / `className` / `path` 无
-  CLI 等价物 → `snapshot -i --include-bounds` + **本地过滤**（保留 `A11yQuery` 全语义，
-  与 windows.rs 一份 matcher 同口径）。命中转 `A11yElement`：ref 用 CLI 的
-  `@<snapshot_id>:eN`，rect 从 bounds。这保证 find 命中的 ref 与后续 invoke/setValue 落在
-  同一 snapshot 上下文——Stream「每次回放重新定位」的模型不用变。
+- `find`：**统一走 `snapshot -i --include-bounds` + 本地过滤**（保留 `A11yQuery` 全语义，与
+  windows.rs 一份 matcher 同口径）。CLI 的 `find` 命令不用于此路：它的结果（`LocatorMatchData`）
+  不带 bounds，而 `A11yElement` 必须带 rect——为补 rect 再发进程得不偿失。命中转 `A11yElement`：
+  ref 用 CLI 的 `@<snapshot_id>:eN`，rect 从 bounds。这保证 find 命中的 ref 与后续 invoke/setValue
+  落在同一 snapshot 上下文——Stream「每次回放重新定位」的模型不用变。
+- role 词表差一层，本地翻译：Stream 的查询 role 是 UIA ControlType 名（`Button` / `ListItem` /
+  `Edit`…），agent-desktop 的 canonical role 是小写且按 pattern 精化（`ListItem→option`、
+  `Edit→textfield`、`Hyperlink→link`、`Tab→tablist`、`TabItem→tab`、`Text→statictext`、
+  `Button→button|switch|menubutton`…）。一张静态映射表 + 单测钉住（`crates/windows/src/tree/roles.rs`
+  的精化规则是映射表的出处）。`path` 条件两边都不实现（windows.rs 的 provider 条件同样忽略它），
+  保持同口径；`className` 在 snapshot JSON 里没有字段，带它的查询整条回落 UIA。
 - 空结果就是空结果：**不回落**。回落会让「这个元素不存在」伪装成「读得到但换了路」，
   drift 分类全部失真。
 
@@ -54,8 +60,8 @@ pub struct AgentDesktopBackend {
 | `invoke` | `click @ref` | headless 语义路（Invoke → Legacy 降级链） |
 | `set_value` | `set-value @ref` | `delivered_verified` = 成功；`delivered_unverified` = 成功 + 标记；`not_delivered` = Err（同 windows.rs 回读纪律：读不回来 = 失败） |
 | `read_subtree` | `snapshot`（spec.path 有则 `--root @ref`）+ 本地 field map / dedupe | fields.read 的 value 档与 windows.rs 同口径（读 name） |
-| `read_elements`（a11y 档） | `snapshot -i --include-bounds` 转 `ElementsRead` | window / scale 从 inner 侧窗口 rect 补 |
-| 其余全部 | — | 原样走 inner：windows / scope / focus / ensureApp / click / moveMouse / scroll / **type（前台闸门一字不动）** / press / nudge / post_input / clearInput / screenshot / findImage / readText / readElements(detector/text 档) / url / sleep / browser.* |
+| `read_elements`（a11y 档） | 第一批**不换**，整条走 windows.rs | 三档（a11y / detector / text）共享**同一次截屏**，只换 a11y 那一档要重构整条管线；且 agent-desktop 的 a11y 档与 Stream 同源（都是 UIA），无保真度差异。真机量完启动开销后再评估是否换 |
+| 其余全部 | — | 原样走 inner：windows / scope / focus / ensureApp / click / moveMouse / scroll / **type（前台闸门一字不动）** / press / nudge / post_input / clearInput / screenshot / findImage / readText / readElements(全部三档) / url / sleep / browser.* |
 
 - `read_elements` 的 `icons` 档（纯视觉检测）与 `a11y:false` 申报原样保留：agent-desktop
   没有任何视觉层，QQ NT 这类不暴露树的应用仍走 see/OCR。
@@ -77,10 +83,15 @@ pub struct AgentDesktopBackend {
 | `APP_NOT_FOUND` / `WINDOW_NOT_FOUND` / `SNAPSHOT_NOT_FOUND` | 回落 | `window-not-found` |
 | `ACTION_NOT_SUPPORTED` | 回落 | `action-not-supported`（旧 UIA invoke 梯子多 SelectionItem / Toggle rung） |
 | `TIMEOUT` / 进程失败 | 回落 | `timeout` / `cli-failed` |
-| `STALE_REF` | 重取 snapshot 一次再试；仍败回落 | `stale-retried` |
+| `STALE_REF` | 重取 snapshot、按结构特征重新拿 ref、重试一次；仍败回落 | `stale-retried` |
 | `ELEMENT_NOT_FOUND` | **不回落**，如实报 | — |
 | `ACTION_FAILED` | **不回落**，如实报 | — |
 | 其余（`INTERNAL` 等） | 回落 | `cli-error` |
+
+**回落是「重新定位再动作」，不是 ref 换路。** ad ref（`@<snapshot_id>:eN`）与 UIA ref（进程内
+元素句柄）是两个空间：find 由 CLI 服务时，invoke/setValue 拿到的是 ad ref，UIA 路认不得它。
+所以回落时后端用该元素的**结构特征**（role 反查回 Stream 词表 + name）在 UIA 路重新定位，
+恰好唯一命中才执行；零个或多个命中都如实报错，绝不任选——与 `resolve_window` 的歧义纪律同一条。
 
 ## 7. 回执与留痕
 

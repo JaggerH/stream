@@ -33,7 +33,9 @@ recipe 显式同意抢屏时使用（前台闸门照旧）。
   `readSubtree` / `readElements` 的 a11y 档）优先委托给内嵌的 agent-desktop CLI
   （每 op 一个子进程，版本 pin 主.次 = 1.2，启动时 `--version` 自检）；其余 op
   （窗口枚举、scope/focus、坐标路、`type`、`press`、`nudge`、`post_input`、`clearInput`、
-  `screenshot`、see/OCR 三档、browser、launch）原样走 `WindowsDesktop`。
+  `screenshot`、see/OCR 全档、`readElements` 三档、browser、launch）原样走 `WindowsDesktop`
+  ——`readElements` 的三档共享同一次截屏，只换 a11y 一档要重构整条管线，且 agent-desktop
+  的 a11y 档与 Stream 同源（都是 UIA），第一批不值得换。
 - **回落规则（UIA 路保留）。** 锁屏会话直接走旧路；agent-desktop 报指定错误码时回落
   `WindowsDesktop` 的 UIA 实现：`AMBIGUOUS_TARGET` / `POLICY_DENIED` / `PERM_DENIED` /
   `APP_NOT_FOUND` / `WINDOW_NOT_FOUND` / `SNAPSHOT_NOT_FOUND` / `ACTION_NOT_SUPPORTED` /

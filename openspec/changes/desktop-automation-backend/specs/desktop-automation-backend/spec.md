@@ -2,8 +2,8 @@
 
 ### Requirement: Windows 语义 a11y 执行优先委托外部 desktop automation CLI
 
-Windows 的 host agent SHALL 把语义 a11y 读与动作（`find`、`invoke`、`setValue`、`readSubtree`、
-`readElements` 的 a11y 档）优先委托给内嵌的 desktop automation CLI（agent-desktop，Apache-2.0，
+Windows 的 host agent SHALL 把语义 a11y 读与动作（`find`、`invoke`、`setValue`、`readSubtree`）
+优先委托给内嵌的 desktop automation CLI（agent-desktop，Apache-2.0，
 版本 pin 主.次 = 1.2），并 SHALL 保留现有 UIA 实现作为回落。委托方式 SHALL 是每 op 一个 CLI
 子进程（JSON envelope v2.x），MUST NOT 改变 `Desktop` trait 的 op 面或 `dispatch` 的分发行为。
 CLI 的 ref 只在单个 snapshot 内有效；后端 SHALL 持有当前 snapshot 上下文，使 `find` 命中的 ref
