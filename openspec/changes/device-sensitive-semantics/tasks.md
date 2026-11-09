@@ -30,6 +30,9 @@
 - [x] 14. deny 类目可见性：窗口列表、树读取、动作、通知四面都不可见；`app-denied`
 - [x] 15. host-relay 协议文档：新错误码、`semantics` schema、控制帧（`docs/ARCHITECTURE.md` 或
        `docs/API.md` 对应节）
+- [x] 16a. `press` Enter 进闸：与 `type` 携带换行同口径（消息 / 社交类判 `message-send`，其余判
+       `commit-unrecognized`，搜索框放行）；Back / Home 不判提交但先过 deny 可见性；批准凭据对
+       `press` Enter 走四查并一次性消费
 
 # 计划 4：测试用例（批次 B 验收清单）
 
@@ -71,6 +74,9 @@
 - [x] 32. `device-busy`：置忙后执行类 op 全拒、`status` / `sleep` / 控制帧可用；`busy:false` 与断开解除；
        锁屏优先于 busy
 - [x] 33. 回归：`secure-window`、`device-locked`、`stale-ref`、abort 的既有语义不变
+- [x] 33a. press Enter 用例：messaging 扣下（type 无换行 + press Enter）、未入类目 App 从严、
+       deny App 的 Enter / Back 拒绝、搜索框放行、凭据重发一次性；Dispatcher 生产构造必传
+       policy 的守卫测试
 
 走查：
 

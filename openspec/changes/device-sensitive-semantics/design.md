@@ -38,9 +38,11 @@ keyguard 检查（既有，device-locked）
   → 既有 ref/动作执行
 ```
 
-gated op：`click`、`invoke`、`setValue`、`type`、`clearInput`、`scroll`。`launchApp` / `focusApp` 不缺省
+gated op：`click`、`invoke`、`setValue`、`type`、`clearInput`、`scroll`，以及 `press` 的 Enter——
+Enter 在非搜索输入框上与 `type` 携带换行同口径（消息 / 社交类判 message-send，其余判
+commit-unrecognized），否则「先打字、再回车」就是绕过闸的发送通道。`launchApp` / `focusApp` 不缺省
 要求审批（打开一个 App 属导航，不是提交类；deny 类目 App 照样打不开），安装类动作发生在商店 App 的
-点击上，由提交类判定覆盖。`press`（Back / Home）、读类 op 不闸。
+点击上，由提交类判定覆盖。`press` 的 Back / Home 与读类 op 不做提交判定，但不越过 deny 可见性。
 
 *备选被否*：把闸放在调用方的 driver 里按工具名判档。工具名判不了「这次点击点的是什么按钮」，而且
 调用方拿不到未经打码的树——判定必须贴着素材。

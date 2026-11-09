@@ -380,6 +380,68 @@ class PolicyGateTest {
         e.errorCode
     }
 
+    // ---- press Enter, the same judgment as a typed newline ---------------------------
+
+    @Test fun enterInMessagingGatesLikeATypedNewline() {
+        val input = FakeNode("EditText", "", className = "android.widget.EditText", rect = Rect(0, 2200, 900, 90), isEditable = true)
+        setUpApp("com.tencent.mm", "微信", root = single(input))
+        dev.focused = input
+        // ① The plain message does not gate; the Enter that sends it does.
+        call("type", """{"text":"你好"}""")
+        assertTrue("setText =你好" in dev.log)
+        val e = err("press", """{"key":"Enter"}""")
+        assertEquals("approval-required", e.errorCode)
+        assertTrue(reasons(e).contains("message-send"))
+        assertFalse(dev.log.any { it == "enter" })
+    }
+
+    @Test fun enterAndTypedNewlineInAnUnknownAppStayStrict() {
+        // ② Outside messaging and social apps the commit default applies.
+        val input = FakeNode("EditText", "", className = "android.widget.EditText", rect = Rect(0, 2200, 900, 90), isEditable = true)
+        setUpApp("com.example.notes", "笔记", root = single(input))
+        dev.focused = input
+        val e = err("type", """{"text":"完成\n"}""")
+        assertEquals("approval-required", e.errorCode)
+        assertTrue(reasons(e).contains("commit-unrecognized"))
+        val e2 = err("press", """{"key":"Enter"}""")
+        assertEquals("approval-required", e2.errorCode)
+        assertTrue(reasons(e2).contains("commit-unrecognized"))
+        assertFalse(dev.log.any { it == "enter" })
+    }
+
+    @Test fun enterAndBackInADeniedAppAreRefused() {
+        // ③ Deny visibility covers the keyboard too.
+        val input = FakeNode("EditText", "", className = "android.widget.EditText", rect = Rect(0, 2200, 900, 90), isEditable = true)
+        setUpApp("com.eg.android.AlipayGphone", "支付宝", root = single(input))
+        dev.focused = input
+        assertEquals("app-denied", errCode("press", """{"key":"Enter"}"""))
+        assertEquals("app-denied", errCode("press", """{"key":"Back"}"""))
+    }
+
+    @Test fun searchFieldEnterAndNewlineRunFree() {
+        // ④ A search field submits a query, not a commit.
+        val search = FakeNode("EditText", "搜索商家", className = "android.widget.EditText", text = "", rect = Rect(0, 100, 900, 90), isEditable = true)
+        setUpApp("com.example.shop", "商店", root = single(search))
+        dev.focused = search
+        call("press", """{"key":"Enter"}""")
+        call("type", """{"text":"关键词\n"}""")
+        assertTrue("enter" in dev.log)
+        assertTrue("setText 搜索商家=关键词\n" in dev.log)
+    }
+
+    @Test fun enterApprovalIsReplayedAndConsumedOnce() {
+        // ⑤ The approval credential flows through the same four checks and buys one action.
+        val input = FakeNode("EditText", "", className = "android.widget.EditText", rect = Rect(0, 2200, 900, 90), isEditable = true)
+        setUpApp("com.tencent.mm", "微信", root = single(input))
+        dev.focused = input
+        val e = err("press", """{"key":"Enter"}""")
+        assertEquals("approval-required", e.errorCode)
+        call("press", """{"key":"Enter","approval":${approvalOf(e)}}""")
+        assertTrue("enter" in dev.log)
+        assertEquals("approval-used", errCode("press", """{"key":"Enter","approval":${approvalOf(e)}}"""))
+        assertEquals(1, dev.log.count { it == "enter" })
+    }
+
     // ---- the walkthrough ------------------------------------------------------------
 
     @Test fun cartToOrderWalkthrough() {

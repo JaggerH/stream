@@ -17,8 +17,10 @@ private val NO_WAKE = setOf("status", "sleep", "windows", "url")
  *  and timing ops; everything else fails as `device-busy`. Control frames never reach here. */
 private val BUSY_PASS = setOf("status", "sleep")
 
-/** Ops the sensitive gate inspects before any device action. */
-private val GATED = setOf("click", "invoke", "setValue", "type", "clearInput", "scroll")
+/** Ops the sensitive gate inspects before any device action. `press` counts through its Enter
+ *  key only — the dispatcher routes just that key through the gate; Back and Home are not
+ *  commits, though they still answer to deny-category visibility. */
+private val GATED = setOf("click", "invoke", "setValue", "type", "clearInput", "scroll", "press")
 
 /** HyperOS's 关联启动 prompt (`com.miui.wakepath.ui.ConfirmStartActivity`) the first time one app opens
  *  another. Matched by activity; the bare package counts only when its activity is not known yet. */
@@ -31,6 +33,8 @@ private const val HYPEROS_CONFIRM = "com.miui.securitycenter"
  * With a [PolicyContext] the dispatcher also runs the sensitive checks, in this order: keyguard
  * (existing), busy, app visibility (deny categories), the credential-field refusal, the approval
  * credential's four checks, then the ask gate — before any gesture or accessibility action.
+ * A null [policy] disables all of that and exists for the JVM unit tests only; production
+ * (RelayService) always supplies one.
  */
 class Dispatcher(private val raw: Device, private val policy: PolicyContext? = null) {
     /** The app (and optional title substring) the agent limited itself to. An Activity change
@@ -122,10 +126,23 @@ class Dispatcher(private val raw: Device, private val policy: PolicyContext? = n
             "press" -> {
                 refuseMessage(args)
                 val key = str(args, "key")
+                if (key !in setOf("Back", "Home", "Enter")) {
+                    throw AgentError("unsupported-key: $key（安卓只认 Back / Home / Enter）")
+                }
+                // Navigation too answers to deny-category visibility, before anything happens.
+                val info = appInfo()
+                requireAppVisible(info.pkg, info.title)
+                if (key == "Enter") {
+                    // The Enter that sends a message or submits a form is a commit: the same
+                    // judgment and the same approval flow as a typed newline.
+                    return gated(op, args, checkCredential = false, target = { _ -> focused() }) { t ->
+                        if (!device.imeEnter(t!!)) throw AgentError("action-failed: 系统没执行 $key")
+                        mapOf("via" to "coords")
+                    }
+                }
                 val done = when (key) {
                     "Back" -> device.globalBack()
                     "Home" -> device.globalHome()
-                    "Enter" -> device.imeEnter(focused())
                     else -> throw AgentError("unsupported-key: $key（安卓只认 Back / Home / Enter）")
                 }
                 if (!done) throw AgentError("action-failed: 系统没执行 $key")

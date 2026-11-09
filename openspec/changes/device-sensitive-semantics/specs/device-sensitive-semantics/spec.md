@@ -2,13 +2,16 @@
 
 ### Requirement: 提交类动作缺省要求审批请求
 
-执行端 SHALL 在 gated op（`click`、`invoke`、`setValue`、`type`、`clearInput`、`scroll`）执行前做敏感
-判定。命中提交类（结构信号或词表）、消息发送、安装、系统设置更改、呼叫、离开当前 App 的链接，或类目表
-把该 App 的此类动作标为 ask 时，执行端 SHALL NOT 执行任何设备动作，SHALL 回 `approval-required` 错误，
-错误 SHALL 附 `semantics`：`op`、`app`（id、显示名、类目）、`control`（role 与打码、裁剪后的文案）、
-`reasons`（枚举见 design D2，开放集合）、`bindingDigest`、`screenDigest`，且 `snapshotRef` 可缺省。
-词表未识别的提交类候选（可点击且在表单或确认上下文）SHALL 同样回 `approval-required`，reason 为
-`commit-unrecognized`。`semantics` SHALL NOT 含屏幕原文、控件树或任何凭据值。
+执行端 SHALL 在 gated op（`click`、`invoke`、`setValue`、`type`、`clearInput`、`scroll`，以及
+`press` 的 Enter——与 `type` 携带换行同口径）执行前做敏感判定。命中提交类（结构信号或词表）、消息
+发送、安装、系统设置更改、呼叫、离开当前 App 的链接，或类目表把该 App 的此类动作标为 ask 时，执行端
+SHALL NOT 执行任何设备动作，SHALL 回 `approval-required` 错误，错误 SHALL 附 `semantics`：`op`、
+`app`（id、显示名、类目）、`control`（role 与打码、裁剪后的文案）、`reasons`（枚举见 design D2，
+开放集合）、`bindingDigest`、`screenDigest`，且 `snapshotRef` 可缺省。词表未识别的提交类候选（可点击
+且在表单或确认上下文）SHALL 同样回 `approval-required`，reason 为 `commit-unrecognized`；非搜索输入框
+里携带换行的 `type` 与其上的 Enter 在消息 / 社交类 App 判 `message-send`，在其他 App 判
+`commit-unrecognized`。`semantics` SHALL NOT 含屏幕原文、控件树或任何凭据值。`press` 的 Back / Home
+不做提交判定，但 SHALL NOT 越过 deny 类目的可见性。
 
 #### Scenario: 提交按钮被扣下
 - **WHEN** 一次 `click` 的目标是词表命中的「立即支付」按钮
@@ -20,6 +23,18 @@
 
 #### Scenario: 非提交动作照常
 - **WHEN** 一次 `click` 的目标是一个翻页 tab 或「取消」按钮
+- **THEN** 该 op 照常执行，没有审批请求
+
+#### Scenario: 回车发送被扣下
+- **WHEN** 消息类 App 里先 `type` 一段不带换行的文字，再 `press` Enter
+- **THEN** 回复是 `approval-required`，`semantics.reasons` 含 `message-send`，消息没有发出
+
+#### Scenario: 未入类目 App 的换行提交从严
+- **WHEN** 类目未知的 App 里，非搜索输入框收到带换行的 `type`，或其上收到 `press` Enter
+- **THEN** 回复是 `approval-required`，`semantics.reasons` 含 `commit-unrecognized`
+
+#### Scenario: 搜索框的回车照常
+- **WHEN** `press` Enter 或带换行的 `type` 落在搜索输入框
 - **THEN** 该 op 照常执行，没有审批请求
 
 #### Scenario: deny 类目优先于审批

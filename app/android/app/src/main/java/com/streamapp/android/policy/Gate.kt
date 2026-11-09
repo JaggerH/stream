@@ -52,12 +52,16 @@ class Gate(private val detect: Detect, private val categories: Categories) {
                 ) out += "payment-label"
                 if (out.isEmpty() && unrecognizedCommit(t, root)) out += "commit-unrecognized"
             }
-            "type" -> {
+            "type", "press" -> {
+                // A newline (typed into the field, or the IME's Enter on it) submits in many
+                // apps. The dispatcher routes only `press` Enter here — Back and Home are not
+                // commits. A search field submits a query, not a commit; messaging and social
+                // apps send; everywhere else the commit default applies.
                 val t = target ?: return emptyList()
-                val submit = typedText?.contains('\n') == true || typedText?.contains('\r') == true
-                if (submit && (cat == "messaging" || cat == "social") && !detect.isSearchField(t.name, t.viewId)) {
-                    out += "message-send"
-                }
+                val submit = op == "press" || typedText?.contains('\n') == true || typedText?.contains('\r') == true
+                if (!submit || detect.isSearchField(t.name, t.viewId)) return emptyList()
+                if (cat == "messaging" || cat == "social") out += "message-send"
+                else out += "commit-unrecognized"
             }
             "scroll" -> {
                 // Sliders such as 「滑动支付」/ "Slide to pay"; a list that scrolls is no slider.
