@@ -67,6 +67,20 @@ describe('widget.json schema', () => {
     expect(WIDGET_SCHEMA.safeParse(bad).success).toBe(false)
   })
 
+  it('permissions.media：布尔声明的任意组合与空对象通过', () => {
+    expect(WIDGET_SCHEMA.safeParse({ ...VALID, permissions: { media: {} } }).success).toBe(true)
+    expect(WIDGET_SCHEMA.safeParse({ ...VALID, permissions: { media: { autoplay: true } } }).success).toBe(true)
+    expect(WIDGET_SCHEMA.safeParse({ ...VALID, permissions: { media: { fullscreen: false, popups: true } } }).success).toBe(true)
+    expect(WIDGET_SCHEMA.safeParse({ ...VALID, permissions: { media: { autoplay: true, fullscreen: true, popups: true } } }).success).toBe(true)
+  })
+
+  it('permissions.media：非布尔、未知字段、非对象都拒绝', () => {
+    expect(WIDGET_SCHEMA.safeParse({ ...VALID, permissions: { media: { autoplay: 'yes' } } }).success).toBe(false) // 非布尔
+    expect(WIDGET_SCHEMA.safeParse({ ...VALID, permissions: { media: { volume: 80 } } }).success).toBe(false) // 未知字段
+    expect(WIDGET_SCHEMA.safeParse({ ...VALID, permissions: { media: [true] } }).success).toBe(false) // 数组不是对象
+    expect(WIDGET_SCHEMA.safeParse({ ...VALID, permissions: { media: true } }).success).toBe(false) // 布尔不是对象
+  })
+
   it('parseWidgetManifest：文本 → 对象或 null', () => {
     expect(parseWidgetManifest(JSON.stringify(VALID))?.id).toBe('my-status')
     expect(parseWidgetManifest('not json')).toBeNull()
@@ -174,6 +188,24 @@ describe('checkWidget', () => {
     expect(out.ok).toBe(false)
     expect(out.results[0]).toMatchObject({ rule: 'manifest', ok: false })
     expect(out.results[0].message).toContain('permissions')
+  })
+
+  it('permissions：media 声明未知字段 → manifest 拒绝并指到 permissions', async () => {
+    const dir = widgetDir('bad-media-perms', { 'widget.json': JSON.stringify({ ...VALID, permissions: { media: { volume: 80 } } }) })
+    const out = await checkWidget(dir)
+    expect(out.ok).toBe(false)
+    expect(out.results[0]).toMatchObject({ rule: 'manifest', ok: false })
+    expect(out.results[0].message).toContain('permissions')
+  })
+
+  it('permissions：media 声明合法 → permissions 一条通过（不是跳过）', async () => {
+    const dir = widgetDir('media-perms', {
+      'widget.json': JSON.stringify({ ...VALID, entry: 'index.html', permissions: { media: { autoplay: true, fullscreen: true } } }),
+      'index.html': 'x',
+    })
+    const byRule = Object.fromEntries((await checkWidget(dir)).results.map((r) => [r.rule, r]))
+    expect(byRule['permissions'].ok).toBe(true)
+    expect(byRule['permissions'].skipped).toBeUndefined()
   })
 
   // ── 归属三条（openspec `widget-manifest-limits`）：检查器逐条判 ────────────────

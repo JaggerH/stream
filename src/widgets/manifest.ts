@@ -102,6 +102,19 @@ export const PERMISSIONS_SCHEMA = z
     model: z.boolean().optional(),
     credentials: z.array(z.string().min(1)).optional(),
     network: z.array(HOST_RULE).optional(),
+    /**
+     * media：iframe 媒体能力（autoplay / fullscreen / popups）的**声明**。声明不执行——放不放、怎么放
+     * （iframe `allow` 的拼装、登记审批卡上展示声明清单）由宿主决定，清单只能表达「想用」；宿主侧的
+     * 口径是永不放开 `allow-same-origin` / `allow-top-navigation`（跨域隔离底线），本声明不触及这两项。
+     */
+    media: z
+      .object({
+        autoplay: z.boolean().optional(),
+        fullscreen: z.boolean().optional(),
+        popups: z.boolean().optional(),
+      })
+      .strict()
+      .optional(),
   })
   .strict()
 
@@ -148,6 +161,8 @@ export interface WidgetManifest {
     model?: boolean
     credentials?: string[]
     network?: string[]
+    /** media：媒体能力声明，放不放由宿主决定（见 {@link PERMISSIONS_SCHEMA}）。 */
+    media?: { autoplay?: boolean; fullscreen?: boolean; popups?: boolean }
   }
   preview?: {
     type: 'text' | 'image'

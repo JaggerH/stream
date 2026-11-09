@@ -310,7 +310,8 @@ export async function checkWidget(dir: string, opts: CheckOpts = {}): Promise<Ch
         }
       : { rule: 'data-endpoint', ok: true, skipped: true }))
 
-  // 10) permissions：schema 已经整体校验过；这一条单独给结论（逐条报告的要求）。
+  // 10) permissions：schema 已经整体校验过；这一条单独给结论（逐条报告的要求）。media 是声明不是
+  //     授权：放不放由宿主决定（见 manifest.ts），本检查只管形状。
   if (manifest.permissions !== undefined) {
     const re = PERMISSIONS_SHAPE.safeParse(parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>).permissions : undefined)
     results.push(re.success
@@ -340,6 +341,16 @@ const PERMISSIONS_SHAPE = z
           '域名只能是主机名或 *.前缀模式（小写字母、数字、点、连字符）',
         ),
       )
+      .optional(),
+    // media 与 manifest.ts 的声明保持同步：媒体能力只是声明，由宿主决定是否放开（iframe `allow` 的
+    // 拼装在宿主侧）；宿主永不放开 allow-same-origin / allow-top-navigation。
+    media: z
+      .object({
+        autoplay: z.boolean().optional(),
+        fullscreen: z.boolean().optional(),
+        popups: z.boolean().optional(),
+      })
+      .strict()
       .optional(),
   })
   .strict()
