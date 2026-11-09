@@ -20,3 +20,22 @@
 
 - **WHEN** recipe 需要在写入新内容前清掉输入框残留
 - **THEN** 它对该元素 `setValue` 空串（元素级、不抢前台），而不是走键盘组合键
+
+### Requirement: 投递未知的动作不自动重试
+
+桌面失败分类 SHALL 新增 `delivery-unknown` 档：动作的投递状态不明（执行进程超时 / 中途失败 /
+回执解析不了），输入**可能已经落在应用上**。重放引擎对它 SHALL 停步如实上报（与
+`foreground-lost-midway` 同一条处置纪律：先看目标应用的实际状态，别直接重发），MUST NOT 自动
+重试该步、MUST NOT 换落地方式重执行、MUST NOT 在设值失败时退回键盘重打——三者都是把同一个
+可能已生效的动作再做一遍。它与 `foreground-lost`（输入确定没发出，直接重试）MUST 分为两档。
+
+#### Scenario: 动作进程超时后引擎停步
+
+- **WHEN** host agent 对一个动作 op 回 `delivery-unknown`，而该步骤声明了 `else:'retry'`
+  或还有其它落地方式候选
+- **THEN** runner 以 drift 结束该趟并如实转述原因，该动作恰好执行了一次（零重发、零换候选）
+
+#### Scenario: 设值投递未知时不退键盘
+
+- **WHEN** `setValue` 的投递状态不明，而 runner 的既有策略是「Value pattern 不成就退回键盘」
+- **THEN** 键盘退路不执行（退路只属于「确定没写进」的失败），整步以 delivery-unknown 上报

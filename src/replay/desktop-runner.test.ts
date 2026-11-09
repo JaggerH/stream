@@ -31,8 +31,12 @@ function fakeDriver(opts: {
   focusOk?: boolean
   /** true = 这个 agent 没有零位移叫醒那一口（老 agent / 非 Windows），调用方该落回 moveMouse */
   nudgeUnsupported?: boolean
+  /** setValue 抛这句（`<code>: <人话>` 形状）——投递未知等失败分类用 */
+  setValueThrows?: string
   /** agent 认出了挡着的是谁时会**抛**这句（`<code>: <人话>`），不是回 false */
   focusThrows?: string
+  /** invoke 抛这句（`<code>: <人话>` 形状）——投递未知等失败分类用 */
+  invokeThrows?: string
   capture?: WindowCapture
   /** 这一屏认出了什么。`elements` 不给就**从 `texts` 推**（落单即入表：没被任何检测器框
    *  包住的文字段自成一条 `kind:'text'` 元素）——绝大多数用例不关心两张表的差别，只有那几条
@@ -79,9 +83,14 @@ function fakeDriver(opts: {
         ...(opts.appVersion ? { appVersion: opts.appVersion } : {}),
       }
     },
-    async invoke(ref) { calls.push({ m: 'invoke', a: ref }); return {} },
+    async invoke(ref) {
+      calls.push({ m: 'invoke', a: ref })
+      if (opts.invokeThrows) throw new Error(opts.invokeThrows)
+      return {}
+    },
     async setValue(ref, text) {
       calls.push({ m: 'setValue', a: { ref, text } })
+      if (opts.setValueThrows) throw new Error(opts.setValueThrows)
       if (opts.setValueFails) throw new Error('setValue failed on every pattern — Value(unavailable): ...')
       return {}
     },
@@ -207,6 +216,33 @@ describe('runDesktopRecipe', () => {
     expect(seq).toEqual(['scopeWindow', 'find', 'setValue', 'focusApp', 'type', 'readSubtree'])
     expect(calls.find((c) => c.m === 'type')!.a).toBe('4K')
     expect(out.typedVia).toBe('keyboard') // 这一轮抢了屏，报告里说得出来
+  })
+
+  /** 投递未知：动作可能已经落在应用上——`else:'retry'` 与换落地方式都等于再做一遍。
+   *  这条测试锁住"重放引擎对 delivery-unknown 不自动重试"。 */
+  it('invoke 报 delivery-unknown 就停步：else:retry 不重发、不换候选，invoke 恰一次', async () => {
+    const { driver, calls } = fakeDriver({
+      invokeThrows: 'delivery-unknown: agent-desktop timeout（fallback=none）——动作可能已投递到目标应用，先看它的实际状态再决定要不要重试，别直接重发',
+    })
+    const out = await runDesktopRecipe(recipe({
+      steps: [{ kind: 'invoke', query: { role: 'Button', name: '搜索消息' }, else: 'retry' }],
+    }), { q: '4K' }, driver)
+    expect(out.outcome).toBe('drift')
+    expect(out.driftReason).toContain('delivery-unknown')
+    expect(calls.filter((c) => c.m === 'invoke')).toHaveLength(1)
+  })
+
+  /** 同一条禁令在 setValue 上：投递未知**不许退回键盘**——键盘再打一遍就是双写。 */
+  it('setValue 报 delivery-unknown 不退键盘，整步停住', async () => {
+    const { driver, calls } = fakeDriver({
+      setValueThrows: 'delivery-unknown: agent-desktop cli-failed（fallback=none）——动作可能已投递到目标应用',
+    })
+    const out = await runDesktopRecipe(recipe({
+      steps: [{ kind: 'type', text: '{q}', query: { role: 'Edit', name: '搜索' } }],
+    }), { q: '4K' }, driver)
+    expect(out.outcome).toBe('drift')
+    expect(out.driftReason).toContain('delivery-unknown')
+    expect(calls.filter((c) => c.m === 'type')).toHaveLength(0)
   })
 
   it('带 query 的 type 找不到输入框 → 退回键盘，不判 drift', async () => {

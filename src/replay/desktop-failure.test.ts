@@ -16,6 +16,7 @@ describe('桌面失败分类', () => {
     ['no-foreground-target: 还没确立目标窗口，先 focusApp', 'no-foreground-target'],
     ['foreground-lost: 目标窗口 123 已不在前台（现在是 456）', 'foreground-lost'],
     ['foreground-lost-midway: 打字过程中目标窗口 123 丢了前台（现在是 456）——可能只发出去一部分', 'foreground-lost-midway'],
+    ['delivery-unknown: agent-desktop timeout（fallback=none）——动作可能已投递到目标应用，先看它的实际状态再决定要不要重试，别直接重发', 'delivery-unknown'],
     ['ambiguous-window: 2 个窗口都匹配，请用 title 指名一个；候选：「扩展程序」、「新标签页」', 'ambiguous-window'],
     ['no-window-match: 没有窗口匹配 AppMatch { process: "telegram.exe" }', 'no-window-match'],
     ['agent-disconnected: Stream Desktop not connected', 'agent-disconnected'],
@@ -30,6 +31,12 @@ describe('桌面失败分类', () => {
   it('foreground-lost 不许吞掉 foreground-lost-midway', () => {
     expect(classifyDesktopError('foreground-lost-midway: 打到一半')).toBe('foreground-lost-midway')
     expect(classifyDesktopError('foreground-lost: 一个字都没发')).toBe('foreground-lost')
+  })
+
+  /** 投递未知与"确定没发出"的下一步相反：前者先看实际状态（重发=可能双发），后者直接重试。 */
+  it('foreground-lost 不许吞掉 delivery-unknown，两者不许并成一档', () => {
+    expect(classifyDesktopError('delivery-unknown: agent-desktop timeout（fallback=none）')).toBe('delivery-unknown')
+    expect(classifyDesktopError('foreground-lost: 目标窗口不在前台')).toBe('foreground-lost')
   })
 
   it('每档两两不同——混任意两档都会让调用方做出错误决定', () => {

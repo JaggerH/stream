@@ -31,24 +31,33 @@ CLI 查询面没有 `nameContains` 等价物时 SHALL 用 snapshot + 本地过�
 - **WHEN** recipe 用 `{role:'ListItem', nameContains:'频道名'}` 定位动态长名的列表项
 - **THEN** 后端以 snapshot + 本地过滤执行该查询，命中结果与 UIA 路的语义一致
 
-### Requirement: 指定错误回落 UIA，其余如实上报
+### Requirement: 指定错误回落 UIA，投递未知绝不重执行
 
-agent-desktop 报以下情况时 SHALL 回落 UIA 路并在回执标注原因：`AMBIGUOUS_TARGET`、
-`POLICY_DENIED`、`PERM_DENIED`、`APP_NOT_FOUND`、`WINDOW_NOT_FOUND`、`SNAPSHOT_NOT_FOUND`、
-`ACTION_NOT_SUPPORTED`、进程失败、超时；`STALE_REF` SHALL 重取 snapshot 一次、仍败才回落
-（原因码标 `stale-retried`）。会话锁屏时 SHALL 直接走 UIA 路。`ELEMENT_NOT_FOUND` 与
-`ACTION_FAILED` MUST NOT 回落：前者是正常结果（元素不存在），回落会掩盖 drift 分类；后者
-说明应用没收下动作，换执行路同样没用。
+agent-desktop 报以下情况时 SHALL 回落 UIA 路并在回执标注原因（这些失败都发生在动作**投递之前**，
+回落不会重复执行）：`AMBIGUOUS_TARGET`、`POLICY_DENIED`、`PERM_DENIED`、`APP_NOT_FOUND`、
+`WINDOW_NOT_FOUND`、`SNAPSHOT_NOT_FOUND`、`ACTION_NOT_SUPPORTED`、动作进程 spawn 失败；`STALE_REF`
+SHALL 重取 snapshot 一次、仍败才回落（原因码标 `stale-retried`；ref 失效 = 确定未执行，重试安全）。
+会话锁屏时 SHALL 直接走 UIA 路。以下情况 MUST NOT 回落：`ELEMENT_NOT_FOUND` 与 `ACTION_FAILED`
+（前者是正常结果，回落会掩盖 drift 分类；后者说明应用没收下，换路同样没用）；**动作进程超时、
+中途失败、回执解析不了、未知错误码**——动作 op 的输入可能已经落到应用上，回落 UIA 路就是执行
+第二次（一次点击「发送」变两次）。投递状态不明的动作 op SHALL 以 `delivery-unknown` 档如实上抛，
+MUST NOT 重发；读 op（无副作用）对同一类失败照旧回落。
 
 #### Scenario: 双胞胎控件回落 UIA
 
 - **WHEN** 两个同名控件使 CLI 报 `AMBIGUOUS_TARGET`
-- **THEN** 动作由 UIA 路完成，回执带 `backend` 与 `fallback` 原因码
+- **THEN** 动作由 UIA 路重新定位后完成，回执带 `backend` 与 `fallback` 原因码
 
 #### Scenario: 元素不存在不回落
 
 - **WHEN** recipe 查询一个此刻不存在的元素，CLI 报 `ELEMENT_NOT_FOUND`
 - **THEN** op 返回空结果，不执行 UIA 路，drift 分类与 CLI 缺席时一致
+
+#### Scenario: 动作超时不重执行
+
+- **WHEN** 一次 `invoke` 的 CLI 进程超时被强杀（输入可能已经投出）
+- **THEN** host agent 以 `delivery-unknown` 报错，不回落 UIA 路、不重发该动作；同一查询若发生在
+  `find`（读 op）上则照旧回落
 
 ### Requirement: 动作回执与日志可区分执行路
 

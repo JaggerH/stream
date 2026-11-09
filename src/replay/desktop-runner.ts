@@ -211,6 +211,9 @@ async function typeInto(
         }
         return 'value'
       } catch (e) {
+        // 投递未知不许退键盘：setValue 可能已经写进去了，键盘再打一遍就是双写——照抛，
+        // 让外层按 `delivery-unknown` 停步。只有"确定没写进"（应用不认 Value pattern）才退。
+        if (classifyDesktopError((e as Error)?.message ?? '') === 'delivery-unknown') throw e
         // 这个控件不认——退回键盘。**原因不吞**：现象（屏幕突然跳到目标应用）和成因（provider
         // 不给 Value pattern）隔得太远，不打出来就只剩一个查不动的"它又抢屏了"。
         console.warn(`[desktop] setValue 不成，退回键盘（这一轮会抢屏）：${(e as Error).message}`)
@@ -1049,6 +1052,8 @@ async function runDesktopRecipeLocked(
         try {
           await driver.setValue(edit.ref, path)
         } catch (e) {
+          // 投递未知照抛（可能已经写进路径框，键盘再打一遍就是双写）——外层按该档停步。
+          if (classifyDesktopError((e as Error)?.message ?? '') === 'delivery-unknown') throw e
           // 不认 ValuePattern → 退回键盘打进这个框（先 invoke 让它拿焦点）。留痕，别静默。
           probe(`#${i} pickFile setValue 不成，退回键盘：${(e as Error).message}`)
           via = 'keyboard+enter'
@@ -1563,6 +1568,9 @@ async function runDesktopRecipeLocked(
       // 窗口"），而这里窗口找到了、只是抬不上来——套上去就成了一句假话，而假话比没话更贵
       // （它会把排查引向"Chrome 是不是没装"）。抛出来那句本身已经指名道姓。
       if (e instanceof ForegroundRefused) return blocked('drift', e.message)
+      // 投递未知**必须停在原地**：动作可能已经落在应用上，换落地方式重来或 `else:'retry'`
+      // 都等于把同一个动作再做一遍（一次点击「发送」变两次）。见 DesktopFailure 的该档注释。
+      if (classifyDesktopError((e as Error)?.message ?? '') === 'delivery-unknown') return blocked('drift', (e as Error).message)
       // 同理不套 label：这句讲的是宿主没接线，不是这一步自己的失败模式。
       if (e instanceof SeeUnavailable) return blocked('drift', e.message)
       // 识别层读不了屏（见 `HARD_SEE_ERRORS`）：翻成这一步的 drift，好让 agent 那句人话

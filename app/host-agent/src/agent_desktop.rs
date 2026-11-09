@@ -93,7 +93,7 @@ fn real_runner(program: &Path, args: &[String], timeout: Duration) -> Result<Str
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()
-        .map_err(|e| format!("cli-failed: spawn {}: {e}", program.display()))?;
+        .map_err(|e| format!("cli-unavailable: spawn {}: {e}", program.display()))?;
     let mut pipe = child.stdout.take().ok_or("cli-failed: stdout 缺席".to_string())?;
     let reader = std::thread::spawn(move || {
         let mut buf = Vec::new();
@@ -160,15 +160,20 @@ pub fn parse_envelope(stdout: &str) -> Result<Envelope, String> {
 // ── 回落决策表 ──────────────────────────────────────────────────────────────
 
 /// 一个 CLI 错误该往哪走。出处见 openspec design §6：
-/// - 回落：动作被拒 / 目标丢了 / 超时——UIA 路可能还有办法（它多 SelectionItem/Toggle rung，
+/// - 回落：动作被拒 / 目标丢了——UIA 路可能还有办法（它多 SelectionItem/Toggle rung，
 ///   且不经过 CLI 的窗口映射）；
 /// - `STALE_REF`：先重取 snapshot 按结构特征重新拿 ref、重试一次，仍败才回落（`stale-retried`）；
+/// - 不确定（`Uncertain`）：进程超时 / 中途失败 / 输出解析不了 / 未知错误码——**动作 op 可能
+///   已经把输入投到应用上**，回落 UIA 就是执行第二次（一次点击「发送」变两次）。读 op 没有
+///   副作用，照旧回落；
 /// - 如实上报：`ELEMENT_NOT_FOUND` 是正常结果（回落会把"这个元素不存在"伪装成"没读到"，
 ///   drift 分类全部失真）；`ACTION_FAILED` 说明应用没收下，换路同样没用。
 #[derive(Debug, Clone, PartialEq)]
 pub enum AdFail {
     Fallback(&'static str),
     StaleRef,
+    /// 投递状态不明（原因码）：动作 op 绝不回落，读 op 照旧回落。
+    Uncertain(&'static str),
     /// 不回落、如实报错（code, message）。
     Report(String, String),
 }
@@ -180,16 +185,44 @@ pub fn route_for(code: &str) -> AdFail {
         "PERM_DENIED" => AdFail::Fallback("perm-denied"),
         "APP_NOT_FOUND" | "WINDOW_NOT_FOUND" | "SNAPSHOT_NOT_FOUND" => AdFail::Fallback("window-not-found"),
         "ACTION_NOT_SUPPORTED" => AdFail::Fallback("action-not-supported"),
-        "TIMEOUT" => AdFail::Fallback("timeout"),
+        "TIMEOUT" => AdFail::Uncertain("timeout"),
         "STALE_REF" => AdFail::StaleRef,
         "ELEMENT_NOT_FOUND" | "ACTION_FAILED" => AdFail::Report(code.into(), String::new()),
-        _ => AdFail::Fallback("cli-error"),
+        _ => AdFail::Uncertain("cli-error"),
     }
 }
 
-/// 进程层失败的错误串 → 回落原因（timeout 单独一档，真机要量它）。
+/// 进程层失败的错误串 → 处置档：spawn 失败（程序没起来 = 动作肯定没发生）可回落；
+/// 超时与中途失败投递状态不明。
 fn runner_fail_reason(err: &str) -> &'static str {
-    if err.starts_with("timeout") { "timeout" } else { "cli-failed" }
+    if err.starts_with("timeout") {
+        "timeout"
+    } else if err.starts_with("cli-unavailable") {
+        "cli-unavailable"
+    } else {
+        "cli-failed"
+    }
+}
+
+/// **动作 op**（invoke / setValue，有副作用的）对 `AdFail` 的处置——读 op 不经过这里。
+/// 回落只允许「确定没动过应用」的失败：CLI 在动作**前**拒绝的码，与程序没起来（spawn 失败）。
+/// 超时 / 中途失败 / 解析不了 / 未知码一律投递未知：调用方先看目标应用的实际状态，
+/// 别直接重发。glue 只按这里的输出分派——没有 `Fallback` 变体就碰不到 inner 的动作方法。
+#[derive(Debug, Clone, PartialEq)]
+pub enum ActionRoute {
+    Fallback(&'static str),
+    RetryStale,
+    DeliveryUnknown(&'static str),
+    Report(String, String),
+}
+
+pub fn action_route(f: &AdFail) -> ActionRoute {
+    match f {
+        AdFail::Fallback(reason) => ActionRoute::Fallback(reason),
+        AdFail::StaleRef => ActionRoute::RetryStale,
+        AdFail::Uncertain(reason) => ActionRoute::DeliveryUnknown(reason),
+        AdFail::Report(code, msg) => ActionRoute::Report(code.clone(), msg.clone()),
+    }
 }
 
 // ── snapshot 树 ─────────────────────────────────────────────────────────────
@@ -515,14 +548,22 @@ impl AdCore {
         let Some(cli) = &self.cli else { return Err(AdFail::Fallback("cli-unavailable")) };
         let out = match cli.run_raw(args, timeout) {
             Ok(o) => o,
-            Err(e) => return Err(AdFail::Fallback(runner_fail_reason(&e))),
+            // spawn 失败 = 程序没起来 = 动作肯定没发生（可回落）；超时 / 中途失败投递状态不明。
+            Err(e) => {
+                return Err(match runner_fail_reason(&e) {
+                    "cli-unavailable" => AdFail::Fallback("cli-unavailable"),
+                    other => AdFail::Uncertain(other),
+                })
+            }
         };
-        let env = parse_envelope(&out).map_err(|_| AdFail::Fallback("cli-failed"))?;
+        // 进程跑了但回执解析不了：投递状态不明（它可能已经做完了事）。
+        let env = parse_envelope(&out).map_err(|_| AdFail::Uncertain("cli-failed"))?;
         if !env.ok {
             let code = env.err_code.unwrap_or_default();
             return Err(match route_for(&code) {
                 AdFail::Fallback(reason) => AdFail::Fallback(reason),
                 AdFail::StaleRef => AdFail::StaleRef,
+                AdFail::Uncertain(reason) => AdFail::Uncertain(reason),
                 AdFail::Report(_, _) => AdFail::Report(code, env.err_message.unwrap_or_default()),
             });
         }
@@ -741,6 +782,15 @@ mod win {
             Err(err)
         }
 
+        /// 投递未知：动作可能已经落在应用上——绝不回落、绝不重发，如实上抛给 runner 分类
+        /// （`delivery-unknown`，重放引擎对它不自动重试）。标记照记：动作走的是 CLI，没有回落。
+        fn delivery_unknown(reason: &str) -> String {
+            format!(
+                "delivery-unknown: agent-desktop {reason}（fallback=none）——动作可能已投递到目标应用，\
+                 先看它的实际状态再决定要不要重试，别直接重发"
+            )
+        }
+
         /// STALE_REF 重试的公共段：重取 snapshot → 按结构特征重新拿 ref。
         fn retry_after_stale(&mut self, scope: &str, pid: u32, title: &str, node: &AdNode) -> Option<String> {
             let wid = self.core.ensure_window(scope, pid, title).ok()?;
@@ -797,6 +847,8 @@ mod win {
                     Ok(els)
                 }
                 Some(Err(AdFail::Fallback(reason))) => self.find_via_uia(reason, q, t0),
+                // 读 op 没有副作用：超时 / 中途失败 / 未知码照旧回落（与动作 op 的分野在 action_route）
+                Some(Err(AdFail::Uncertain(reason))) => self.find_via_uia(reason, q, t0),
                 Some(Err(AdFail::StaleRef)) => self.find_via_uia("stale-retried", q, t0),
                 Some(Err(AdFail::Report(code, msg))) => Err(format!("{code}: {msg}")),
             }
@@ -822,7 +874,10 @@ mod win {
             let mut ref_id = el_ref.to_string();
             let mut retried = false;
             loop {
-                match self.core.click(&ref_id) {
+                let r = self.core.click(&ref_id);
+                // 动作 op 的分派只走 action_route：Fallback 变体之外碰不到 inner——
+                // 超时/中途失败/未知码在这里绝无第二次执行。
+                match r {
                     Ok(()) => {
                         self.core.mark("agent-desktop", None);
                         eprintln!("[agent-desktop] op=invoke path=agent-desktop elapsed={}ms", t0.elapsed().as_millis());
@@ -831,13 +886,19 @@ mod win {
                     Err(AdFail::StaleRef) if !retried => {
                         retried = true;
                         match self.retry_after_stale(&scope, pid, &title, &node) {
-                            Some(r) => ref_id = r,
+                            Some(next) => ref_id = next,
                             None => return self.act_via_uia("invoke", "stale-retried", &node, t0, |d, _, r| d.invoke(r)),
                         }
                     }
-                    Err(AdFail::StaleRef) => return self.act_via_uia("invoke", "stale-retried", &node, t0, |d, _, r| d.invoke(r)),
-                    Err(AdFail::Fallback(reason)) => return self.act_via_uia("invoke", reason, &node, t0, |d, _, r| d.invoke(r)),
-                    Err(AdFail::Report(code, msg)) => return Err(format!("{code}: {msg}")),
+                    Err(f) => match action_route(&f) {
+                        ActionRoute::RetryStale => return self.act_via_uia("invoke", "stale-retried", &node, t0, |d, _, r| d.invoke(r)),
+                        ActionRoute::Fallback(reason) => return self.act_via_uia("invoke", reason, &node, t0, |d, _, r| d.invoke(r)),
+                        ActionRoute::DeliveryUnknown(reason) => {
+                            eprintln!("[agent-desktop] op=invoke path=agent-desktop delivery-unknown={} elapsed={}ms", reason, t0.elapsed().as_millis());
+                            return Err(Self::delivery_unknown(reason));
+                        }
+                        ActionRoute::Report(code, msg) => return Err(format!("{code}: {msg}")),
+                    },
                 }
             }
         }
@@ -861,7 +922,9 @@ mod win {
             let mut ref_id = el_ref.to_string();
             let mut retried = false;
             loop {
-                match self.core.set_value(&ref_id, text) {
+                let r = self.core.set_value(&ref_id, text);
+                // 动作 op 同 invoke：只走 action_route，投递未知绝不第二次执行。
+                match r {
                     Ok(()) => {
                         self.core.mark("agent-desktop", None);
                         eprintln!("[agent-desktop] op=setValue path=agent-desktop elapsed={}ms", t0.elapsed().as_millis());
@@ -870,13 +933,19 @@ mod win {
                     Err(AdFail::StaleRef) if !retried => {
                         retried = true;
                         match self.retry_after_stale(&scope, pid, &title, &node) {
-                            Some(r) => ref_id = r,
+                            Some(next) => ref_id = next,
                             None => return self.act_via_uia("setValue", "stale-retried", &node, t0, |d, _, r| d.set_value(r, text)),
                         }
                     }
-                    Err(AdFail::StaleRef) => return self.act_via_uia("setValue", "stale-retried", &node, t0, |d, _, r| d.set_value(r, text)),
-                    Err(AdFail::Fallback(reason)) => return self.act_via_uia("setValue", reason, &node, t0, |d, _, r| d.set_value(r, text)),
-                    Err(AdFail::Report(code, msg)) => return Err(format!("{code}: {msg}")),
+                    Err(f) => match action_route(&f) {
+                        ActionRoute::RetryStale => return self.act_via_uia("setValue", "stale-retried", &node, t0, |d, _, r| d.set_value(r, text)),
+                        ActionRoute::Fallback(reason) => return self.act_via_uia("setValue", reason, &node, t0, |d, _, r| d.set_value(r, text)),
+                        ActionRoute::DeliveryUnknown(reason) => {
+                            eprintln!("[agent-desktop] op=setValue path=agent-desktop delivery-unknown={} elapsed={}ms", reason, t0.elapsed().as_millis());
+                            return Err(Self::delivery_unknown(reason));
+                        }
+                        ActionRoute::Report(code, msg) => return Err(format!("{code}: {msg}")),
+                    },
                 }
             }
         }
@@ -902,6 +971,8 @@ mod win {
                 Err(AdFail::Report(code, msg)) => return Err(format!("{code}: {msg}")),
                 Err(AdFail::StaleRef) => return self.uia_read("stale-retried", spec, t0),
                 Err(AdFail::Fallback(reason)) => return self.uia_read(reason, spec, t0),
+                // 读 op 没有副作用：超时 / 中途失败 / 未知码照旧回落
+                Err(AdFail::Uncertain(reason)) => return self.uia_read(reason, spec, t0),
             }
             let items = self.core.matches(&spec.item_query);
             let rows = super::read_rows(&items, spec);
@@ -1048,7 +1119,7 @@ mod tests {
         // 两层断言都成立——找不到=None）。
         assert_eq!(resolve_program(&kill, Some(&dir)), None);
         // 缺席 = None（可选能力静默缺席）
-        assert_eq!(resolve_program(&no_env, Some(&std::path::Path::new("/nonexistent-dr1w"))), None);
+        assert_eq!(resolve_program(&no_env, Some(&std::path::Path::new("/nonexistent-agent-desktop"))), None);
     }
 
     #[test]
@@ -1060,12 +1131,50 @@ mod tests {
         assert_eq!(route_for("SNAPSHOT_NOT_FOUND"), AdFail::Fallback("window-not-found"));
         assert_eq!(route_for("APP_NOT_FOUND"), AdFail::Fallback("window-not-found"));
         assert_eq!(route_for("ACTION_NOT_SUPPORTED"), AdFail::Fallback("action-not-supported"));
-        assert_eq!(route_for("TIMEOUT"), AdFail::Fallback("timeout"));
+        // 超时/未知码投递状态不明：动作 op 绝不回落（见 action_route），读 op 照旧回落
+        assert_eq!(route_for("TIMEOUT"), AdFail::Uncertain("timeout"));
+        assert_eq!(route_for("INTERNAL"), AdFail::Uncertain("cli-error"));
         assert_eq!(route_for("STALE_REF"), AdFail::StaleRef);
         // 这两个绝不回落：空结果与"应用没收下"换路也一样
         assert!(matches!(route_for("ELEMENT_NOT_FOUND"), AdFail::Report(..)));
         assert!(matches!(route_for("ACTION_FAILED"), AdFail::Report(..)));
-        assert_eq!(route_for("INTERNAL"), AdFail::Fallback("cli-error"));
+    }
+
+    #[test]
+    fn action_route_never_falls_back_on_uncertain_delivery() {
+        // 动作 op 的分派表：回落只允许"确定没动过应用"的失败
+        assert_eq!(action_route(&AdFail::Fallback("ambiguous-target")), ActionRoute::Fallback("ambiguous-target"));
+        assert_eq!(action_route(&AdFail::Fallback("cli-unavailable")), ActionRoute::Fallback("cli-unavailable"));
+        assert_eq!(action_route(&AdFail::StaleRef), ActionRoute::RetryStale);
+        assert_eq!(action_route(&AdFail::Uncertain("timeout")), ActionRoute::DeliveryUnknown("timeout"));
+        assert_eq!(action_route(&AdFail::Uncertain("cli-failed")), ActionRoute::DeliveryUnknown("cli-failed"));
+        assert_eq!(action_route(&AdFail::Uncertain("cli-error")), ActionRoute::DeliveryUnknown("cli-error"));
+        assert!(matches!(action_route(&AdFail::Report("X".into(), "y".into())), ActionRoute::Report(..)));
+    }
+
+    #[test]
+    fn runner_failures_split_spawn_from_midway() {
+        // spawn 失败 = 程序没起来 = 动作肯定没发生 → 可回落；其余投递状态不明
+        assert_eq!(runner_fail_reason("cli-unavailable: spawn x: 2 (No such file)"), "cli-unavailable");
+        assert_eq!(runner_fail_reason("timeout: agent-desktop 进程超时被强杀"), "timeout");
+        assert_eq!(runner_fail_reason("cli-failed: wait: ..."), "cli-failed");
+    }
+
+    /// 恒定失败的 runner：模拟进程层错误（spawn 失败 / 超时 / 中途崩溃）。
+    fn failing_cli(err: &'static str) -> Cli {
+        Cli { program: PathBuf::from("fake-agent-desktop"), run: Box::new(move |_p, _a, _t| Err(err.to_string())) }
+    }
+
+    #[test]
+    fn spawn_failure_falls_back_but_timeout_stays_uncertain() {
+        // 程序没起来 = 动作肯定没发生 → 可回落
+        let mut core = AdCore::with_cli(failing_cli("cli-unavailable: spawn ad: No such file"));
+        assert_eq!(core.click("@s1:e1"), Err(AdFail::Fallback("cli-unavailable")));
+        // 超时 / 中途失败：投递状态不明，动作 op 绝不回落
+        let mut core = AdCore::with_cli(failing_cli("timeout: agent-desktop 进程超时被强杀"));
+        assert_eq!(core.click("@s1:e1"), Err(AdFail::Uncertain("timeout")));
+        let mut core = AdCore::with_cli(failing_cli("cli-failed: wait: interrupted"));
+        assert_eq!(core.click("@s1:e1"), Err(AdFail::Uncertain("cli-failed")));
     }
 
     #[test]
@@ -1118,7 +1227,7 @@ mod tests {
     #[test]
     fn open_degrades_silently_when_version_or_binary_is_missing() {
         // 找不到二进制 = 可选能力静默缺席
-        let core = AdCore::open(&|k| (k == ENV_BIN_PATH).then(|| "/nonexistent-dr1w/ad".to_string()), None);
+        let core = AdCore::open(&|k| (k == ENV_BIN_PATH).then(|| "/nonexistent-agent-desktop/ad".to_string()), None);
         assert!(!core.usable());
     }
 
@@ -1174,8 +1283,9 @@ mod tests {
     fn snapshot_timeout_maps_to_the_timeout_fallback_reason() {
         let (cli, _) = fake_cli(vec![]); // 空脚本 = 进程层失败
         let mut core = AdCore::with_cli(cli);
+        // 读 op 的回落决策在 glue（find 对 Uncertain 照旧回落）；核心层只保证映射正确
         let err = core.refresh_snapshot("w1").unwrap_err();
-        assert_eq!(err, AdFail::Fallback("cli-failed"));
+        assert_eq!(err, AdFail::Uncertain("cli-failed"));
     }
 
     #[test]

@@ -75,18 +75,22 @@ pub struct AgentDesktopBackend {
 先决：`session_locked() == Some(true)` → 直接 UIA（锁屏场景，真机实测为准）；`cli == None`、
 降级开关、窗口映射失败 → UIA。
 
-| CLI 错误码 | 处置 | 原因码（回执/日志） |
+**回落只允许「确定没动过应用」的失败**——动作 op（invoke / setValue，有副作用）与读 op
+（find / readSubtree）在此分野：
+
+| 失败 | 读 op | 动作 op |
 |---|---|---|
-| `AMBIGUOUS_TARGET` | 回落 | `ambiguous-target` |
-| `POLICY_DENIED` | 回落 | `policy-denied` |
-| `PERM_DENIED` | 回落 | `perm-denied` |
-| `APP_NOT_FOUND` / `WINDOW_NOT_FOUND` / `SNAPSHOT_NOT_FOUND` | 回落 | `window-not-found` |
-| `ACTION_NOT_SUPPORTED` | 回落 | `action-not-supported`（旧 UIA invoke 梯子多 SelectionItem / Toggle rung） |
-| `TIMEOUT` / 进程失败 | 回落 | `timeout` / `cli-failed` |
-| `STALE_REF` | 重取 snapshot、按结构特征重新拿 ref、重试一次；仍败回落 | `stale-retried` |
-| `ELEMENT_NOT_FOUND` | **不回落**，如实报 | — |
-| `ACTION_FAILED` | **不回落**，如实报 | — |
-| 其余（`INTERNAL` 等） | 回落 | `cli-error` |
+| `AMBIGUOUS_TARGET` / `POLICY_DENIED` / `PERM_DENIED` / 窗口类 NOT_FOUND / `ACTION_NOT_SUPPORTED`（动作前拒绝） | 回落 | 回落 |
+| spawn 失败（程序没起来 = 动作没发生） | 回落 `cli-unavailable` | 回落 `cli-unavailable` |
+| `STALE_REF`（ref 失效 = 确定未执行） | 重取 snapshot 一次，仍败回落（`stale-retried`） | 同左 |
+| `TIMEOUT` / 进程中途失败 / 回执解析不了 / 未知码 | 回落（`timeout` / `cli-failed` / `cli-error`） | **投递未知**：`delivery-unknown` 如实上抛，绝不回落、绝不重发 |
+| `ELEMENT_NOT_FOUND` / `ACTION_FAILED` | 如实报（空结果/应用没收下），不回落 | 同左 |
+
+动作 op 的分派抽成平台无关纯函数 `action_route()`——回落只从 `Fallback` 变体出来，glue 没有
+该变体就碰不到 inner 的动作方法（类型上封死「超时后再执行一次」）。`delivery-unknown` 的
+处置纪律与 `foreground-lost-midway` 同构（先看目标应用实际状态，别直接重发），在
+desktop-failure.ts 注册为独立失败档，重放引擎对它不自动重试、不换候选、设值不退键盘——
+退键盘那条路只属于「确定没写进」的失败。
 
 **回落是「重新定位再动作」，不是 ref 换路。** ad ref（`@<snapshot_id>:eN`）与 UIA ref（进程内
 元素句柄）是两个空间：find 由 CLI 服务时，invoke/setValue 拿到的是 ad ref，UIA 路认不得它。

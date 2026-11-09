@@ -23,6 +23,11 @@ export type DesktopFailure =
    *  跟 `foreground-lost` 分开是因为下一步相反：那一档直接重试，这一档必须先看目标应用的
    *  实际状态，否则重试会把同一条消息发两遍（判据在 host-agent 的 `guard_typing_landed`） */
   | 'foreground-lost-midway'
+  /** agent-desktop 的动作进程超时 / 中途失败 / 回执解析不了——输入**可能已经投到应用上**，
+   *  投递状态不明。跟 `foreground-lost` 分开是因为下一步相反：那一档输入确定没发出、直接重试；
+   *  这一步必须先看目标应用的实际状态，否则重试会把同一个动作**再做一遍**（判据在
+   *  host-agent 的 desktop-automation-backend：投递不明绝不回落 UIA 路重执行） */
+  | 'delivery-unknown'
 
 /** agent 侧用 `<code>: <人话>` 的形状回错误（见 host-agent 的 protocol.rs）。
  *  这里只认前缀，认不出的原样归为 undefined——**不猜**：把一个陌生错误归到某一档，
@@ -39,6 +44,7 @@ export function classifyDesktopError(message: string): DesktopFailure | undefine
     // 所以谁先谁后都对——但别把它改成 `startsWith` 匹配，那样 `foreground-lost` 会先吞掉
     // `foreground-lost-midway`，两档静默并成一档。
     'foreground-lost-midway',
+    'delivery-unknown',
     'foreground-lost',
   ]
   return known.find((k) => k === code)
