@@ -21,6 +21,7 @@ import com.streamapp.android.BuildConfig
 import com.streamapp.android.a11y.AndroidDevice
 import com.streamapp.android.a11y.StreamAccessibilityService
 import com.streamapp.android.agent.Dispatcher
+import com.streamapp.android.policy.PolicyContext
 import com.streamapp.android.protocol.DeviceState
 import com.streamapp.android.store.Credentials
 import okhttp3.OkHttpClient
@@ -63,9 +64,16 @@ class RelayService : Service() {
         val creds = Credentials.load(this) ?: run { stopSelf(); return START_NOT_STICKY }
         if (client == null) {
             val device = AndroidDevice(this) { client?.abort() }
+            // The policy engine is process-lifetime: its lease id rotates when this service (and
+            // with it the process state) starts over, so credentials issued before a restart fail
+            // their binding check on replay.
+            val policy = PolicyContext.fromStreams(
+                { path -> assets.open(path) },
+                creds.deviceId,
+            )
             client = RelayClient(
                 transport = OkHttpTransport(http),
-                dispatcher = { Dispatcher(device) },
+                dispatcher = { Dispatcher(device, policy) },
                 name = "${Build.MANUFACTURER} ${Build.MODEL}",
                 agentVersion = BuildConfig.VERSION_NAME,
                 stateProvider = ::state,

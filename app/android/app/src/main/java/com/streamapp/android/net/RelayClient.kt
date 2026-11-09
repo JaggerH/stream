@@ -1,9 +1,12 @@
 package com.streamapp.android.net
 
 import com.streamapp.android.agent.ANDROID_OPS
+import com.streamapp.android.agent.AgentError
 import com.streamapp.android.agent.Cancel
 import com.streamapp.android.agent.Dispatcher
+import com.streamapp.android.policy.AskExemption
 import com.streamapp.android.protocol.Backoff
+import com.streamapp.android.protocol.Control
 import com.streamapp.android.protocol.DeviceState
 import com.streamapp.android.protocol.Frames
 import com.streamapp.android.protocol.wsUrl
@@ -117,8 +120,12 @@ class RelayClient(
 
         override fun onMessage(text: String) {
             if (g != gen) return
-            val req = Frames.request(text) ?: return
             val d = current ?: return
+            Frames.control(text)?.let { c ->
+                handleControl(c, d)
+                return
+            }
+            val req = Frames.request(text) ?: return
             val epoch = req.abortEpoch
             if (epoch != null && epoch < minEpoch) {
                 if (open) transport.send(Frames.error(req.id, ABORTED))
@@ -134,12 +141,34 @@ class RelayClient(
                     val reply = try {
                         Frames.reply(req.id, d.dispatch(req.op, req.args, cancel))
                     } catch (t: Throwable) {
-                        Frames.error(req.id, t.message ?: t.javaClass.simpleName)
+                        errorReply(req.id, t)
                     }
                     if (g == gen && open) transport.send(reply)
                 } finally {
                     synchronized(live) { live -= cancel }
                 }
+            })
+        }
+
+        /** Control frames run through the same serialized executor, so busy and exemptions take
+         *  effect in op order; they never check busy themselves (they are how busy ends). */
+        private fun handleControl(c: Control, d: Dispatcher) {
+            val id = c.id ?: return
+            executor(Runnable {
+                if (g != gen || !open || stopped) return@Runnable
+                val reply = try {
+                    when (c.control) {
+                        "setBusy" -> { d.setBusy(c.busy ?: false, c.reason); Frames.reply(id, emptyMap<String, Any?>()) }
+                        "exemptions" -> {
+                            d.grantExemptions(c.ask.map { AskExemption(it.first, it.second) }, c.financeVisible)
+                            Frames.reply(id, emptyMap<String, Any?>())
+                        }
+                        else -> Frames.error(id, "unknown-control: ${c.control}", "unknown-control")
+                    }
+                } catch (t: Throwable) {
+                    errorReply(id, t)
+                }
+                if (g == gen && open) transport.send(reply)
             })
         }
 
@@ -173,6 +202,14 @@ class RelayClient(
     private companion object {
         const val GONE = "aborted: 连接断开了，停下手上的操作"
         const val ABORTED = "aborted: 用户在手机上点了停止"
+    }
+
+    /** Errors carry their machine code (an explicit one, else the message's `code:` prefix) and,
+     *  for `approval-required`, the semantics receipt. */
+    private fun errorReply(id: Long, t: Throwable): String {
+        val a = t as? com.streamapp.android.agent.AgentError
+        val code = a?.errorCode?.takeIf { it.isNotEmpty() }
+        return Frames.error(id, t.message ?: t.javaClass.simpleName, code, a?.semantics)
     }
 
     private fun retry(why: String) {

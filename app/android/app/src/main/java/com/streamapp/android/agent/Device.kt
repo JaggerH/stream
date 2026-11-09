@@ -1,5 +1,7 @@
 package com.streamapp.android.agent
 
+import org.json.JSONObject
+
 data class WindowInfo(val id: String, val process: String, val title: String, val foreground: Boolean)
 data class Shot(val jpeg: ByteArray, val window: Rect, val scale: Double)
 
@@ -32,10 +34,18 @@ interface Device {
     fun swipe(x1: Int, y1: Int, x2: Int, y2: Int, durationMs: Long)
     fun globalBack(): Boolean
     fun globalHome(): Boolean
-    fun screenshot(): Shot
+    /** A screenshot with the given screen rects covered in black (credential fields and
+     *  one-time-code text), so no credential value leaves in a frame. */
+    fun screenshot(maskedAreas: List<Rect> = emptyList()): Shot
     fun screenSize(): Rect
     fun status(text: String?)
     fun sleep(ms: Long)
 }
 
-class AgentError(msg: String) : Exception(msg)
+/** An op failure. [code] is the machine-readable family (`approval-required`, `device-busy`…);
+ *  when null, the caller derives it from the message's `<code>: <人话>` prefix. [semantics]
+ *  carries the structured receipt an `approval-required` reply shows the approver. */
+class AgentError(msg: String, val code: String? = null, val semantics: JSONObject? = null) : Exception(msg) {
+    val errorCode: String
+        get() = code ?: message?.substringBefore(':')?.trim()?.takeIf { it.isNotBlank() && ' ' !in it } ?: ""
+}

@@ -18,6 +18,11 @@ class AndroidNode(val info: AccessibilityNodeInfo, override val children: List<U
         info.getBoundsInScreen(r)
         Rect(r.left, r.top, r.width(), r.height())
     }
+    override val isPassword: Boolean = info.isPassword
+    override val isEditable: Boolean = info.isEditable
+    override val isClickable: Boolean = info.isClickable
+    override val isScrollable: Boolean = info.isScrollable
+    override val viewId: String = info.viewIdResourceName ?: ""
 
     companion object {
         /** Depth cap guards against pathological trees (some apps nest hundreds deep). */

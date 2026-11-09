@@ -20,4 +20,12 @@ interface UiNode {
     val text: String
     val rect: Rect
     val children: List<UiNode>
+    /** Structure signals the sensitive-action gate reads; the adapter fills them from the node,
+     *  hand-built test nodes default to false. */
+    val isPassword: Boolean get() = false
+    val isEditable: Boolean get() = false
+    val isClickable: Boolean get() = false
+    val isScrollable: Boolean get() = false
+    /** The node's resource id, e.g. `com.app:id/password`; "" when the app gave none. */
+    val viewId: String get() = ""
 }

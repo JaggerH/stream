@@ -39,7 +39,7 @@ class CancellableDevice(private val inner: Device, private val cancel: Cancel) :
     override fun swipe(x1: Int, y1: Int, x2: Int, y2: Int, durationMs: Long) = guard { inner.swipe(x1, y1, x2, y2, durationMs) }
     override fun globalBack() = guard { inner.globalBack() }
     override fun globalHome() = guard { inner.globalHome() }
-    override fun screenshot() = guard { inner.screenshot() }
+    override fun screenshot(maskedAreas: List<Rect>) = guard { inner.screenshot(maskedAreas) }
     override fun screenSize() = guard { inner.screenSize() }
     override fun status(text: String?) = guard { inner.status(text) }
 

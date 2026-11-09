@@ -198,16 +198,16 @@ class AndroidDevice(private val ctx: Context, private val onStop: () -> Unit) : 
 
     /** An all-black frame is retried once (the throttle spaces it 1.1 s later): an app's dark splash
      *  screen is black for a moment too, and is not a protected window. */
-    override fun screenshot(): Shot = try {
-        shoot(lastTry = false)
+    override fun screenshot(maskedAreas: List<Rect>): Shot = try {
+        shoot(emptyList(), lastTry = false)
     } catch (_: AllBlack) {
-        shoot(lastTry = true)
+        shoot(maskedAreas, lastTry = true)
     }
 
     private class AllBlack : Exception()
 
     /** `takeScreenshot` allows about one call per second; calls are spaced 1.1 s apart rather than failed. */
-    private fun shoot(lastTry: Boolean): Shot {
+    private fun shoot(maskedAreas: List<Rect>, lastTry: Boolean): Shot {
         val wait = lastShotAt + 1_100 - System.currentTimeMillis()
         if (wait > 0) Thread.sleep(wait)
         val done = CountDownLatch(1)
@@ -245,6 +245,13 @@ class AndroidDevice(private val ctx: Context, private val onStop: () -> Unit) : 
             if (isAllBlack(bmp)) {
                 if (!lastTry) throw AllBlack()
                 throw AgentError("secure-window: 画面是全黑的，当前页面禁止截图（支付、密码页）或屏幕没亮")
+            }
+            // Masking at the pixel layer, before the frame exists: the covered rects are the
+            // credential fields and code text the policy layer found in the tree.
+            if (maskedAreas.isNotEmpty()) {
+                val canvas = android.graphics.Canvas(bmp)
+                val paint = android.graphics.Paint().apply { color = android.graphics.Color.BLACK }
+                for (r in maskedAreas) canvas.drawRect(r.x.toFloat(), r.y.toFloat(), (r.x + r.w).toFloat(), (r.y + r.h).toFloat(), paint)
             }
             val bytes = ByteArrayOutputStream().also { bmp.compress(Bitmap.CompressFormat.JPEG, 80, it) }.toByteArray()
             return Shot(bytes, Rect(0, 0, bmp.width, bmp.height), ctx.resources.displayMetrics.density.toDouble())

@@ -58,8 +58,15 @@ fun findAll(root: UiNode, q: A11yQuery): List<UiNode> {
     return out
 }
 
-/** Read items into rows. See the plan's Task 3 rules; `dedupeBy` is the backend's job. */
-fun readSubtree(root: UiNode, spec: JSONObject): List<Map<String, String>> {
+/** Read items into rows. See the plan's Task 3 rules; `dedupeBy` is the backend's job.
+ *  [maskName]/[maskValue] run last, so a read-layer masker replaces credential text before the
+ *  row ever leaves; the defaults pass text through. */
+fun readSubtree(
+    root: UiNode,
+    spec: JSONObject,
+    maskName: (UiNode) -> String = { it.name },
+    maskValue: (UiNode) -> String = { it.text },
+): List<Map<String, String>> {
     val items = findAll(root, A11yQuery.from(spec.getJSONObject("itemQuery")))
     val fields = spec.getJSONObject("fields")
     // A misspelt `read` would otherwise silently read the name.
@@ -73,8 +80,8 @@ fun readSubtree(root: UiNode, spec: JSONObject): List<Map<String, String>> {
             val node = f.optJSONObject("from")?.let { findAll(item, A11yQuery.from(it)).firstOrNull() } ?: if (f.has("from")) null else item
             when {
                 node == null -> ""
-                f.getString("read") == "value" -> node.text
-                else -> node.name
+                f.getString("read") == "value" -> maskValue(node)
+                else -> maskName(node)
             }
         }
     }

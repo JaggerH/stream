@@ -39,7 +39,12 @@ class FakeDevice : Device {
     override fun swipe(x1: Int, y1: Int, x2: Int, y2: Int, durationMs: Long) { rec("swipe $x1,$y1->$x2,$y2") }
     override fun globalBack(): Boolean { rec("back"); return true }
     override fun globalHome(): Boolean { rec("home"); return true }
-    override fun screenshot() = Shot(byteArrayOf(1, 2, 3), Rect(0, 0, 1080, 2400), 2.75)
+    override fun screenshot(maskedAreas: List<Rect>): Shot {
+        val jpeg = if (maskedAreas.isEmpty()) byteArrayOf(1, 2, 3)
+        // The covered areas leave a mark in the bytes, so tests can assert masking happened.
+        else byteArrayOf(1, 2, 3) + byteArrayOf(maskedAreas.size.toByte())
+        return Shot(jpeg, Rect(0, 0, 1080, 2400), 2.75)
+    }
     override fun screenSize() = Rect(0, 0, 1080, 2400)
     override fun status(text: String?) { rec("status $text") }
     override fun sleep(ms: Long) { rec("sleep $ms") }
