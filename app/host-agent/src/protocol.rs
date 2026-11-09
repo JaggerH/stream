@@ -359,6 +359,12 @@ pub trait Desktop {
         Err("post_input: unsupported on this backend".into())
     }
     fn read_subtree(&mut self, spec: &ReadSpec) -> Result<Vec<serde_json::Map<String, Value>>, String>;
+    /// 这次动作实际走的执行路（desktop-automation-backend）。**None = 没有第二种路**：别的
+    /// 后端零改动，`settle` 也就不往回执里加 `backend` / `fallback` 键。标记是**一次性**的
+    /// ——读走即清，只描述紧挨着的前一次动作。
+    fn backend_tag(&mut self) -> Option<(String, Option<String>)> {
+        None
+    }
     /// 一张 base64 JPEG + 它对应的窗口物理 rect；None = 这个后端不支持截图。
     fn screenshot(&mut self) -> Result<Option<Screenshot>, String>;
     /// 在目标窗口此刻的画面上找一张 PNG 模板，回「框 + 分数」；None = 画面里没有它。
@@ -548,12 +554,24 @@ fn guard_typing_landed<D: Desktop>(d: &mut D) -> Result<(), String> {
 /// click，底下"有 ref 走 invoke / 没 ref 走坐标"由调用方看不见的条件决定，而锁屏时行不行
 /// 恰恰取决于它。让它显形，调用方才能解释自己拿到的结果。
 ///
+/// `backend` / `fallback`（desktop-automation-backend）：后端有不止一条执行路时（agent-desktop
+/// 优先、UIA 回落），回执要能说清**这次走的哪条、有没有发生回落**。只有给了标记才出现这
+/// 两个键——"没标"和"标了 uia"必须分得开，别的后端不标（wire 兼容，行为照旧）。
+///
 /// `confirmed` 仍是三态：给了 `expect` 才有（true/false），没给就**没有这个字段**——
 /// "没验"和"验过且通过"必须分得开，谎报 confirmed:true 比不报更坏。
 fn settle<D: Desktop>(d: &mut D, args: &Value, via: &str) -> Result<Value, String> {
-    let Some(q) = args.get("expect") else { return Ok(json!({ "via": via })) };
+    let mut out = json!({ "via": via });
+    if let Some((backend, fallback)) = d.backend_tag() {
+        out["backend"] = json!(backend);
+        if let Some(reason) = fallback {
+            out["fallback"] = json!(reason);
+        }
+    }
+    let Some(q) = args.get("expect") else { return Ok(out) };
     let hit = !d.find(&parse::<A11yQuery>(q)?)?.is_empty();
-    Ok(json!({ "via": via, "confirmed": hit }))
+    out["confirmed"] = json!(hit);
+    Ok(out)
 }
 
 /// 「这次空结果**可能是没读到，而不是没有**」——判据只有一条，写成具名函数好让它被搜到、

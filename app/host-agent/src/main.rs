@@ -46,6 +46,11 @@ mod see;
 mod see_detect;
 #[cfg(windows)]
 mod windows;
+// agent-desktop 委托层：平台无关的核心（envelope 解析、回落决策、snapshot 过滤）在 Linux
+// 上也要编译、被 cargo test 覆盖；只有模块内的 win 子段是 cfg(windows)。Linux 非 test 构建
+// 里核心逻辑没有非测试消费者，allow(dead_code) 只为这一件事。
+#[allow(dead_code)]
+mod agent_desktop;
 
 use futures_util::{SinkExt, StreamExt};
 use relay::{wall_jump, SessionEnd, Supervisor, WALL_JUMP_LIMIT};
@@ -128,7 +133,7 @@ pub const PAIRED_SILENCE_LIMIT: std::time::Duration = std::time::Duration::from_
 /// 提示那一层（`OverlayHandleLike`）也是三档（Windows / mac 各有渲染层，其余占位），
 /// 但它和后端分档是两件独立的事，别并到一起。
 #[cfg(windows)]
-type Backend = windows::WindowsDesktop;
+type Backend = agent_desktop::AgentDesktopBackend;
 #[cfg(target_os = "macos")]
 type Backend = macos::MacDesktop;
 #[cfg(all(not(windows), not(target_os = "macos")))]
