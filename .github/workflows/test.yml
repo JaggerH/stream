@@ -53,6 +53,20 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo test --manifest-path app/host-agent/Cargo.toml
 
+  # Windows 构建的常驻闸门。桌面后端只在 windows runner 上真正编译链接（release-desktop 流程），
+  # 平时对「linux-only 的设备模块」与「Windows 专属代码」的边界只靠编译纪律守着——一处漏门的
+  # 引用就能让下一次发版当场红。交叉 `cargo check` 不链接（不需要 mingw），把"Windows 还能编"
+  # 变成每次 push 都被验证的事实。
+  host-agent-windows-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-gnu
+      - run: cargo check --target x86_64-pc-windows-gnu --manifest-path app/host-agent/Cargo.toml
+
   # `hosts/<宿主>/` 各自带一套 npm 依赖（不在 pnpm workspace 里，见 hosts/README.md），所以单开
   # 一个 job。加一个宿主目录就往 matrix 加一行——`src/hosts-boundary.guard.test.ts` 断言每个
   # `hosts/*` 都有 `test` 与 `typecheck` 两个脚本，这个 job 就按这两个固定名字调用。
