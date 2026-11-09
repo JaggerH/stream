@@ -14,10 +14,10 @@
 ## What Changes
 
 - **提交类动作缺省要求审批请求。** 执行端对会作用于屏幕的动作（`click`、`invoke`、`setValue`、`type`、`clearInput`、`scroll`）在执行前做敏感判定：命中提交类（结构信号 + 多语言词表）或类目表把该 App 标为 ask 的动作不执行，回 `approval-required` 并附 `semantics`（op、App 与类目、控件 role 与打码后的文案、reasons、屏幕 digest、打码快照引用）。**缺省从严**：词表未识别的提交类候选（`role=button` 且在表单 / 确认上下文）同样要求审批（reason `commit-unrecognized`）。
-- **批准凭据与执行前四查。** 调用方批准后按审批里的参数原样重发同一次调用，`args.approval = { id, bindingDigest, screenDigest, expiresAt }`。执行端在任何动作前自校四件事，任一不过即拒绝：凭据过期 → `approval-expired`；绑定不符（设备 / 会话租约 / op / 参数 digest 任一不同）→ `approval-mismatch`；凭据已消费 → `approval-used`；执行前重读屏幕、digest 已变 → `approval-stale`。一个批准只执行一次动作。凭据过期时长由调用方配置，执行端只认凭据上的过期时刻。
+- **批准凭据与执行前四查。** 调用方批准后按审批里的参数原样重发同一次调用，`args.approval = { id, bindingDigest, screenDigest, expiresAt }`。执行端在任何动作前自校四件事，任一不过即拒绝：凭据过期 → `approval-expired`；绑定不符（设备 / 会话租约 / op / 参数 digest 任一不同）→ `approval-mismatch`；凭据已消费 → `approval-used`；执行前重读屏幕、digest 已变 → `approval-stale`。一个批准只执行一次动作。凭据过期时长由调用方配置，执行端只认凭据上的过期时刻。执行端进程重启后会话租约换新，重启前签发的凭据重发一律 `approval-mismatch`。
 - **读取层打码。** 密码框与验证码字段的值在出站前替换为掩码：树读取（`find` / `readSubtree`）的标签与文本、截图里被识别元素的覆盖区域、`approval-required` 回执里的控件文案。无法可靠掩码时不回图（同 `secure-window`）。密码与验证码字段禁止写入：`setValue` / `type` / `clearInput` 一律 `credential-field-denied`，任何审批与豁免都不可解除。
-- **App 类目与可见性。** 类目表随 Stream 版本走；deny 类目（资金、密码管理、用户手动拉黑）的 App 对调用方整体不可见：读不到屏、通知不出现、任何动作拒绝（`app-denied`）。豁免永远不解除 deny 类目与凭据字段。
-- **App 级豁免由调用方下发。** 执行端只存储与匹配调用方下发的豁免（App × 动作类目），不自带过期、不管理生命周期：下发即生效，连接断开即清空。豁免只解除「要求审批」，不解除 deny，不解除凭据字段。
+- **App 类目与可见性。** 类目表随 Stream 版本走；缺省 deny 的类目（资金、密码管理）与用户手动拉黑的 App 对调用方整体不可见：读不到屏、通知不出现、任何动作拒绝（`app-denied`）。密码管理类与凭据字段的拒绝永远不可解除；资金类 App 可由调用方下发的任务级「可见性豁免」升为可见，升为可见后其提交类动作仍逐次要求审批。
+- **豁免由调用方下发，分两种。** 「ask 豁免」（App × 动作类目）只解除「要求审批」；「可见性豁免」把资金类 App 从不可见升为可见，作用域为本任务级，由调用方收回。执行端不自带过期、不管理生命周期：下发即生效，连接断开即清空。两种豁免都不解除密码管理类与凭据字段；手动拉黑的解除走名单移除，不走豁免。
 - **审批未决期间执行端可被置忙。** 调用方用控制帧把执行端置忙（busy）；置忙期间除 `status`、`sleep` 与控制帧外一律回 `device-busy`；`busy:false` 或连接断开自动解除。执行端不推断忙的时长。
 - **词表与类目表随 Stream 版本走。** 提交 / 资金 / 安装 / 呼叫 / 设置 / 密码 / 验证码词表（11 种 UI 语言）与 App 类目表以数据文件随 Stream 发布，摘自 Pinky（Apache-2.0）的部分保留 NOTICE 与出处。漏报的兜底是结构信号优先于词表 + 缺省从严。
 
@@ -25,7 +25,7 @@
 
 ### New Capabilities
 
-- `device-sensitive-semantics`：执行端的敏感动作判定、`approval-required` 回执与 semantics schema、批准凭据的执行前校验、读取层打码、App 类目与可见性、豁免下发、置忙语义、词表与类目表。
+- `device-sensitive-semantics`：执行端的敏感动作判定、`approval-required` 回执与 semantics schema、批准凭据的执行前校验、读取层打码、App 类目与可见性、两种豁免（ask 与资金类可见性）下发、置忙语义、词表与类目表。
 
 ### Modified Capabilities
 

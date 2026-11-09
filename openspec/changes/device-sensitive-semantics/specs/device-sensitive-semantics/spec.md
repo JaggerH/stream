@@ -90,11 +90,12 @@ gated op 的 `args.approval` 为 `{ id, bindingDigest, screenDigest, expiresAt }
 - **WHEN** 一次 `setValue` 的目标是验证码输入框
 - **THEN** 回复是 `credential-field-denied`
 
-### Requirement: deny 类目的 App 整体不可见
+### Requirement: deny 类目的 App 缺省整体不可见
 
-类目表把 `finance`、`passwords` 与 `blocked`（用户手动拉黑）定为缺省 deny。对 deny 类目的 App：窗口
-列表 SHALL 不显示它，`find` / `readSubtree` SHALL 读不到其内容，任何 op SHALL 以 `app-denied` 失败，
-其通知 SHALL 不出现。deny SHALL NOT 被任何豁免解除。
+类目表把 `finance` 与 `passwords` 定为缺省 deny，`blocked` 为用户手动拉黑。对处于 deny 状态的 App：
+窗口列表 SHALL 不显示它，`find` / `readSubtree` SHALL 读不到其内容，任何 op SHALL 以 `app-denied` 失败，
+其通知 SHALL 不出现。`blocked` 的解除 SHALL 只走名单移除，SHALL NOT 走豁免。`passwords` 类的不可见
+SHALL NOT 被任何豁免解除；`finance` 类的不可见 SHALL 只能被调用方下发的任务级可见性豁免解除。
 
 #### Scenario: 资金 App 读不到屏
 - **WHEN** 执行端前台是一个 finance 类目的 App，调用方发起 `readSubtree`
@@ -104,18 +105,22 @@ gated op 的 `args.approval` 为 `{ id, bindingDigest, screenDigest, expiresAt }
 - **WHEN** 一次 `click` 要作用于用户手动拉黑的 App 的窗口
 - **THEN** 回复是 `app-denied`
 
-### Requirement: App 级豁免只来自调用方且只解除 ask
+#### Scenario: 拉黑解除不走豁免
+- **WHEN** 调用方对一个用户手动拉黑的 App 下发可见性豁免
+- **THEN** 下发被拒（`exemption-invalid`），该 App 仍不可见；解除只能由用户在名单里移除
 
-执行端的 App 级豁免 SHALL 只来自调用方的下发（App × 动作类目），执行端 SHALL NOT 自带豁免过期、
-SHALL NOT 管理豁免的建立与收回：下发即生效，再次下发即替换，连接断开即清空。豁免 SHALL 只解除被豁免
-App × 类目的「要求审批」，SHALL NOT 解除 deny 类目、SHALL NOT 解除凭据字段的拒绝。
+### Requirement: ask 豁免只来自调用方且只解除 ask
+
+执行端的 ask 豁免（App × 动作类目）SHALL 只来自调用方的下发，执行端 SHALL NOT 自带豁免过期、
+SHALL NOT 管理豁免的建立与收回：下发即生效，再次下发即替换，连接断开即清空。ask 豁免 SHALL 只解除
+被豁免 App × 类目的「要求审批」，SHALL NOT 解除任何 App 的不可见，SHALL NOT 解除凭据字段的拒绝。
 
 #### Scenario: 豁免后同类动作不再问
 - **WHEN** 调用方下发了某消息 App 的发送类豁免，之后该 App 里一次发送类动作被判定
 - **THEN** 该动作照常执行，没有审批请求；该 App 的其他提交类动作仍要求审批
 
-#### Scenario: 豁免解除不了 deny
-- **WHEN** 调用方对某 finance 类目的 App 下发了豁免
+#### Scenario: ask 豁免解除不了不可见
+- **WHEN** 调用方对某 finance 类目的 App 下发了 ask 豁免
 - **THEN** 该 App 仍整体不可见，动作仍回 `app-denied`
 
 #### Scenario: 豁免解除不了凭据字段
@@ -125,6 +130,34 @@ App × 类目的「要求审批」，SHALL NOT 解除 deny 类目、SHALL NOT �
 #### Scenario: 断开即清空
 - **WHEN** 执行端与调用方的连接断开后重连，调用方未重新下发豁免
 - **THEN** 执行端不再持有任何豁免，提交类动作恢复要求审批
+
+### Requirement: 可见性豁免仅限资金类、仅任务级
+
+调用方 SHALL 能下发资金类（`finance`）App 的可见性豁免，把该 App 从不可见升为可见。其作用域 SHALL
+为本任务级，由调用方收回；连接断开即清空。可见性豁免 SHALL NOT 解除该 App 提交类动作的审批要求：
+升为可见后，提交类动作仍逐次 `approval-required`。对 `passwords` 类 App、`blocked` App 或凭据字段的
+可见性豁免请求 SHALL 被拒（`exemption-invalid`）且不生效。
+
+#### Scenario: 资金 App 豁免后可见但仍逐次审批
+- **WHEN** 调用方对某 finance 类 App 下发可见性豁免，之后该 App 里一次提交类动作被判定
+- **THEN** 该 App 的屏幕可读，且这次动作回 `approval-required`，未因豁免免批
+
+#### Scenario: passwords 豁免请求被拒
+- **WHEN** 调用方对某 passwords 类 App 下发可见性豁免
+- **THEN** 下发被拒（`exemption-invalid`），该 App 仍不可见
+
+#### Scenario: 任务结束豁免收回
+- **WHEN** 调用方收回可见性豁免（或连接断开）
+- **THEN** 该 finance 类 App 恢复不可见
+
+### Requirement: 进程重启换新会话租约，旧凭据一律失配
+
+执行端进程重启后 SHALL 使用新的会话租约标识，SHALL NOT 复用重启前的租约标识。重启前签发的批准凭据
+重发时 SHALL 因绑定不符以 `approval-mismatch` 拒绝，SHALL NOT 执行任何设备动作。
+
+#### Scenario: 重启后重放被拒
+- **WHEN** 执行端进程重启后，调用方原样重发一条重启前批准的凭据
+- **THEN** 回复是 `approval-mismatch`，没有动作发生
 
 ### Requirement: 置忙期间执行端拒绝执行类动作
 

@@ -19,10 +19,13 @@
 
 - [ ] 9. 提交类检测引擎：op × 结构信号 × 词表 × 类目 → reasons（含 `commit-unrecognized`）
 - [ ] 10. `approval-required` 回执与 `semantics` schema；`bindingDigest` / `screenDigest` 计算（规范化
-       序列化定死并进测试快照）
+       序列化定死并进测试快照，批次 B 必做）；`snapshotRef` 的取图通道与 FLAG_SECURE 页缺省（批次 B 必做）
 - [ ] 11. 执行前四查与错误码：`approval-expired` / `approval-mismatch` / `approval-used` /
-       `approval-stale`；检查顺序（keyguard → busy → 闸）与「检查失败不消费凭据」
-- [ ] 12. 豁免下发与匹配：App × 动作类目；断开清空；不解除 deny 与凭据字段
+       `approval-stale`；检查顺序（keyguard → busy → 闸）与「检查失败不消费凭据」；进程重启换新
+       会话租约、重启前凭据一律 `approval-mismatch`
+- [ ] 12. 豁免下发与匹配：ask 豁免（App × 动作类目）与 finance 可见性豁免（任务级）两种；断开清空、
+       可见性豁免由调用方收回；`passwords` / `blocked` 的可见性豁免请求被拒（`exemption-invalid`）；
+       两种豁免都不解除凭据字段
 - [ ] 13. `setBusy` 控制帧与 `device-busy`：置忙拒执行类 op、`status` 照常、断开自动解除
 - [ ] 14. deny 类目可见性：窗口列表、树读取、动作、通知四面都不可见；`app-denied`
 - [ ] 15. host-relay 协议文档：新错误码、`semantics` schema、控制帧（`docs/ARCHITECTURE.md` 或
@@ -49,7 +52,8 @@
 
 凭据四查：
 
-- [ ] 24. binding 不符三方向：改参数、换 op、换会话租约 → `approval-mismatch`，不执行、不消费
+- [ ] 24. binding 不符三方向：改参数、换 op、换会话租约 → `approval-mismatch`，不执行、不消费；进程
+       重启后旧凭据原样重发 → `approval-mismatch`
 - [ ] 25. 一次性：成功执行后原样重发 → `approval-used`
 - [ ] 26. 过期：凭据过期（时钟前与边界两例）→ `approval-expired`，不执行
 - [ ] 27. stale：批准后目标页内容或结构变化 → `approval-stale`；无关轮播滚动不 stale；
@@ -59,8 +63,11 @@
 类目、豁免与 busy：
 
 - [ ] 29. `app-denied` 四面：窗口列表、树读取、动作、通知；deny 优先于 `approval-required`
-- [ ] 30. 豁免生效面：只解除被豁免 App × 类目的 ask；同 App 其他类目、其他 App 仍问
-- [ ] 31. 豁免不解除 deny 类目与凭据字段；断开重连后豁免清空
+- [ ] 30. ask 豁免生效面：只解除被豁免 App × 类目的 ask；同 App 其他类目、其他 App 仍问；ask 豁免不
+       解除不可见
+- [ ] 31. finance 可见性豁免：升为可见后屏幕可读，但提交类动作仍逐次 `approval-required`；调用方收回
+       或断开后恢复不可见；`passwords` / `blocked` 的可见性豁免请求被拒（`exemption-invalid`）；两种
+       豁免都不解除凭据字段；断开重连后 ask 豁免清空
 - [ ] 32. `device-busy`：置忙后执行类 op 全拒、`status` / `sleep` / 控制帧可用；`busy:false` 与断开解除；
        锁屏优先于 busy
 - [ ] 33. 回归：`secure-window`、`device-locked`、`stale-ref`、abort 的既有语义不变

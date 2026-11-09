@@ -116,6 +116,10 @@ args.approval = {
 由 stale 与绑定兜住，一次性在这台设备的本次开机内成立。无凭据的 ask 命中回 `approval-required`；带了
 凭据的非 gated op 照常执行，凭据被忽略。
 
+**进程重启即换租约。** 执行端进程重启后 SHALL 换新会话租约标识（租约 id 不持久化、不复用）。重启前
+签发的批准凭据重发时，重算的绑定 digest 必然失配 → `approval-mismatch`。这条硬闭合取代任何「重启后
+凭据状态」的持久化讨论：已消费集合重启即清不构成绕过面（旧凭据连绑定都过不了）。
+
 *对齐先例*：Pinky 的批准是「单次 id，绑定 session + device + lease + tool + 参数 digest」，Allow 后重查
 屏幕再执行（stale）、审批期间冻结设备、参数换一个就作废——四查即这四条的中性化改写（pinky
 `internal/approval/approval.go` 头注、`internal/gateway/pipeline.go`）。
@@ -147,9 +151,18 @@ args.approval = {
 ### D6. App 类目表与 deny；词表与兜底
 
 **类目表**：`finance`、`passwords`、`messaging`、`social`、`stores`、`browsers`、`phone`、`settings`、
-`system`、`blocked`（对齐 Pinky `apps.yaml` 的类目集合）。deny 类目缺省 = `finance`、`passwords`、
-`blocked`（用户手动拉黑）。deny 的语义是**整个 App 不可见**：`windows` 看不到它、`find` / `readSubtree`
-读不到内容、一切动作回 `app-denied`、通知不出现。豁免永不解除 deny。
+`system`、`blocked`（对齐 Pinky `apps.yaml` 的类目集合）。缺省 deny 的类目 = `finance`、`passwords`；
+`blocked` 是用户手动拉黑，解除即从名单移除，不走豁免。deny 的语义是**整个 App 不可见**：`windows`
+看不到它、`find` / `readSubtree` 读不到内容、一切动作回 `app-denied`、通知不出现。
+
+**豁免分两种，都由调用方下发**（对齐 Pinky 的 per-task 豁免与 always allow 两层）：
+
+- **ask 豁免**（App × 动作类目）：只解除「要求审批」；执行端不自带过期、不管理生命周期，连接断开
+  即清空。
+- **可见性豁免**：把一个 finance 类 App 从不可见升到可见，作用域为本任务级，由调用方在任务结束时
+  收回。升为可见后该 App 的提交类动作**仍逐次 `approval-required`**——可见性豁免不解 ask。
+- `passwords` 类的可见性豁免请求一律被拒（`exemption-invalid`），下发不生效；两种豁免都**永不**作用
+  于凭据字段（`credential-field-denied` 不可解除）。
 
 **可见性档位**（执行端只区分这两档，档位之上的产品语义归调用方）：
 
@@ -179,6 +192,8 @@ args.approval = {
 审批未决期间，调用方用控制帧 `setBusy { busy: boolean, reason? }` 把执行端置忙。置忙期间：
 
 - 除 `status`、`sleep` 与控制帧（`setBusy`、豁免下发）外，一切 op 回 `device-busy`；`message` 带 reason。
+- 豁免下发命中不可豁免的对象（如 `passwords` 类的可见性豁免）时，控制帧回错误 `exemption-invalid`，
+  下发不生效。
 - `status` 照常（调用方与用户需要看到设备活着、忙与否）。
 - `busy: false` 解除；连接断开自动解除（调用方不再在，忙无从维持）。
 - 执行端不推断忙的时长、不自动过期——忙什么时候结束是调用方的审批语义。
@@ -199,6 +214,7 @@ busy 检查在 keyguard 检查之后（锁着的手机先回 `device-locked`）�
 | `credential-field-denied` | `secure-window`（内容不出设备）+ `device-locked`（不可协商的硬检） | 凭据字段不可写，任何审批与豁免不可解除 |
 | `app-denied` | `secure-window`（内容不出设备） | 同原则的 App 级前置化：deny 类目整体不可见 |
 | `device-busy` | `device-locked`（先于动作拒绝） | 同层：置忙期间拒绝执行类 op |
+| `exemption-invalid` | `device-incapable`（`device-execution`：配置错误、不重试族） | 不可豁免对象的豁免下发被拒，不生效 |
 
 既有的错误码全部不变：`device-locked` / `secure-window` / `blocked-by-os` / `stale-ref` / `aborted` /
 `device-offline` / `device-lost` / `device-incapable` / `host-not-allowed` / `private-target` 等
@@ -216,14 +232,15 @@ busy 检查在 keyguard 检查之后（锁着的手机先回 `device-locked`）�
   否则存量凭据集体 stale。缓解：细则进测试快照；升级改变摘要时按大版本处理。
 - **busy 误挂**：调用方崩溃在置忙态会把设备冻住到重连。缓解：连接断开自动解除（D7）；`status` 始终可
   用，用户在设备上能看到状态。
-- **一次性集合在设备重启后清空**：D3 的取舍——持久化凭据状态引入存储面，重启窗口的绕过面由绑定与
-  stale 兜住；如评审认为不够，可升级为持久化（列为 Open Question）。
+- **一次性集合在设备重启后清空**：由「进程重启换新会话租约」硬闭合（D3）——重启前签发的凭据重发
+  一律 `approval-mismatch`，集合清空不构成绕过面，不需要持久化凭据状态。
 
 ## Open Questions
 
-- `setBusy` / 豁免下发的控制帧走 `hello` 之后的带外帧还是 op？建议带外控制帧（与 `abort` 对称，不占
-  op 集），批次 B 定帧格式。
-- `snapshotRef` 的取图机制：调用方拿引用后通过什么通道取打码图（新 op？带外接口？）——审批卡片展示
-  的事，批次 B 定；本提案只定引用的存在性与 FLAG_SECURE 页缺省。
-- 一次性凭据集合是否要持久化（见 Risks 最后一条）。
+（评审已定：控制帧走带外、与 `abort` 对称，不占 op 集；重启换租约取代持久化讨论。以下留给批次 B。）
+
+- `setBusy` / 豁免下发控制帧的具体帧格式（批次 B 定）。
+- `snapshotRef` 的取图机制：调用方拿引用后通过什么通道取打码图——批次 B 必做项（tasks 计划 3）；本
+  提案只定引用的存在性与 FLAG_SECURE 页缺省。
+- `screenDigest` 规范化序列化细则：批次 B 必做项（tasks 计划 3），定死并进测试快照。
 - 已消费凭据 id 集合的容量与淘汰策略（批次 B 定；建议 LRU，容量以一次挂起会话的审批量为量级）。
