@@ -31,8 +31,9 @@ service worker 醒来时 SHALL 以**浏览器真实的标签组成员**为准与
 
 认领规则：
 - 匹配键 SHALL 是「URL 结构相等 ∧ 该成员此刻在本绑定的恢复组内、出身标为『用户拖入』」，MUST NOT 以 tabId 为匹配条件（恢复出来的 tab 拿到新 id）。
+- 名单条目的 URL SHALL 跟随标签导航保持新鲜：进组时优先记 `pendingUrl`（此刻 `tab.url` 常还是初始空文档）；之后随 `tabs.onUpdated` 的 `changeInfo.url` 更新（只更新、不新增，tab 回收后条目绝不复活）；service worker 休眠期间错过的导航 SHALL 在醒来对账时对仍在册的 tabId 现读补上（同一会话内 tabId 可信，跨重启的陈旧条目 MUST NOT 现读刷新）。
 - 每条名单记录 SHALL 至多认领一张标签；同 URL 多张恢复 tab 而记录不足时，多出的 tab 照旧按『用户拖入』处理。
-- 名单 SHALL 在一次启动对账后整个清掉，不跨启动累积；tab 被回收或授权被撤销时 SHALL 同步删除其名单条目。
+- 名单 SHALL 在一次跨会话认领后整个清掉，不跨启动累积；同一次会话内的普通醒来 MUST NOT 清名单（清了名单就活不到重启）；tab 被回收或授权被撤销时 SHALL 同步删除其名单条目。
 - 认回 probe 的 SHALL 随后被常规回收路径关闭；认回 created 的 SHALL 留在主组并恢复出身。
 
 红线不变：名单认不出的恢复 tab 照旧按『用户拖入』处理、MUST NOT 被 `chrome.tabs.remove`；组外 tab（含 URL 恰好与名单相同的用户自己的 tab）一律不碰。本机制 MUST NOT 新增任何权限。
@@ -52,6 +53,18 @@ service worker 醒来时 SHALL 以**浏览器真实的标签组成员**为准与
 #### Scenario: 组外同 URL 的用户标签不关
 - **WHEN** 名单里的 URL 出现在恢复组之外的用户自己的 tab 上
 - **THEN** 该 tab 不被认领、不被 remove（认领只作用于恢复组内标为『用户拖入』的成员）
+
+#### Scenario: 名单跟到导航后的最终 URL
+- **WHEN** 自建标签进组后继续导航（翻页、点详情、站内跳转、重定向），Chrome 恢复的是它最后停留的 URL
+- **THEN** 名单条目的 URL 跟随导航更新（进组时记 `pendingUrl`，之后随 `onUpdated` 更新；service worker 休眠期间错过的由醒来对账现读补上），重启后按最终 URL 认领
+
+#### Scenario: 休眠期导航靠醒来刷新兜住
+- **WHEN** service worker 死着时自建标签导航到了新 URL（`onUpdated` 事件无人接收），随后 SW 在同一次浏览器会话内醒来
+- **THEN** 名单里该 tabId 的条目被现读刷新为新 URL，之后重启也能按最终 URL 认领
+
+#### Scenario: 回收后的条目不复活
+- **WHEN** 一个 tab 的名单条目已随其回收删除，同一 tabId 在本会话内被复用给用户新开的标签并发生导航
+- **THEN** `onUpdated` 不为它创建名单条目（名单只由入组时刻创建）
 
 #### Scenario: 同 URL 多张只认领一张
 - **WHEN** 恢复组内有两张 URL 相同的 tab，而名单只有一条该 URL 的记录

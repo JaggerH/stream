@@ -527,8 +527,15 @@ function ensureLedgerFresh(): Promise<void> {
 //   账本已经判过「AI 自建」的那张标签的出身认回来，不会把任何陌生的东西变成可回收。
 // - 名单里的记录来自 addTabToGroup 写账本的那一刻，同一时刻写入；releaseTab / forgetMember
 //   回收或撤销成员时同步删除——标签正常关闭后名单里不留死条目，URL 不会在之后被误认领。
-// - 名单只活到下一次启动对账为止：reconcileOnWake 用完（认领过一次）就整个清掉。它不承担
-//   长期记账的职责，那是账本的事；它只回答「重启那一刻，恢复组里哪几张是我们自己开的」。
+// - 名单只活到下一次**跨浏览器会话**的对账为止：重启认领那次用完就整个清掉。同一次会话内的
+//   普通 SW 醒来只刷新、绝不清（清了名单就活不到重启，导航跟踪全白做）。
+//
+// **URL 跟着标签走。** 进组那一刻标签常还在初始空文档（tabs.create(url) 返回时 tab.url 可能
+// 还是 about:blank，见 waitForNav 的注释），且采集标签进组后还会继续导航（翻页、点详情、站内
+// 跳转）——Chrome 恢复的是标签**最后停留的 URL**，名单停在最初那条就对不上了。所以条目 URL
+// 在三处保持新鲜：入组时优先记 pendingUrl（url 还是 about:blank/空时）；之后每次
+// tabs.onUpdated 的 changeInfo.url 到了就更新（只更新、不新增，回收后绝不复活）；SW 死着
+// 错过的那部分导航由醒来对账时现读补上（refreshRosterFromLive）。
 //
 // URL 比较规则：与 openTab 的 find-or-open 同一把尺（sameUrl，结构相等：scheme/host/path 归一、
 // 尾斜杠不计、query 与 hash 照算）。探针的落点 URL 是我们发给 Chrome 的那条原样 URL，恢复后
@@ -559,13 +566,47 @@ async function noteRoster(tabId: number, origin: TabOrigin, rt: BindingRuntime):
   if (origin === 'adopted') return
   let url = ''
   try {
-    url = (await chrome.tabs.get(tabId)).url ?? ''
+    const tab = await chrome.tabs.get(tabId)
+    // 进组那一刻 tab.url 常还是初始空文档；pendingUrl 是它正要去的地方，优先记它。
+    // about:blank / 空串也照记——条目先占上，URL 由 onUpdated / 醒来刷新补成真实落点。
+    url = tab.url && tab.url !== 'about:blank' ? tab.url : tab.pendingUrl ?? tab.url ?? ''
   } catch {
     return // 标签已不在：没什么可记的
   }
   const entries = await loadRoster(rt)
   entries.push({ tabId, url, origin })
   await saveRoster(entries, rt)
+}
+
+/**
+ * 名单条目的 URL 跟着导航走（tabs.onUpdated 的 changeInfo.url 只在导航提交时出现，频率可控）。
+ * **只更新、不新增**：名单条目只由 noteRoster 创建、dropRoster 删除——回收之后同一 tabId 被
+ * Chrome 复用给用户新开的标签时，这里的更新找不到条目，自然什么都不做（绝不复活）。
+ * URL 没变不写 storage（onUpdated 对同一 URL 会重复发）。
+ */
+async function refreshRosterUrl(tabId: number, url: string, rt: BindingRuntime): Promise<void> {
+  const entries = await loadRoster(rt)
+  const entry = entries.find((e) => e.tabId === tabId)
+  if (!entry || entry.url === url) return
+  entry.url = url
+  await saveRoster(entries, rt)
+}
+
+/** SW 休眠期间的导航没人听（onUpdated 事件丢了）：醒来把名单里仍活着的 tabId 现读一次 URL 补上。
+ *  「现读」的资格是**账本还在册**——同一会话内 tabId 可信，账本在册就是同一会话的凭据；账本被
+ *  重启作废后 members 为空，陈旧条目一个都不会被刷（它们的 tabId 已不可信，认领时按 URL 匹配）。 */
+async function refreshRosterFromLive(g: GroupState, rt: BindingRuntime): Promise<void> {
+  const entries = await loadRoster(rt)
+  let changed = false
+  for (const entry of entries) {
+    if (!g.members.has(entry.tabId)) continue
+    const url = await liveUrlOf(entry.tabId)
+    if (url != null && url !== entry.url) {
+      entry.url = url
+      changed = true
+    }
+  }
+  if (changed) await saveRoster(entries, rt)
 }
 
 /** 把一个 tabId 的名单条目删掉（回收/撤销成员时同步）。 */
@@ -998,9 +1039,16 @@ function onTabGroupChangeFor(rt: BindingRuntime, tabId: number, newGroupId: numb
 }
 
 // changeInfo.groupId 仅在 tab 组归属变化时出现；返回 promise（真 chrome 忽略返回值）便于测试等待。
-chrome.tabs.onUpdated.addListener((tabId, changeInfo) =>
-  changeInfo.groupId !== undefined ? onTabGroupChange(tabId, changeInfo.groupId) : undefined,
-)
+// changeInfo.url 只在导航提交时出现——名单条目的 URL 跟着它更新（refreshRosterUrl：只更新、
+// 不新增）；SW 死着错过的那部分由醒来对账的 refreshRosterFromLive 现读补上。
+chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
+  if (changeInfo.groupId !== undefined) return onTabGroupChange(tabId, changeInfo.groupId)
+  if (typeof changeInfo.url === 'string') {
+    // 每条绑定各查各的名单：一张 tab 至多属于一条绑定，查不到条目的绑定是空读，代价可控
+    for (const rt of runtimes.values()) void refreshRosterUrl(tabId, changeInfo.url, rt).catch(() => {})
+  }
+  return undefined
+})
 
 /** 这扇窗是不是 popup（放不了标签组的那种）。窗口没了 → false。 */
 async function isPopupWindow(windowId: number | undefined): Promise<boolean> {
@@ -1193,6 +1241,10 @@ async function absorbLegacyGroups(g: GroupState, rt: BindingRuntime): Promise<vo
  */
 export async function reconcileOnWake(rt: BindingRuntime = runtime()): Promise<void> {
   const g = await hydrateGroup(rt)
+  // 名单先补一次账：SW 死着时错过的导航由这里现读补上（只刷账本还在册的 tabId——同一会话内
+  // tabId 可信）。账本刚被重启作废时 members 为空，这里自然是空操作；陈旧条目的 tabId 已不可信，
+  // 绝不现读刷新，它们由认领分支按 URL 匹配处理。
+  await refreshRosterFromLive(g, rt)
   // 先把浏览器里的组收拢成一个（同名主组合并、旧版独立窗组收编），再按主组对账。
   await inGroupQueue(rt, async () => {
     await mergeMainGroups(g, rt)
@@ -1219,11 +1271,8 @@ export async function reconcileOnWake(rt: BindingRuntime = runtime()): Promise<v
     for (const tabId of inMain) {
       if (!g.members.has(tabId)) await addTabToGroup(tabId, 'adopted', rt)
     }
-    // ②' 自建名单认领：Chrome 把上次会话组里的标签恢复出来了（组归属跟着会话走），而账本刚被
-    //    onStartup 作废、上面第②步把它们一律补成了 adopted。名单里有「自建 + URL 相同 + 在组内」
-    //    对得上的，认回真实出身——probe 恢复出来也照样有人收（否则用户每次重启都看到它）。
-    await claimRestoredTabs(g, rt)
-    // ③ 对完账再回收探针（没人看的泄漏兜底）
+    // ③ 对完账再回收探针（没人看的泄漏兜底）。名单在这里不动：这条分支是账本活着（同一次
+    //    浏览器会话）的情形，名单条目要继续跟着标签导航走、活到将来那次重启。
     for (const { tabId, origin } of await groupMembers(rt)) {
       if (origin === 'probe') await releaseTab(tabId, origin, rt)
     }
