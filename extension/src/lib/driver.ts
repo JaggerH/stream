@@ -52,6 +52,8 @@ export type Inbound =
 
 const OWNED_KEY = 'ownedTabs'
 const GROUP_KEY = 'tabGroup'
+/** 「自建名单」：跨浏览器重启存活的出身记录（tabId + URL + 出身），见「自建名单」那节头注。 */
+const ROSTER_KEY = 'tabRoster'
 /** 「本次扩展加载已判过账本时效」的标记，存 storage.session —— 见 ensureLedgerFresh。 */
 const LEDGER_CHECKED_KEY = 'tabGroupChecked'
 /** 第一次 hydrate 给 onStartup 留的宽限期（只在真有账本时等，每次扩展加载至多一次）。 */
@@ -152,6 +154,10 @@ export class BindingRuntime {
   ) {}
   get groupKey(): string {
     return storageKey(GROUP_KEY, this.id)
+  }
+  /** 自建名单的存储键（跨浏览器重启存活的出身记录，见「自建名单」节头注）。 */
+  get rosterKey(): string {
+    return storageKey(ROSTER_KEY, this.id)
   }
   /** 这条绑定在旧版里那些「独立窗」组的名字：主组名把开头的 `Stream` 换成前缀，配对名的尾巴照留。 */
   get legacyWindowGroupTitle(): string {
@@ -504,6 +510,123 @@ function ensureLedgerFresh(): Promise<void> {
   return ledgerCheck
 }
 
+// ── 自建名单：跨浏览器重启存活的出身记录 ────────────────────────────────────────
+// 账本（tabGroup）在浏览器重启时被 ensureLedgerFresh 作废，理由是 tabId 跨会话不可信。但
+// Chrome 的「继续浏览上次打开的网页」会把上次会话 Stream 组里没关的标签原样恢复出来（组归属
+// 本身跟着恢复），账本一作废它们就被 findExistingGroup 一律收编为 adopted——probe 永远没人收，
+// 用户每次重启都看到上一轮采集留下的页面。这就是名单要堵的缺口。
+//
+// **认领键刻意不含 tabId。** 官方文档（developer.chrome.com/docs/extensions/reference/api/tabs，
+// Tab.id）写死 "Tab IDs are unique within a browser session"——恢复出来的标签拿到的是新 id，
+// 与上一次会话的记号对不上。名单按「URL 相同 ∧ 在本绑定的恢复组内」认领；每条记录至多认领
+// 一张标签（同 URL 多张时按记录条数认领，多出来的照旧 adopted），URL 只在认领那一刻从浏览器
+// 现读，页面伪造不了 chrome.tabs.get 的 url。
+//
+// 与账本的三条边界：
+// - 名单**不参与任何红线判定**。认不出的标签照旧 adopted、绝不 remove（红线不变）；名单只会把
+//   账本已经判过「AI 自建」的那张标签的出身认回来，不会把任何陌生的东西变成可回收。
+// - 名单里的记录来自 addTabToGroup 写账本的那一刻，同一时刻写入；releaseTab / forgetMember
+//   回收或撤销成员时同步删除——标签正常关闭后名单里不留死条目，URL 不会在之后被误认领。
+// - 名单只活到下一次启动对账为止：reconcileOnWake 用完（认领过一次）就整个清掉。它不承担
+//   长期记账的职责，那是账本的事；它只回答「重启那一刻，恢复组里哪几张是我们自己开的」。
+//
+// URL 比较规则：与 openTab 的 find-or-open 同一把尺（sameUrl，结构相等：scheme/host/path 归一、
+// 尾斜杠不计、query 与 hash 照算）。探针的落点 URL 是我们发给 Chrome 的那条原样 URL，恢复后
+// Chrome 保存的也是它——query 变了通常意味着页面自己跳转过，那张标签的身份已经不可信，宁可
+// 当 adopted 留着也不认领。
+type RosterEntry = { tabId: number; url: string; origin: TabOrigin }
+type RosterSnapshot = Record<string, RosterEntry[]>
+
+/** 读本绑定的自建名单（没有则空数组）。 */
+async function loadRoster(rt: BindingRuntime): Promise<RosterEntry[]> {
+  const s = await chrome.storage.local.get(rt.rosterKey)
+  const all = s[rt.rosterKey] as RosterSnapshot | undefined
+  return all?.[rt.id] ?? []
+}
+
+/** 覆写本绑定的自建名单。 */
+async function saveRoster(entries: RosterEntry[], rt: BindingRuntime): Promise<void> {
+  const s = await chrome.storage.local.get(rt.rosterKey)
+  const all = (s[rt.rosterKey] as RosterSnapshot | undefined) ?? {}
+  if (entries.length) all[rt.id] = entries
+  else delete all[rt.id]
+  await chrome.storage.local.set({ [rt.rosterKey]: all })
+}
+
+/** 把一条出身记进名单（与 addTabToGroup 同一刻调用）。adopted（用户拖入）不进名单——
+ *  名单只回答「哪几张是我们自己开的」，认领也只把被保守降级的自建出身认回来。 */
+async function noteRoster(tabId: number, origin: TabOrigin, rt: BindingRuntime): Promise<void> {
+  if (origin === 'adopted') return
+  let url = ''
+  try {
+    url = (await chrome.tabs.get(tabId)).url ?? ''
+  } catch {
+    return // 标签已不在：没什么可记的
+  }
+  const entries = await loadRoster(rt)
+  entries.push({ tabId, url, origin })
+  await saveRoster(entries, rt)
+}
+
+/** 把一个 tabId 的名单条目删掉（回收/撤销成员时同步）。 */
+async function dropRoster(tabId: number, rt: BindingRuntime): Promise<void> {
+  const entries = await loadRoster(rt)
+  const next = entries.filter((e) => e.tabId !== tabId)
+  if (next.length !== entries.length) await saveRoster(next, rt)
+}
+
+/**
+ * 从名单认领恢复组里的自建标签。g 必须已经指向恢复出来的组（groupId 已认领、成员已照红线
+ * 收编为 adopted）。只在本绑定的恢复组内、只对账本此刻标为 adopted 的成员动手——名单只把
+ * 「被保守默认降级」的出身认回来，绝不碰已经判过的。
+ *
+ * 匹配键 = URL（sameUrl 结构相等）∧ 在组内，**不含 tabId**：官方文档写死 "Tab IDs are unique
+ * within a browser session"，恢复出来的标签拿的是新 id。URL 在认领那一刻从 chrome.tabs.get
+ * 现读，页面伪造不了。每条名单记录至多认领一张（同 URL 多张时按记录条数认领，多出来的照旧
+ * adopted——这是本方案已知的残余模糊，宁可留一张没人收也不多关一张）。认领完名单整个清掉：
+ * 它只回答「重启那一刻，恢复组里哪几张是我们自己开的」，不承担长期记账。
+ */
+async function claimRestoredTabs(g: GroupState, rt: BindingRuntime): Promise<void> {
+  const roster = await loadRoster(rt)
+  if (!roster.length) return
+  // 只考虑此刻标为 adopted 的成员（组外、created/probe、认不出的一律不碰）
+  const candidates: number[] = []
+  const urlOf = new Map<number, string>()
+  for (const [id, origin] of g.members) {
+    if (origin !== 'adopted') continue
+    const url = await liveUrlOf(id)
+    if (url != null) {
+      candidates.push(id)
+      urlOf.set(id, url)
+    }
+  }
+  const claimed = new Set<number>()
+  for (const entry of roster) {
+    const hit = candidates.find((id) => !claimed.has(id) && sameUrl(urlOf.get(id) ?? '', entry.url))
+    if (hit == null) continue
+    claimed.add(hit)
+    g.members.set(hit, entry.origin)
+  }
+  if (claimed.size) {
+    await persistGroup(g, rt)
+    debugLog('roster-claimed', `按自建名单认领了 ${claimed.size} 张恢复出来的自建标签`, {
+      claimed: [...claimed],
+    })
+  }
+  await saveRoster([], rt) // 名单只服务这一次启动，认没认领到都清掉
+}
+
+/** 某 tab 此刻的真实 URL（拿不到——标签没了、chrome:// 读不了——则 undefined）。 */
+async function liveUrlOf(tabId: number): Promise<string | undefined> {
+  try {
+    const t = await chrome.tabs.get(tabId)
+    return t.url ?? undefined
+  } catch {
+    return undefined
+  }
+}
+
+
 /**
  * 给刚建好的组起名 + 上色。
  *
@@ -555,6 +678,7 @@ const memberBornAt = new Map<number, number>()
 /** 把一个 tab 归入会话标签组（首个 tab 建新组，其后追加进同一组），记出身标记并持久化。返回 groupId。 */
 export async function addTabToGroup(tabId: number, origin: TabOrigin, rt: BindingRuntime = runtime()): Promise<number> {
   memberBornAt.set(tabId, Date.now())
+  await noteRoster(tabId, origin, rt)
   return inGroupQueue(rt, async () => {
     const g = await hydrateGroup(rt)
     const groupId = await groupIntoMain(g, tabId, rt)
@@ -797,13 +921,14 @@ async function detachTab(tabId: number): Promise<void> {
   await chrome.debugger.detach({ tabId }).catch(() => {})
 }
 
-/** 把一个 tab 从账本抹掉。组成员表与 owned 快照两处都要清 —— 任一处残留都会骗过后续判据。 */
+/** 把一个 tab 从账本抹掉。组成员表、owned 快照与自建名单三处都要清 —— 任一处残留都会骗过后续判据。 */
 async function forgetMember(tabId: number, rt: BindingRuntime = runtime()): Promise<void> {
   const g = await hydrateGroup(rt)
   g.members.delete(tabId)
   g.popups.delete(tabId)
   await persistGroup(g, rt)
   await withOwned((o) => o.delete(tabId))
+  await dropRoster(tabId, rt)
 }
 
 /** 组成员快照（{tabId, origin}[]，插入序）——供 list 用。 */
@@ -1094,6 +1219,10 @@ export async function reconcileOnWake(rt: BindingRuntime = runtime()): Promise<v
     for (const tabId of inMain) {
       if (!g.members.has(tabId)) await addTabToGroup(tabId, 'adopted', rt)
     }
+    // ②' 自建名单认领：Chrome 把上次会话组里的标签恢复出来了（组归属跟着会话走），而账本刚被
+    //    onStartup 作废、上面第②步把它们一律补成了 adopted。名单里有「自建 + URL 相同 + 在组内」
+    //    对得上的，认回真实出身——probe 恢复出来也照样有人收（否则用户每次重启都看到它）。
+    await claimRestoredTabs(g, rt)
     // ③ 对完账再回收探针（没人看的泄漏兜底）
     for (const { tabId, origin } of await groupMembers(rt)) {
       if (origin === 'probe') await releaseTab(tabId, origin, rt)
@@ -1108,6 +1237,13 @@ export async function reconcileOnWake(rt: BindingRuntime = runtime()): Promise<v
       g.groupId = existing.groupId
       for (const t of existing.tabIds) g.members.set(t, 'adopted')
       await persistGroup(g, rt)
+      // 恢复组里的自建标签按名单认回出身。红线不变：名单认不出的照旧 adopted、绝不 remove。
+      await claimRestoredTabs(g, rt)
+      // 认回 probe 的此刻按常规路径回收（浏览器重启正是走这条 else 分支——账本刚被 onStartup
+      // 作废、groupId 还是 null；上面那条对账分支管的是账本活着（重载）的情形）。
+      for (const [tabId, origin] of g.members) {
+        if (origin === 'probe') await releaseTab(tabId, origin, rt)
+      }
     }
   }
   // 兜底：在 owned 快照里但不在组内的 tab —— 旧版扩展（无组概念）建的残留。owned 历来只记
