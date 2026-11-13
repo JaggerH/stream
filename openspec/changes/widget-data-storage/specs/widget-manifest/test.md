@@ -27,7 +27,8 @@
   先拒，不发请求）。
 - 文档：GET 未写过 → 404 → 客户端报「没写过」；PUT 新建（`If-None-Match: *`）→ 200 + revision；
   PUT 覆盖带正确 `If-Match` → 200；带过期 `If-Match` → 409 映射为条件冲突；412/413/429/503/507
-  各映射为可读错误，message 取服务端错误体的 `{error, message}`。
+  各映射为可读错误，message 取服务端错误体的 `{error, message}`。413/507（超限）是客户端必须
+  处理的错误，假服务端分别以单个过大 / 总量超限命中。
 - 对象：GET / HEAD / PUT / DELETE / 列举（prefix + cursor）往返；DELETE 幂等（404 也算删成）。
 - 条件写：新建用 `If-None-Match: *`、覆盖用 `If-Match`，header 形状由假服务端断言。
 

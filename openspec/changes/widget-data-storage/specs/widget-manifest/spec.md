@@ -12,7 +12,9 @@
   其中。数据根的映射仍是宿主的事（见「数据目录与环境变量的归属」），本需求不改变它。
 - **宿主注入的环境**（清单不能声明，环境由宿主组装）：`WIDGET_DATA_URL`（数据服务的 base URL）、
   `WIDGET_DATA_TOKEN`（本次会话的构件凭据）、可选 `WIDGET_DATA_MODE`（`off` / `snapshot` /
-  `write_behind` / `write_through`）。常量 SHALL 从公共入口导出。
+  `write_behind` / `write_through`）。`WIDGET_DATA_MODE` SHALL 只是宿主向构件提示其保证的持久性
+  级别：构件 SHALL NOT 依赖它做正确性判断——即便提示为 `write_behind`，写失败仍 SHALL 按
+  `503`/`507` 等错误处理与重试。常量 SHALL 从公共入口导出。
 - **HTTP 面**：服务 SHALL 在 `<base>/v1/document` 提供 JSON 文档的 `GET`（200 + JSON，带弱 `ETag`
   与 `X-Widget-Revision`；404 = 没写过）与 `PUT`（整份写，可带 `If-Match` / `If-None-Match: *`），
   在 `<base>/v1/objects?prefix=&cursor=`（列举）、`<base>/v1/objects/<path>`（`GET`/`HEAD`/`PUT`/
@@ -20,8 +22,11 @@
   不满足 SHALL 回 `409`（版本不符）或 `412`（前置失败），SHALL NOT 静默覆盖。服务端 SHALL 分配
   单调递增的 per-widget `revision` 并在成功响应中带新值。
 - **错误与上限**：错误码 SHALL 覆盖 `401`（未认证）、`403`（越权）、`404`、`409`、`412`、`413`
-  （超限）、`429`（限流）、`503`（服务不可达）、`507`（配额）；错误体 SHALL 为
-  `{error: <code>, message: <可读>}`。文档 SHALL 限 1 MiB、单对象 SHALL 限 8 MiB（常量导出）。
+  （单个对象或文档过大）、`429`（限流）、`503`（服务不可达）、`507`（总量超限）；错误体 SHALL 为
+  `{error: <code>, message: <可读>}`。**大小上限由宿主决定**：超限 SHALL 回 `413`（单个过大）或
+  `507`（总量超限），客户端 SHALL 处理这两种错误；约定只规定「宿主至少应接受」的保守下限——文档
+  ≥ 256 KiB、单对象 ≥ 1 MiB——供构件作者参考，SHALL NOT 作为契约值（常量只导出下限值并说明其
+  参考性质）。
 - **路径规范化**：对象路径 SHALL 是 POSIX 相对路径；绝对路径、空段、`.`、`..`、反斜杠、NUL SHALL
   拒绝；段长 ≤ 255、总长 ≤ 512、深度 ≤ 16；保留名 `doc` 与 `.well-known` SHALL NOT 进文件命名
   空间（常量导出）。校验逻辑在 widget 侧参考客户端与服务端各做一遍，不信任其中一侧。
@@ -159,7 +164,7 @@ serve 已起来时，在 serve-up 的进程窗口内向 `/.well-known/widget-dat
 `widget.json` 的类型与解析、数据写入口常量 `WIDGET_DATA_PATH`、检查器、挂载存储 SHALL 从公共
 入口导出；依赖方 SHALL NOT 需要导入本仓库内部文件。存储约定的常量——`WIDGET_DATA_DEFAULT_DIR`、
 `WIDGET_DATA_URL`、`WIDGET_DATA_TOKEN`、`WIDGET_DATA_MODE` 与模式枚举、存储接口的路径前缀与
-端点路径、大小上限、路径规范化限制、保留名——SHALL 一并从公共入口导出，导出面守卫快照同步。
+端点路径、路径规范化限制、保留名、大小下限参考值——SHALL 一并从公共入口导出，导出面守卫快照同步。
 
 #### Scenario: 依赖方只碰公共入口
 

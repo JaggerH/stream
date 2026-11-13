@@ -3,8 +3,9 @@
 ## 计划 1：约定与常量
 
 - [ ] 1. `manifest.ts`：`WIDGET_DATA_DEFAULT_DIR = 'data'` 与数据根语义注释；存储环境变量名常量
-      （`WIDGET_DATA_URL` / `WIDGET_DATA_TOKEN` / `WIDGET_DATA_MODE`）与模式枚举；存储接口常量
-      （路径前缀 `/v1`、document / objects 端点、文档 1 MiB / 对象 8 MiB 上限、路径限制与保留名）
+      （`WIDGET_DATA_URL` / `WIDGET_DATA_TOKEN` / `WIDGET_DATA_MODE`）与模式枚举（含「提示性质，
+      构件不得依赖其做正确性判断」的注释）；存储接口常量（路径前缀 `/v1`、document / objects 端点、
+      大小下限参考值（文档 ≥ 256 KiB、单对象 ≥ 1 MiB，注明参考性质）、路径限制与保留名）
 - [ ] 2. `src/engine/index.ts` 导出上述常量；`exports.guard.test.ts` 快照同步
 
 ## 计划 2：检查器
