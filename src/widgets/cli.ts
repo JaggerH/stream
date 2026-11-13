@@ -13,7 +13,7 @@ const cmd = args[0]
 if (cmd === 'widget:check') {
   const dir = args[1]
   if (!dir) { console.error('usage: stream widget:check <dir>'); process.exit(1) }
-  const output = await checkWidget(dir)
+  const output = await checkWidget(dir, { env: process.env })
   for (const r of output.results) {
     console.log(r.ok ? `✓ ${r.rule}` : `✗ ${r.rule}: ${r.message || ''}`)
   }
@@ -25,7 +25,7 @@ if (cmd === 'widget:check') {
   if (!id || !dir || deviceIdx < 0) { console.error('usage: stream widget:add <id> <dir> --device <name>'); process.exit(1) }
   const device = args[deviceIdx + 1]
   try {
-    const output = await checkWidget(dir)
+    const output = await checkWidget(dir, { env: process.env })
     if (!output.ok) {
       for (const r of output.results) {
         if (!r.ok) console.error(`✗ ${r.rule}: ${r.message || ''}`)

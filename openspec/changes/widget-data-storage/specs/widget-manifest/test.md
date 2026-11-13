@@ -35,3 +35,13 @@
 ## 行为不变
 
 - 无 `WIDGET_DATA_URL` 的环境里跑完整既有套件：每条规则结论与升级前一致。
+
+## 运行记录
+
+- 受影响测试文件（`widgets.test.ts`、`data-client.test.ts`、`exports.guard.test.ts`）：
+  3 个文件 45 个用例全部通过。
+- 全量（根包完整套件 + `tsc --noEmit`，本机整机锁下）：`Test Files 8 failed | 902 passed |
+  14 skipped (924)`，`Tests 16 failed | 11172 passed | 119 skipped (11307)`；typecheck 退出码 0。
+- 16 个失败全部是 `spawn ffmpeg ENOENT`（音频 / 媒体类用例依赖本机未安装的 ffmpeg 二进制），
+  与本能力改动无关，属于环境性失败；相关文件：`src/audio/*`、`src/media/*`、`src/http/audio-archive.test.ts`、
+  `src/voiceprint/identify.test.ts`。widget / engine 相关用例全部通过。

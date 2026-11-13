@@ -2,13 +2,15 @@
  * widget 检查器（openspec `widget-manifest`）。
  *
  * 规则：manifest（存在且 schema 合法）、env（顶层没有 `env` / `environment`）、entry（文件存在）、
- * icon（声明了就存在）、data-dir（声明了 `dataDir` 就必须是清单目录内的相对路径）、
- * serve-port（合法且不是主实例端口）、serve-command（`serve.command` 的第一个词是白名单解释器或清单
- * 目录内的相对路径，且参数不含 shell 元字符）、serve-up（serve.command 在超时内起来并回应健康检查；
- * **serve-command 不通过时不启动**）、data-ingress（声明了 data 就必须有 serve）、data-endpoint（serve
- * 还活着的时候向 /.well-known/widget-data 发一次最小样例，只要求连得上且不是 404）、
- * permissions（字段本身合法）。整体 ok = 全部结果都通过（没声明 serve / data / permissions 的对应
- * 规则按跳过 = 通过计）。
+ * icon（声明了就存在）、data-dir（声明了 `dataDir` 就必须是清单目录内的相对路径；没声明按缺省数据根
+ * `data/` 跳过）、serve-port（合法且不是主实例端口）、serve-command（`serve.command` 的第一个词是白名单
+ * 解释器或清单目录内的相对路径，且参数不含 shell 元字符）、serve-up（serve.command 在超时内起来并回应
+ * 健康检查；**serve-command 不通过时不启动**）、data-ingress（声明了 data 就必须有 serve）、data-endpoint
+ * （serve 还活着的时候向 /.well-known/widget-data 发一次最小样例，只要求连得上且不是 404）、
+ * data-storage（检查器进程带 `WIDGET_DATA_URL` 时对宿主的存储服务探活一次：接受 2xx 与 404，拒绝
+ * 连不上、401/403、5xx 与其余非 2xx/404 的状态码；没有 env 则跳过——自部署行为不变）、
+ * permissions（字段本身合法）。整体 ok = 全部结果都通过（没声明 serve / data / permissions、没有存储
+ * env 的对应规则按跳过 = 通过计）。
  *
  * `data-dir` / `env` / `serve-command` 三条归属规则见 openspec `widget-manifest-limits`：数据目录与环境
  * 变量都属于宿主，清单只能声明位置；后端由哪个解释器起也归宿主管，检查器自己不起不该起的命令。
@@ -17,7 +19,16 @@ import { existsSync, readFileSync } from 'node:fs'
 import { join, resolve, sep } from 'node:path'
 import { spawn, type ChildProcess } from 'node:child_process'
 import { request } from 'node:http'
-import { WIDGET_SCHEMA, WIDGET_DATA_PATH, SERVE_INTERPRETERS, SHELL_METACHARS, FORBIDDEN_ENV_FIELDS } from './manifest.ts'
+import {
+  WIDGET_SCHEMA,
+  WIDGET_DATA_PATH,
+  WIDGET_DATA_DEFAULT_DIR,
+  WIDGET_DATA_URL,
+  WIDGET_STORAGE_OBJECTS_PATH,
+  SERVE_INTERPRETERS,
+  SHELL_METACHARS,
+  FORBIDDEN_ENV_FIELDS,
+} from './manifest.ts'
 import type { WidgetManifest } from './manifest.ts'
 
 export interface CheckResult {
@@ -38,6 +49,13 @@ export interface CheckOpts {
   timeoutMs?: number
   /** 主实例端口（serve.port 不得撞上），缺省 8900。 */
   backendPort?: number
+  /**
+   * 检查器可见的环境（openspec `widget-data-storage`）：只有 `data-storage` 一条读它——带
+   * `WIDGET_DATA_URL`（宿主提供持久数据服务）就探活，不带就跳过。检查器自己**不读** `process.env`：
+   * 库入口可达的模块不许读环境（openspec `embeddable-engine`），宿主环境由进程入口（CLI / 宿主装配）
+   * 翻译后递进来。缺省 = 空环境 = `data-storage` 跳过，与宿主不提供存储服务同一结论。
+   */
+  env?: Record<string, string | undefined>
 }
 
 const DEFAULT_TIMEOUT_MS = 10_000
@@ -111,6 +129,43 @@ async function pollHealth(port: number, path: string, timeoutMs: number): Promis
   return { ok: false, detail: `健康检查 ${timeoutMs}ms 内没有得到 <500 的响应` }
 }
 
+/**
+ * 存储服务探活的探针路径（openspec `widget-data-storage`）：对象端点下的一个固定名字。探测只问
+ * 「服务在不在」，404 = 服务在但这个探针没写过，与 2xx 同样算通过；名字本身不进任何数据命名空间。
+ */
+const DATA_STORAGE_PROBE_PATH = `${WIDGET_STORAGE_OBJECTS_PATH}/.probe`
+
+/** 存储探活的单次等待上界：与数据口探测同档，本地回环或同宿主内网两秒足够。 */
+const DATA_STORAGE_PROBE_TIMEOUT_MS = 2_000
+
+/**
+ * 存储服务探活（openspec `widget-data-storage`）：宿主注入了 `WIDGET_DATA_URL` 时，对该服务的对象
+ * 端点发一次单次 `HEAD`。接受 2xx 与 404（404 = 还没写过，正常）；连不上、401/403（凭据不对）、
+ * 5xx（服务端坏了）与其余非 2xx/404 的状态码都不通过并写明原因。检查器不带构件凭据（那是宿主给
+ * widget 后端的，检查器进程未必有），服务按未认证回 401 是「服务在、门关着」——对构件有用的探活
+ * 要凭据，这里只验证可达性与基本语义。
+ */
+async function probeDataStorage(baseUrl: string): Promise<CheckResult> {
+  let url: URL
+  try {
+    url = new URL(DATA_STORAGE_PROBE_PATH, baseUrl)
+  } catch {
+    return { rule: 'data-storage', ok: false, message: `${WIDGET_DATA_URL} 不是合法的 URL：${baseUrl}` }
+  }
+  try {
+    const res = await fetch(url, { method: 'HEAD', signal: AbortSignal.timeout(DATA_STORAGE_PROBE_TIMEOUT_MS), redirect: 'manual' })
+    const status = res.status
+    if (status >= 200 && status < 300) return { rule: 'data-storage', ok: true, message: `存储服务可达（HTTP ${status}）` }
+    if (status === 404) return { rule: 'data-storage', ok: true, message: '存储服务可达（404 = 探针未写过，正常）' }
+    if (status === 401 || status === 403) {
+      return { rule: 'data-storage', ok: false, message: `存储服务拒绝探活（HTTP ${status}）：可达但凭据语义不对` }
+    }
+    return { rule: 'data-storage', ok: false, message: `存储服务返回 HTTP ${status}：不是 2xx / 404，探活不通过` }
+  } catch (e) {
+    return { rule: 'data-storage', ok: false, message: `存储服务连不上（${url.origin}）：${e instanceof Error ? e.message : String(e)}` }
+  }
+}
+
 /** 像绝对路径的写法：POSIX 前缀、UNC、Windows 盘符。 */
 const isAbsoluteLike = (s: string): boolean =>
   s.startsWith('/') || s.startsWith('\\\\') || /^[a-zA-Z]:[\\/]/.test(s)
@@ -166,6 +221,7 @@ export async function checkWidget(dir: string, opts: CheckOpts = {}): Promise<Ch
   const abs = resolve(dir)
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS
   const backendPort = opts.backendPort ?? 8900
+  const env = opts.env ?? {}
 
   // 1) manifest：存在、JSON 可解、schema 合法
   let manifest: WidgetManifest | undefined
@@ -215,15 +271,16 @@ export async function checkWidget(dir: string, opts: CheckOpts = {}): Promise<Ch
   }
 
   // 4) data-dir：`dataDir` 是「数据往哪儿写」的目录声明，归宿主管（openspec `widget-manifest-limits`）：
-  //     必须是清单目录内的相对路径，宿主把它映射成该 widget 唯一可写的数据目录。没声明 = 宿主给一份按
-  //     widget id 命名的目录，本条跳过。静态判定，不起进程、不创建目录。
+  //     必须是清单目录内的相对路径，宿主把它映射成该 widget 唯一可写的数据目录。没声明 = 缺省数据根
+  //     data/（openspec `widget-data-storage`：宿主给一份按 widget id 命名的目录），本条跳过。
+  //     静态判定，不起进程、不创建目录。
   if (manifest.dataDir !== undefined) {
     const problem = dataDirProblem(manifest.dataDir)
     results.push(problem === undefined
       ? { rule: 'data-dir', ok: true, message: `宿主把 ${manifest.dataDir} 映射成该 widget 唯一可写的数据目录` }
       : { rule: 'data-dir', ok: false, message: problem })
   } else {
-    results.push({ rule: 'data-dir', ok: true, skipped: true, message: '未声明 dataDir：宿主给一份按 widget id 命名的数据目录' })
+    results.push({ rule: 'data-dir', ok: true, skipped: true, message: `未声明 dataDir：缺省数据根 ${WIDGET_DATA_DEFAULT_DIR}/，宿主给一份按 widget id 命名的数据目录` })
   }
 
   // 5) serve-port：声明了 serve 才查
@@ -310,7 +367,14 @@ export async function checkWidget(dir: string, opts: CheckOpts = {}): Promise<Ch
         }
       : { rule: 'data-endpoint', ok: true, skipped: true }))
 
-  // 10) permissions：schema 已经整体校验过；这一条单独给结论（逐条报告的要求）。media 是声明不是
+  // 10) data-storage：宿主提供持久数据服务时的探活（openspec `widget-data-storage`）。环境从
+  //     `opts.env` 取，不从 `process.env` 读（库入口可达的模块不读环境）；进程入口（CLI / 宿主装配）
+  //     把它看见的环境递进来。没有 `WIDGET_DATA_URL` 就跳过——自部署 `widget check` 行为不变。
+  const storageUrl = env[WIDGET_DATA_URL]
+  if (storageUrl) results.push(await probeDataStorage(storageUrl))
+  else results.push({ rule: 'data-storage', ok: true, skipped: true, message: `没有 ${WIDGET_DATA_URL}：宿主不提供持久数据服务，widget 只用本地数据目录` })
+
+  // 11) permissions：schema 已经整体校验过；这一条单独给结论（逐条报告的要求）。media 是声明不是
   //     授权：放不放由宿主决定（见 manifest.ts），本检查只管形状。
   if (manifest.permissions !== undefined) {
     const re = PERMISSIONS_SHAPE.safeParse(parsed && typeof parsed === 'object' ? (parsed as Record<string, unknown>).permissions : undefined)

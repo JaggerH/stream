@@ -47,6 +47,26 @@ export { checkWidget } from '../widgets/check.ts'
 export type { CheckResult, CheckOutput } from '../widgets/check.ts'
 export { createWidgetsStore, WidgetsStore } from '../widgets/store.ts'
 export { mountWidgetListPage } from '../widgets/page.ts'
+/**
+ * 宿主提供的持久数据服务约定（openspec `widget-data-storage`）：只导出约定常量，任何嵌入方都可以
+ * 照此实现宿主一侧；存储服务端与客户端实现不在本仓库的公共面里。
+ */
+export {
+  WIDGET_DATA_DEFAULT_DIR,
+  WIDGET_DATA_URL,
+  WIDGET_DATA_TOKEN,
+  WIDGET_DATA_MODE,
+  WIDGET_DATA_MODES,
+  WIDGET_STORAGE_PATH_PREFIX,
+  WIDGET_STORAGE_DOCUMENT_PATH,
+  WIDGET_STORAGE_OBJECTS_PATH,
+  WIDGET_STORAGE_MIN_DOCUMENT_BYTES,
+  WIDGET_STORAGE_MIN_OBJECT_BYTES,
+  WIDGET_STORAGE_MAX_SEGMENT,
+  WIDGET_STORAGE_MAX_PATH,
+  WIDGET_STORAGE_MAX_DEPTH,
+  WIDGET_STORAGE_RESERVED_NAMES,
+} from '../widgets/manifest.ts'
 // 用 CDP 驱动一台没有装扩展的浏览器（openspec `cdp-binding`）：对外讲扩展中继的同一套协议。
 export { startCdpBinding } from '../cdp-binding/index.ts'
 export type { CdpBinding, CdpBindingOptions } from '../cdp-binding/index.ts'

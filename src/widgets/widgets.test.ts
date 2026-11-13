@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from 'node:http'
 import type { AddressInfo } from 'node:net'
-import { WIDGET_SCHEMA, WIDGET_DATA_PATH, parseWidgetManifest } from './manifest.ts'
+import { WIDGET_SCHEMA, WIDGET_DATA_PATH, parseWidgetManifest, WIDGET_STORAGE_OBJECTS_PATH } from './manifest.ts'
 import { checkWidget } from './check.ts'
 import { WidgetsStore } from './store.ts'
 
@@ -247,6 +247,7 @@ describe('checkWidget', () => {
     const absent = widgetDir('datadir-absent', { 'widget.json': JSON.stringify({ ...VALID, entry: 'index.html' }), 'index.html': 'x' })
     const byAbsent = Object.fromEntries((await checkWidget(absent)).results.map((r) => [r.rule, r]))
     expect(byAbsent['data-dir'].skipped).toBe(true)
+    expect(byAbsent['data-dir'].message).toContain('data/')
 
     const absolute = widgetDir('datadir-absolute', {
       'widget.json': JSON.stringify({ ...VALID, entry: 'index.html', dataDir: '/var/tmp/x' }),
@@ -400,6 +401,94 @@ describe('checkWidget', () => {
     expect(ep.message).toContain(WIDGET_DATA_PATH)
     expect(out.ok).toBe(false)
     server.close()
+  })
+
+
+  // ── data-storage（openspec `widget-data-storage`）────────────────────────────
+
+  /** 起一个带状态码行为的服务器：HEAD /v1/objects/.probe 回固定状态码或断开。 */
+  const startProbeServer = async (behavior: 'ok' | '404' | '401' | '403' | '500' | '503' | '302' | 'reset'): Promise<{ server: Server; baseUrl: string }> => {
+    const server: Server = createServer((req: IncomingMessage, res: ServerResponse) => {
+      res.setHeader('x-probe', '1')
+      if (behavior === 'reset') { req.socket.destroy(); return }
+      const status = behavior === 'ok' ? 200 : behavior === '404' ? 404 : Number(behavior)
+      res.writeHead(status)
+      res.end()
+    })
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+    return { server, baseUrl: `http://127.0.0.1:${(server.address() as AddressInfo).port}` }
+  }
+
+  it('data-storage：无 env skipped，行为不变；有 env 由 opts.env 传入', async () => {
+    const dir = widgetDir('storage-no-env', { 'widget.json': JSON.stringify({ ...VALID, entry: 'index.html' }), 'index.html': 'x' })
+    const byRule = Object.fromEntries((await checkWidget(dir)).results.map((r) => [r.rule, r]))
+    expect(byRule['data-storage'].ok).toBe(true)
+    expect(byRule['data-storage'].skipped).toBe(true)
+    expect(byRule['data-storage'].message).toContain('WIDGET_DATA_URL')
+
+    // 显式空环境与不传同一结论
+    const byEmpty = Object.fromEntries((await checkWidget(dir, { env: {} })).results.map((r) => [r.rule, r]))
+    expect(byEmpty['data-storage'].skipped).toBe(true)
+  })
+
+  it('data-storage：2xx 与 404 探活通过', async () => {
+    const dir = widgetDir('storage-ok', { 'widget.json': JSON.stringify({ ...VALID, entry: 'index.html' }), 'index.html': 'x' })
+    for (const behavior of ['ok', '404'] as const) {
+      const { server, baseUrl } = await startProbeServer(behavior)
+      try {
+        const out = await checkWidget(dir, { env: { WIDGET_DATA_URL: baseUrl } })
+        const ds = out.results.find((r) => r.rule === 'data-storage')!
+        expect(ds.ok, behavior).toBe(true)
+        expect(out.ok, behavior).toBe(true)
+      } finally {
+        server.close()
+      }
+    }
+  })
+
+  it('data-storage：401/403/5xx/其它状态码与连不上都不通过', async () => {
+    const dir = widgetDir('storage-bad', { 'widget.json': JSON.stringify({ ...VALID, entry: 'index.html' }), 'index.html': 'x' })
+    for (const behavior of ['401', '403', '500', '503', '302', 'reset'] as const) {
+      const { server, baseUrl } = await startProbeServer(behavior)
+      try {
+        const out = await checkWidget(dir, { env: { WIDGET_DATA_URL: baseUrl } })
+        const ds = out.results.find((r) => r.rule === 'data-storage')!
+        expect(ds.ok, behavior).toBe(false)
+        expect(out.ok, behavior).toBe(false)
+        expect(ds.message, behavior).toMatch(/HTTP|连不上|拒绝/)
+      } finally {
+        server.close()
+      }
+    }
+  })
+
+  it('data-storage：URL 不合法时不通过并写明', async () => {
+    const dir = widgetDir('storage-bad-url', { 'widget.json': JSON.stringify({ ...VALID, entry: 'index.html' }), 'index.html': 'x' })
+    const out = await checkWidget(dir, { env: { WIDGET_DATA_URL: 'not-a-url' } })
+    const ds = out.results.find((r) => r.rule === 'data-storage')!
+    expect(ds.ok).toBe(false)
+    expect(ds.message).toContain('WIDGET_DATA_URL')
+  })
+
+  it('data-storage：探针路径打在对象端点的固定名字上，不带构件凭据', async () => {
+    const seen: Array<{ method: string | undefined; url: string | undefined; auth: string | undefined }> = []
+    const server: Server = createServer((req: IncomingMessage, res: ServerResponse) => {
+      seen.push({ method: req.method, url: req.url, auth: req.headers.authorization })
+      res.writeHead(404)
+      res.end()
+    })
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+    try {
+      const dir = widgetDir('storage-probe-path', { 'widget.json': JSON.stringify({ ...VALID, entry: 'index.html' }), 'index.html': 'x' })
+      const out = await checkWidget(dir, { env: { WIDGET_DATA_URL: `http://127.0.0.1:${(server.address() as AddressInfo).port}` } })
+      expect(out.results.find((r) => r.rule === 'data-storage')!.ok).toBe(true)
+      expect(seen.length).toBe(1)
+      expect(seen[0].method).toBe('HEAD')
+      expect(seen[0].url).toBe(`${WIDGET_STORAGE_OBJECTS_PATH}/.probe`)
+      expect(seen[0].auth).toBe(undefined)
+    } finally {
+      server.close()
+    }
   })
 
   it('data-endpoint：端点连接失败（收到数据口请求直接断开）→ 不通过', async () => {
