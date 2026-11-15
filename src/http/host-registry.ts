@@ -151,7 +151,7 @@ export class HostRelayRegistry {
     // **每次都发 online**，包括顶掉旧连接的重连：嵌入方按事件折在线状态，设备挂起期间它可能
     // 已经把行压成离线（厂商说挂起），重连不发事件就只能等它自己的兜底对账（一个心跳周期一拍）
     // ——那正是恢复后「重连上了但表不翻」的来源。事件幂等，消费方行已在线时无变化。
-    this.emitChange({ deviceId: hello.deviceId, name: hello.name, platform: hello.platform, online: true, at: now })
+    this.emitChange({ deviceId: hello.deviceId, name: hello.name, platform: hello.platform, online: true, at: now, ops: hello.ops })
     return relay
   }
 
@@ -250,11 +250,13 @@ export class HostRelayRegistry {
   }
 }
 
-/** HostRelayRegistry 的上下线事件载荷（at = 毫秒时间戳）。 */
+/** HostRelayRegistry 的上下线事件载荷（at = 毫秒时间戳）。online 事件带当次 hello 声明的 op 集
+ *  （重连换了 op 集合，事件就是最新事实）；offline 不带 ops——设备已断，没有「现在的 ops」。 */
 export interface HostChange {
   deviceId: string
   name: string
   platform: string
   online: boolean
   at: number
+  ops?: string[]
 }

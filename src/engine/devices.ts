@@ -17,15 +17,16 @@ import type { HarvestService } from '../kernel/plugins/harvest.ts'
 
 /** 设备 / 绑定的上下线事件（openspec `embeddable-device-gateway`）。由两条中继注册表在连接建立 /
  *  断开时发出；**每次握手成功都发一条 online**，包括新连接顶掉旧连接的重连——嵌入方按事件折在线
- *  状态，挂起醒来后要靠它当场翻回在线，不能等自己的兜底对账。 */
+ *  状态，挂起醒来后要靠它当场翻回在线，不能等自己的兜底对账。online 的 device 支带 `ops`（该次
+ *  hello 声明的 op 集，重连换了集合就是新事实）；offline 不带。 */
 export type DeviceChange =
-  | { kind: 'device'; deviceId: string; name: string; platform: string; online: boolean; at: number }
+  | { kind: 'device'; deviceId: string; name: string; platform: string; online: boolean; at: number; ops?: string[] }
   | { kind: 'binding'; bindingId: string; deviceId: string; nodeId?: string; online: boolean; at: number }
 
 /** `online()` 的快照：嵌入方启动时先读一次再订阅 `onChange`。`connectedAt` 是该连接的建立时刻
  *  （毫秒，可选）：嵌入方可用它区分「挂起前就在、可能已被冻死的旧连接」和「挂起后重新建立的连接」。 */
 export interface DeviceSnapshot {
-  devices: Array<{ deviceId: string; name: string; platform: string; connectedAt?: number }>
+  devices: Array<{ deviceId: string; name: string; platform: string; connectedAt?: number; ops?: string[] }>
   bindings: Array<{ bindingId: string; deviceId: string; nodeId?: string; connectedAt?: number }>
 }
 
@@ -69,7 +70,7 @@ export function wireDeviceChanges(devices: StreamDevices, harvest: HarvestServic
     }
   }
   harvest.hostRelays.onChange((ch) =>
-    emit({ kind: 'device', deviceId: ch.deviceId, name: ch.name, platform: ch.platform, online: ch.online, at: ch.at }))
+    emit({ kind: 'device', deviceId: ch.deviceId, name: ch.name, platform: ch.platform, online: ch.online, at: ch.at, ...(ch.ops ? { ops: ch.ops } : {}) }))
   harvest.extRelays.onChange((ch) => {
     if (ch.deviceId === undefined) return
     emit({ kind: 'binding', bindingId: ch.bindingId, deviceId: ch.deviceId, ...(ch.nodeId ? { nodeId: ch.nodeId } : {}), online: ch.online, at: ch.at })
@@ -79,7 +80,7 @@ export function wireDeviceChanges(devices: StreamDevices, harvest: HarvestServic
     return () => { listeners.delete(listener) }
   }
   devices.online = (): DeviceSnapshot => ({
-    devices: harvest.hostRelays.devices().map((d) => ({ deviceId: d.hello.deviceId, name: d.hello.name, platform: d.hello.platform, connectedAt: d.connectedAt })),
+    devices: harvest.hostRelays.devices().map((d) => ({ deviceId: d.hello.deviceId, name: d.hello.name, platform: d.hello.platform, connectedAt: d.connectedAt, ops: d.hello.ops })),
     bindings: harvest.extRelays.statuses()
       .filter((s) => s.online && s.deviceId !== '?')
       .map((s) => ({ bindingId: s.bindingId, deviceId: s.deviceId, ...(harvest.extRelays.nodeOf(s.bindingId) ? { nodeId: harvest.extRelays.nodeOf(s.bindingId) } : {}), ...(s.connectedAt !== null ? { connectedAt: s.connectedAt } : {}) })),

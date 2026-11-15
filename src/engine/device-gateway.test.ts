@@ -143,15 +143,26 @@ describe('deviceGateway（宿主自建 server + Hono，basePath /api/stream）',
     await new Promise<void>((resolve, reject) => { ws.on('open', resolve); ws.on('error', reject) })
     ws.send(JSON.stringify({ type: 'hello', deviceId, platform: 'linux', name: '测试机', agentVersion: '1.0.0', ops: ['browser.tabs'] }))
     await vi.waitFor(() => {
-      expect(changes).toContainEqual({ kind: 'device', deviceId, name: '测试机', platform: 'linux', online: true, at: expect.any(Number) })
+      expect(changes).toContainEqual({ kind: 'device', deviceId, name: '测试机', platform: 'linux', online: true, at: expect.any(Number), ops: ['browser.tabs'] })
     })
-    // 快照：启动时先读一次的口；connectedAt 是该连接的建立时刻
+    // 快照：启动时先读一次的口；connectedAt 是该连接的建立时刻；ops 来自 hello
     const snapDevice = stream.devices.online().devices.find((d) => d.deviceId === deviceId)
     expect(snapDevice?.connectedAt).toEqual(expect.any(Number))
+    expect(snapDevice?.ops).toEqual(['browser.tabs'])
     ws.close()
     await vi.waitFor(() => {
       expect(changes).toContainEqual({ kind: 'device', deviceId, name: '测试机', platform: 'linux', online: false, at: expect.any(Number) })
     })
+
+    // 重连换 op 集合：online 事件带当次 hello 的 ops（新事实），快照跟着翻
+    const ws2 = new WebSocket(`ws://127.0.0.1:${port}/api/stream/host`, [HOST_RELAY_PROTOCOL, token])
+    await new Promise<void>((resolve, reject) => { ws2.on('open', resolve); ws2.on('error', reject) })
+    ws2.send(JSON.stringify({ type: 'hello', deviceId, platform: 'linux', name: '测试机', agentVersion: '1.0.1', ops: ['browser.tabs', 'browser.claim'] }))
+    await vi.waitFor(() => {
+      expect(changes.at(-1)).toEqual({ kind: 'device', deviceId, name: '测试机', platform: 'linux', online: true, at: expect.any(Number), ops: ['browser.tabs', 'browser.claim'] })
+    })
+    expect(stream.devices.online().devices.find((d) => d.deviceId === deviceId)?.ops).toEqual(['browser.tabs', 'browser.claim'])
+    ws2.close()
 
     // 别人的路径（这里没有兜底者）：handleUpgrade 返回 false；socket 没人接、客户端悬着——
     // 所以只断言认领结果，不等客户端报错。
@@ -286,7 +297,7 @@ describe('deviceGateway（宿主自建 server + Hono，basePath /api/stream）',
     await new Promise<void>((resolve, reject) => { ws.on('open', resolve); ws.on('error', reject) })
     ws.send(JSON.stringify({ type: 'hello', deviceId, platform: 'linux', name: '测试机', agentVersion: '1.0.0', ops: [] }))
     await vi.waitFor(() => {
-      expect(changes).toContainEqual({ kind: 'device', deviceId, name: '测试机', platform: 'linux', online: true, at: expect.any(Number) })
+      expect(changes).toContainEqual({ kind: 'device', deviceId, name: '测试机', platform: 'linux', online: true, at: expect.any(Number), ops: [] })
     })
     expect(stream.devices.online().devices.map((d) => d.deviceId)).toContain(deviceId)
     ws.close()
@@ -305,7 +316,7 @@ describe('deviceGateway（宿主自建 server + Hono，basePath /api/stream）',
 
     await frozenDevice(port, token, { deviceId, platform: 'linux', name: '冻住的机器', agentVersion: '1.0.0', ops: [] })
     await vi.waitFor(() => {
-      expect(changes).toContainEqual({ kind: 'device', deviceId, name: '冻住的机器', platform: 'linux', online: true, at: expect.any(Number) })
+      expect(changes).toContainEqual({ kind: 'device', deviceId, name: '冻住的机器', platform: 'linux', online: true, at: expect.any(Number), ops: [] })
     })
     // 不回 pong：keepRelayAlive 两个周期内判死 → close → offline
     await vi.waitFor(() => {
