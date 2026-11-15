@@ -107,7 +107,7 @@ function rewriteHlsPlaylist(text: string, baseUrl: string, backend: string): str
     })
     .join('\n')
 }
-import { fetchUrl, makeResolveByLink, type FetchUrlDeps } from './fetch-url.ts'
+import { fetchUrl, makeResolveByLink, scrubUrlQuery, type FetchUrlDeps } from './fetch-url.ts'
 import { toClientItem, sortKeyOf, encodeCursor, decodeCursor, isAfterCursor } from './client-item.ts'
 import { attachStoryGroups } from '../story-fold/project.ts'
 import type { StoryFoldStore } from '../story-fold/store.ts'
@@ -3478,9 +3478,18 @@ export function createHttpApp(deps: HttpDeps): Hono {
   // 与 /api/enrich?source=link（Defuddle 转成文字）是两件事，所以放在 /api/media 下、名字里带 media：
   // 上一版把它挂成 `?source=url` 与 `?source=link` 并排，两个名字在自然语言里是同义词、产出却毫无
   // 关系，先后骗过三个人。MCP 的 stream_fetch_url 调的是同一个 fetchUrl 函数。
+  //
+  // 失败必须留一行服务端日志（host + 认领到的包名）：这条门的失败原本只到前端（502 或 200+error），
+  // 排查只能靠用户截图。日志里**不带 query**——分享链接的 query 里常有签名/凭据参数，错误原文里
+  // 带的 URL 也照剥（scrubUrlQuery）。
   app.get('/api/media/from-url', async (c) => {
     const url = c.req.query('url')
     if (!url) return c.json(errorBody('validation_error', 'url required'), 400)
+    const host = (() => { try { return new URL(url).hostname } catch { return '(unparsable)' } })()
+    const claimed = deps.links?.sync(url)?.package ?? '(no package)'
+    const logFailure = (message: string): void => {
+      console.warn(`[media/from-url] host=${host} package=${claimed} failed: ${scrubUrlQuery(String(message).slice(0, 300))}`)
+    }
     // resolveByLink：providers / bindings 都在（生产装配）才给；最小装配缺席 → fetchUrl 只走宿主分支。
     const fetchDeps: FetchUrlDeps = {
       resolveByLink: deps.providers && deps.providerBindings
@@ -3490,11 +3499,14 @@ export function createHttpApp(deps: HttpDeps): Hono {
     try {
       // caller-fetch-guard：与 MCP 的 stream_fetch_url 同一道门、同一个作用域（openspec/
       // changes/private-fetch-guard）。开关打开时这里先预检、连接层逐跳校验；关闭时透传。
-      return c.json(await withCallerFetchGuard(async () => {
+      const result = await withCallerFetchGuard(async () => {
         await assertCallerUrlAllowed(url)
         return fetchUrl(url, fetchDeps)
-      }))
+      })
+      if (result.error) logFailure(result.error)
+      return c.json(result)
     } catch (e) {
+      logFailure(e instanceof Error ? e.message : String(e))
       if (e instanceof SlotBrokenError) return slotBroken422(c, e)
       return c.json(errorBody('upstream_error', String((e as Error).message)), 502)
     }

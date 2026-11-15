@@ -56,4 +56,57 @@ describe('GET /api/media/from-url', () => {
     expect(body.platform).toBe('unknown')
     expect(body.error).toMatch(/read_url/)
   })
+
+  // 失败必须留一行服务端日志（host + 认领到的包名）——原本失败只到前端，排查只能靠用户截图。
+  // 日志是卫生边界：**不带 query**（分享链接的 query 里常有签名/凭据参数），错误原文里带的
+  // URL 也照剥。
+  it('认领了的站失败 → 200+error 照旧，服务端记一行（含 host 与包名，不含 query）', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      const dispatch = vi.fn((_c: string, key: string) => (key === 'somesite-link' ? 'row-somesite' : null))
+      const invoke = vi.fn(async () => {
+        throw new Error('上游拒了: https://www.somesite.test/video/X?sign=SECRET&msToken=TOK 失败')
+      })
+      const links = { sync: (u: string) => ({ url: u, package: '@streamapp/somesite', platform: 'somesite' }) }
+      const app = createHttpApp({
+        ...(stubs as object),
+        providers: { executor: { invoke }, stats: {} },
+        providerBindings: { dispatch },
+        links,
+      } as never)
+      const res = await app.request(
+        `/api/media/from-url?url=${encodeURIComponent('https://www.somesite.test/video/X?sign=SECRET&msToken=TOK')}`)
+      expect(res.status).toBe(200)
+      expect((await res.json()).error).toMatch(/上游拒了/)
+      expect(warn).toHaveBeenCalledTimes(1)
+      const line = String(warn.mock.calls[0]?.[0])
+      expect(line).toContain('host=www.somesite.test')
+      expect(line).toContain('package=@streamapp/somesite')
+      expect(line).not.toContain('SECRET')
+      expect(line).not.toContain('TOK')
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
+  it('抛错那一路（502）同样记一行', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      const dispatch = vi.fn(() => 'row-x')
+      const invoke = vi.fn(async () => {
+        throw new (await import('../providers/bindings.ts')).SlotBrokenError('chan', 'site', ['row-x'])
+      })
+      const app = createHttpApp({
+        ...(stubs as object),
+        providers: { executor: { invoke }, stats: {} },
+        providerBindings: { dispatch },
+      } as never)
+      const res = await app.request(`/api/media/from-url?url=${encodeURIComponent('https://www.site.test/v/1')}`)
+      expect(res.status).toBe(422)
+      expect(warn).toHaveBeenCalledTimes(1)
+      expect(String(warn.mock.calls[0]?.[0])).toContain('host=www.site.test')
+    } finally {
+      warn.mockRestore()
+    }
+  })
 })

@@ -47,6 +47,22 @@ export interface FetchUrlResult {
 
 // ─── Platform detection ────────────────────────────────────────────
 
+/**
+ * 把消息文本里出现的每个 URL 的 query 和 fragment 剥掉。**日志卫生**：分享链接的 query 里
+ * 常有签名 / 凭据参数，错误原文（包把上游原话带出来时）可能整条含着它——进了日志就是把它
+ * 撒进所有看日志的人手里。解析不了的 URL 退一档：从第一个 `?` 处截断。
+ */
+export function scrubUrlQuery(message: string): string {
+  return message.replace(/https?:\/\/\S+/g, (raw) => {
+    try {
+      const u = new URL(raw)
+      return `${u.origin}${u.pathname}${u.search ? '?…' : ''}`
+    } catch {
+      return raw.split('?')[0] ?? raw
+    }
+  })
+}
+
 const IMAGE_EXT_RE = /\.(jpe?g|png|gif|webp|bmp)(\?|$)/i
 const VIDEO_EXT_RE = /\.(mp4|webm|mov|avi)(\?|$)/i
 
