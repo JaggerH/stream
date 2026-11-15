@@ -60,13 +60,13 @@ export type SpawnFn = typeof nodeSpawn
  * **`closed` 和 `exited` 是两件事，`close()` 也不杀进程。** `close()` 只关协议连接（`closed`
  * 随之 resolve），子进程照常活着；要它真的走开必须 `kill()`，然后等 `exited`。判「这一轮还
  * 活着吗」用 `Promise.race([closed, exited])` —— 单看任何一个都会漏掉另一半。
- * `kill()` 默认发 SIGTERM，不保证进程一定死；需要「一定收掉」的场景由上层等一段
- * `exited` 之后再 `kill('SIGKILL')` 兜底（`RepairSession.closeAgent` 就是那个上层），
+ * `kill()` 发的是**整组**信号（见下），需要「等它真的走开」的场景由上层等一段 `exited`
+ * 之后再 `kill('SIGKILL')` 兜底（`AgentSessionBase.closeAgent` 就是那个上层），
  * 这层不替它决定等多久。
  */
 export interface SpawnedAgent extends AcpClient {
   readonly exited: Promise<{ code: number | null; signal: string | null }>
-  kill(signal?: NodeJS.Signals): void
+  kill(signal?: NodeJS.Signals | number | undefined): void
 }
 
 const MAX_LINE_CHARS = 1 << 20
@@ -138,7 +138,11 @@ export function spawnAcpAgent(
   const spawnFn = opts.spawnFn ?? nodeSpawn
   let child: ChildProcess
   try {
-    child = spawnFn(cmd.command, cmd.args, { cwd: opts.cwd, env: opts.env ?? process.env, stdio: ['pipe', 'pipe', 'pipe'] })
+    // **detached**：孩子自成一个进程组。这不是「脱离管控」，恰是管控的前提——claude-agent-acp
+    // 这类 adapter 自己再 spawn 的孙进程（claude-agent-sdk 的 claude）不随父进程死，只有「整组
+    // 一起收」才收得掉。活体（2026-11-15）：stream-back 停服时 repair 会话的 acp adapter 收了
+    // 信号退了，它拉起的 claude 还活着，继续打 /api/mcp，把正在关停的后端炸出未捕获错误。
+    child = spawnFn(cmd.command, cmd.args, { cwd: opts.cwd, env: opts.env ?? process.env, stdio: ['pipe', 'pipe', 'pipe'], detached: true })
   } catch (e) {
     const err = e instanceof Error ? e : new Error(String(e))
     const rejected = <T,>(): Promise<T> => Promise.reject(err)
@@ -184,6 +188,12 @@ export function spawnAcpAgent(
   return {
     ...client,
     exited,
-    kill: (signal) => { try { child.kill(signal) } catch { /* 已经死了 */ } },
+    /** 收整组，不只收直接子进程：spawn 是 detached 的（孩子自成一个组，pgid = pid），孙进程
+     *  只有整组信号才收得掉（见 spawn 处的 detached 注释）。两步各吞错：孩子先走一步时
+     *  `child.kill` 抛的错不该挡住整组那一下；组已经没了（ESRCH）说明都走干净了。 */
+    kill: (signal?: NodeJS.Signals | number | undefined) => {
+      try { child.kill(signal ?? 'SIGTERM') } catch { /* 已经死了 */ }
+      try { if (child.pid != null) process.kill(-child.pid, signal ?? 'SIGTERM') } catch { /* 组已经没了 */ }
+    },
   }
 }

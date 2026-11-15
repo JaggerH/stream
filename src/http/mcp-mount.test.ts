@@ -110,4 +110,28 @@ describe('mountMcp (real MCP client over HTTP, real listening server)', () => {
     expect(JSON.parse(text(r))).toEqual({ unsubscribed: 'my-tech', existed: true })
     expect(scheduler.list().map((s) => s.id)).not.toContain('my-tech')
   })
+
+  // 停机窗口：内核域已 inactive、store 已关，agent 会话的子进程还在打工具——这一刻的请求要
+  // **干净拒绝**（503 + JSON-RPC 错误信封），不能把正在退出的进程炸出未捕获错误。
+  // （活体 2026-11-15：`POST /api/mcp 未捕获错误: cannot get required service "packages"
+  // in inactive context`、`unhandledRejection: The database connection is not open`。）
+  it('服务在关停（组装 MCP 面时抛 cordis inactive 那类错）→ 503 JSON-RPC 错误信封，不向上抛', async () => {
+    const broken = new Hono()
+    const inactive: { intents?: unknown } = {}
+    Object.defineProperty(inactive, 'intents', {
+      get() { throw new Error('cannot get required service "packages" in inactive context') },
+    })
+    await mountMcp(broken, { list: () => [] } as never, inactive as never)
+    const res = await broken.request('/api/mcp', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' }),
+    })
+    expect(res.status).toBe(503)
+    const body = await res.json()
+    expect(body.jsonrpc).toBe('2.0')
+    expect(body.error.code).toBe(-32000)
+    expect(body.error.message).toMatch(/关停/)
+    expect(body.error.message).toMatch(/packages/)
+  })
 })

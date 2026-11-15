@@ -1,7 +1,9 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi, afterEach } from 'vitest'
 import * as acp from '@agentclientprotocol/sdk'
 import { PassThrough, Readable, Writable } from 'node:stream'
 import { openAcpClient, spawnAcpAgent } from './acp-client.ts'
+
+afterEach(() => { vi.restoreAllMocks() })
 
 /** 一个最小 ACP agent：initialize / session/new / session/prompt（发一条 tool_call、问一次权限、结束）/ session/cancel。 */
 function fakeAgent(opts: { onPrompt?: (text: string) => void } = {}): acp.AgentApp {
@@ -87,6 +89,8 @@ describe('spawnAcpAgent（注入的假 spawn）', () => {
     // 假 agent 接在这两根管子的另一端
     const agentStream = acp.ndJsonStream(Writable.toWeb(fromAgent) as WritableStream<Uint8Array>, Readable.toWeb(toAgent) as ReadableStream<Uint8Array>)
     fakeAgent().connect(agentStream)
+    // 假 pid 不能让 kill 的整组那一下打到真进程组上（-4242 在真机上撞谁算谁）。
+    vi.spyOn(process, 'kill').mockImplementation(() => true)
     const lines: string[] = []
     const spawned = spawnAcpAgent({ command: 'fake', args: [] }, {
       onUpdate: () => {}, onPermission: async (r) => ({ outcome: { outcome: 'selected', optionId: r.options[0]!.optionId } }),
@@ -101,10 +105,37 @@ describe('spawnAcpAgent（注入的假 spawn）', () => {
     await expect(spawned.exited).resolves.toEqual({ code: 0, signal: null })
   })
 
-  /** 上层（`RepairSession.closeAgent`）等不到 `exited` 时要能补一发 SIGKILL——这层必须把信号透下去，
-   *  吞掉它的表现是「关停看起来做了收尾」而那个不肯死的子进程还在。 */
-  it('kill(signal) 把信号原样发给子进程；不带参数就是默认 SIGTERM', () => {
-    const killed: (NodeJS.Signals | number | undefined)[] = []
+  // 孙进程不随父进程死：acp adapter（npm exec）自己 spawn 的 claude 只有**整组**信号才收得掉
+  // （活体 2026-11-15：stream-back 停服后 claude 还活着，继续打 /api/mcp）。所以 spawn 必须
+  // detached（孩子自成一个组），kill 必须 SIGTERM/SIGKILL 到负 pid 上。
+  it('spawn 带 detached（自成进程组），kill 把信号发给整组（负 pid）+ 直接子进程', () => {
+    const pk = vi.spyOn(process, 'kill').mockImplementation(() => true)
+    const killed: Array<NodeJS.Signals | number | undefined> = []
+    const child = {
+      stdin: new PassThrough(), stdout: new PassThrough(), stderr: new PassThrough(),
+      on: () => {}, once: () => {},
+      kill: (sig?: NodeJS.Signals | number) => { killed.push(sig); return true },
+      pid: 4246,
+    }
+    let seenOpts: { detached?: boolean } | undefined
+    const spawned = spawnAcpAgent({ command: 'fake', args: [] }, {
+      onUpdate: () => {}, onPermission: async () => ({ outcome: { outcome: 'cancelled' } }),
+    }, { cwd: '/tmp', spawnFn: ((_c: string, _a: string[], o: { detached?: boolean }) => { seenOpts = o; return child }) as never })
+    expect(seenOpts!.detached).toBe(true)
+    spawned.kill()
+    spawned.kill('SIGKILL')
+    // 整组那一下：负 pid、信号原样；缺省 SIGTERM。
+    expect(pk.mock.calls).toEqual([[-4246, 'SIGTERM'], [-4246, 'SIGKILL']])
+    // 直接子进程同样收到（双保险；子进程在组里，整组那一下本就覆盖它）。
+    expect(killed).toEqual(['SIGTERM', 'SIGKILL'])
+    spawned.close()
+  })
+
+  /** 整组那一下遇上组已经没了（ESRCH，孩子先走一步的常态）必须吞掉：收尾路径不许因为
+   *  「没东西可收」而抛——上层还要靠它之后的 `exited` / SIGKILL 兜底走完。 */
+  it('kill：整组信号抛 ESRCH 也吞掉，直接子进程那一下照发', () => {
+    vi.spyOn(process, 'kill').mockImplementation(() => { throw new Error('ESRCH') })
+    const killed: Array<NodeJS.Signals | number | undefined> = []
     const child = {
       stdin: new PassThrough(), stdout: new PassThrough(), stderr: new PassThrough(),
       on: () => {}, once: () => {},
@@ -114,9 +145,9 @@ describe('spawnAcpAgent（注入的假 spawn）', () => {
     const spawned = spawnAcpAgent({ command: 'fake', args: [] }, {
       onUpdate: () => {}, onPermission: async () => ({ outcome: { outcome: 'cancelled' } }),
     }, { cwd: '/tmp', spawnFn: (() => child) as never })
-    spawned.kill()
-    spawned.kill('SIGKILL')
-    expect(killed).toEqual([undefined, 'SIGKILL'])
+    expect(() => spawned.kill()).not.toThrow()
+    expect(() => spawned.kill('SIGKILL')).not.toThrow()
+    expect(killed).toEqual(['SIGTERM', 'SIGKILL'])
     spawned.close()
   })
 

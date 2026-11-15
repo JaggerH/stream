@@ -9,6 +9,8 @@ import { RepairSession, type RepairSessionDeps, type RepairJobInput } from './re
 import { scriptedAgent, inProcess, type Turn } from './__fixtures__/scripted-agent.ts'
 import type { EventInput } from '../events/store.ts'
 
+type KillSignal = NodeJS.Signals | number | undefined
+
 /**
  * 一份**真的过得了 `validateRecipe`** 的 `kind:'http'` recipe（任务书里那份夹具过不了，
  * 见 recipe-validation.test.ts 的同一条注释）。
@@ -419,7 +421,7 @@ describe('RepairSession', () => {
 
   /** `kill()` 发的是 SIGTERM，不保证进程一定死。不等、不补 SIGKILL = 后端退了而 agent 子进程还在。 */
   it('关停：子进程在宽限期内没走开 → 补一发 SIGKILL，cancel() 等到那时才返回', async () => {
-    const signals: (string | undefined)[] = []
+    const signals: KillSignal[] = []
     const agent = scriptedAgent([async () => new Promise<acp.PromptResponse>(() => {})])
     const h = harness([], {
       closeGraceMs: 30,
@@ -439,7 +441,7 @@ describe('RepairSession', () => {
   })
 
   it('关停：子进程收到 SIGTERM 就走开了 → 不补 SIGKILL', async () => {
-    const signals: (string | undefined)[] = []
+    const signals: KillSignal[] = []
     const agent = scriptedAgent([async () => new Promise<acp.PromptResponse>(() => {})])
     let resolveExit: (v: { code: number | null; signal: string | null }) => void = () => {}
     const exited = new Promise<{ code: number | null; signal: string | null }>((r) => { resolveExit = r })
