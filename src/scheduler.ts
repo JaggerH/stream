@@ -109,6 +109,15 @@ export interface SchedulerOpts {
    */
   onHarvestSkipped?: (sourceId: string, reason: string) => void
   /**
+   * 这个源当前是否处于隔离/停用状态（RepairLedger，漂移 K 次后自动隔离）。**只服务直读**
+   * （`readSource`：包的 `ctx.readSource`、搜索成员、doctor reprobe 这类「当场要答案」的调用）：
+   * 隔离中的源在 adapter 里 decline 成空数组，直读拿到 [] 会把「源被自动隔离了」读成
+   * 「这条内容没有」——活体（2026-11-15）：douyin-detail 被隔离后，所有抖音链接 5ms 秒回
+   * 「没有读到作品详情（recipe 跑完了但产出是空的）」，没有一处说得出源已经哑了。
+   * 返回 null = 没有隔离；缺席 = 宿主没接账本（单测 / 最小装配），不拦。
+   */
+  quarantineOf?: (sourceId: string) => { consecutive: number; reason: string } | null
+  /**
    * 执行位置：源 facility → 它绑定的设备（与 ReplayAdapter 的 `placementFor` 是**同一个**解析器，
    * 见 `src/devices/placement.ts` 的 `makeFacilityPlacement`）。每次真采集开始时解一次，整次
    * `adapter.fetch` 在这个上下文里跑——code 包的 `ctx.fetch` 才会派到那台设备。缺席 = 全部本机。
@@ -964,10 +973,23 @@ export class Scheduler {
     opts: { signal?: AbortSignal; userInitiated?: boolean } = {},
   ): Promise<unknown[]> {
     const parsed = parseSourceId(sourceId)
-    return (await this.fetchSource(
+    const got = await this.fetchSource(
       { plugin_id: parsed.plugin_id, source_template_id: parsed.source_template_id, params },
       { signal: opts.signal, userInitiated: opts.userInitiated },
-    )).items
+    )
+    // 隔离中的源 decline 成空数组（adapter 的 shouldRun=false → DECLINED）。直读方拿到 [] 只会
+    // 把「源被自动隔离了」读成「这条内容没有」——发一个把真因说清的错误，不是静默的空。
+    // 缓存命中不拦：隔离是漂移**之后**才记的账，缓存里的存量内容是隔离前采的，照常给。
+    if (got.items.length === 0 && !got.cacheHit) {
+      const q = this.opts.quarantineOf?.(sourceId)
+      if (q) {
+        throw new Error(
+          `源 "${sourceId}" 处于隔离状态（连续 ${q.consecutive} 次漂移，原因：${q.reason}）` +
+          '——这是采集端把这个源自动隔离了，不是这条内容没有；recipe 修复出新版本后自动解除',
+        )
+      }
+    }
+    return got.items
   }
 
   /**

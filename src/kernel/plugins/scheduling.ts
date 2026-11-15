@@ -91,7 +91,7 @@ export interface SchedulingConfig {
 export const schedulingPlugin = {
   name: 'scheduling',
   // `harvest`：设备目录（hostRelays）住那里，采集派到设备前要问它在不在线。它比本域早挂。
-  inject: ['sources', 'adapters', 'stores', 'credentials', 'auth', 'streamEvents', 'packages', 'provider', 'harvest'],
+  inject: ['sources', 'adapters', 'stores', 'credentials', 'auth', 'streamEvents', 'packages', 'provider', 'harvest', 'repairLedger'],
   apply(ctx: Context, config: SchedulingConfig): void {
     const { registry } = ctx.sources
     const adapters = ctx.adapters
@@ -124,6 +124,12 @@ export const schedulingPlugin = {
       // 时机 ②：这一轮要用登录态了，快照太旧就先去浏览器取一次。Chrome 关着时立刻返回
       // （relay 未连），不拖慢采集。
       beforeTick: () => auth.cookiePuller.ensureFresh(COOKIE_SNAPSHOT_MAX_AGE_MS, 'before-harvest'),
+      // 隔离中的源直读时要把真因说清（不是「这条内容没有」）——账本在 adapters 域，现取快照即可。
+      quarantineOf: (sourceId) => {
+        const st = ctx.repairLedger.get(sourceId)
+        if (!st || (st.status !== 'quarantined' && st.status !== 'failed')) return null
+        return { consecutive: st.consecutiveDrift, reason: st.lastReason ?? 'drift' }
+      },
       onHarvestError: (sourceId, failure) => events.emit({
         type: 'harvest.error', severity: 'error',
         title: `采集失败：${sourceId}`,

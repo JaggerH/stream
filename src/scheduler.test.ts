@@ -98,6 +98,37 @@ describe('Scheduler', () => {
     expect(sched.normalizeRaw('src-a', { guid: 'n', title: 'N' }).source_id).toBe('src-a')
   })
 
+  // 隔离中的源在 adapter 里 decline 成空数组。直读拿到 [] 只会把「源被自动隔离了」读成
+  // 「这条内容没有」——必须抛一句把真因说清的错（活体：douyin-detail 被隔离后所有抖音链接
+  // 5ms 秒回「产出是空的」，排查只能靠猜）。
+  it('readSource on a quarantined source throws the reason, not a silent empty array', async () => {
+    const sched = new Scheduler({
+      registry: new Registry([mk('src-a')]),
+      streams: [],
+      adapters: new Map([['fake', { ...fakeAdapter, fetch: async () => ({ items: [], authoritative: false }) }]]),
+      resolveCreds: async () => ({}),
+      vaultRoot: join(dir, 'vault'),
+      dedup,
+      quarantineOf: (id) => (id === 'src-a' ? { consecutive: 3, reason: '落地页不是 /video/<id>' } : null),
+    })
+    await expect(sched.readSource('src-a')).rejects.toThrow(/隔离状态（连续 3 次漂移，原因：落地页不是 \/video\/<id>）/)
+    await expect(sched.readSource('src-a')).rejects.toThrow(/不是这条内容没有/)
+  })
+
+  it('readSource on a healthy source returns items; quarantineOf absent = no interception', async () => {
+    const sched = makeScheduler([])
+    expect(await sched.readSource('src-a')).toHaveLength(2)
+    const quarantinedButNoLedger = new Scheduler({
+      registry: new Registry([mk('src-a')]),
+      streams: [],
+      adapters: new Map([['fake', { ...fakeAdapter, fetch: async () => ({ items: [], authoritative: false }) }]]),
+      resolveCreds: async () => ({}),
+      vaultRoot: join(dir, 'vault'),
+      dedup,
+    })
+    expect(await quarantinedButNoLedger.readSource('src-a')).toEqual([])
+  })
+
   it('stamps a member\'s season tag onto every item it harvests (season merge)', async () => {
     const itemStore = new ItemStore(join(dir, 'items.db'))
     const sched = new Scheduler({
