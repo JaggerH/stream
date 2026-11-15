@@ -64,19 +64,56 @@ interface SidequestFacade {
 }
 
 /**
- * sidequest 的 console transport 静音。**为什么**：一条外部任务失败，stdout 上会出现三遍——
- * 我们自己的 `[tasks] X failed: <摘要>`（唯一带 stderr 尾部摘要的一条）、sidequest 引擎
- * transition 的 `[error] [ts] [Sidequest] [Core] <message>`、以及 sidequest 的 winston printf
- * 对 toErrorData 普通对象 inspect 出来的裸 `{ name: 'Error', [Symbol(level)]: 'error' }` + 栈
- * （retry-transition 收到的是引擎序列化后的普通对象，不是 Error 实例）。
- * 后两遍是引擎对同一件事的重复记账——账本与面板照记，stdout 上留我们那一条就够。
+ * sidequest 日志里只滤掉「外部任务失败」的**那两遍重复**，其余照常上 stdout。
  *
- * 代价：sidequest 自己的 info/warn（job 起跑、脚本导入失败）也不再上 stdout。job 的起跑/失败
- * 状态在账本与面板里都有，真要排查时那才是权威；stdout 的职责是「一条失败说一遍、说清楚」。
- * 进程级、幂等（configureLogger 每次重建 logger，所以每次 start 之后都要再静一遍）。
+ * 背景：一条外部任务失败在 stdout 上出现三遍——我们自己的 `[tasks] X failed: <摘要>`（唯一带
+ * stderr 尾部摘要的一条）、sidequest 引擎 transition 的 `[error] [ts] [Sidequest] [Core] <message>`、
+ * 以及 winston printf 对序列化错误对象 inspect 出的裸 `{ name: 'Error', [Symbol(level)]: 'error' }` + 栈。
+ * 后两遍是引擎对同一件事的重复记账，但**只滤这两遍的重复，不整个静音**——sidequest 自己的
+ * warn/error（jobs 文件导入失败、backend/migrate 出错、队列配置错误）是引擎健康状态的一手信号，
+ * 静掉它们是可观测性倒退，比重复更糟。
+ *
+ * 判据（logform filter，`format.combine(filter, 原format)` 套在原 format 之前——此时 info 已经过
+ * `errors({stack:true})` 展开）：transition 收到的是 `toErrorData()` 序列化后的**普通对象**，
+ * `errors()` 展开它时会把对象自己的 `name` 也抄到 info 顶层；引擎直接传**真 Error** 的地方
+ * 不会出现 `name` 键（`errors()` 对 Error 实例只抄 message/stack）。于是
+ * 「error 级 + 顶层带字符串 `name` + 带 `stack`」= 序列化对象 = 那条重复 → 丢弃（filter 返回 false）；
+ * 真栈（有 stack 无 name，引擎 `logger().error(realError)`）与字符串 error（两者皆无，
+ * migrate/队列配置类）原样放行。winston 复现对照（logform 2.7 / winston 3.19）：
+ *   toErrorData 对象 → {name,stack} 都在（滤）；真 Error → 只有 stack（留）；字符串 → 都没有（留）。
+ *
+ * 幂等：configureLogger 每次重建 logger 与 transport，所以每次 start 之后都要重新套一遍；
+ * 已套过（带 `__slDropFilter` 标记）的 transport 跳过。
  */
-export function silenceSidequestConsole(sq: { logger: () => { transports: Array<{ silent?: boolean }> } }): void {
-  for (const t of sq.logger().transports) t.silent = true
+export interface SidequestLike {
+  /** winston 模块面：只需要 `format`（combine 与 filter 工厂）。 */
+  format: {
+    combine: (...f: unknown[]) => unknown
+    // logform 的 format(fn) 工厂：fn 返回 false 丢弃、返回 info 继续
+    (fn: (info: Record<symbol | string, unknown>) => Record<symbol | string, unknown> | boolean): { (): unknown }
+  }
+  logger: () => {
+    transports: Array<{ silent?: boolean; format?: unknown }>
+  }
+}
+
+export function silenceSidequestConsole(sq: SidequestLike): void {
+  const levelSym = Symbol.for('level')
+  const filterFn = (info: Record<symbol | string, unknown>): Record<symbol | string, unknown> | boolean => {
+    if (info[levelSym] === 'error' && typeof info.name === 'string' && typeof info.stack === 'string') return false
+    return info
+  }
+  for (const t of sq.logger().transports) {
+    const tAny = t as { silent?: boolean; format?: unknown; __slDropFilter?: boolean }
+    if (tAny.__slDropFilter) continue
+    tAny.__slDropFilter = true
+    // transport.format 必须是 logform Format（带 .transform）——winston-transport 的 _write 直接调
+    // this.format.transform(info)。所以不能塞裸函数，用 combine(filter, 原format) 合成新 Format。
+    const existing = tAny.format
+    tAny.format = existing
+      ? sq.format.combine(sq.format(filterFn)(), existing)
+      : sq.format.combine(sq.format(filterFn)())
+  }
 }
 
 /** 传给门面 `start` 的那份配置（形状沿用 `Sidequest.start` 的，单测按它断言）。面板不在这份
@@ -111,6 +148,9 @@ export function instanceKeyOf(dbPath: string): string {
  */
 async function realFacade(key: string): Promise<{ facade: SidequestFacade; jobClass: unknown }> {
   const sq = await import('sidequest')
+  // winston 不在 sidequest 的导出面里，但它是 sidequest 的直接依赖（@sidequest/core 的 logger 用它）——
+  // 从 sidequest 的包位置 createRequire 解析，保证拿到的是**同一份实例**（winston 的 format 工厂
+  // 无状态，双份也无害，但同份最省心）。sidequest 缺席时（类型检查/假门面路径）用不到它。
   const { StreamTaskJob } = await import('./stream-task-job.ts')
   let backend: InstanceType<typeof sq.LazyBackend> | undefined
   let runtime: InstanceType<typeof sq.WorkerRuntime> | undefined
@@ -165,8 +205,14 @@ async function realFacade(key: string): Promise<{ facade: SidequestFacade; jobCl
           }
           // 日志级别是 sidequest 的进程级设置（所有实例同一个值，幂等）。
           sq.configureLogger(conf.logger)
-          // console 静音紧跟其后：configureLogger 每次重建 logger，先建才有的静。
-          silenceSidequestConsole(sq)
+          // 滤重复紧跟其后：configureLogger 每次重建 logger 与 transport，先建才有的滤。
+          // winston 从 sidequest 的包位置解析（它是 @sidequest/core logger 的直接依赖）。
+          const { createRequire } = await import('node:module')
+          const sqRequire = createRequire(import.meta.resolve('sidequest'))
+          silenceSidequestConsole({
+            format: sqRequire('winston').format as never,
+            logger: () => sq.logger(),
+          })
           backend = new sq.LazyBackend(conf.backend as never)
           await backend.migrate()
           for (const q of conf.queues) await sq.grantQueueConfig(backend, q as never, conf.queueDefaults as never, true)

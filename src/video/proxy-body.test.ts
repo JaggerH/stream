@@ -89,4 +89,51 @@ describe('guardUpstreamBody', () => {
     const resp = guardUpstreamBody(new Response(null, { status: 304 }), 'http://cdn.example.com/x')
     expect(resp.body).toBeNull()
   })
+
+  it('上游自己被中止（AbortError，下游未取消）：按断流处理，不伪装成完整结束', async () => {
+    const lines: string[] = []
+    const body = byteStream(
+      [new TextEncoder().encode('partial')],
+      Object.assign(new Error('This operation was aborted'), { name: 'AbortError' }),
+    )
+    const resp = guardUpstreamBody(new Response(body, { status: 200, headers: { 'content-type': 'video/mp4' } }), 'http://cdn.example.com/seg.bin', { log: (m) => lines.push(m) })
+    const reader = resp.body!.getReader()
+    const first = await reader.read()
+    expect(new TextDecoder().decode(first.value!)).toBe('partial')
+    // 下游没取消过（cancel 回调从未触发）——pull 里的 AbortError 是上游自己的中止：
+    // 记一行断流日志，读端以 PREMATURE_CLOSE 报错，绝不 ctrl.close() 伪装完整。
+    await expect(reader.read()).rejects.toMatchObject({ code: 'ERR_STREAM_PREMATURE_CLOSE' })
+    expect(lines).toHaveLength(1)
+    expect(lines[0]).toContain('cdn.example.com')
+    expect(lines[0]).toContain('aborted')
+  })
+
+  it('下游取消之后的 AbortError 回声：安静收场，不记日志', async () => {
+    const lines: string[] = []
+    // undici 形状：下游 cancel 后，挂在途 read 上的那一次以 AbortError 拒绝。
+    let rejectRead: ((e: unknown) => void) | undefined = undefined
+    let cancelRequested = false
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode('chunk'))
+      },
+      cancel() {
+        cancelRequested = true
+        rejectRead?.(Object.assign(new Error('This operation was aborted'), { name: 'AbortError' }))
+      },
+      pull() {
+        // 挂一个永不 resolve 的 read——模拟 undici 在途请求，cancel 时以 AbortError 拒绝。
+        return new Promise<never>((_resolve, reject) => { rejectRead = reject })
+      },
+    })
+    const resp = guardUpstreamBody(new Response(body), 'http://cdn.example.com/seg.bin', { log: (m) => lines.push(m) })
+    const reader = resp.body!.getReader()
+    await reader.read()
+    const pending = reader.read().catch(() => 'rejected') // 在途 read
+    await reader.cancel()
+    await pending
+    expect(cancelRequested).toBe(true)
+    await new Promise((r) => setTimeout(r, 10))
+    expect(lines).toHaveLength(0)
+  })
 })

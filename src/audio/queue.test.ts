@@ -105,11 +105,17 @@ describe('DownloadQueue', () => {
     // 终态尾部取的是**最近**的（id 最大的一段），不是任意 200 条
     const maxId = Math.max(...jobs.filter((j) => j.state === 'done').map((j) => j.id))
     expect(jobs.some((j) => j.state === 'done' && j.id === maxId)).toBe(true)
-    // archived 只批量查一次（活跃任务不查）
+    // archived 只批量查一次，覆盖**全部返回行**（活跃行也要：一个已归档的 track 撞上
+    // 重复入队的 job 时，那行该显示「已下载」而不是空）
     expect(statusSpy).toHaveBeenCalledTimes(1)
-    expect(statusSpy.mock.calls[0][0].length).toBe(200)
+    expect(statusSpy.mock.calls[0][0].length).toBe(201)
     expect(jobs.find((j) => j.track_id === 't249')?.archived).toBe(true)
-    expect(jobs.find((j) => j.track_id === 'live')?.archived).toBeUndefined()
+    // 活跃且已归档（重复入队 / force 重跑中）→ true；活跃且未归档 → false 而不是 undefined
+    q.enqueue({ platform: 'netease', id: 't0' }) // already archived, stays queued
+    const requeued = q.jobs().find((j) => j.track_id === 't0')
+    expect(requeued?.state).toBe('queued')
+    expect(requeued?.archived).toBe(true)
+    expect(jobs.find((j) => j.track_id === 'live')?.archived).toBe(false)
 
     const small = q.jobs({ limit: 5 })
     expect(small.filter((j) => j.state === 'done')).toHaveLength(5)

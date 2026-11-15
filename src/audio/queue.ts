@@ -172,7 +172,7 @@ export class DownloadQueue {
       last_error: r.last_error ?? undefined,
       downloaded_bytes: progress?.downloaded_bytes,
       total_bytes: progress?.total_bytes,
-      archived: archivedFlags ? archivedFlags[key] : this.deps.archive.status([ref])[key] ?? false,
+      archived: (archivedFlags ? archivedFlags[key] : this.deps.archive.status([ref])[key]) ?? false,
     }
   }
 
@@ -204,8 +204,9 @@ export class DownloadQueue {
   }
 
   jobs(filter: { platform?: string; limit?: number } = {}): JobView[] {
-    // 活跃任务全量 + 终态只带最近 limit 条。归档状态一次批量查（archive.status 本来就吃
-    // 整个 ref 数组），只查终态行——排队/在跑的行没有"已下载"可言。
+    // 活跃任务全量 + 终态只带最近 limit 条。归档状态对**全部返回行**一次批量查（archive.status
+    // 本来就吃整个 ref 数组）：活跃行也要 archived——一个已归档的 track 撞上重复入队的 job
+    // （single-flight 挡住的 or force 重跑中）时，前端那行该显示「已下载」而不是空。
     const limit = Math.min(Math.max(0, filter.limit ?? TERMINAL_TAIL_DEFAULT), TERMINAL_TAIL_MAX)
     const p = filter.platform
     const activeRows = (p
@@ -217,9 +218,7 @@ export class DownloadQueue {
       : this.db.prepare(`SELECT * FROM download_job WHERE state NOT IN ('queued','running') ORDER BY id DESC LIMIT ?`)
     ).all(...(p ? [p] : []), limit) as any[]
     const rows = [...activeRows, ...terminalRows]
-    const flags = this.deps.archive.status(
-      terminalRows.map((r) => ({ platform: r.platform, id: r.track_id })),
-    )
+    const flags = this.deps.archive.status(rows.map((r) => ({ platform: r.platform, id: r.track_id })))
     return rows.map((r) => this.mapJob(r, flags))
   }
 

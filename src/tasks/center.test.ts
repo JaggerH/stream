@@ -269,9 +269,98 @@ describe('whenBusy', () => {
 })
 
 describe('silenceSidequestConsole', () => {
-  it('把 logger 的全部 transport 静音（失败一条任务只在 stdout 记我们自己那一条）', () => {
-    const transports = [{ silent: false }, { silent: false }]
-    silenceSidequestConsole({ logger: () => ({ transports }) })
-    expect(transports.every((t) => t.silent)).toBe(true)
+  // 滤的是「序列化错误对象被 errors() 展开」那一形状。判据的成立前提是 sidequest 自己的
+  // format 链（errors({stack:true}) 在前），所以这里用真 winston 复现那条链再套 filter。
+  const setup = async () => {
+    const { toErrorData } = await import('sidequest')
+    const createRequire = (await import('node:module')).createRequire
+    const req = createRequire(import.meta.resolve('sidequest'))
+    const winston = req('winston') as {
+      format: { errors: (o?: unknown) => unknown; timestamp: (o?: unknown) => unknown; colorize: () => unknown; label: (o?: unknown) => unknown; combine: (...f: unknown[]) => unknown; (fn: unknown): unknown }
+    }
+    // 真链：sidequest buildFormat 的顺序（timestamp→errors→colorize→label）。
+    const chain = winston.format.combine(
+      winston.format.timestamp({ format: 'x' }),
+      winston.format.errors({ stack: true }),
+      winston.format.colorize(),
+      winston.format.label({ label: 'Sidequest' }),
+    )
+    const transport = { silent: false, format: chain as unknown, __slDropFilter: false }
+    const lines: string[] = []
+    // 链的输出记一行（模拟 Console transport 写 stdout）：filter 放行的才到得了这里。
+    const recordFilter = (winston.format as unknown as (fn: (info: Info) => Info) => { (): unknown })((info: Info) => {
+      lines.push(String(info.message ?? 'undefined'))
+      return info
+    })
+    ;(transport as unknown as { format: unknown }).format = winston.format.combine(recordFilter(), chain)
+    silenceSidequestConsole({ format: winston.format as never, logger: () => ({ transports: [transport] as never }) })
+    const fmt = (transport as unknown as { format: { transform: (i: Info) => unknown } }).format.transform
+    return { toErrorData, lines, fmt, silentFlag: () => transport.silent }
+  }
+  type Info = Record<symbol | string, unknown>
+
+  it('滤掉 toErrorData 普通对象（name+stack），保留真 Error（只有 stack）与字符串 error', async () => {
+    const { toErrorData, lines, fmt, silentFlag } = await setup()
+    // A：job 失败的第 2/3 遍——toErrorData 普通对象经 errors() 展开后 name+stack 都在 → 丢弃
+    expect(fmt({ [Symbol.for('level')]: 'error', message: 'task failure', name: 'Error', stack: 'Error: task failure', timestamp: 'x', label: 'Sidequest' })).toBe(false)
+    // B：引擎自己的真 Error（errors() 只抄 message/stack，无顶层 name）→ 放行
+    const realErr = fmt({ [Symbol.for('level')]: 'error', message: 'engine genuine error', stack: 'Error: engine genuine error', timestamp: 'x' })
+    expect(realErr).not.toBe(false)
+    expect((realErr as Info).message).toBe('engine genuine error')
+    // C：字符串 error（migrate / 队列配置类）→ 放行
+    expect(fmt({ [Symbol.for('level')]: 'error', message: 'Backend migrate failed: connection refused', timestamp: 'x' })).not.toBe(false)
+    // 非 error 级一律放行（即使形状撞上——info/warn 是引擎的正常日志）
+    expect(fmt({ [Symbol.for('level')]: 'info', message: 'Running job #1', name: 'Error', stack: 'x', timestamp: 'x' })).not.toBe(false)
+    expect(fmt({ [Symbol.for('level')]: 'warn', message: 'w', name: 'Error', stack: 'x', timestamp: 'x' })).not.toBe(false)
+    expect(silentFlag()).toBe(false) // 不再整个静音
+    void toErrorData; void lines
+  })
+
+  it('端到端：真 winston logger + sidequest format 链 + filter，输出按形态滤/留', async () => {
+    const { toErrorData } = await import('sidequest')
+    const createRequire = (await import('node:module')).createRequire
+    const req = createRequire(import.meta.resolve('sidequest'))
+    const winston = req('winston')
+    const lines: string[] = []
+    // 内存 transport：必须是 winston-transport 的实例（legacy 检查 .on 等），log(info, cb) 接住
+    // filter 之后放行的 info（丢弃发生在 format 链上，到不了 log）。
+    const WinstonTransport = req('winston-transport').default ?? req('winston-transport')
+    class Mem extends WinstonTransport {
+      log(info: Info, cb: () => void): void {
+        lines.push(String(info.message))
+        cb()
+      }
+    }
+    const mem = new Mem()
+    // winston-transport 的 _write 读 this.format.transform——logger 的 format 链在 logger 上，
+    // transport 自身不需要 format，但该属性必须是带 transform 的形状（winston 3.x 约定）。
+    ;(mem as unknown as { format: unknown }).format = winston.format.combine()
+    const lg = winston.createLogger({
+      level: 'error',
+      format: winston.format.combine(
+        winston.format.timestamp({ format: 'x' }),
+        winston.format.errors({ stack: true }),
+        winston.format.label({ label: 'Sidequest' }),
+      ),
+      transports: [mem as never],
+    })
+    silenceSidequestConsole({ format: winston.format as never, logger: () => ({ transports: [mem] as never }) })
+    lg.error(toErrorData(new Error('task failure')))               // 序列化对象 → 滤
+    lg.error(new Error('engine genuine error'))                    // 真 Error → 留
+    lg.error('Backend migrate failed: connection refused')         // 字符串 → 留
+    await new Promise((r) => setTimeout(r, 20))
+    expect(lines).toEqual(['engine genuine error', 'Backend migrate failed: connection refused'])
+  })
+
+  it('幂等：同一 transport 套两遍不叠加', async () => {
+    const req0 = (await import('node:module')).createRequire(import.meta.resolve('sidequest'))
+    const winston = req0('winston')
+    const transport = { silent: false, format: winston.format.combine() as unknown, __slDropFilter: false }
+    const sq = { format: winston.format as never, logger: () => ({ transports: [transport] as never }) }
+    silenceSidequestConsole(sq)
+    const first = transport.format
+    silenceSidequestConsole(sq)
+    silenceSidequestConsole(sq)
+    expect(transport.format).toBe(first)
   })
 })
