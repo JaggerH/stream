@@ -113,7 +113,10 @@ const QUERY_PASSTHROUGH = ['limit']
  * 重试永远不会好，用户不配置就永远这样。
  */
 export function isMissingConfigMessage(message: string): boolean {
-  return /disabled due to the lack of (the )?relevant config|missing (the )?relevant config|route.*not configured|缺少.*配置/i.test(message)
+  // RSSHub 的错误信封会把 "relevant config" 包进 <a href="…docs.rsshub.app/deploy/config…"> 链接
+  // （活体：Twitter 路由）。匹配前剥掉 HTML 标签、把标签留下的空白折叠，否则正则永远够不着。
+  const text = message.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ')
+  return /disabled due to the lack of (the )?relevant config|missing (the )?relevant config|route.*not configured|缺少.*配置/i.test(text)
 }
 
 /** Substitute {key} placeholders in a route from params; error on anything left unresolved.

@@ -194,10 +194,16 @@ describe('RSSHub feed response validation', () => {
       .fetch({}, manifest)).rejects.toThrow(/No headers based on this input/)
   })
 
+  // 活体原文（Cortana stream-back 日志，2026-11-15）：RSSHub 5.x 的错误信封会把
+  // "relevant config" 包进 <a> 链接（指向部署配置文档）。正则匹配必须先剥标签。
+  const TWITTER_ENVELOPE_RAW =
+    'Twitter RSS is disabled due to the lack of ' +
+    '<a href="https://docs.rsshub.app/deploy/config#route-specific-configurations">relevant config</a>'
+
   it('「路由未配置」信封 → 抛声明 config 类别的错误，消息里说清楚要配置', async () => {
     let thrown: unknown
     try {
-      await adapterFor({ error: { message: 'Twitter RSS is disabled due to the lack of relevant config' } }).fetch({}, manifest)
+      await adapterFor({ error: { message: TWITTER_ENVELOPE_RAW } }).fetch({}, manifest)
     } catch (e) {
       thrown = e
     }
@@ -207,7 +213,8 @@ describe('RSSHub feed response validation', () => {
     expect((thrown as { failureCategory?: string }).failureCategory).toBe('config')
   })
 
-  it('isMissingConfigMessage 认得出 RSSHub 的各种「缺配置」说法，不误伤普通错误', () => {
+  it('isMissingConfigMessage 认得出 RSSHub 的各种「缺配置」说法（含带 HTML 链接的原文），不误伤普通错误', () => {
+    expect(isMissingConfigMessage(TWITTER_ENVELOPE_RAW)).toBe(true)
     expect(isMissingConfigMessage('Twitter RSS is disabled due to the lack of relevant config')).toBe(true)
     expect(isMissingConfigMessage('this route requires config: missing relevant config for key')).toBe(true)
     expect(isMissingConfigMessage('Cannot read properties of null (reading undefined')).toBe(false)
