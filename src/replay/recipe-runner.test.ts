@@ -767,6 +767,28 @@ describe('RecipeRunner', () => {
     expect(business.outcome).toBe('drift')
   })
 
+  // 页内以 `input-error: ` 前缀自报「调用方给的输入不成立」→ **不判 drift**。判 drift 会让
+  // RepairLedger 连吃三次把一份完好的 recipe 关进隔离（活体：一条形状不对的抖音链接连试三次，
+  // douyin-detail 整个源 5ms 秒回空）。前缀合同见 INPUT_ERROR_PREFIX。
+  it('输入错误自报（input-error: 前缀）→ inputError，不进 drift', async () => {
+    const paged = {
+      ...recipe,
+      steps: [{ kind: 'evaluate' as const, call: '(c,n)=>c', itemsAt: 'items' }],
+      observers: [],
+      output: { itemsAt: 'items', dedupeBy: 'id', targetCount: 2, mapping: { guid: 'id' } },
+    }
+    const out = await new RecipeRunner().run(paged, {}, fakeDriver({
+      evalJson: async (expr) => {
+        if (!expr.includes('(c,n)=>c')) return null
+        throw new Error('input-error: 这不是一条抖音作品链接——落地页 https://www.douyin.com/user/xx 不是 /video/<id>')
+      },
+    }))
+    expect(out.outcome).toBe('inputError')
+    expect(out.reason).toMatch(/这不是一条抖音作品链接/)
+    // 前缀已剥掉——消息是说给人的，不该把合同常量漏出去。
+    expect(out.reason).not.toMatch(/input-error:/)
+  })
+
   it('挑战优先于墙：验证码遮罩底下压着登录入口时，判的是 challenged 不是 needsLogin', async () => {
     // 两者对用户的动作要求相反（去登录 vs 什么都不用做）。遮罩底下常常还压着站点自己的
     // 登录入口，所以两个选择器可能同时命中——先问墙就会把"站方让我们等"读成"你得去登录"。

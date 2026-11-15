@@ -80,6 +80,25 @@ class EvaluateDriftError extends Error {
 }
 
 /**
+ * 页内抛错里属于「**调用方给的输入不对**」的那一档——recipe 用它在最终失败时自报
+ * 「这不是 recipe 坏了，是这条链接/参数本来就不成立」（约定：消息以 `INPUT_ERROR_PREFIX`
+ * 开头）。与 `EvaluateDriftError` 的处置相反：**绝不记漂移**（三次就把一份完好的 recipe
+ * 关进隔离，之后所有调用秒回空结果——活体撞过：一条形状不对的抖音链接连试三次，douyin-detail
+ * 整个源被隔离，还拉起修复会话去修一份没坏的东西）。
+ *
+ * 为什么靠消息前缀而不是结构化通道：页内 call 只能抛 Error，能过 CDP 边界的只有 message。
+ * 前缀是 recipe（数据）与 runner（引擎）之间的一行合同——换 recipe 想用同一档，扔同一个前缀即可。
+ */
+export const INPUT_ERROR_PREFIX = 'input-error: '
+
+class EvaluateInputError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'EvaluateInputError'
+  }
+}
+
+/**
  * 页面**自己说**这一趟失败了（`evaluate` 步的 `siteErrorField` 有值）：recipe 一步没走错、登录态
  * 好好的，是站点那边这一次没办成。外层翻成 `siteError`——**不进 drift**（那会让 `RepairLedger`
  * 隔离一份没坏的 recipe，还会拿现场去问 AI「这是哪个页面」），**不进冷却**（站点没让我们等）。
@@ -132,7 +151,10 @@ export interface RecipeRunOutcome {
    *  更糟——三次就被 `RepairLedger` 静默隔离（见 `SiteChallengeError`）。 */
   /** `siteError` = 页面自己报了这一趟失败（站方错误码 / 「出了点问题，请稍后重试」），见
    *  `SiteReportedError`。recipe 没坏、登录没坏、不用冷却；重试是调用方的事。 */
-  outcome: 'ok' | 'needsLogin' | 'challenged' | 'blocked' | 'drift' | 'cancelled' | 'unavailable' | 'siteError'
+  /** `inputError` = 调用方给的输入不成立（链接不是一条作品、参数指不到目标），见
+   *  `EvaluateInputError` / `ReplayInputError`。recipe 没坏——**不记漂移、不进隔离、不进冷却**；
+   *  对用户的说法是「这条输入本身不对」，重跑同一输入不会更好。 */
+  outcome: 'ok' | 'needsLogin' | 'challenged' | 'blocked' | 'drift' | 'cancelled' | 'unavailable' | 'siteError' | 'inputError'
   items: MappedItem[]
   trace: ActionTrace[]
   reason?: string
@@ -534,7 +556,11 @@ async function runEvaluateStep(ctx: StepContext, step: EvaluateStep, index: numb
     try {
       body = await evalWithDetachRetry(driver, expr)
     } catch (e) {
-      throw new EvaluateDriftError(e instanceof Error ? e.message : String(e))
+      const msg = e instanceof Error ? e.message : String(e)
+      // 输入错误排在 drift 前面：recipe 自报「调用方给的输入不成立」（见 INPUT_ERROR_PREFIX）
+      // 就**不许**落到 EvaluateDriftError —— 那一档会记漂移，三次把一份完好的 recipe 关进隔离。
+      if (msg.startsWith(INPUT_ERROR_PREFIX)) throw new EvaluateInputError(msg.slice(INPUT_ERROR_PREFIX.length))
+      throw new EvaluateDriftError(msg)
     }
     const siteError = step.siteErrorField == null ? undefined : toSiteErrorReport(getPath(body, step.siteErrorField))
     if (siteError) throw new SiteReportedError(siteError)
@@ -1068,6 +1094,7 @@ export class RecipeRunner {
         : error instanceof StateDeadEndError ? 'challenged'
         // 空收成自带结论（drift / blocked），但仍要走完下面那套认领现场——它只是换了个出口。
         : error instanceof EmptyHarvestError ? error.outcome
+        : error instanceof EvaluateInputError ? 'inputError'
         : error instanceof FeatureDriftError || error instanceof EvaluateDriftError ? 'drift'
         : 'blocked'
       // **失败之后补一次撞墙探测。** 登录墙/拦截页只在 entry 那一刻看过一次，而**它多半是被

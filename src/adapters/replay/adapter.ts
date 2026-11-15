@@ -5,7 +5,7 @@ import type { RecipeStore } from '../../replay/recipe-store.ts'
 import type { ReplayLauncher } from '../../replay/browser-fetch.ts'
 import { runFetchRecipe } from '../../replay/browser-fetch.ts'
 import { runBrowserRecipe } from '../../replay/browser-drive.ts'
-import { interpret, interpretObject, ReplayDriftError, ReplayThrottledError, type MappedItem } from '../../replay/interpret.ts'
+import { interpret, interpretObject, ReplayDriftError, ReplayInputError, ReplayThrottledError, type MappedItem } from '../../replay/interpret.ts'
 import { makeHttpFetch } from '../../replay/http-fetch.ts'
 import { offlineFetch } from '../../devices/fetch.ts'
 import { interpretHtml } from '../../replay/interpret-html.ts'
@@ -126,6 +126,9 @@ export function sessionOutcomeToItems(
     case 'needsLogin': throw new NeedsLoginError(sourceId, facility, label)
     case 'challenged': throw new SiteChallengeError(sourceId, facility, label)
     case 'drift': throw new ReplayDriftError(result.reason ?? 'session recipe drift', 0)
+    // 输入不成立 = 调用方给的地址/参数的问题，不是源坏了：不记漂移、不进隔离（见 ReplayInputError）。
+    // 消息原样带出去——「这不是一条作品链接」要说给贴链接的人听，不是给采集端看的。
+    case 'inputError': throw new ReplayInputError(result.reason ?? '调用方给的输入不成立')
     case 'blocked': throw new RecipeBlockedError(result.reason ?? 'recipe blocked')
     case 'cancelled': throw new Error(result.reason ?? 'recipe cancelled')
     case 'siteError': throw new SiteReportedFailure(sourceId, result.reason ?? '站点报错')

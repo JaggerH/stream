@@ -37,6 +37,29 @@ describe('douyin-detail — recipe 与代码之间那两条对得上', () => {
     expect(RECIPE.entryUrl).toBe('{url}')
     expect(RECIPE.output.targetCount).toBe(1)
   })
+
+  // 「落地页不是 /video/<id>」这一档是**调用方的输入**造成的（用户主页等非作品页链接顶着
+  // douyin.com 的域名走同一条认领路径），不是 recipe 坏了——最终抛错必须带 `input-error: `
+  // 前缀自报（合同见 src/replay/recipe-runner.ts 的 INPUT_ERROR_PREFIX）。不带的话 runner 判成
+  // drift，RepairLedger 连吃三次把整个源隔离，之后所有抖音链接 5ms 秒回「产出是空的」
+  // （活体 2026-11-15：modal_id 链接试两次加重试一次就哑了）。
+  it('「落地页不是作品页」的最终失败带 input-error 前缀，且只在这一档', () => {
+    const call = RECIPE.steps[0].call
+    const marked = call.indexOf("why.indexOf('落地页不是') === 0")
+    expect(marked, 'recipe 里找不到落地页判据——again 的输入错误分支被挪走或改名了').toBeGreaterThan(-1)
+    expect(call.slice(marked)).toContain("'input-error: 这不是一条抖音作品链接——'")
+    // 其余失败（风控、模块搬家）仍是普通抛错——那才是 drift 该管的事。
+    expect(call).toContain("throw new Error('douyin-detail: ' + ATTEMPTS")
+  })
+
+  // 验证码墙（活体：用户第一次粘贴时页面出了验证码）：loginCheck 必须声明 challenge 选择器，
+  // runner 的失败后补探才能把它翻成 challenged（「需要人工过验证」），而不是 drift——
+  // 判 drift 会把被验证码挡了一下的源关进隔离。判法复用 browser-drive 的阳性墙探测。
+  it('loginCheck 声明了抖音的验证码容器（挑战翻案靠它）', () => {
+    const lc = (RECIPE as unknown as { loginCheck: { challenge?: string; wall?: string } }).loginCheck
+    expect(lc.challenge).toBe('#captcha_container')
+    expect(lc.wall).toBe('#login-panel-new')
+  })
 })
 
 // 两条成员（播放解析 / 贴链接抓媒体）都是经 `hybridVideoData` 跑这条 recipe 的，所以扇出层给它们的

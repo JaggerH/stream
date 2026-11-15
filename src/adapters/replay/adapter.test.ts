@@ -435,12 +435,35 @@ describe('ReplayAdapter', () => {
   it('classifies a session outcome into typed source errors', async () => {
     const { sessionOutcomeToItems } = await import('./adapter.ts')
     const { RecipeBlockedError } = await import('../../replay/session-recipe-executor.ts')
-    const { ReplayDriftError } = await import('../../replay/interpret.ts')
+    const { ReplayDriftError, ReplayInputError } = await import('../../replay/interpret.ts')
     const base = { items: [{ guid: 'n1' }], trace: [] }
     expect(sessionOutcomeToItems({ outcome: 'ok', ...base }, 's1')).toEqual([{ guid: 'n1' }])
     expect(() => sessionOutcomeToItems({ outcome: 'needsLogin', ...base }, 's1')).toThrow(NeedsLoginError)
     expect(() => sessionOutcomeToItems({ outcome: 'drift', ...base, reason: 'shape moved' }, 's1')).toThrow(ReplayDriftError)
+    expect(() => sessionOutcomeToItems({ outcome: 'inputError', ...base, reason: '这不是一条抖音作品链接' }, 's1'))
+      .toThrow(ReplayInputError)
     expect(() => sessionOutcomeToItems({ outcome: 'blocked', ...base, reason: 'wall' }, 's1')).toThrow(RecipeBlockedError)
+  })
+
+  // 一条形状不对的输入地址（用户主页链接顶着 douyin.com 的域名走同一条认领路径）**不是源坏了**：
+  // 记了漂移，用户连试三次就把 douyin-detail 整个源关进隔离，之后所有抖音链接 5ms 秒回空结果。
+  // 输入错误必须与 drift 分家：不记账、不请修复，原话带出去说给贴链接的人听。
+  it('session 报 inputError → 不记漂移、不请修复，原话原样抛出', async () => {
+    const { ReplayInputError } = await import('../../replay/interpret.ts')
+    const drifts: string[] = []
+    const repairs: string[] = []
+    const a = new ReplayAdapter(deps({
+      sessionFetch: async () => { throw new ReplayInputError('这不是一条抖音作品链接——落地页不是 /video/<id>') },
+      ledger: {
+        shouldRun: () => true,
+        recordDrift: (id: string) => { drifts.push(id); return { status: 'ok' } as never },
+        recordSuccess: () => {},
+      } as unknown as import('../../replay/repair-ledger.ts').RepairLedger,
+      repairRunner: { requestRepair: async ({ sourceId }: { sourceId: string }) => { repairs.push(sourceId) } } as never,
+    }))
+    await expect(a.fetch({ query: 'x' }, MANIFEST)).rejects.toThrow(/这不是一条抖音作品链接/)
+    expect(drifts).toEqual([])
+    expect(repairs).toEqual([])
   })
 
   it('records session-recipe drift to the ledger and requests repair on quarantine', async () => {

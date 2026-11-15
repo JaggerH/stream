@@ -1,4 +1,5 @@
 import type { Recipe, FetchRecipe, HttpRecipe, RecipeFieldMap, RecipeFieldSpec } from './recipe.ts'
+import type { DeclaresFailureCategory } from '../failure.ts'
 
 /** Both recipe kinds the declarative engine runs: same request/pagination/assert/mapping,
  *  different transport. */
@@ -65,6 +66,28 @@ export class ReplayThrottledError extends Error {
   constructor(readonly assertDesc: string, readonly page: number) {
     super(`replay throttled on page ${page} (shell present, rows absent): ${assertDesc}`)
     this.name = 'ReplayThrottledError'
+  }
+}
+
+/**
+ * 「这条链接不是一条作品」——**调用方给的输入**造成的失败，**不是** recipe 坏了。和
+ * `ReplayThrottledError`（被限流）、`NeedsLoginError`（要重新登录）同一类：**绝不记漂移**——
+ * 记了三次就把一份完好的 recipe 关进隔离（`RepairLedger`），之后所有调用 5ms 秒回空结果。
+ *
+ * 为什么需要单独一个类：用户粘贴的地址形状不对（用户主页链接、弹窗外壳页、搜索页链接都顶着
+ * douyin.com 的域名走同一条认领路径）时，recipe 的失败面和「站点改版」一模一样——都是
+ * 「页面和我以为的不一样」。分不开的代价活体真撞过：同一条形状不对的链接试三次（用户自己
+ * 重试），douyin-detail 三次 drift 进隔离，之后**所有**抖音链接都秒回「产出是空的」，还拉起
+ * 一个修复会话去修一份没坏的 recipe。
+ *
+ * 消息要说清「是输入不对，不是作品没内容」，让调用方把它当作 4xx 一类的错误讲给用户，
+ * 而不是当作源故障去重试或修复。
+ */
+export class ReplayInputError extends Error implements DeclaresFailureCategory {
+  readonly failureCategory = 'unknown' as const
+  constructor(message: string) {
+    super(message)
+    this.name = 'ReplayInputError'
   }
 }
 
