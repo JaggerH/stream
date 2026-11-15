@@ -2,6 +2,7 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, expect, test, vi } from 'vitest'
 import { StreamPanel } from './StreamPanel.tsx'
 import { api } from '../lib/api.ts'
+import type { FetchUrlResult } from '../lib/types.ts'
 import { detailBundle } from './detailBundle.ts'
 
 // detailBundle.load 换成源码级的 detail-entry（理由见 StreamPanel.test.tsx 顶上那段）。
@@ -151,4 +152,71 @@ test('stt 没配 → 「转成文字」置灰但还在（说得出为什么不�
 
   await waitFor(() => expect(screen.getByTestId('paste-action-modal')).toBeTruthy())
   expect((screen.getByTestId('paste-action-transcribe') as HTMLButtonElement).disabled).toBe(true)
+})
+
+// —— 装配：确认框与加载遮罩照 acrylic 那一套画 ——
+
+test('确认框是 acrylic 装配：磨砂遮罩 + 玻璃面板 + acrylic 条目，不经 portal 出面板子树', async () => {
+  mockDouyinVideo()
+  fakeDetailBundle()
+  render(<StreamPanel />)
+  await waitFor(() => expect(api.channelItems).toHaveBeenCalled())
+
+  paste(document.body, 'https://www.douyin.com/video/1')
+  await waitFor(() => expect(screen.getByTestId('paste-action-modal')).toBeTruthy())
+
+  const modal = screen.getByTestId('paste-action-modal')
+  // 不 portal 到 body：DSH 宿主里 body 不在挂 `.dark` 的子树，token 全会丢——留在面板子树里画。
+  expect(modal.closest('[data-radix-portal]')).toBeNull()
+  // 遮罩 = acrylic 的 overlay 档；自报 data-state=open，modal-acrylic 涂层按 DOM 事实判定开态。
+  expect(modal.className).toContain('bg-[var(--acr-overlay)]')
+  expect(modal.className).toContain('backdrop-blur')
+  expect(modal.getAttribute('data-state')).toBe('open')
+  // 卡片 = acrylic Dialog 面板同款玻璃（--acr-panel + 环形描边阴影），不是 shadcn 的 bg-card。
+  const card = screen.getByTestId('paste-action-panel')
+  expect(card.className).toContain('bg-[var(--acr-panel)]')
+  expect(card.className).toContain('backdrop-blur-xl')
+  expect(card.className).not.toContain('bg-card')
+  // 媒体条目走 acrylic 的 Item / ItemMedia，不是手写的 border 卡。
+  const entry = screen.getByTestId('paste-action-card')
+  expect(entry.closest('[data-slot="item"]')).toBeTruthy()
+  expect(entry.querySelector('[data-slot="item-media"] img')).toBeTruthy()
+})
+
+test('点遮罩 = 取消，什么都不开', async () => {
+  mockDouyinVideo()
+  const mountSpy = fakeDetailBundle()
+  render(<StreamPanel />)
+  await waitFor(() => expect(api.channelItems).toHaveBeenCalled())
+
+  paste(document.body, 'https://www.douyin.com/video/1')
+  await waitFor(() => expect(screen.getByTestId('paste-action-modal')).toBeTruthy())
+
+  fireEvent.click(screen.getByTestId('paste-action-modal'))
+
+  await waitFor(() => expect(screen.queryByTestId('paste-action-modal')).toBeNull())
+  expect(mountSpy).not.toHaveBeenCalled()
+})
+
+test('加载遮罩是 acrylic 表面 + spinner + i18n 文案，取到后收掉', async () => {
+  mockDouyinVideo()
+  let release!: (v: FetchUrlResult) => void
+  vi.spyOn(api, 'mediaFromUrl').mockImplementation(
+    () => new Promise((resolve) => { release = resolve }),
+  )
+  fakeDetailBundle()
+  render(<StreamPanel />)
+  await waitFor(() => expect(api.channelItems).toHaveBeenCalled())
+
+  paste(document.body, 'https://www.douyin.com/video/1')
+
+  const loading = await waitFor(() => screen.getByTestId('panel-paste-loading'))
+  expect(loading.querySelector('[data-slot="spinner"]')).toBeTruthy()
+  expect(loading.textContent).toContain('正在读取链接…')
+
+  await act(async () => {
+    release({ platform: 'douyin', title: '一条抖音', author: '某作者', media: [{ kind: 'video', url: 'https://cdn.test/x.mp4', poster: 'https://cdn.test/p.jpg' }] })
+  })
+  await waitFor(() => expect(screen.queryByTestId('panel-paste-loading')).toBeNull())
+  await waitFor(() => expect(screen.getByTestId('paste-action-modal')).toBeTruthy())
 })

@@ -61,6 +61,7 @@ const zh = {
     paste: {
       foundLink: '识别到一条内容',
       close: '关闭',
+      loading: '正在读取链接…',
     },
     video: {
       // page chrome

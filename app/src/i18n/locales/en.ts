@@ -61,6 +61,7 @@ const en = {
     paste: {
       foundLink: 'Recognized a link',
       close: 'Close',
+      loading: 'Reading link…',
     },
     video: {
       // page chrome

@@ -10,10 +10,14 @@
 // - 点卡片 / 「查看详情」→ onOpenDetail：原来那条直接开详情的路。
 // ESC / 点遮罩 / 关闭 = 取消，什么都不发生。
 //
-// **不用 Radix Dialog**：它 portal 到 document.body——在 DSH 宿主里那不是我们这棵挂着
-// `.dark` 的子树，磨砂和颜色全会跑掉（StreamPanel 里 StreamSettingPage 用 absolute
-// overlay 而不是 Sheet 是同一个坑，见那边注释）。这里原样 follow：absolute inset-0 +
-// 居中卡片，ESC 自己听。
+// **不 portal 到 document.body**：acrylic 的 Dialog（acrylic/dialog.tsx）把 DialogPortal
+// 写死在 body 上、没透传 container，而 DSH 宿主里 body 不在我们这棵挂着 `.dark` 的子树，
+// 一出去 token 全丢（StreamPanel 里 StreamSettingPage 用 absolute overlay 而不是 Sheet 是
+// 同一个坑，见那边注释）。所以沿用 absolute inset-0、留在面板子树里，但表面照 acrylic
+// Dialog 那一套画：遮罩 `--acr-overlay` + 磨砂，面板 `--acr-panel` + 环形描边阴影，媒体
+// 条目用 acrylic 的 Item/ItemMedia。`data-state="open"` + `<ModalAcrylicBody />` 让这个
+// 自绘 overlay 参与 modal-acrylic 涂层（观察器按 DOM 事实 `[role=dialog][data-state=open]`
+// 判开态，见 use-modal-acrylic.ts；Detail.tsx 的全屏 overlay 同款做法）。
 //
 // 按钮可见性不自己嗅探：「转成文字」亮不亮读 useCanExtract（判定权威在
 // shared/extract/plan.ts），「下载」亮不亮看 videoDownloadUrl 派不派得出直链
@@ -24,6 +28,8 @@ import { Download, ExternalLink, FileText, X } from 'lucide-react'
 
 import { Badge } from './acrylic/badge.tsx'
 import { Button as AcrylicButton } from './acrylic/button.tsx'
+import { Item, ItemContent, ItemMedia, ItemTitle } from './acrylic/item.tsx'
+import { ModalAcrylicBody } from './acrylic/use-modal-acrylic.ts'
 import { imgUrl, LOCAL } from '../lib/api.ts'
 import { useCanExtract } from '../lib/extractCaps.tsx'
 import { triggerDownload, videoDownloadUrl } from '../lib/feedPresent.ts'
@@ -72,12 +78,15 @@ export function PasteActionModal({
     <div
       role="dialog"
       aria-modal="true"
+      data-state="open"
       data-testid="paste-action-modal"
-      className="absolute inset-0 z-20 flex items-center justify-center bg-background/70 p-4 backdrop-blur-sm"
+      className="absolute inset-0 z-20 flex items-center justify-center bg-[var(--acr-overlay)] p-4 backdrop-blur-2xl"
       onClick={onClose}
     >
+      <ModalAcrylicBody />
       <div
-        className="relative w-full max-w-md rounded-xl border bg-card p-4 shadow-lg"
+        data-testid="paste-action-panel"
+        className="relative w-full max-w-md rounded-[20px] bg-[var(--acr-panel)] p-4 shadow-[0_0_0_1px_rgba(190,190,190,0.16),0_16px_48px_rgba(0,0,0,0.45)] backdrop-blur-xl"
         onClick={(e) => e.stopPropagation()}
       >
         <AcrylicButton
@@ -92,28 +101,27 @@ export function PasteActionModal({
         </AcrylicButton>
         <div className="mb-1 pr-8 text-xs text-muted-foreground">{t('paste.foundLink')}</div>
         {/* 点卡片 = 仅查看详情：三种意图里唯一不需要按钮确认的——「先看看是什么」。 */}
-        <button
-          type="button"
-          onClick={onOpenDetail}
-          className="group flex w-full items-start gap-3 rounded-lg border p-3 text-left transition-colors hover:bg-accent"
-          data-testid="paste-action-card"
-        >
-          {poster ? (
-            <img
-              src={imgUrl(LOCAL.baseUrl, poster)}
-              alt=""
-              className="size-16 shrink-0 rounded-md object-cover"
-              loading="lazy"
-            />
-          ) : null}
-          <span className="min-w-0 flex-1">
-            <span className="line-clamp-2 text-sm font-semibold">{item.title}</span>
-            <span className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
-              {typeof item.author === 'string' && item.author ? <span className="truncate">{item.author}</span> : null}
-              <Badge size="sm" className="shrink-0">{sourceLabel(item)}</Badge>
-            </span>
-          </span>
-        </button>
+        <Item variant="muted" asChild data-testid="paste-action-card">
+          <button type="button" onClick={onOpenDetail} className="w-full text-left">
+            <ItemMedia variant="image">
+              {poster ? (
+                <img
+                  src={imgUrl(LOCAL.baseUrl, poster)}
+                  alt=""
+                  loading="lazy"
+                />
+              ) : null}
+            </ItemMedia>
+            <ItemContent>
+              {/* 标题两行截断是原确认框的排版：单行 truncate 会把长标题吞得只剩一句。 */}
+              <ItemTitle className="whitespace-normal line-clamp-2">{item.title}</ItemTitle>
+              <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
+                {typeof item.author === 'string' && item.author ? <span className="truncate">{item.author}</span> : null}
+                <Badge size="sm" className="shrink-0">{sourceLabel(item)}</Badge>
+              </div>
+            </ItemContent>
+          </button>
+        </Item>
         <div className="mt-3 flex flex-wrap items-center gap-2">
           <AcrylicButton
             variant="neutral"

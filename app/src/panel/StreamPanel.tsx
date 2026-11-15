@@ -39,6 +39,7 @@
  * 真要换，分桶的写法照抄 `useInbox`，别另发明一套。
  */
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactElement } from 'react'
+import { useTranslation } from 'react-i18next'
 import { api, LOCAL } from '../lib/api.ts'
 import { ChannelTitleMenu } from '../components/ChannelTitleMenu.tsx'
 import { ExtensionOnboardingCard, extensionActions } from '../components/extension/ExtensionOnboardingCard.tsx'
@@ -68,6 +69,7 @@ import { detailBundle } from './detailBundle.ts'
 import { askChatSink } from '../lib/askExtract.ts'
 import { firstUrlIn, isEditableTarget, resolvePastedLink } from '../lib/pasteLink.ts'
 import { PasteActionModal } from '../components/PasteActionModal.tsx'
+import { Spinner } from '../components/acrylic/spinner.tsx'
 import { movieBundle, type MovieBundle } from './movieBundle.ts'
 import { publishThemeToFrame } from './embedTheme.ts'
 
@@ -95,6 +97,7 @@ export function StreamPanel({ onWidthChange, onItemContext }: {
   const [items, setItems] = useState<StreamItem[]>([])
   const [error, setError] = useState<string>()
   const [loadingMore, setLoadingMore] = useState(false)
+  const { t } = useTranslation()
   // 频道/空间/当前频道住在**模块级 store**里，不是这棵树的 state：导航树是另一个 React root
   // （`mountNav`），跨 root 没有 context 也没有 props——两边各存一份就会互相说谎。见 nav/channel-store.ts。
   const nav = useSyncExternalStore(channelStore.subscribe, channelStore.getSnapshot)
@@ -790,8 +793,15 @@ export function StreamPanel({ onWidthChange, onItemContext }: {
         </>
       ) : null}
       {pasting ? (
-        <div data-testid="panel-paste-loading" className="absolute inset-0 z-10 flex items-center justify-center bg-background/80 text-sm text-muted-foreground">
-          正在读取链接…
+        <div
+          data-testid="panel-paste-loading"
+          className="absolute inset-0 z-10 flex items-center justify-center bg-[var(--acr-overlay)] backdrop-blur-2xl"
+        >
+          {/* 弹在磨砂背板上的小胶囊用更实一档的面板材质：半透玻璃叠半透玻璃，底下的行文字会透上来。 */}
+          <div className="flex items-center gap-2 rounded-full bg-[var(--acr-panel-solid)] px-4 py-2 text-sm text-muted-foreground shadow-[0_0_0_1px_rgba(190,190,190,0.16),0_16px_48px_rgba(0,0,0,0.45)] backdrop-blur-xl">
+            <Spinner size={14} />
+            {t('paste.loading')}
+          </div>
         </div>
       ) : null}
       {pasteAction !== null ? (
