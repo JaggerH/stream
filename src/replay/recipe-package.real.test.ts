@@ -175,8 +175,10 @@ describe('shipped recipe packages load (manifest schema)', () => {
     })
 
     it('声明了曲目 URL 文法与 RSSHub 命名空间', () => {
-      expect(pkg().links?.hosts).toEqual([{ host: 'music.163.com', platform: 'netease' }])
+      // 163cn.tv 是它自己的短链域（links.canonical 里同时声明了展开规则）
+      expect(pkg().links?.hosts).toEqual([{ host: '163cn.tv', platform: 'netease' }, { host: 'music.163.com', platform: 'netease' }])
       expect(pkg().links?.patterns.map((p) => p.kind)).toEqual(['track', 'track'])
+      expect(Object.keys(pkg().links?.canonical ?? {})).toEqual(['netease'])
       expect(pkg().rsshubNamespaces).toEqual(['163'])
     })
 
