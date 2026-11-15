@@ -7,7 +7,7 @@ import type { LinkTableEntry } from '../replay/recipe-package.ts'
  *
  * 三步，全部发生在**认领之后、交给包取数之前**：
  * 1. **分享文案里抽出链接**（通用、无平台知识）：整段文案里找第一段 http(s) 地址，剥掉尾部的
- *    全角标点。用户从抖音 / 网易云 / B 站的分享弹窗复制出来的往往是一句话加一条链接。
+ *    全角标点。各站的「分享」弹窗复制出来的往往是一句话加一条链接。
  * 2. **认领 + 短链展开**（复用 LinkRecognizer.resolve——只跟包声明过的 shortHosts）。
  * 3. **按平台规范**：命中 `canonical[platform]` 的某条 pattern → 按 template 重写规范 URL；
  *    认领了却没有一条命中 → **输入错误**（「这个地址形状还不认识」），不是取数失败——
@@ -58,7 +58,7 @@ function applyRule(spec: LinkCanonicalSpec, rule: { pattern: string; template: s
   if (!m) return null
   const canonical = rule.template.replace(/\{(\w+)\}/g, (_whole, name: string) =>
     m.groups?.[name] != null ? String(m.groups[name]) : '')
-  // 模板自带 query（网易云的 song?id= 这类）就不再接原 query——两个来源会拼重。
+  // 模板自带 query（作品地址把 id 放在 query 里的平台）就不再接原 query——两个来源会拼重。
   return canonical.includes('?') ? canonical : canonical + queryFor(spec, url)
 }
 

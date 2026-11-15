@@ -34,7 +34,7 @@ export interface FetchedMedia {
    *  在转写层就断（no_media），无论播放好不好使。 */
   provider?: string
   vid?: string
-  /** 规范化的作品页地址（抽帧 / 二次打开复用；xsec_token 一类开页必需的参数带上）。 */
+  /** 规范化的作品页地址（抽帧 / 二次打开复用；平台声明里开页必需的 query 参数带上）。 */
   page_url?: string
 }
 

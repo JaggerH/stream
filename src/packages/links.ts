@@ -28,12 +28,12 @@ export interface LinkPattern { kind: LinkKind; pattern: string; platform: string
  */
 export interface LinkCanonicalRule { pattern: string; template: string }
 export interface LinkCanonicalSpec {
-  /** 规范地址的主机（`www.douyin.com` 这种完整主机，不许通配）。 */
+  /** 规范地址的主机（`www.<站>.com` 这种完整主机，不许通配）。 */
   host: string
   patterns: LinkCanonicalRule[]
-  /** 只保留这些 query 参数（xsec_token 这类没它打不开的）。 */
+  /** 只保留这些 query 参数（开页必需的凭据参数——没它这条链接打不开）。 */
   keepQuery?: string[]
-  /** 丢掉这些追踪参数（spm_id_from 这类）。与 keepQuery 二选一。 */
+  /** 丢掉这些追踪参数（站点统计参数）。与 keepQuery 二选一。 */
   dropQuery?: string[]
 }
 

@@ -176,7 +176,10 @@ export interface FetchUrlResult {
   title?: string
   author?: string
   author_avatar?: string
-  media: Array<{ kind: 'video' | 'image'; url: string; poster?: string; duration_s?: number; download_url?: string }>
+  // provider/vid/page_url：转写取音轨与抽帧的键（后端 transcribe 层按它们走 resolveVideo），
+  // 前端 media 原样透传，不能剥（见 pasteLink.itemFromFetched）。
+  media: Array<{ kind: 'video' | 'image'; url: string; poster?: string; duration_s?: number; download_url?: string;
+    provider?: string; vid?: string; page_url?: string }>
   text?: string
   /** 抓取本身失败（认领了却没取到 / 不是支持的来源）时的原话。 */
   error?: string
