@@ -37,6 +37,7 @@
     ],
     "links": {
       "hosts": [
+        "163cn.tv",
         "music.163.com"
       ],
       "patterns": [
@@ -48,6 +49,24 @@
           "kind": "track",
           "pattern": "^https?://music\\.163\\.com/song/(?<id>\\d+)"
         }
+      ],
+      "canonical": {
+        "netease": {
+          "host": "music.163.com",
+          "patterns": [
+            {
+              "pattern": "music\\.163\\.com/(?:m/)?(?:#/)?song\\?id=(?<id>\\d+)",
+              "template": "https://music.163.com/song?id={id}"
+            },
+            {
+              "pattern": "music\\.163\\.com/(?:m/)?song/(?<id>\\d+)",
+              "template": "https://music.163.com/song?id={id}"
+            }
+          ]
+        }
+      },
+      "shortHosts": [
+        "163cn.tv"
       ]
     },
     "providers": [

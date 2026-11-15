@@ -47,6 +47,48 @@ describe('literalHostsOf / hostCovered', () => {
 describe('normalizeLinks —— 归一 + 迁移期别名翻译', () => {
   const pkg = { facility: 'pkg', id: 'pkg' }
 
+  it('canonical：合法声明原样进表（host 必须归该平台、模板洞必须是 pattern 的命名组）', () => {
+    const d = normalizeLinks({
+      hosts: ['pkgsite.com'],
+      canonical: {
+        pkg: {
+          host: 'www.pkgsite.com',
+          patterns: [{ pattern: 'pkgsite\\.com/(?:video|note)/(?<id>\\d+)', template: 'https://www.pkgsite.com/video/{id}' }],
+          keepQuery: ['token'],
+        },
+      },
+    }, {}, pkg)!
+    expect(d.canonical).toEqual({
+      pkg: {
+        host: 'www.pkgsite.com',
+        patterns: [{ pattern: 'pkgsite\\.com/(?:video|note)/(?<id>\\d+)', template: 'https://www.pkgsite.com/video/{id}' }],
+        keepQuery: ['token'],
+      },
+    })
+  })
+
+  it('canonical：平台不在 hosts 里 / 规范主机不是该平台的主机 → 抛', () => {
+    expect(() => normalizeLinks({
+      hosts: ['pkgsite.com'],
+      canonical: { other: { host: 'www.pkgsite.com', patterns: [{ pattern: 'a(?<id>1)', template: 'x{id}' }] } },
+    }, {}, pkg)).toThrow(/不在 links\.hosts 里/)
+    expect(() => normalizeLinks({
+      hosts: ['pkgsite.com'],
+      canonical: { pkg: { host: 'evil.example', patterns: [{ pattern: 'a(?<id>1)', template: 'x{id}' }] } },
+    }, {}, pkg)).toThrow(/不是平台 'pkg' 声明的主机/)
+  })
+
+  it('canonical：模板引用了 pattern 没有的命名组 → 抛；正则编不过 → 抛', () => {
+    expect(() => normalizeLinks({
+      hosts: ['pkgsite.com'],
+      canonical: { pkg: { host: 'www.pkgsite.com', patterns: [{ pattern: 'pkgsite\\.com/video/(?<id>\\d+)', template: 'https://x/{nope}' }] } },
+    }, {}, pkg)).toThrow(/\{nope\}/)
+    expect(() => normalizeLinks({
+      hosts: ['pkgsite.com'],
+      canonical: { pkg: { host: 'www.pkgsite.com', patterns: [{ pattern: '((', template: 'x' }] } },
+    }, {}, pkg)).toThrow(/不是合法正则/)
+  })
+
   it('字符串 host 取 facility 当 platform；{host, platform} 保留；host 归一成小写去前导点', () => {
     const d = normalizeLinks({ hosts: ['PkgSite.com', { host: '.other.net', platform: 'oth' }] }, {}, pkg)!
     expect(d.hosts).toEqual([{ host: 'pkgsite.com', platform: 'pkg' }, { host: 'other.net', platform: 'oth' }])

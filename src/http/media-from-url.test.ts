@@ -67,7 +67,7 @@ describe('GET /api/media/from-url', () => {
       const invoke = vi.fn(async () => {
         throw new Error('上游拒了: https://www.somesite.test/video/X?sign=SECRET&msToken=TOK 失败')
       })
-      const links = { sync: (u: string) => ({ url: u, package: '@streamapp/somesite', platform: 'somesite' }) }
+      const links = { sync: (u: string) => ({ url: u, package: '@streamapp/somesite', platform: 'somesite' }), normalize: async (u: string) => ({ url: u, package: '@streamapp/somesite', platform: 'somesite', claimed: true }) }
       const app = createHttpApp({
         ...(stubs as object),
         providers: { executor: { invoke }, stats: {} },
@@ -108,5 +108,82 @@ describe('GET /api/media/from-url', () => {
     } finally {
       warn.mockRestore()
     }
+  })
+
+  // 统一链接规范化（src/links/normalize.ts，由 deps.links.normalize 提供）在**取数前**做：
+  // 弹窗地址 / 分享文案 / 短链 / 追踪参数都在这一步归一；认得平台却抽不出规范地址 → 输入错误原话
+  // 出来（200+error，不是 502，更不是拿个错误形状去打采集端）。
+  describe('统一链接规范化（links.normalize 接线）', () => {
+    const linksStub = (result: { url?: string; platform?: string; claimed?: boolean; error?: string; extracted?: boolean }) => ({
+      sync: (u: string) => ({ url: u, package: 'pkg', platform: result.platform ?? 'douyin' }),
+      normalize: async () => ({
+        url: result.url ?? '', platform: result.platform, package: 'pkg', claimed: result.claimed ?? true,
+        ...(result.error ? { error: result.error } : {}),
+        ...(result.extracted ? { extracted: true } : {}),
+      }),
+    })
+
+    it('弹窗地址 → 规范地址递给认领的行（派发看到的是 /video/<id>）', async () => {
+      const dispatch = vi.fn((_c: string, key: string) => (key === 'douyin-link' ? 'row-douyin' : null))
+      const seen: string[] = []
+      const invoke = vi.fn(async (id: string, args: { url: string }) => {
+        seen.push(args.url)
+        return {
+          strategy: 'sequential', provider: 'row-douyin', via: 'm', misses: [], timings: [],
+          value: [{ platform: 'douyin', title: 't', media: [{ kind: 'video', url: 'https://www.douyin.com/video/7684184358583930148' }] }],
+        }
+      })
+      const app = createHttpApp({
+        ...(stubs as object),
+        providers: { executor: { invoke }, stats: {} },
+        providerBindings: { dispatch },
+        links: linksStub({ url: 'https://www.douyin.com/video/7684184358583930148', platform: 'douyin' }),
+      } as never)
+      const res = await app.request('/api/media/from-url?url=' +
+        encodeURIComponent('https://www.douyin.com/user/self?modal_id=7684184358583930148'))
+      expect(res.status).toBe(200)
+      expect(seen).toEqual(['https://www.douyin.com/video/7684184358583930148'])
+    })
+
+    it('整段分享文案 → 抽出链接再走（派发看到的是链接，不是文案）', async () => {
+      const dispatch = vi.fn(() => 'row-douyin')
+      const seen: string[] = []
+      const invoke = vi.fn(async (id: string, args: { url: string }) => {
+        seen.push(args.url)
+        throw new Error('上游没起来: https://www.douyin.com/video/1?sign=SECRET 失败')
+      })
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      try {
+        const app = createHttpApp({
+          ...(stubs as object),
+          providers: { executor: { invoke }, stats: {} },
+          providerBindings: { dispatch },
+          links: linksStub({ url: 'https://www.douyin.com/video/1', platform: 'douyin', extracted: true }),
+        } as never)
+        const res = await app.request('/api/media/from-url?url=' +
+          encodeURIComponent('复制打开抖音，看看【某某的作品】 https://v.douyin.com/abc/'))
+        expect(res.status).toBe(200)
+        expect(seen).toEqual(['https://www.douyin.com/video/1'])
+        // 失败日志里的 host 也要是链接自己的，不是整段文案
+        expect(String(warn.mock.calls[0]?.[0])).toContain('host=www.douyin.com')
+      } finally {
+        warn.mockRestore()
+      }
+    })
+
+    it('认得平台但抽不出规范地址 → 200 + 输入错误原话（不进取数）', async () => {
+      const dispatch = vi.fn(() => { throw new Error('不该派发') })
+      const invoke = vi.fn(async () => { throw new Error('不该执行') })
+      const app = createHttpApp({
+        ...(stubs as object),
+        providers: { executor: { invoke }, stats: {} },
+        providerBindings: { dispatch },
+        links: linksStub({ platform: 'douyin', error: '这个地址形状还不认识：www.douyin.com/user/MS4w（认领平台 douyin，但抽不出规范的作品地址）' }),
+      } as never)
+      const res = await app.request('/api/media/from-url?url=' +
+        encodeURIComponent('https://www.douyin.com/user/MS4w'))
+      expect(res.status).toBe(200)
+      expect((await res.json()).error).toMatch(/这个地址形状还不认识：www\.douyin\.com\/user/)
+    })
   })
 })

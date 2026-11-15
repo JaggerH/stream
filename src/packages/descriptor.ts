@@ -431,6 +431,14 @@ const linksRawSchema = z.object({
     yields: z.enum(DOWNLOAD_YIELDS).optional(),
     platform: z.string().min(1).optional(),
   })).optional(),
+  // 「粘贴进来的任意形态 → 规范地址」（按 platform 分）：每条 pattern 命中后按 template 重写成
+  // 规范 URL。形状与语义校验在 src/packages/links.ts 的 normalizeLinks（与 patterns 同一条路）。
+  canonical: z.record(z.string().min(1), z.object({
+    host: z.string().min(1),
+    patterns: z.array(z.object({ pattern: z.string().min(1), template: z.string().min(1) })).min(1),
+    keepQuery: z.array(z.string().min(1)).optional(),
+    dropQuery: z.array(z.string().min(1)).optional(),
+  })).optional(),
 })
 export type RawLinks = z.infer<typeof linksRawSchema>
 

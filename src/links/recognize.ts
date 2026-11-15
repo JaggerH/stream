@@ -14,6 +14,7 @@
  */
 import type { DownloadYield, LinkKind } from '../packages/links.ts'
 import type { LinkTableEntry } from '../replay/recipe-package.ts'
+import { makeLinkNormalizer, type NormalizedLink } from './normalize.ts'
 
 export interface LinkRef {
   /** 认领所依据的地址（短链已展开时是展开后的那一个）。 */
@@ -145,4 +146,12 @@ export class LinkRecognizer {
     }
     return this.sync(current)
   }
+
+  /**
+   * 粘贴进来的**任意形态** → 规范地址（引擎在 `./normalize.ts`，形状规则是各包 `stream.links.canonical`
+   * 声明的——这一层只递表和认领，不认识任何平台）。挂在 recognizer 上而不是单独一个服务：短链展开、
+   * 声明表、debug 通道全在这里，调用方（HTTP 门与 MCP）各自已握着这一个对象。
+   */
+  normalize = (raw: string, opts: { fetch?: typeof fetch } = {}): Promise<NormalizedLink> =>
+    makeLinkNormalizer({ recognize: (u, o) => this.recognize(u, o), table: () => this.table() })(raw, opts)
 }

@@ -66,7 +66,45 @@
       ],
       "shortHosts": [
         "b23.tv"
-      ]
+      ],
+      "canonical": {
+        "bilibili": {
+          "host": "www.bilibili.com",
+          "keepQuery": [
+            "p"
+          ],
+          "dropQuery": [
+            "spm_id_from",
+            "vd_source",
+            "share_source",
+            "share_medium",
+            "share_plat",
+            "share_session_id",
+            "share_tag",
+            "unique_k",
+            "from_spmid",
+            "bsource"
+          ],
+          "patterns": [
+            {
+              "pattern": "bilibili\\.com/video/(?<bvid>BV[0-9A-Za-z]+)",
+              "template": "https://www.bilibili.com/video/{bvid}"
+            },
+            {
+              "pattern": "bilibili\\.com/video/av(?<id>\\d+)",
+              "template": "https://www.bilibili.com/video/av{id}"
+            },
+            {
+              "pattern": "bilibili\\.com/bangumi/play/(?<kind>ep|ss)(?<id>\\d+)",
+              "template": "https://www.bilibili.com/bangumi/play/{kind}{id}"
+            },
+            {
+              "pattern": "[?&]bvid=(?<bvid>BV[0-9A-Za-z]+)",
+              "template": "https://www.bilibili.com/video/{bvid}"
+            }
+          ]
+        }
+      }
     },
     "rsshubNamespaces": [
       "bilibili"

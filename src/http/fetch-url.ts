@@ -14,6 +14,7 @@
  */
 
 import type { LinkRecognizer } from '../links/recognize.ts'
+import type { NormalizedLink } from '../links/normalize.ts'
 
 import { SlotBrokenError, type ProviderBindings, type SlotContext } from '../providers/bindings.ts'
 import type { ProviderExecutor } from '../providers/executor.ts'
@@ -28,6 +29,13 @@ export interface FetchedMedia {
   duration_s?: number
   /** direct-download URL that returns the file bytes */
   download_url?: string
+  /** provider + 平台侧 id：视频**转写取音轨**走 `resolveVideo(provider, vid)` 的键（`video-<provider>`
+   *  Provider 行，见 src/transcribe/media.ts / src/video/resolve-video.ts）。缺了它，粘贴 → 转成文字
+   *  在转写层就断（no_media），无论播放好不好使。 */
+  provider?: string
+  vid?: string
+  /** 规范化的作品页地址（抽帧 / 二次打开复用；xsec_token 一类开页必需的参数带上）。 */
+  page_url?: string
 }
 
 export interface FetchUrlResult {

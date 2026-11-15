@@ -12,7 +12,7 @@ import { clampRateLimit } from './facility-rate-limit.ts'
 import { applyLayerPick, pickLayers, type LayerPick } from '../packages/pick-layer.ts'
 import type { ServingPolicy } from '../media/serving.ts'
 import type { ItemDeclaration, ProviderDeclaration, SearchSourceDeclaration } from '../packages/descriptor.ts'
-import type { LinkHost, LinkPattern, LinksDeclaration } from '../packages/links.ts'
+import type { LinkCanonicalSpec, LinkHost, LinkPattern, LinksDeclaration } from '../packages/links.ts'
 
 /** Highest recipe-package schema this interpreter understands. A package that
  *  declares a NEWER version is refused loudly — silently loading it would run
@@ -514,7 +514,7 @@ export function providerDeclarationsOf(pkgs: Array<Pick<RecipePackage, 'facility
 }
 
 /** 认领表里的一个包：它认领的主机、短链主机、路径类型。`package` = npm 名（没有就退到 facility）。 */
-export interface LinkTableEntry { package: string; hosts: LinkHost[]; shortHosts: string[]; patterns: LinkPattern[] }
+export interface LinkTableEntry { package: string; hosts: LinkHost[]; shortHosts: string[]; patterns: LinkPattern[]; canonical?: Record<string, LinkCanonicalSpec> }
 export interface LinkTable { entries: LinkTableEntry[]; rejected: Array<{ package: string; reason: string }> }
 
 /**
@@ -547,7 +547,7 @@ export function linkTableOf(pkgs: Array<Pick<RecipePackage, 'facility' | 'name' 
     }
     for (const h of p.links.hosts) hostOwner.set(h.host, pkg)
     for (const pl of platforms) platformOwner.set(pl, pkg)
-    entries.push({ package: pkg, hosts: p.links.hosts, shortHosts: p.links.shortHosts, patterns: p.links.patterns })
+    entries.push({ package: pkg, hosts: p.links.hosts, shortHosts: p.links.shortHosts, patterns: p.links.patterns, canonical: p.links.canonical })
   }
   return { entries, rejected }
 }

@@ -139,6 +139,8 @@ export interface McpExtras {
   speakers?: (itemId: string) => { segments: import('../transcribe/client.ts').TranscriptSegment[]; hasSpeakers: boolean }
   /** 「这条链接有没有具名行认领」（`content.enrich` 按 `<platform>-link` 派发）。缺席 = 只走宿主分支。 */
   resolveByLink?: FetchUrlDeps['resolveByLink']
+  /** 「粘贴的任意形态 → 规范地址」——stream_fetch_url 与 HTTP 门共用同一层（见 src/links/normalize.ts）。 */
+  normalize?: (raw: string) => Promise<import('../links/normalize.ts').NormalizedLink>
   /** target-resolve model surface (additive): one-shot resolve/intent/sources tools.
    *  Standing subscription lives in the Channel+Stream path (stream_subscribe), not here. */
   resolve?: {
@@ -463,11 +465,17 @@ export function toolCatalog(service: StreamServiceLike, extras: McpExtras): Tool
       schema: { url: z.string().describe('The URL to fetch (a supported platform page, or a direct image/video link)') },
       // resolveByLink 现读（getter 透传，别拍成死值）：extras 那一格本身是每次调用现派发的闭包，
       // 装/卸包、改绑定都跟得上。
-      run: ({ url }) =>
-        withCallerFetchGuard(async () => {
+      run: async ({ url }) => {
+        // 统一链接规范化在 caller-fetch-guard **之前**：分享文案不是合法 URL，预检过不了；
+        // 抽出/规范化成真地址后再预检（预检的才是真正要抓的地址）。输入错误（认得平台但抽不出
+        // 规范地址）走工具回执，不是异常。
+        const norm = extras.normalize ? await extras.normalize(url as string) : { url: url as string, claimed: false }
+        if (norm.error) return { platform: norm.platform ?? 'unknown', media: [], error: norm.error }
+        return withCallerFetchGuard(async () => {
+          const target = norm.url
           try {
-            await assertCallerUrlAllowed(url as string)
-            return await fetchUrl(url as string, {
+            await assertCallerUrlAllowed(target)
+            return await fetchUrl(target, {
               get resolveByLink() { return extras.resolveByLink },
             })
           } catch (e) {
@@ -477,7 +485,8 @@ export function toolCatalog(service: StreamServiceLike, extras: McpExtras): Tool
             if (blocked) return { platform: 'unknown', media: [], error: blocked.message }
             throw e
           }
-        }),
+        })
+      },
     },
   ]
 

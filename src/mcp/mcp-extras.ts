@@ -821,6 +821,9 @@ export function buildMcpExtras(boot: McpExtrasDeps): McpExtras {
     // 「这条链接有没有具名行认领」：闭包在每次调用时才认领、才问 bindings.dispatch，装/卸包、改绑定
     // 都跟得上——这里只是把两个句柄递进去，不在装配期求任何值。
     resolveByLink: makeResolveByLink(boot.providerBindings, boot.providerExecutor, undefined, boot.links),
+    // 粘贴形态 → 规范地址（与 GET /api/media/from-url 同一层、同一个 recognizer：短链展开、
+    // 各包 links.canonical 声明的改写都在那里）。
+    normalize: (raw: string) => boot.links.normalize(raw),
     /**
      * 转成文字 / 补说话人的**注册门**：`hasKind` 问的是"这个 kind 此刻配好了没"，而这份 extras
      * 是装配期只建一次的——写成普通字段就等于把答案冻在开机那一刻。

@@ -3483,12 +3483,22 @@ export function createHttpApp(deps: HttpDeps): Hono {
   // 排查只能靠用户截图。日志里**不带 query**——分享链接的 query 里常有签名/凭据参数，错误原文里
   // 带的 URL 也照剥（scrubUrlQuery）。
   app.get('/api/media/from-url', async (c) => {
-    const url = c.req.query('url')
-    if (!url) return c.json(errorBody('validation_error', 'url required'), 400)
+    const raw = c.req.query('url')
+    if (!raw) return c.json(errorBody('validation_error', 'url required'), 400)
+    // 统一链接规范化（src/links/normalize.ts）在**认领之后、取数之前**：分享文案抽链接、短链展开、
+    // 各包 links.canonical 声明的形态改写（弹窗地址、追踪参数）。认领了却抽不出规范地址 → 输入错误
+    // 原话回给前端（是输入不对，不是取数失败），不进取数层。
+    const norm = deps.links ? await deps.links.normalize(raw) : { url: raw, claimed: false }
+    const url = norm.url
+    // 日志的主语是**链接**自己的 host（分享文案进来时 raw 不是 URL，用的是抽出来的那条）。
     const host = (() => { try { return new URL(url).hostname } catch { return '(unparsable)' } })()
-    const claimed = deps.links?.sync(url)?.package ?? '(no package)'
-    const logFailure = (message: string): void => {
+    const claimed = norm.package ?? deps.links?.sync(url)?.package ?? '(no package)'
+    const logFailure = (message: string) => {
       console.warn(`[media/from-url] host=${host} package=${claimed} failed: ${scrubUrlQuery(String(message).slice(0, 300))}`)
+    }
+    if (norm.error) {
+      logFailure(norm.error)
+      return c.json({ platform: norm.platform ?? 'unknown', media: [], error: norm.error })
     }
     // resolveByLink：providers / bindings 都在（生产装配）才给；最小装配缺席 → fetchUrl 只走宿主分支。
     const fetchDeps: FetchUrlDeps = {
@@ -3499,6 +3509,7 @@ export function createHttpApp(deps: HttpDeps): Hono {
     try {
       // caller-fetch-guard：与 MCP 的 stream_fetch_url 同一道门、同一个作用域（openspec/
       // changes/private-fetch-guard）。开关打开时这里先预检、连接层逐跳校验；关闭时透传。
+      // 预检的是**规范化后的**地址——真正要抓的是它。
       const result = await withCallerFetchGuard(async () => {
         await assertCallerUrlAllowed(url)
         return fetchUrl(url, fetchDeps)

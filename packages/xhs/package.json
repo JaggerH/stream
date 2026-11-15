@@ -47,7 +47,30 @@
       ],
       "shortHosts": [
         "xhslink.com"
-      ]
+      ],
+      "canonical": {
+        "xhs": {
+          "host": "www.xiaohongshu.com",
+          "keepQuery": [
+            "xsec_token",
+            "xsec_source"
+          ],
+          "patterns": [
+            {
+              "pattern": "xiaohongshu\\.com/explore/(?<id>[0-9a-fA-F]{24})",
+              "template": "https://www.xiaohongshu.com/explore/{id}"
+            },
+            {
+              "pattern": "xiaohongshu\\.com/discovery/item/(?<id>[0-9a-fA-F]{24})",
+              "template": "https://www.xiaohongshu.com/explore/{id}"
+            },
+            {
+              "pattern": "xiaohongshu\\.com/user/profile/(?<uid>[0-9a-fA-F]{24})/(?<id>[0-9a-fA-F]{24})",
+              "template": "https://www.xiaohongshu.com/explore/{id}"
+            }
+          ]
+        }
+      }
     },
     "rateLimit": {
       "burst": 5,

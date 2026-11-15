@@ -19,11 +19,31 @@ export type DownloadYield = 'magnet' | 'ed2k' | 'quark' | 'baidu' | 'aliyun' | '
 export interface LinkHost { host: string; platform: string }
 export interface LinkPattern { kind: LinkKind; pattern: string; platform: string; yields?: DownloadYield }
 
+/**
+ * 一个 platform 的「粘贴形态 → 规范地址」规则（`links.canonical[platform]`）。
+ *
+ * 每条 rule：URL 上的**搜索式**正则（不锚定整串——弹窗地址「当前页 + modal_id」、hash 路由
+ * `/#/song?id=` 这类形状都长在 URL 的中段或尾段）+ 规范 URL 模板（`{name}` 填 pattern 的命名组）。
+ * 模板没带 `?` 时，原 URL 的 query 按 keepQuery/dropQuery 过滤后接上（都没声明就不带 query）。
+ */
+export interface LinkCanonicalRule { pattern: string; template: string }
+export interface LinkCanonicalSpec {
+  /** 规范地址的主机（`www.douyin.com` 这种完整主机，不许通配）。 */
+  host: string
+  patterns: LinkCanonicalRule[]
+  /** 只保留这些 query 参数（xsec_token 这类没它打不开的）。 */
+  keepQuery?: string[]
+  /** 丢掉这些追踪参数（spm_id_from 这类）。与 keepQuery 二选一。 */
+  dropQuery?: string[]
+}
+
 /** 归一后的声明：每个 host / pattern 都带着它的 platform。 */
 export interface LinksDeclaration {
   hosts: LinkHost[]
   shortHosts: string[]
   patterns: LinkPattern[]
+  /** 「粘贴形态 → 规范地址」，按 platform 分。缺席 = 该平台不做规范化（原样交给取数层）。 */
+  canonical?: Record<string, LinkCanonicalSpec>
   /** 这份声明里有多少是从迁移期别名翻译来的（给「谁还在用老写法」留痕）。 */
   legacy?: Array<'trackUrl' | 'downloadPages'>
 }
@@ -260,5 +280,38 @@ export function normalizeLinks(
     if (problem) throw new Error(`links.patterns[${i}]: ${problem}`)
   })
 
-  return { hosts, shortHosts, patterns, ...(used.length ? { legacy: used } : {}) }
+  // canonical：每条规则能编译、模板的每个洞都是那条 pattern 的命名组、host 是本包为该平台声明的
+  // 主机（规范化不能把地址搬到别家去）。pattern 是**搜索式**（不锚定整串），长度与回溯闸照用。
+  const platformHosts = new Map<string, string[]>()
+  for (const h of hosts) platformHosts.set(h.platform, [...(platformHosts.get(h.platform) ?? []), h.host])
+  let canonical: Record<string, LinkCanonicalSpec> | undefined
+  for (const [platform, spec] of Object.entries(raw?.canonical ?? {})) {
+    const where = `links.canonical[${platform}]`
+    const declared = platformHosts.get(platform)
+    if (!declared?.length) throw new Error(`${where}: 平台 '${platform}' 不在 links.hosts 里`)
+    if (!hostCovered(normHost(spec.host), declared)) {
+      throw new Error(`${where}: 规范主机 '${spec.host}' 不是平台 '${platform}' 声明的主机`)
+    }
+    for (const [i, rule] of (spec.patterns ?? []).entries()) {
+      if (rule.pattern.length > LINK_PATTERN_MAX_SOURCE) {
+        throw new Error(`${where}.patterns[${i}]: 源串超过 ${LINK_PATTERN_MAX_SOURCE} 字符`)
+      }
+      let re: RegExp
+      try { re = new RegExp(rule.pattern) } catch (e) {
+        throw new Error(`${where}.patterns[${i}]: '${rule.pattern}' 不是合法正则：${(e as Error).message}`)
+      }
+      if (NESTED_QUANTIFIER.test(rule.pattern)) {
+        throw new Error(`${where}.patterns[${i}]: 含嵌套量词，有灾难性回溯风险`)
+      }
+      if (re.test('')) throw new Error(`${where}.patterns[${i}]: 匹配空串`)
+      const holes = [...rule.template.matchAll(/\{(\w+)\}/g)].map((m) => m[1])
+      const groups = [...new Set([...rule.pattern.matchAll(/\(\?<(\w+)>/g)].map((m) => m[1]))]
+      const missing = holes.find((h) => !groups.includes(h))
+      if (missing) throw new Error(`${where}.patterns[${i}]: 模板的 {${missing}} 不是这条 pattern 的命名组`)
+    }
+    canonical ??= {}
+    canonical[platform] = spec
+  }
+
+  return { hosts, shortHosts, patterns, ...(canonical ? { canonical } : {}), ...(used.length ? { legacy: used } : {}) }
 }
