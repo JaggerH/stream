@@ -81,6 +81,11 @@ export async function fetchUrlFor(
       kind: 'video',
       url: mediaPlayUrl({ platform: PLATFORM, vid }),
       download_url: mediaPlayUrl({ platform: PLATFORM, vid, dl: true }),
+      // 转写链路（粘贴 → 转成文字）靠 provider+vid 走 resolveVideo 取 DASH 音轨，page_url 给
+      // 抽帧/详情复用——缺了这几格，from-url 明明成功、转换却立刻 no_media（活体 2026-11-15）。
+      provider: PLATFORM,
+      vid,
+      page_url: `https://www.bilibili.com/video/${vid}`,
     }],
   }
 }

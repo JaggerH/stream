@@ -61,6 +61,25 @@ describe('itemFromFetched', () => {
     expect(item.title).toBe('一条视频')
     expect(item.source_label).toBe('douyin') // 来源徽章显示平台，不是内部的 stream_id
   })
+
+  // video 项上的 provider/vid/page_url 是**转写取音轨与抽帧的键**（src/transcribe/media.ts 的
+  // resolveVideo 走 provider+vid）。白名单式重建会把它们静默剥掉——from-url 明明成功、
+  // 「转成文字」却秒回 no_media（活体 2026-11-15）。所以 media 原样带过去，不做重建。
+  test('video 项的 provider/vid/page_url/download_url 原样保留', () => {
+    const item = itemFromFetched('https://www.douyin.com/video/1', {
+      platform: 'douyin', title: '一条视频',
+      media: [{
+        kind: 'video', url: 'https://v.test/1.mp4', poster: 'https://v.test/1.jpg', duration_s: 631,
+        download_url: '/api/media/play?platform=douyin&vid=1&dl=1',
+        provider: 'douyin', vid: '1', page_url: 'https://www.douyin.com/video/1',
+      }],
+    })
+    expect(item.content?.media?.[0]).toMatchObject({
+      kind: 'video', url: 'https://v.test/1.mp4', duration_s: 631,
+      provider: 'douyin', vid: '1', page_url: 'https://www.douyin.com/video/1',
+      download_url: '/api/media/play?platform=douyin&vid=1&dl=1',
+    })
+  })
 })
 
 describe('resolvePastedLink', () => {

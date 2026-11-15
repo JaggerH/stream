@@ -12,7 +12,7 @@
 // 收敛始末见 docs/superpowers/specs/2026-08-15-speaker-single-source-design.md。
 // 它的失败模式是「没补上」，不是「弄坏了」：任何一步不成都不碰已存的转写结果。
 import type { Media } from '../../content/types.ts'
-import type { MediaBytes } from '../../transcribe/media.ts'
+import { explainNoTranscribableMedia, type MediaBytes } from '../../transcribe/media.ts'
 import type { TranscriptSegment } from '../../transcribe/client.ts'
 import type { IdentifyFn, IdentifyWindowing } from '../../voiceprint/identify.ts'
 import { alignTextToClusters } from '../../voiceprint/resolve.ts'
@@ -98,7 +98,11 @@ export function makeIdentifyConverter(deps: IdentifyConverterDeps): Converter {
 
       const m = await ctx.stage('media', () => deps.resolveMedia(ctx.itemId, mediaHint))
       if (ctx.signal.aborted) return { ok: false, error: { code: 'cancelled', message: 'cancelled' } }
-      if (!m) return { ok: false, error: { code: 'no_media', message: 'no transcribable media' } }
+      if (!m) {
+        const message = explainNoTranscribableMedia(mediaHint)
+        console.warn(`[diarize] ${ctx.itemId}: ${message}`)
+        return { ok: false, error: { code: 'no_media', message } }
+      }
 
       deps.onRecluster?.(ctx.itemId)
 

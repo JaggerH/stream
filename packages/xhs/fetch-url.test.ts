@@ -37,6 +37,11 @@ describe('xhs-fetch-url', () => {
       url: `/api/media/play?platform=xhs&vid=${ID}`,
       download_url: `/api/media/play?platform=xhs&vid=${ID}&dl=1`,
       poster: 'http://img/1.webp',
+      // 转写链路的键（video-xhs 行的成员）+ 开页必需的 token
+      provider: 'xhs',
+      vid: ID,
+      // token 原样带上（URLSearchParams 可能重编码 `=`，形状等价即可）——没有它打不开这条笔记
+      page_url: expect.stringContaining(`https://www.xiaohongshu.com/explore/${ID}?xsec_token=ABp6rV`),
     }])
     // 播放时 xhs-resolve 只吃流地址表——这里必须已经登记。
     expect(streams.get(ID)).toBe(VIDEO_URL)

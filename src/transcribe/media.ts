@@ -100,6 +100,27 @@ export function transcribableMedia(media: Media[] | undefined): TranscribableMed
   )
 }
 
+/**
+ * `resolveMedia` 判不出可转写内容时的**人话**——缺的是哪一格要说清。stt / 声纹 / 说话人三个
+ * 转换器的 `no_media` 共用这一份。那几句干巴巴的 'no transcribable media' 让排查只能靠猜：
+ * 活体（2026-11-15）抖音粘贴链路 from-url 明明成功、extract 秒回 no_media，真相只是 video 项上
+ * 没有 provider 定位符——没有一个字说清这件事，服务端一行日志都没有。
+ */
+export function explainNoTranscribableMedia(media: Media[] | undefined): string {
+  const list = media ?? []
+  if (list.length === 0) return 'no transcribable media（这条内容没有任何 media）'
+  const v = list.find((m): m is Extract<Media, { kind: 'video' }> => m.kind === 'video')
+  if (v) {
+    if (!v.vid && !v.embed && !v.page_url && !netdiskLeftKey(v.url)) {
+      return 'no transcribable media（视频项没有 vid / embed / page_url——没有任何定位符，取不到音轨）'
+    }
+    if (!v.provider || !v.vid) {
+      return `no transcribable media（视频页地址有了，但缺 provider+vid，转写层走不到 resolveVideo：provider=${v.provider ?? '(缺)'}, vid=${v.vid ?? '(缺)'}）`
+    }
+  }
+  return 'no transcribable media（media 形状不在可转写的那几档里）'
+}
+
 /** 拿到的 content-type（去掉参数）；上游没说就按 `audio/mpeg` 兜底——播客直链绝大多数是 mp3，
  *  且下游 ffmpeg 按字节自嗅探，这个值只用于记录与传参。 */
 function audioMimeOf(resp: Response): string {

@@ -54,11 +54,12 @@ export function linkItem(url: string): Item {
   return { ...shell(url, url, host, { archetype: 'link', media: [{ kind: 'link', url }] }), author: host }
 }
 
-/** 包现取回来的那一份 → 详情要的 `Item`。原型按媒体形状定：有视频是视频，有图是图集，否则是文字。 */
+/** 包现取回来的那一份 → 详情要的 `Item`。原型按媒体形状定：有视频是视频，有图是图集，否则是文字。
+ *  media **原样带过去，不白名单重建**：video 项上的 provider/vid/page_url（转写取音轨与抽帧的键，
+ *  见 src/transcribe/media.ts）是后端补的，重建一遍就静默剥掉——粘贴 → 转成文字立刻 no_media，
+ *  而 from-url 明明成功（活体 2026-11-15 撞过）。 */
 export function itemFromFetched(url: string, r: FetchUrlResult): Item {
-  const media: Media[] = r.media.map((m) => m.kind === 'video'
-    ? { kind: 'video', url: m.url, poster: m.poster, duration_s: m.duration_s }
-    : { kind: 'image', url: m.url })
+  const media: Media[] = r.media.map((m) => ({ ...m }))
   const archetype = media.some((m) => m.kind === 'video') ? 'video' : media.length > 0 ? 'gallery' : 'text'
   const firstLine = r.text?.split('\n').find((l) => l.trim() !== '')?.trim()
   const title = r.title?.trim() || firstLine || url

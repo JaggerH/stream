@@ -49,6 +49,11 @@ export async function fetchUrlFor(client: HybridClient, platform: MediaPlatform,
       poster: firstUrl(video?.cover),
       duration_s: duration === undefined ? undefined : platform === 'douyin' ? Math.round(duration / 1000) : duration,
       download_url: mediaPlayUrl({ platform, vid, dl: true }),
+      // 转写链路（粘贴 → 转成文字）靠 provider+vid 走 resolveVideo 取音轨，page_url 给抽帧/详情复用
+      // ——缺了这几格，from-url 明明成功、转换却立刻 no_media（活体 2026-11-15）。
+      provider: platform,
+      vid,
+      ...(platform === 'douyin' ? { page_url: `https://www.douyin.com/video/${vid}` } : {}),
     })
   }
   // 图集 / 图文：逐张给 image media。

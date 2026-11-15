@@ -5,7 +5,7 @@
 // extract 的记录。消费方：src/story-fold/fp-source.ts。
 // 设计：docs/superpowers/specs/2026-08-23-audio-fingerprint-fold-design.md §3.3。
 import type { Media } from '../../content/types.ts'
-import type { MediaBytes } from '../../transcribe/media.ts'
+import { explainNoTranscribableMedia, type MediaBytes } from '../../transcribe/media.ts'
 import { encodeFingerprint } from '../../media/audio-fingerprint.ts'
 import type { Converter } from '../runner.ts'
 
@@ -31,7 +31,11 @@ export function makeAudioFpConverter(deps: AudioFpConverterDeps): Converter {
     async run(ctx) {
       const mediaHint = ctx.options.media as Media[] | undefined
       const m = await ctx.stage('media', () => deps.resolveMedia(ctx.itemId, mediaHint))
-      if (!m) return { ok: false, error: { code: 'no_media', message: 'no fingerprintable media' } }
+      if (!m) {
+        const message = explainNoTranscribableMedia(mediaHint)
+        console.warn(`[audio-fp] ${ctx.itemId}: ${message}`)
+        return { ok: false, error: { code: 'no_media', message } }
+      }
       try {
         const fp = await ctx.stage('fingerprint', () => deps.fingerprint(m.bytes, m.mime, ctx.signal))
         if (ctx.signal.aborted) return { ok: false, error: { code: 'cancelled', message: 'cancelled' } }

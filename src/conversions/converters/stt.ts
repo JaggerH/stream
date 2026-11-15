@@ -10,7 +10,7 @@
 //    梯子只管跨成员 failover,「没赢但可重试」归任务层,两种语义干净分离(见原 service.ts 的注)。
 //  - identify 是 STT 的**加菜**:它降级/失败不该让 transcript 整体失败(转写已经交付了)。
 import type { Media } from '../../content/types.ts'
-import type { MediaBytes } from '../../transcribe/media.ts'
+import { explainNoTranscribableMedia, type MediaBytes } from '../../transcribe/media.ts'
 import type { InvokeResult } from '../../providers/executor.ts'
 import { buildResolveEntry } from '../../providers/debug-entry.ts'
 import { ladderTrace } from '../../providers/ladder-trace.ts'
@@ -56,7 +56,11 @@ export function makeSttConverter(deps: SttConverterDeps): ExtractBranchRunner {
       const translate = !!ctx.options.translate
 
       const m = await ctx.stage('media', () => deps.resolveMedia(ctx.itemId, mediaHint))
-      if (!m) return { ok: false, error: { code: 'no_media', message: 'no transcribable media' } }
+      if (!m) {
+        const message = explainNoTranscribableMedia(mediaHint)
+        console.warn(`[stt] ${ctx.itemId}: ${message}`)
+        return { ok: false, error: { code: 'no_media', message } }
+      }
 
       // 声纹 engine 在场时它才是 diarizer，STT 只需要纯 ASR 文本——再让 CF-Whisper 去 diarize
       // 它会 decline，整条转写跟着失败。

@@ -68,12 +68,26 @@ export async function fetchUrlFor(
   const note = await readNote(noteId, token, deps)
   if (!note) return { platform: PLATFORM, media: [], error: '笔记页没读到这条笔记（可能已删除、仅自己可见，或登录态失效）' }
   const { it, images, videoUrl } = note
+  // 视频笔记转写走 video-xhs Provider 行（签名 mp4，见 adapter.ts），page_url 带上开页必需的
+  // xsec_token——缺了这几格，from-url 明明成功、转换却立刻 no_media（活体 2026-11-15）。
+  const pageUrl = (() => {
+    if (!u) return undefined
+    const page = new URL(`https://www.xiaohongshu.com/explore/${noteId}`)
+    for (const k of ['xsec_token', 'xsec_source']) {
+      const v = u.searchParams.get(k)
+      if (v) page.searchParams.set(k, v)
+    }
+    return page.toString()
+  })()
   const media: FetchUrlResult['media'] = videoUrl
     ? [{
         kind: 'video',
         url: mediaPlayUrl({ platform: PLATFORM, vid: noteId }),
         download_url: mediaPlayUrl({ platform: PLATFORM, vid: noteId, dl: true }),
         poster: images[0]?.url,
+        provider: PLATFORM,
+        vid: noteId,
+        ...(pageUrl ? { page_url: pageUrl } : {}),
       }]
     : images.map((im) => ({ kind: 'image', url: im.url }))
   return {

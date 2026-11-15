@@ -168,7 +168,8 @@ describe('stt converter', () => {
     const { runner } = setup({ resolveMedia: vi.fn(async () => null) })
     const { record } = runner.start('extract', 'i', { options: { content: VIDEO } })
     await settle()
-    expect(runner.get(record.id)!.error).toEqual({ code: 'no_media', message: 'no transcribable media' })
+    // no_media 的 message 现在说清缺了哪一格（explainNoTranscribableMedia），不再是干巴巴一句
+    expect(runner.get(record.id)!.error).toEqual({ code: 'no_media', message: expect.stringContaining('no transcribable media') })
   })
 
   it('still delivers the transcript when identify degrades — diarization is a side dish', async () => {
