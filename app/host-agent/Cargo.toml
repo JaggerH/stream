@@ -100,6 +100,8 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"
 url = "2"
 # 主实例走公网 HTTPS 时设备要连 wss://。
 tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
+# 单实例锁（`device::acquire_instance_lock`）：对状态目录 flock。已在依赖树里（reqwest 的传递依赖）。
+libc = "0.2"
 
 [target.'cfg(target_os = "linux")'.dev-dependencies]
 flate2 = "1"

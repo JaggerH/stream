@@ -126,6 +126,14 @@ pub struct Session {
 /// 设备模式的静默上限：连续错过三次后端 ping（~20s 一次）才判死，一次丢包或一次慢回复不至于误杀。
 pub const PAIRED_SILENCE_LIMIT: std::time::Duration = std::time::Duration::from_secs(60);
 
+/// 设备会话循环**显式拦下、按 op 配回执**的名单（out-of-band 的 abort / fwd-data / fwd-close 不按
+/// op 配回执，不在名单里；`status` 由循环答 `{}` 但它是提示性的——后端不按 hello 声明派它，也不在
+/// `device::DEVICE_OPS` 里）。守卫测试钉住它与 `DEVICE_OPS` 一致；循环里的 `op ==` 比较用的也是
+/// `device::OP_*` 常量，新增 op 时三处必须一起动。
+#[cfg(target_os = "linux")]
+pub const SESSION_LOOP_REPLIES: &[&str] =
+    &[device::OP_HTTP_FETCH, device::OP_HTTP_FORWARD, device::OP_WS_FORWARD];
+
 /// The active Desktop backend for this OS.
 ///
 /// **三档，不是两档**：Windows（UIA）、macOS（AX）、其余（占位）。分档写在这一处，
@@ -577,14 +585,24 @@ async fn main() {
 
 /// 设备模式的一生：拿到配对 → 监督循环 → 被撤销就作废配对、回到第一步。不返回。
 ///
-/// 每一步的失败去向：配置 / 状态目录坏了 → 退出码 2（不会自己变好）；没有码或码被拒 → 挂起等人
-/// （`device::park`）；主实例连不上 → 监督循环里退避重试。
+/// 每一步的失败去向：配置 / 状态目录坏了、已有实例占着状态目录 → 退出码 2（不会自己变好）；
+/// 没有码或码被拒 → 挂起等人（`device::park`）；主实例连不上 → 监督循环里退避重试。
 #[cfg(target_os = "linux")]
 async fn run_device_mode(env: device::DeviceEnv) {
     if let Err(e) = device::ensure_state_dir(&env.state_dir) {
         eprintln!("[device] {e}");
         std::process::exit(2);
     }
+    // 单实例（device-execution）：同一状态目录只允许一个 agent 进程。两个 agent 用同一个 token
+    // 连 `/api/host` 会互相挤掉连接（最新连接赢）、反复断连。锁随进程退出由内核释放；fd 挂在
+    // run_device_mode 的栈上活到进程结束，一关锁就没了——所以必须留在作用域里，不能 drop。
+    let _instance_lock = match device::acquire_instance_lock(&env.state_dir) {
+        Ok(fd) => fd,
+        Err(e) => {
+            eprintln!("[device] {e}——同一状态目录只允许一个 agent 进程，退出");
+            std::process::exit(2);
+        }
+    };
     let fetcher = match httpfetch::Fetcher::new(httpfetch::Guard::strict(), env.allow_hosts.clone()) {
         Ok(f) => std::sync::Arc::new(f),
         Err(e) => {
@@ -801,7 +819,7 @@ async fn run_session<D: protocol::Desktop>(
 
         // `status` 的收件人是指示条，不是桌面：在这里拦下、不进 dispatch。没有渲染层
         // （非 Windows）也照样回 `{}`——它是提示，缺席不该让后端那一步失败。
-        if op == "http.fetch" {
+        if op == device::OP_HTTP_FETCH {
             if let Some(f) = &session.fetcher {
                 let (f, out) = (f.clone(), out_tx.clone());
                 fetches.spawn(async move {
@@ -815,7 +833,7 @@ async fn run_session<D: protocol::Desktop>(
 
         // http.forward（openspec device-loopback-forward）：与 http.fetch 同一条并发执行路。
         #[cfg(target_os = "linux")]
-        if op == "http.forward" {
+        if op == device::OP_HTTP_FORWARD {
             if let Some(f) = &session.forwarder {
                 let (f, out) = (f.clone(), out_tx.clone());
                 fetches.spawn(async move {
@@ -828,7 +846,7 @@ async fn run_session<D: protocol::Desktop>(
 
         // ws.forward：建连后登记会话，之后双向数据走 fwd-data / fwd-close 主动帧。
         #[cfg(target_os = "linux")]
-        if op == "ws.forward" {
+        if op == device::OP_WS_FORWARD {
             if let Some(f) = &session.forwarder {
                 let reply = match (serde_json::from_value::<forward::WsForwardArgs>(args.clone()), id.as_u64()) {
                     (Ok(a), Some(n)) => match f.open_ws(n, a, out_tx.clone()).await {

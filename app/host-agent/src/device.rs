@@ -17,8 +17,17 @@ use url::Url;
 use crate::netguard;
 use crate::relay::{self, SessionEnd, Supervisor};
 
-/// 设备模式声明的全部 op。浏览器通道（`browser`）是计划 3 的事；这里只声明真的能做的。
-pub const DEVICE_OPS: &[&str] = &["http.fetch"];
+/// 设备会话循环处理的 op 名。`DEVICE_OPS`（hello 里声明的 op 集）与守卫测试都引用同一份：
+/// 新增循环处理的 op 时，声明与两处名单必须一起动，否则守卫测试红——少声明，后端把这台设备
+/// 当不支持（`forwardRelay` 先查 `hasOp`，没声明的转发 op 恒 no-relay）；多声明，后端派活
+/// 过来落进 unsupported。
+pub const OP_HTTP_FETCH: &str = "http.fetch";
+pub const OP_HTTP_FORWARD: &str = "http.forward";
+pub const OP_WS_FORWARD: &str = "ws.forward";
+
+/// 设备模式声明的全部 op（= 会话循环实际处理并按 op 配回执的名单，守卫测试钉住一致）。
+/// 浏览器通道（`browser`）是计划 3 的事；这里只声明真的能做的。
+pub const DEVICE_OPS: &[&str] = &[OP_HTTP_FETCH, OP_HTTP_FORWARD, OP_WS_FORWARD];
 const PAIRING_FILE: &str = "device.json";
 const REVOKED_FILE: &str = "device.json.revoked";
 /// 配对路由拒码时回的原因（device-store.ts 的 `pair`，目前只有这一种）。
@@ -320,6 +329,26 @@ pub fn device_hello(device_id: &str, name: &str, state_dir: &Path) -> Value {
     relay::hello_frame(device_id, "linux", name, env!("CARGO_PKG_VERSION"), DEVICE_OPS, ports.as_ref().map(|p| p.0.as_slice()))
 }
 
+/// 单实例锁：对状态目录本身加 flock（`LOCK_EX | LOCK_NB`）。同一状态目录只允许一个 agent
+/// 进程——两个 agent 用同一个 token 连 `/api/host` 会互相挤掉连接（最新连接赢）、反复断连。
+/// 拿到锁返回的 fd 必须活到进程结束：flock 随 fd 关闭由内核释放（正常退出与被杀都是），
+/// 不落任何要清理的锁文件。锁被占 → `Err`，调用方打一行清楚的日志退出（非零码）。
+pub fn acquire_instance_lock(state_dir: &Path) -> Result<std::os::fd::OwnedFd, String> {
+    use std::os::fd::AsRawFd;
+    let dir = std::fs::File::open(state_dir)
+        .map_err(|e| format!("打开状态目录失败（{}）：{e}", state_dir.display()))?;
+    let rc = unsafe { libc::flock(dir.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+    if rc == 0 {
+        return Ok(dir.into());
+    }
+    let err = std::io::Error::last_os_error();
+    if err.raw_os_error() == Some(libc::EWOULDBLOCK) {
+        Err(format!("状态目录 {} 已被另一个 agent 进程占用（flock）", state_dir.display()))
+    } else {
+        Err(format!("对状态目录 {} 加锁失败：{err}", state_dir.display()))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -413,7 +442,7 @@ mod tests {
     }
 
     #[test]
-    fn the_hello_declares_linux_and_only_http_fetch() {
+    fn the_hello_declares_linux_device_ops() {
         let dir = std::env::temp_dir().join(format!("stream-hello-test-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let h = device_hello("linux:0b7c", "nas", &dir);
@@ -421,7 +450,7 @@ mod tests {
         assert_eq!(h["deviceId"], "linux:0b7c");
         assert_eq!(h["platform"], "linux");
         assert_eq!(h["name"], "nas");
-        assert_eq!(h["ops"], json!(["http.fetch"]));
+        assert_eq!(h["ops"], json!(["http.fetch", "http.forward", "ws.forward"]), "{h}");
         assert_eq!(h["agentVersion"], env!("CARGO_PKG_VERSION"));
         // 没配 forward-ports.json：ports 不出现在 hello 里（fail closed）。
         assert!(h.get("ports").is_none(), "{h}");
@@ -431,7 +460,39 @@ mod tests {
         assert_eq!(h2["ports"], json!([8765, 9000]), "{h2}");
     }
 
-    /// forward-ports.json 的解析：合法、去重、越界与格式错 → None（一台端口都不许转）。
+    /// 守卫：hello 声明的 op 与会话循环实际处理（拦下、按 op 配回执）的名单一致。双向比对：
+    /// 循环会答但 hello 没声明 → 后端把这台设备当不支持（`forwardRelay` 先查 `hasOp`，转发恒
+    /// no-relay）；hello 声明了但循环不处理 → 后端按这个 op 派活会永远得不到回执。
+    #[test]
+    fn device_ops_are_exactly_the_ops_the_session_loop_answers() {
+        assert_eq!(DEVICE_OPS, &[OP_HTTP_FETCH, OP_HTTP_FORWARD, OP_WS_FORWARD]);
+        for op in crate::SESSION_LOOP_REPLIES {
+            assert!(DEVICE_OPS.contains(op), "循环会回执但 hello 没声明: {op}");
+        }
+        for op in DEVICE_OPS {
+            assert!(crate::SESSION_LOOP_REPLIES.contains(op), "hello 声明但循环不处理: {op}");
+        }
+    }
+
+    /// 单实例锁：同目录第二个进程拿不到锁；锁随 fd 关闭释放；别的状态目录互不影响。
+    #[test]
+    fn a_second_agent_on_the_same_state_dir_is_refused() {
+        let d = fresh_dir("singleton");
+        ensure_state_dir(&d).unwrap();
+        let first = acquire_instance_lock(&d).unwrap();
+        let second = acquire_instance_lock(&d).unwrap_err();
+        assert!(second.contains("已被另一个 agent 进程占用"), "{second}");
+        // 别的状态目录不受影响。
+        let other = fresh_dir("singleton-other");
+        ensure_state_dir(&other).unwrap();
+        let elsewhere = acquire_instance_lock(&other).unwrap();
+        drop(elsewhere);
+        // 锁随 fd 关闭释放：第一个持锁者放下之后，同一目录可以再拿。
+        drop(first);
+        acquire_instance_lock(&d).unwrap();
+    }
+
+        /// forward-ports.json 的解析：合法、去重、越界与格式错 → None（一台端口都不许转）。
     #[test]
     fn declared_ports_parses_the_config_file() {
         let dir = std::env::temp_dir().join(format!("stream-ports-test-{}", std::process::id()));
