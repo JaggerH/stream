@@ -63,6 +63,42 @@ describe('WsHostRelay.fetchOp', () => {
     expect(e.code).toBe('private-target')
   })
 
+  it('错误帧带 semantics：原样透传到异常上（设备 op 的审批回执）', async () => {
+    const r = new WsHostRelay()
+    const { socket, sent } = fakeSocket()
+    r.connect(socket)
+    const p = r.send({ op: 'click', args: { ref: 'n7' } }) as Promise<never>
+    const semantics = {
+      op: 'click',
+      app: { id: 'com.shop', name: 'Shop', category: 'stores' },
+      control: { role: 'Button', label: '立即支付' },
+      reasons: ['payment-label'],
+      bindingDigest: 'b1',
+      screenDigest: 's1',
+    }
+    r.handleMessage(JSON.stringify({ id: sent[0].id, error: 'approval-required: 需要审批', code: 'approval-required', semantics }))
+    const e = await p.catch((x: HostOpError) => x)
+    expect(e).toBeInstanceOf(HostOpError)
+    expect(e.code).toBe('approval-required')
+    expect(e.semantics).toEqual(semantics)
+  })
+
+  it('错误帧只带 code：semantics 缺省；只有 message：两者都缺省', async () => {
+    const r = new WsHostRelay()
+    const { socket, sent } = fakeSocket()
+    r.connect(socket)
+    const p1 = r.send({ op: 'find', args: {} }) as Promise<never>
+    r.handleMessage(JSON.stringify({ id: sent[0].id, error: 'stale-ref: n3 belongs to an older tree', code: 'stale-ref' }))
+    const e1 = await p1.catch((x: HostOpError) => x)
+    expect(e1.code).toBe('stale-ref')
+    expect(e1.semantics).toBeUndefined()
+    const p2 = r.send({ op: 'find', args: {} }) as Promise<never>
+    r.handleMessage(JSON.stringify({ id: sent[1].id, error: 'action-failed: boom' }))
+    const e2 = await p2.catch((x: HostOpError) => x)
+    expect(e2.code).toBeUndefined()
+    expect(e2.semantics).toBeUndefined()
+  })
+
   it('断连时在途的 fetch 以 HostRelayDisconnected 拒绝', async () => {
     const r = new WsHostRelay()
     const { socket } = fakeSocket()

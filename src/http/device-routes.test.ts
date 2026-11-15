@@ -166,10 +166,12 @@ describe('device routes', () => {
       app.request(`/devices/${encodeURIComponent(id)}/ops`, { method: 'POST', body })
     const sent: string[] = []
     let phoneId: string
+    let phoneSocket: { send: (d: string) => void }
     beforeEach(() => {
       sent.length = 0
       phoneId = 'android:1'
-      registry.connect({ send: (d) => void sent.push(d) }, { deviceId: phoneId, platform: 'android', name: 'K80', agentVersion: '0.1.0', ops: ['find'] })
+      phoneSocket = { send: (d) => void sent.push(d) }
+      registry.connect(phoneSocket, { deviceId: phoneId, platform: 'android', name: 'K80', agentVersion: '0.1.0', ops: ['find'] })
     })
 
     it('runs one op on a device, loopback only', async () => {
@@ -190,6 +192,56 @@ describe('device routes', () => {
       const r = await p
       expect(r.status).toBe(502)
       expect(await r.json()).toEqual({ error: 'stale-ref: n3 belongs to an older tree' })
+    })
+
+    it('502 body carries the structured code and semantics when the device sent them', async () => {
+      const p = opPost(phoneId, JSON.stringify({ op: 'click', args: { ref: 'n7' } }))
+      await vi.waitFor(() => expect(sent).toHaveLength(1))
+      const semantics = {
+        op: 'click',
+        app: { id: 'com.bank.app', name: 'Bank', category: 'finance' },
+        control: { role: 'Button', label: '立即支付' },
+        reasons: ['payment-label'],
+        bindingDigest: 'b-1',
+        screenDigest: 's-1',
+        snapshotRef: 'snap-9',
+      }
+      registry.devices()[0].relay.handleMessage(JSON.stringify({
+        id: JSON.parse(sent[0]).id,
+        error: 'approval-required: 该动作需要审批',
+        code: 'approval-required',
+        semantics,
+      }))
+      const r = await p
+      expect(r.status).toBe(502)
+      expect(await r.json()).toEqual({ error: 'approval-required: 该动作需要审批', code: 'approval-required', semantics })
+    })
+
+    it('other device codes ride along in the 502 body (stale-ref)', async () => {
+      const p = opPost(phoneId, JSON.stringify({ op: 'invoke', args: { ref: 'n3' } }))
+      await vi.waitFor(() => expect(sent).toHaveLength(1))
+      registry.devices()[0].relay.handleMessage(JSON.stringify({
+        id: JSON.parse(sent[0]).id,
+        error: 'stale-ref: n3 belongs to an older tree',
+        code: 'stale-ref',
+      }))
+      const r = await p
+      expect(r.status).toBe(502)
+      const body = await r.json() as { error: string; code?: string; semantics?: unknown }
+      expect(body).toEqual({ error: 'stale-ref: n3 belongs to an older tree', code: 'stale-ref' })
+      expect('semantics' in body).toBe(false)
+    })
+
+    it('a backend-side failure (disconnect) keeps the old {error} shape with no code/semantics', async () => {
+      const p = opPost(phoneId, JSON.stringify({ op: 'find', args: {} }))
+      await vi.waitFor(() => expect(sent).toHaveLength(1))
+      registry.disconnect(phoneSocket, phoneId)
+      const r = await p
+      expect(r.status).toBe(502)
+      const body = await r.json() as { error: string; code?: string; semantics?: unknown }
+      expect(body.error).toBeTruthy()
+      expect('code' in body).toBe(false)
+      expect('semantics' in body).toBe(false)
     })
 
     it('refuses the op route off-box, for an offline device and for a bad body', async () => {
@@ -264,6 +316,15 @@ describe('device routes', () => {
       expect(r.status).toBe(502)
       const body = await r.json() as { error: string; code?: string }
       expect(body.error).toContain('exemption-invalid')
+    })
+
+    it('设备的 502 回执透传 code（与 ops 路由同一契约）', async () => {
+      const p = controlPost(phoneId, { type: 'control', control: 'exemptions', financeVisible: ['com.bank.app'] })
+      await vi.waitFor(() => expect(sent).toHaveLength(1))
+      reply(sent[0]!, { error: 'exemption-invalid: com.bank.app', code: 'exemption-invalid' })
+      const r = await p
+      expect(r.status).toBe(502)
+      expect(await r.json()).toEqual({ error: 'exemption-invalid: com.bank.app', code: 'exemption-invalid' })
     })
 
     it('格式不合法 400，设备上一帧都不发', async () => {

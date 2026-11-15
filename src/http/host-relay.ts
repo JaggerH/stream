@@ -93,12 +93,47 @@ export class HostAbortedByUser extends Error {
  */
 export const INTERACTIVE_SESSION_WAIT_MS = 20_000
 
-/** agent 回了一个错误帧。`code` 是 agent 给的机器可读分类（`private-target` 等），旧 agent 不带。 */
+/**
+ * 设备错误帧里 `semantics` 的形状——`device-sensitive-semantics` 定义的审批回执：被扣下的动作是
+ * 什么（`op`）、在哪个 App 的哪个控件上（`app`、`control`，文案是设备端打码后的）、为什么扣
+ * （`reasons`，开放集合）、重发凭据要带的两个摘要，以及取打码截图的引用（可缺省）。后端原样转发，
+ * 不解释、不裁剪；嵌入方的审批 UI 消费它。
+ */
+export interface DeviceOpSemantics {
+  op: string
+  app: { id: string; name: string; category?: string }
+  control?: { role: string; label: string }
+  /** 开放集合：调用方对不认识的 reason 按要求审批处理（device-sensitive-semantics）。 */
+  reasons: string[]
+  bindingDigest: string
+  screenDigest: string
+  snapshotRef?: string
+}
+
+/** agent 回了一个错误帧。`code` 是 agent 给的机器可读分类（`private-target` 等），旧 agent 不带；
+ *  `semantics` 是 `approval-required` 的结构化回执（`device-sensitive-semantics`），设备给了才在。 */
 export class HostOpError extends Error {
-  constructor(message: string, readonly code?: string) {
+  /** 显式赋值而不是参数属性：sidequest 的 inline runner 用 Node 原生 import 装载 jobs 文件——
+   *  strip-only 模式过不了参数属性（同 `devices/errors.ts` 的既有先例）。 */
+  readonly code?: string
+  /** 设备给的审批回执，原样对象；不是 approval-required（或设备没给）时是 undefined。 */
+  readonly semantics?: DeviceOpSemantics
+  constructor(message: string, code?: string, semantics?: DeviceOpSemantics) {
     super(message)
     this.name = 'HostOpError'
+    this.code = code
+    this.semantics = semantics
   }
+}
+
+/** 设备错误帧 → HostOpError：`code` / `semantics` 设备给了才带上，形状不对的按没给算
+ *  （`semantics` 原样转发给嵌入方，后端不解释、不裁剪——它的 schema 归设备端管）。 */
+function opErrorFromFrame(msg: { error?: string; code?: unknown; semantics?: unknown }): HostOpError {
+  return new HostOpError(
+    msg.error ?? 'unknown error',
+    typeof msg.code === 'string' ? msg.code : undefined,
+    typeof msg.semantics === 'object' && msg.semantics !== undefined ? (msg.semantics as DeviceOpSemantics) : undefined,
+  )
 }
 
 /** 设备 HTTP 通道排队等在途名额等太久——请求**没有**发出。与 UI 会话租约的排队超时分开报。 */
@@ -294,7 +329,7 @@ export class WsHostRelay implements HostRelay {
 
   /** Receive {id,result} | {id,error}, resolve/reject by id and clear its timer. Unknown id ignored. */
   handleMessage(raw: string): void {
-    let msg: { id?: number; result?: unknown; error?: string; code?: unknown; type?: string; reason?: string; b64?: unknown }
+    let msg: { id?: number; result?: unknown; error?: string; code?: unknown; semantics?: unknown; type?: string; reason?: string; b64?: unknown }
     try {
       msg = JSON.parse(raw)
     } catch {
@@ -330,7 +365,7 @@ export class WsHostRelay implements HostRelay {
         if (msg.error !== undefined) {
           this.forwardSessions.delete(msg.id)
           clearTimeout(s.timer)
-          s.reject(new HostOpError(msg.error, typeof msg.code === 'string' ? msg.code : undefined))
+          s.reject(opErrorFromFrame(msg))
         } else {
           clearTimeout(s.timer)
           s.resolve()
@@ -342,7 +377,7 @@ export class WsHostRelay implements HostRelay {
     if (!p) return
     this.pending.delete(msg.id)
     clearTimeout(p.timer)
-    if (msg.error !== undefined) p.reject(new HostOpError(msg.error, typeof msg.code === 'string' ? msg.code : undefined))
+    if (msg.error !== undefined) p.reject(opErrorFromFrame(msg))
     else p.resolve(msg.result)
   }
 

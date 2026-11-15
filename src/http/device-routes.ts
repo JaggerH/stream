@@ -13,6 +13,7 @@ import { LOCAL_DEVICE } from '../devices/run-context.ts'
 import { targetFields, targetFrom, type Target } from '../devices/target.ts'
 import type { PairingGuard } from './rate-limit.ts'
 import type { HostRelayRegistry } from './host-registry.ts'
+import { HostOpError } from './host-relay.ts'
 
 export const TOKEN_EXEMPT_ROUTES: ReadonlyArray<{ method: string; path: string }> = [
   { method: 'POST', path: '/api/devices/pair' },
@@ -130,6 +131,22 @@ export function devicePairHandler(
   }
 }
 
+/**
+ * 设备侧失败的 502 body：人话 `error` 之外，设备错误帧带了 `code` / `semantics` 就原样带出
+ * （`device-op-error-semantics`：嵌入方的审批 UI 消费结构化回执）。错误不是设备帧（排队超时、
+ * 断连等本机错误）时就没有这两个字段——不伪造。
+ */
+function opErrorBody(e: unknown): Record<string, unknown> {
+  if (e instanceof HostOpError) {
+    return {
+      error: e.message,
+      ...(e.code !== undefined ? { code: e.code } : {}),
+      ...(e.semantics !== undefined ? { semantics: e.semantics } : {}),
+    }
+  }
+  return { error: e instanceof Error ? e.message : String(e) }
+}
+
 export function mountDeviceRoutes(app: Hono, deps: DeviceRoutesDeps): void {
   app.post('/devices/pairing-code', (c) => {
     if (!deps.isAdmin(c)) return c.json({ error: '配对码只能在运行 Stream 的那台机器上生成' }, 403)
@@ -187,7 +204,7 @@ export function mountDeviceRoutes(app: Hono, deps: DeviceRoutesDeps): void {
       const result = await device.relay.send({ op: body.op, ...(body.args ? { args: body.args as Record<string, unknown> } : {}) })
       return c.json({ result: result ?? null })
     } catch (e) {
-      return c.json({ error: e instanceof Error ? e.message : String(e) }, 502)
+      return c.json(opErrorBody(e), 502)
     }
   })
 
@@ -209,7 +226,7 @@ export function mountDeviceRoutes(app: Hono, deps: DeviceRoutesDeps): void {
       const result = await device.relay.sendControl(frame)
       return c.json({ result: result ?? null })
     } catch (e) {
-      return c.json({ error: e instanceof Error ? e.message : String(e) }, 502)
+      return c.json(opErrorBody(e), 502)
     }
   })
 

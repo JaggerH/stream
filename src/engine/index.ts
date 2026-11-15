@@ -30,6 +30,8 @@ export { createRuntime } from './runtime.ts'
 export type { StreamDevices, DeviceChange, DeviceSnapshot } from './devices.ts'
 export { deviceGateway } from './device-gateway.ts'
 export type { DeviceGateway, DeviceGatewayOptions } from './device-gateway.ts'
+/** 设备 op 失败帧的结构化回执类型（device-sensitive-semantics；经管理口 502 透传给嵌入方）。 */
+export type { DeviceOpSemantics } from '../http/host-relay.ts'
 /** 设备回环转发入口（openspec `device-loopback-forward`）。 */
 export {
   deviceForwardApp,

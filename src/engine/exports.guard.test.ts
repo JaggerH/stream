@@ -38,6 +38,7 @@ describe('@streamapp/engine 公开面', () => {
         'DeviceChange',
         'DeviceGateway',
         'DeviceGatewayOptions',
+        'DeviceOpSemantics',
         'DeviceSnapshot',
         'ForwardScope',
         'Stream',
