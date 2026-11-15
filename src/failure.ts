@@ -8,7 +8,7 @@ import { SiteChallengeError } from './adapters/replay/adapter.ts'
 export { EnvironmentUnavailableError, isEnvironmentUnavailable } from '../shared/failure/environment.ts'
 
 /** Coarse failure class so alerts/Doctor/a future repair agent can act by type. */
-export type FailureCategory = 'drift' | 'auth' | 'timeout' | 'network' | 'blocked' | 'empty' | 'unknown'
+export type FailureCategory = 'drift' | 'auth' | 'timeout' | 'network' | 'blocked' | 'config' | 'empty' | 'unknown'
 
 /** One recorded failure — kept in a rolling per-source history (the "track"). */
 export interface FailureRecord {
@@ -28,7 +28,7 @@ export interface FailureRecord {
  * and classify on the enriched text. Order matters: cookie/login (auth) is checked before
  * the generic 4xx (blocked) so an expired-cookie failure reads as `auth`, not `blocked`.
  */
-const CATEGORIES: readonly FailureCategory[] = ['drift', 'auth', 'timeout', 'network', 'blocked', 'empty', 'unknown']
+const CATEGORIES: readonly FailureCategory[] = ['drift', 'auth', 'timeout', 'network', 'blocked', 'config', 'empty', 'unknown']
 
 /**
  * 一个错误可以**自报分类**：带 `failureCategory` 就按它说的算，不进下面那串正则。

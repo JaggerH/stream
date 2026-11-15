@@ -1,4 +1,5 @@
 import type { DashResult } from './dash.ts'
+import { guardUpstreamBody } from './proxy-body.ts'
 
 /** 一次解析要的是哪一档：渐进式整片 / 分离流 DASH / 最小码率纯音轨。
  *  `audio` 是转写那条路要的——它只要声音，不要 1080p 画面。 */
@@ -25,5 +26,5 @@ export async function proxyRangedStream(
   }
   if (!h.has('content-type')) h.set('content-type', mime ?? 'video/mp4')
   h.set('accept-ranges', h.get('accept-ranges') ?? 'bytes')
-  return new Response(upstream.body, { status: upstream.status, statusText: upstream.statusText, headers: h })
+  return guardUpstreamBody(new Response(upstream.body, { status: upstream.status, statusText: upstream.statusText, headers: h }), url)
 }

@@ -4096,7 +4096,12 @@ export function createHttpApp(deps: HttpDeps): Hono {
   app.get('/api/downloads', (c) => {
     if (!deps.downloadQueue) return c.json(errorBody('unavailable', 'Download queue is not available'), 503)
     const platform = c.req.query('platform')
-    return c.json({ items: deps.downloadQueue.jobs({ platform: platform || undefined }) })
+    // 终态任务只带最近一段（默认 200，`?limit=` 可调、封顶 1000）：全表读 + 逐行归档状态
+    // 在几千条历史任务上是事件循环的同步重活（loop-lag 点名）。前端消费的是活跃任务 +
+    // 最近的终态（进度/失败提示/「已下载」徽标），更旧的历史没有调用方。
+    const rawLimit = Number(c.req.query('limit') ?? '')
+    const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.floor(rawLimit) : undefined
+    return c.json({ items: deps.downloadQueue.jobs({ platform: platform || undefined, ...(limit ? { limit } : {}) }) })
   })
 
   app.get('/api/media/assets', (c) => {

@@ -463,9 +463,11 @@ export const agentPlugin = {
       store: intentStore,
       llm: intentLlm,
       digestDeps: {
-        listItems: (sid) =>
+        // opts.limit：digest 窗口饱和时的扩窗重取（窗口只是取数页大小，itemStore 里留着
+        // capPerStream 条——恢复后补判窗口外的旧条目靠这一页）。
+        listItems: (sid, opts) =>
           itemStore
-            .recent({ stream: sid, limit: 200, order: 'desc' })
+            .recent({ stream: sid, limit: opts?.limit ?? 200, order: 'desc' })
             .map((it) => ({ id: it.id, title: it.title, author: it.author, body_text: it.body_text, link: it.url })),
         transcriptTextOf: (itemId) => {
           const rec = ctx.conversions.conversions.transcriptOf(itemId)

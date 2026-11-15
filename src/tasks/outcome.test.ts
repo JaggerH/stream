@@ -34,6 +34,20 @@ describe('parseOutcome', () => {
     expect(r.outcome.summary).toContain('Traceback: boom')
   })
 
+  it('stderr 开头的库警告噪声不进摘要，摘要取最后的异常行（活体：RequestsDependencyWarning 刷屏）', () => {
+    const stderr = [
+      '/usr/lib/python3/dist-packages/requests/__init__.py:10: RequestsDependencyWarning: urllib3 (2.2.3) or chardet (5.2.0) does not match the supported version',
+      'Traceback (most recent call last):',
+      '  File "crawl.py", line 42, in <module>',
+      '    raise RuntimeError("feed unavailable")',
+      'RuntimeError: feed unavailable',
+    ].join('\n')
+    const r = parseOutcome({ stdout: '', stderr, exitCode: 1, signal: null })
+    expect(r.ok).toBe(false)
+    expect(r.outcome.summary).toContain('RuntimeError: feed unavailable')
+    expect(r.outcome.summary).not.toContain('RequestsDependencyWarning')
+  })
+
   it('被信号杀死（超时）⇒ 失败，摘要点名信号', () => {
     const r = parseOutcome({ stdout: '', stderr: '', exitCode: null, signal: 'SIGKILL' })
     expect(r.ok).toBe(false)
@@ -50,5 +64,15 @@ describe('parseOutcome', () => {
     const r = parseOutcome({ stdout: '::outcome:: {"detail":{"a":1}}\n', stderr: '', exitCode: 0, signal: null })
     expect(typeof r.outcome.summary).toBe('string')
     expect(r.outcome.summary.length).toBeGreaterThan(0)
+  })
+})
+
+describe('parseOutcome stderr 噪声过滤的边界', () => {
+  it('stderr 只有警告（退出码非 0、无 traceback）时保留警告——有总比空强', () => {
+    const r = parseOutcome({
+      stdout: '', stderr: '/x/y.py:10: RequestsDependencyWarning: version mismatch', exitCode: 1, signal: null,
+    })
+    expect(r.ok).toBe(false)
+    expect(r.outcome.summary).toContain('RequestsDependencyWarning')
   })
 })

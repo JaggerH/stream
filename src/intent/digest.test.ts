@@ -177,4 +177,130 @@ describe('runDigestRound', () => {
     const out = await runDigestRound(rec, deps(items))
     expect(out.windowSaturated).toEqual([])
   })
+
+  // ── 模型端整体不可用（「全部模型用尽 / 限流」）——整体收轮，不逐条重试 ──
+  describe('模型端整体不可用', () => {
+    const cases = [
+      ['全部模型用尽', 'All models exhausted for this request'],
+      ['限流', 'Too Many Requests (429)'],
+      ['配额', 'quota exceeded'],
+      ['梯子全灭', 'LLM 梯子上没有一个成员答成：a: error；b: error'],
+      ['未配置', 'LLM 未配置，请在设置中填写'],
+    ] as const
+    for (const [name, message] of cases) {
+      it(`${name}：第一条就收轮，不把其余条目逐个再打一遍；一行汇总日志；条目顺延不入账本`, async () => {
+        const rec = store.create({ goal: 'g', criteria: 'c', streamIds: ['s1'] })
+        const attempted: string[] = []
+        const llm = fakeLlm({
+          judgeItem: async (_c, text) => {
+            attempted.push(text)
+            throw new Error(message)
+          },
+        })
+        const logs: string[] = []
+        const d = {
+          ...deps({ s1: [{ id: 'a', title: 'AI 1' }, { id: 'b', title: 'AI 2' }, { id: 'c', title: 'AI 3' }] }),
+          llm,
+          log: (m: string) => logs.push(m),
+        }
+        const out = await runDigestRound(rec, d)
+        expect(attempted).toHaveLength(1) // 第二条起不再打模型
+        expect(out.errors).toBe(1)
+        expect(out.remaining).toBeGreaterThan(0) // 没判完 → lastDigestAt 不推进，下轮接着来
+        expect(store.get(rec.id)?.lastDigestAt).toBeUndefined()
+        expect(Object.keys(store.ledger(rec.id))).toHaveLength(0) // 不算该条目的永久失败
+        expect(logs).toHaveLength(1) // 合并成一行，不是每条一行
+        expect(logs[0]).toContain('整体不可用')
+        expect(logs[0]).toContain(message)
+        expect(out.windowSaturated).toEqual([])
+      })
+    }
+
+    it('普通单条错误不触发收轮：其余条目照常判（既有行为不变）', async () => {
+      const rec = store.create({ goal: 'g', criteria: 'c', streamIds: ['s1'] })
+      const llm = fakeLlm({
+        judgeItem: async (_c, text) => {
+          if (text.includes('炸')) throw new Error('connection reset by peer')
+          return { relevant: false }
+        },
+      })
+      const logs: string[] = []
+      const d = {
+        ...deps({ s1: [{ id: 'a', title: '炸' }, { id: 'b', title: '好' }] }),
+        llm,
+        log: (m: string) => logs.push(m),
+      }
+      const out = await runDigestRound(rec, d)
+      expect(out.judged).toBe(2)
+      expect(out.errors).toBe(1)
+      expect(store.ledger(rec.id).b).toBeDefined()
+      expect(logs.some((m) => m.includes('judge failed item=a'))).toBe(true)
+    })
+
+    it('部分成功后撞上整体不可用：已判的入账本，收轮，退避判断仍成立（errors<judged 时清零由 service 做）', async () => {
+      const rec = store.create({ goal: 'g', criteria: 'c', streamIds: ['s1'] })
+      let n = 0
+      const llm = fakeLlm({
+        judgeItem: async () => {
+          n++
+          if (n > 2) throw new Error('All models exhausted')
+          return { relevant: false }
+        },
+      })
+      const logs: string[] = []
+      const d = {
+        ...deps({ s1: [{ id: 'a', title: '1' }, { id: 'b', title: '2' }, { id: 'c', title: '3' }, { id: 'e', title: '4' }] }),
+        llm,
+        log: (m: string) => logs.push(m),
+      }
+      const out = await runDigestRound(rec, d)
+      expect(out.judged).toBe(3) // a、b 成功，c 撞墙
+      expect(out.errors).toBe(1)
+      expect(Object.keys(store.ledger(rec.id))).toEqual(['a', 'b'])
+      expect(out.remaining).toBeGreaterThan(0)
+      expect(logs.filter((m) => m.includes('整体不可用'))).toHaveLength(1)
+    })
+  })
+
+  // ── 窗口饱和时扩窗补判：恢复后窗口外的旧条目也能轮到 ──
+  it('整窗未判 → 扩窗重取（listItems 带 limit），窗口外的旧条目进本轮', async () => {
+    const rec = store.create({ goal: 'g', criteria: 'c', streamIds: ['s1'] })
+    // 生产形状：窗口 200、库里更早还有条目。这里用窗口 3 / 库 4 条演示（扩窗一次就见底）。
+    const calls: Array<number | undefined> = []
+    const listItems = (sid: string, opts?: { limit?: number }) => {
+      calls.push(opts?.limit)
+      const all = ['n0', 'n1', 'n2', 'n3'].map((id) => ({ id, title: 'AI' }))
+      return all.slice(-(opts?.limit ?? 3))
+    }
+    const logs: string[] = []
+    const d: DigestDeps = { store, llm: fakeLlm(), listItems, streamExists: () => true, events: { append: (e) => events.push(e) }, windowSize: 3, backlogLimit: 5, log: (m) => logs.push(m) }
+    const out = await runDigestRound(rec, d)
+    expect(calls[0]).toBeUndefined() // 第一次按窗口取
+    expect(calls[1]).toBe(5) // 整窗未判 → 扩到 backlogLimit 重取
+    expect(out.judged).toBe(4) // 窗口外的 n3 也进了本轮（maxJudged 默认 100 不截断）
+    expect(out.windowSaturated).toEqual([]) // 扩窗见底（取回 < backlogLimit），不算饱和
+    // 全部入账本，下轮不再重复
+    expect(Object.keys(store.ledger(rec.id))).toHaveLength(4)
+  })
+
+  it('扩窗取满且整段未判 → 才报饱和，日志说明扩窗上限', async () => {
+    const rec = store.create({ goal: 'g', criteria: 'c', streamIds: ['s1'] })
+    const all = Array.from({ length: 6 }, (_, i) => ({ id: `n${i}`, title: 'AI' }))
+    const listItems = (sid: string, opts?: { limit?: number }) => all.slice(-(opts?.limit ?? 3))
+    const logs: string[] = []
+    const d: DigestDeps = { store, llm: fakeLlm(), listItems, streamExists: () => true, events: { append: (e) => events.push(e) }, windowSize: 3, backlogLimit: 5, log: (m) => logs.push(m) }
+    const out = await runDigestRound(rec, d)
+    expect(out.windowSaturated).toEqual(['s1'])
+    expect(logs.some((m) => m.includes('s1') && m.includes('5'))).toBe(true)
+    expect(out.judged).toBe(5) // maxJudged 默认 100 —— 5 条全判了
+    expect(out.remaining).toBe(0) // 第 6 条在扩窗页之外，本轮看不见它（饱和日志已点名）
+  })
+
+  it('未传 backlogLimit → 缺省 1000（生产值），不传 listItems 的 opts 时行为兼容旧 fixture', async () => {
+    const rec = store.create({ goal: 'g', criteria: 'c', streamIds: ['s1'] })
+    const items = { s1: Array.from({ length: 3 }, (_, i) => ({ id: `n${i}`, title: 'AI' })) }
+    const d = { ...deps(items), windowSize: 3, log: () => {} }
+    const out = await runDigestRound(rec, d)
+    expect(out.windowSaturated).toEqual(['s1']) // fixture 忽略 opts，扩窗取回的还是同一窗 → 仍全未判 → 饱和
+  })
 })

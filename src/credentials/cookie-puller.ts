@@ -73,6 +73,11 @@ export class CookiePuller {
   /** 最近一轮扩展没给的域（面板节点行）。 */
   private lastGaps: CookieGaps | undefined
 
+  /** 上一轮**成功**取回内容的指纹——内容没变的那一轮安静落地，不打日志不发 debug 条目
+   *  （活体：`cookies-changed: 取回 16/16 个域` 每隔几分钟一次、7 天几百条，绝大多数轮
+   *  内容一个字节没变）。 */
+  private lastContentFingerprint: string | null = null
+
   constructor(private readonly deps: CookiePullerDeps) {}
 
   /** 最近一轮扩展没给的域；给齐了 / 还没拉成过 = undefined。拉失败不动它（不知道 ≠ 给齐了）。 */
@@ -169,20 +174,34 @@ export class CookiePuller {
       // 没给站点权限的域扩展没读（noAccess），和被拒一样算没取过。
       this.coverage = { requested: domains.map(normDomain), refused: [...(refused ?? []), ...(noAccess ?? [])].map(normDomain) }
       const got = Object.keys(normalized)
-      log(`[cookie-pull] ${reason}: 取回 ${got.length}/${domains.length} 个域`)
+      // 指纹只对**取回的内容**（域 + 每条 cookie 的全字段），与触发原因无关：扩展照例报的
+      // "cookies-changed" 里九成九是内容没变的轮，发声的判据是内容，不是理由。
+      const fingerprint = JSON.stringify(
+        Object.keys(normalized).sort().map((d) => [
+          d,
+          ...normalized[d]
+            .map((c) => JSON.stringify(Object.keys(c).sort().map((k) => (c as unknown as Record<string, unknown>)[k])))
+            .sort(),
+        ]),
+      )
+      const unchanged = fingerprint === this.lastContentFingerprint
+      this.lastContentFingerprint = fingerprint
+      if (!unchanged) log(`[cookie-pull] ${reason}: 取回 ${got.length}/${domains.length} 个域`)
       // 被拒 = 后端要的域不在扩展申报的同步范围里。**必须喊**：它的表现和"用户没登录"
       // 一模一样（两者都是取不到 cookie），不喊就会被当成登录问题查上半天。
       if (refused?.length) log(`[cookie-pull] 扩展拒了这些域（不在它申报的同步范围内）：${refused.join(', ')}`)
       if (noAccess?.length) log(`[cookie-pull] 这个 profile 没给扩展这些站点的权限：${noAccess.join(', ')}`)
-      this.report(reason, !refused?.length && !noAccess?.length, `取回 ${got.length}/${domains.length} 个域`, [
-        { label: '取回', value: got.join(', ') || '(空)', tone: got.length ? 'ok' : 'warn' },
-        ...(refused?.length
-          ? [{ label: '被扩展拒了', value: refused.join(', '), tone: 'bad' as const }]
-          : []),
-        ...(noAccess?.length
-          ? [{ label: '没有站点权限', value: noAccess.join(', '), tone: 'bad' as const }]
-          : []),
-      ])
+      if (!unchanged) {
+        this.report(reason, !refused?.length && !noAccess?.length, `取回 ${got.length}/${domains.length} 个域`, [
+          { label: '取回', value: got.join(', ') || '(空)', tone: got.length ? 'ok' : 'warn' },
+          ...(refused?.length
+            ? [{ label: '被扩展拒了', value: refused.join(', '), tone: 'bad' as const }]
+            : []),
+          ...(noAccess?.length
+            ? [{ label: '没有站点权限', value: noAccess.join(', '), tone: 'bad' as const }]
+            : []),
+        ])
+      }
       return { ok: true, domains: got, refused: refused ?? [] }
     } catch (err) {
       // 拉失败绝不清空快照：旧的登录态再旧也比没有强，而"清空"会把一次网络抖动放大成全站游客态。

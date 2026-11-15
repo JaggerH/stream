@@ -9,6 +9,7 @@ import { ItemStore } from './item-store.ts'
 import type { Adapter } from './adapters/types.ts'
 import type { SourceManifest } from './manifest/types.ts'
 import type { Stream } from './streams/types.ts'
+import { SourceHealthStore } from './source-health-store.ts'
 
 function mk(id: string): SourceManifest {
   return {
@@ -556,6 +557,70 @@ describe('Scheduler', () => {
     expect(errors).toHaveLength(1)
     expect(errors[0].sourceId).toContain('src-b')
     expect(errors[0].message).toContain('boom upstream')
+  })
+
+  // 「缺配置」不是临时故障：RSSHub 路由没给环境变量/凭据时每轮 tick 都以同一个错收场，
+  // 日志里反复记 `tick failed`。该走的是源健康账里的 config 类别 + 一次点名，不刷屏。
+  describe('缺配置的来源', () => {
+    // 真实形状：RssHubAdapter.fetch 对「缺配置」信封抛的是**声明了 failureCategory:'config'** 的错误
+    // （见 isMissingConfigMessage）。这里照抄那个形状。
+    const cfgMissing: Adapter = {
+      id: 'fake', init: async () => {},
+      fetch: async () => {
+        const e = new Error('[rsshub] /twitter/trends: Twitter RSS is disabled due to the lack of relevant config')
+        ;(e as Error & { failureCategory?: string }).failureCategory = 'config'
+        throw e
+      },
+    }
+    const single: Stream = {
+      id: 'tw', description: 's', sources: [{ source_id: 'src-a', params: {} }],
+      cadence_seconds: 1800, vault_subdir: 'tw',
+    }
+
+    it('单来源缺配置：tick 不抛（tick failed 行不再出现）、只点名一次、健康账记 config', async () => {
+      const health = new SourceHealthStore(join(dir, 'health.json'))
+      const sched = new Scheduler({
+        registry: new Registry([mk('src-a')]), streams: [single],
+        adapters: new Map([['fake', cfgMissing]]), resolveCreds: async () => ({}),
+        vaultRoot: join(dir, 'vault'), dedup, health,
+      })
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      const err = vi.spyOn(console, 'error').mockImplementation(() => {})
+      try {
+        await sched.tick('tw')
+        await sched.tick('tw')
+        await sched.tick('tw')
+        expect(err).not.toHaveBeenCalled()
+        expect(warn).toHaveBeenCalledTimes(1)
+        const line = warn.mock.calls[0].map(String).join(' ')
+        expect(line).toContain('src-a')
+        expect(line).toContain('配置')
+      } finally {
+        warn.mockRestore(); err.mockRestore()
+      }
+      expect(health.get('src-a')?.lastErrorCategory).toBe('config')
+    })
+
+    it('混着普通错误（全员失败）时照旧抛', async () => {
+      const mixed: Adapter = {
+        id: 'fake', init: async () => {},
+        fetch: async (_p, m) => {
+          if (m.id === 'src-a') {
+            const e = new Error('[rsshub] x: Twitter RSS is disabled due to the lack of relevant config')
+            ;(e as Error & { failureCategory?: string }).failureCategory = 'config'
+            throw e
+          }
+          throw new Error('boom upstream')
+        },
+      }
+      const sched = new Scheduler({
+        registry: new Registry([mk('src-a'), mk('src-b')]), streams: [fanoutStream],
+        adapters: new Map([['fake', mixed]]), resolveCreds: async () => ({}),
+        vaultRoot: join(dir, 'vault'), dedup,
+      })
+      // errors[0] 是第一个成员的错（src-a 在前）；这里只钉「混着普通错误仍然整轮抛」这件事
+      await expect(sched.tick('merged')).rejects.toThrow()
+    })
   })
 
   it('a tick still throws when EVERY attempted source fails', async () => {

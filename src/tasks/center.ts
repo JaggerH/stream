@@ -63,6 +63,22 @@ interface SidequestFacade {
   stop: () => Promise<void>
 }
 
+/**
+ * sidequest 的 console transport 静音。**为什么**：一条外部任务失败，stdout 上会出现三遍——
+ * 我们自己的 `[tasks] X failed: <摘要>`（唯一带 stderr 尾部摘要的一条）、sidequest 引擎
+ * transition 的 `[error] [ts] [Sidequest] [Core] <message>`、以及 sidequest 的 winston printf
+ * 对 toErrorData 普通对象 inspect 出来的裸 `{ name: 'Error', [Symbol(level)]: 'error' }` + 栈
+ * （retry-transition 收到的是引擎序列化后的普通对象，不是 Error 实例）。
+ * 后两遍是引擎对同一件事的重复记账——账本与面板照记，stdout 上留我们那一条就够。
+ *
+ * 代价：sidequest 自己的 info/warn（job 起跑、脚本导入失败）也不再上 stdout。job 的起跑/失败
+ * 状态在账本与面板里都有，真要排查时那才是权威；stdout 的职责是「一条失败说一遍、说清楚」。
+ * 进程级、幂等（configureLogger 每次重建 logger，所以每次 start 之后都要再静一遍）。
+ */
+export function silenceSidequestConsole(sq: { logger: () => { transports: Array<{ silent?: boolean }> } }): void {
+  for (const t of sq.logger().transports) t.silent = true
+}
+
 /** 传给门面 `start` 的那份配置（形状沿用 `Sidequest.start` 的，单测按它断言）。面板不在这份
  *  配置里——它由 `startDashboard` 单独起（HTTP 面，routes() 决定）。 */
 interface StartConfig {
@@ -149,6 +165,8 @@ async function realFacade(key: string): Promise<{ facade: SidequestFacade; jobCl
           }
           // 日志级别是 sidequest 的进程级设置（所有实例同一个值，幂等）。
           sq.configureLogger(conf.logger)
+          // console 静音紧跟其后：configureLogger 每次重建 logger，先建才有的静。
+          silenceSidequestConsole(sq)
           backend = new sq.LazyBackend(conf.backend as never)
           await backend.migrate()
           for (const q of conf.queues) await sq.grantQueueConfig(backend, q as never, conf.queueDefaults as never, true)

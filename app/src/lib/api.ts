@@ -1139,7 +1139,8 @@ export const api = {
    *  就是调用方手里这一份，丢了写进文件的 ID3 里专辑就是空的。 */
   download: (c: Connection, body: { itemId?: string; stream?: string; track?: { platform: string; trackId: string; title?: string; artist?: string; album?: string; pageUrl?: string }; skipArchived?: boolean; force?: boolean }) =>
     post<{ enqueued: number; skipped: number }>(c, '/api/downloads', body),
-  /** Active + recently completed download jobs. */
+  /** Active + recent terminal download jobs (server bounds the terminal tail — defaults to the
+   *  newest 200, `limit` query overrides — so the listing never walks the full history). */
   downloadJobs: (c: Connection, platform?: string) =>
     get<{ items: { id: number; platform: string; track_id: string; state: string; attempts: number; last_error?: string; downloaded_bytes?: number; total_bytes?: number; archived?: boolean }[] }>(
       c,

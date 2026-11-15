@@ -107,6 +107,15 @@ export async function __disposeRsshubClient(): Promise<void> {
  *  leak into the route. `limit` is an RSSHub framework-level param (every route honors it). */
 const QUERY_PASSTHROUGH = ['limit']
 
+/**
+ * RSSHub 的「路由未配置」信封。路由代码在环境变量/凭据缺席时抛这种话（活体：Twitter 路由的
+ * "Twitter RSS is disabled due to the lack of relevant config"）。它与临时故障的区别是：
+ * 重试永远不会好，用户不配置就永远这样。
+ */
+export function isMissingConfigMessage(message: string): boolean {
+  return /disabled due to the lack of (the )?relevant config|missing (the )?relevant config|route.*not configured|缺少.*配置/i.test(message)
+}
+
 /** Substitute {key} placeholders in a route from params; error on anything left unresolved.
  *  Then append allowlisted query params not already declared by the template. */
 export function resolveRoute(manifest: SourceManifest, params: Record<string, unknown>): string {
@@ -234,6 +243,13 @@ export class RssHubAdapter implements Adapter {
     // a failed harvest, never an authoritative empty collection.
     if (data?.error != null) {
       const message = typeof data.error === 'string' ? data.error : data.error.message
+      if (typeof message === 'string' && isMissingConfigMessage(message)) {
+        // 「缺配置」不是临时故障（每轮 tick 都会以同一个错收场）：显式声明 config 类别，
+        // 调度方按"需要配置"处置（健康账 + 一次点名），不反复记采集失败。
+        const e = new Error(`[rsshub] ${route}: 需要配置才能用（RSSHub 说：${message}）`)
+        ;(e as Error & { failureCategory?: 'config' }).failureCategory = 'config'
+        throw e
+      }
       throw new Error(`[rsshub] ${route}: ${typeof message === 'string' ? message : 'request failed'}`)
     }
     // eslint-disable-next-line @typescript-eslint/no-explicit-any

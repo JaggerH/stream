@@ -15,8 +15,19 @@ const MARKER = '::outcome::'
 /** stderr 末尾带进摘要的行数：够看清 Python traceback 的最后一击，又不至于把摘要撑爆。 */
 const STDERR_TAIL_LINES = 5
 
+/**
+ * 库警告噪声（`/path/to/pkg.py:10: RequestsDependencyWarning: ...`）。这类行在 stderr 开头刷屏、
+ * 与失败原因无关，但 **stderr 短于尾部窗口时它们就在"尾部"里**，一行长的把 traceback 的
+ * 最后一击挤出摘要（活体：pub.data-packs 一类任务的失败摘要整行都是 RequestsDependencyWarning，
+ * 真正的 RuntimeError 一眼看不到）。从摘要候选里剔掉；只剩警告（脚本退出码非 0 且 stderr
+ * 只有警告、没有 traceback）时保留原样——有总比空强。
+ */
+const WARNING_NOISE = /\.[a-z]+:\d+:\s+\w*Warning:|^(?:\w+\.)*Warning:\s/
+
 function tail(text: string, n: number): string {
-  return text.split('\n').filter((l) => l.trim() !== '').slice(-n).join(' | ')
+  const lines = text.split('\n').filter((l) => l.trim() !== '')
+  const useful = lines.filter((l) => !WARNING_NOISE.test(l))
+  return (useful.length ? useful : lines).slice(-n).join(' | ')
 }
 
 export interface ExecResult {

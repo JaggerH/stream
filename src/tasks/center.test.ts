@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { TaskCenter, queueOf } from './center.ts'
+import { TaskCenter, queueOf, silenceSidequestConsole } from './center.ts'
 import type { ScheduledTask } from './types.ts'
 
 /** 每条用例一个新中心（一个实例一个，见 center.ts 头注）。 */
@@ -265,5 +265,13 @@ describe('whenBusy', () => {
     expect(await c.runningTasks()).toEqual([{ id: 't1', label: '东财登录' }, { id: 'ghost', label: 'ghost' }])
     await c.stop()
     expect(await c.runningTasks()).toEqual([])
+  })
+})
+
+describe('silenceSidequestConsole', () => {
+  it('把 logger 的全部 transport 静音（失败一条任务只在 stdout 记我们自己那一条）', () => {
+    const transports = [{ silent: false }, { silent: false }]
+    silenceSidequestConsole({ logger: () => ({ transports }) })
+    expect(transports.every((t) => t.silent)).toBe(true)
   })
 })

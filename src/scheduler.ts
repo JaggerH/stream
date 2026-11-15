@@ -347,6 +347,8 @@ export class Scheduler {
   private readonly rng: () => number
   /** per stream+member consecutive-failure ledger driving the scheduled-tick backoff */
   private readonly backoff = new Map<string, { fails: number; skip: number }>()
+  /** 「缺配置」来源已点名过的 sourceId——点一次就够，之后靠健康账说话，不再每轮刷日志。 */
+  private readonly configWarned = new Set<string>()
   private readonly now: () => number
   /** collection 替换防线的 armed 位（注入的持久实现，或进程内缺省） */
   private readonly collectionGuard: CollectionGuardStore
@@ -549,6 +551,12 @@ export class Scheduler {
           throw e
         }
         const failure = classifyError(e)
+        if (failure.category === 'config' && !this.configWarned.has(sourceId)) {
+          // 缺配置不是临时故障：重试永远不好，用户不配置就永远这样。点名一次（怎么修的那句
+          // 在错误信息里），此后不再每轮记失败——健康账（config 类别）就是它持续的状态。
+          this.configWarned.add(sourceId)
+          console.warn(`[scheduler] 来源 ${sourceId} 需要配置才能用，暂不采集（配置好会自动恢复）: ${failure.message}`)
+        }
         // An `auth` failure is recorded even from an ad-hoc read. It is not a health verdict on
         // the source (which is what recordHealth gates) — it is a FACT about the facility's login
         // session, and it is the only thing that lights up the re-login panel. A search-only
@@ -843,11 +851,18 @@ export class Scheduler {
         timing: o.probe?.timings() ?? [],
       })
     }
-    if (errors.length > 0 && errors.length === outcomes.length) throw errors[0]
+    // 全员失败才整轮抛——但「缺配置」那一路不算：它重试永远不会好，已经各自点过一次名、
+    // 健康账里也记着 config 类别。再抛出去就是 arm() 那行 `tick failed` 每隔几轮刷一遍
+    // （活体：rsshub-twitter-trends 缺配置，日志反复记失败）。安静返回 {0,0}，流显示
+    // "已检查、无新条目"，源健康里看得到"需要配置"。
+    const configOnly =
+      outcomes.length > 0 && outcomes.every((o) => o.error && classifyError(o.error).category === 'config')
+    if (errors.length > 0 && errors.length === outcomes.length && !configOnly) throw errors[0]
     // 部分失败：整轮不抛，调用方那行 `tick failed` 就不会出现——坏掉的来源在这里各说一句，否则
     // 后端日志里一个字都没有（它只进源健康那本账）。不会刷屏：连续失败的来源已经在按退避跳班。
+    // 缺配置的来源不进这个循环（它的那一句已经在 fetchSource 里点过名）。
     for (const o of outcomes) {
-      if (o.error) console.error(`[scheduler] ${stream.id} 来源 ${this.getSourceId(o.src)} 失败（其余来源照常入库）:`, o.error.message)
+      if (o.error && classifyError(o.error).category !== 'config') console.error(`[scheduler] ${stream.id} 来源 ${this.getSourceId(o.src)} 失败（其余来源照常入库）:`, o.error.message)
     }
     this.reportFeedTitle(stream.id, firstTitle, rawForInference)
     return { fetched, written }

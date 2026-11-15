@@ -126,6 +126,68 @@ describe('CookiePuller.pull', () => {
     expect(lines.join('\n')).toContain('mybank.example')
   })
 
+  // 「[cookie-pull] cookies-changed: 取回 16/16 个域」每隔几分钟一次、7 天几百条——绝大多数
+  // 轮是扩展照例报的变更，内容根本没变。快照照写（语义不变），但日志与 debug 总线只在
+  // **内容真的变了**的那一轮发声。
+  it('内容没变：照常整份替换、返回 ok，但不打日志不发 debug 条目', async () => {
+    const { store, replace } = makeStore()
+    const { relay } = makeRelay(async () => ({ cookies: { 'quark.cn': [cookie('sid')] }, refused: [] }))
+    const lines: string[] = []
+    const reports: DebugEntry[] = []
+    const p = new CookiePuller({ relay, store, requiredDomains: () => REQUIRED, log: (l) => lines.push(l), report: (e) => reports.push(e) })
+    const first = await p.pull('t')
+    expect(first.ok).toBe(true)
+    expect(lines).toHaveLength(1)
+    expect(reports).toHaveLength(1)
+    const second = await p.pull('cookies-changed')
+    expect(second.ok).toBe(true)
+    expect(lines).toHaveLength(1) // 安静：没变化不打
+    expect(reports).toHaveLength(1)
+    expect(replace).toHaveBeenCalledTimes(2) // 快照照写，语义不变
+  })
+
+  it('内容变了（值 / 过期时间）→ 照常发声', async () => {
+    const { store } = makeStore()
+    let value = 'v1'
+    const { relay } = makeRelay(async () => ({
+      cookies: { 'quark.cn': [{ ...cookie('sid'), value }] },
+      refused: [],
+    }))
+    const lines: string[] = []
+    const reports: DebugEntry[] = []
+    const p = new CookiePuller({ relay, store, requiredDomains: () => REQUIRED, log: (l) => lines.push(l), report: (e) => reports.push(e) })
+    await p.pull('t')
+    value = 'v2' // cookie 轮换
+    await p.pull('cookies-changed')
+    expect(lines).toHaveLength(2)
+    expect(reports).toHaveLength(2)
+  })
+
+  it('过期时间变了也算变化（会话续期是真实事件）', async () => {
+    const { store } = makeStore()
+    let exp = 1000
+    const { relay } = makeRelay(async () => ({
+      cookies: { 'quark.cn': [{ ...cookie('sid'), expirationDate: exp }] },
+      refused: [],
+    }))
+    const lines: string[] = []
+    const p = new CookiePuller({ relay, store, requiredDomains: () => REQUIRED, log: (l) => lines.push(l) })
+    await p.pull('t')
+    exp = 2000
+    await p.pull('t')
+    expect(lines).toHaveLength(2)
+  })
+
+  it('被拒的域照旧喊（那是"没登录"级别的信号，跟有没有变化无关）', async () => {
+    const { store } = makeStore()
+    const { relay } = makeRelay(async () => ({ cookies: {}, refused: ['mybank.example'] }))
+    const lines: string[] = []
+    const p = new CookiePuller({ relay, store, requiredDomains: () => REQUIRED, log: (l) => lines.push(l) })
+    await p.pull('t')
+    await p.pull('t')
+    expect(lines.filter((l) => l.includes('mybank.example'))).toHaveLength(2)
+  })
+
   it('没有要同步的域 → 不打扰浏览器', async () => {
     const { store } = makeStore()
     const { relay, cookiePull } = makeRelay(async () => ({ cookies: {}, refused: [] }))

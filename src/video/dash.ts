@@ -16,6 +16,8 @@
  * 回路由的理由：docs/superpowers/specs/2026-09-20-code-packages-prebuilt-dist-design.md §2.1
  */
 
+import { guardUpstreamBody } from './proxy-body.ts'
+
 export interface DashStream {
   id: number
   codecs: string
@@ -126,7 +128,7 @@ export async function proxyUrl(
     const v = upstream.headers.get(h)
     if (v) out.set(h, v)
   }
-  return new Response(upstream.body, { status: upstream.status, headers: out })
+  return guardUpstreamBody(new Response(upstream.body, { status: upstream.status, headers: out }), url)
 }
 
 const xml = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')

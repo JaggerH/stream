@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import type { LanguageModel } from 'ai'
 import { makeIntentLlm } from './llm.ts'
 
@@ -121,5 +121,48 @@ describe('makeIntentLlm', () => {
   it('pickSources 空候选直接回空，不打 LLM', async () => {
     const llm = makeIntentLlm(() => null) // 无 model：真打会 throw 'LLM 未配置'
     await expect(llm.pickSources('g', 'c', [])).resolves.toEqual([])
+  })
+
+  // ── 不走 responseFormat（openai-compatible 上游不支持时 AI SDK 会对每次调用刷警告）──
+  // 改为提示词约束 + 容错抽取 + zod 校验。这些用例钉住新形状。
+  const textModel = (text: string | (() => string)): LanguageModel =>
+    ({
+      specificationVersion: 'v2', provider: 'mock', modelId: 'mock', supportedUrls: {},
+      doGenerate: async () => ({
+        finishReason: 'stop', usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2 },
+        content: [{ type: 'text', text: typeof text === 'function' ? text() : text }], warnings: [],
+      }),
+      doStream: async () => { throw new Error('not implemented') },
+    }) as unknown as LanguageModel
+
+  it('judgeItem 输出带 json 围栏和前后废话也能解析', async () => {
+    const llm = makeIntentLlm(() => null, {
+      model: textModel(() => '好的，我的判断如下：\n```json\n{"relevant": true, "summary": "相关"}\n```\n以上。'),
+    })
+    const r = await llm.judgeItem('标准', '正文')
+    expect(r.relevant).toBe(true)
+    expect(r.summary).toBe('相关')
+  })
+
+  it('模型返回非法 JSON / 形状不对 → 抛出说人话的错误（按单条失败处理）', async () => {
+    const bad = makeIntentLlm(() => null, { model: textModel('我觉得不太行') })
+    await expect(bad.judgeItem('标准', '正文')).rejects.toThrow('没有返回合法 JSON')
+
+    const wrongShape = makeIntentLlm(() => null, { model: textModel('{"relevant": "yes"}') })
+    await expect(wrongShape.judgeItem('标准', '正文')).rejects.toThrow('不合形状')
+  })
+
+  it('不再发 responseFormat：模型端收到的请求里没有 AI SDK 警告产生', async () => {
+    const warns: string[] = []
+    const spy = vi.spyOn(console, 'warn').mockImplementation((m) => warns.push(String(m)))
+    try {
+      // 三个调用形状不同，各给一份对得上的模型输出
+      await makeIntentLlm(() => null, { model: jsonModel({ relevant: false, summary: null }) }).judgeItem('标准', '正文')
+      await makeIntentLlm(() => null, { model: jsonModel({ criteria: '与 AI 硬件相关' }) }).parseIntent('目标')
+      await makeIntentLlm(() => null, { model: jsonModel({ picks: [] }) }).pickSources('目标', '标准', [{ id: 's', description: 'd' }])
+      expect(warns.filter((m) => m.includes('AI SDK Warning'))).toEqual([])
+    } finally {
+      spy.mockRestore()
+    }
   })
 })

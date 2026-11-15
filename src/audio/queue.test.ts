@@ -91,6 +91,32 @@ describe('DownloadQueue', () => {
     expect(a).toBe(b)
     expect(q.jobs().length).toBe(1)
   })
+  // GET /api/downloads 是热路径（loop-lag 反复点名）：历史上 jobs() 全表读 + 每行一次
+  // archive.status（prepare + existsSync），几千条历史任务一次就是几百毫秒的同步重活。
+  // 现在活跃任务全量、终态只带最近一段；archived 一把批量查。
+  it('jobs bounds the terminal tail and batches the archived lookup', async () => {
+    for (let i = 0; i < 250; i++) q.enqueue({ platform: 'netease', id: `t${i}` })
+    await q.drain()
+    q.enqueue({ platform: 'bilibili', id: 'live' }) // stays queued (never drained)
+    const statusSpy = vi.spyOn(archive, 'status')
+    const jobs = q.jobs()
+    expect(jobs.filter((j) => j.state === 'queued')).toHaveLength(1)
+    expect(jobs.filter((j) => j.state === 'done')).toHaveLength(200)
+    // 终态尾部取的是**最近**的（id 最大的一段），不是任意 200 条
+    const maxId = Math.max(...jobs.filter((j) => j.state === 'done').map((j) => j.id))
+    expect(jobs.some((j) => j.state === 'done' && j.id === maxId)).toBe(true)
+    // archived 只批量查一次（活跃任务不查）
+    expect(statusSpy).toHaveBeenCalledTimes(1)
+    expect(statusSpy.mock.calls[0][0].length).toBe(200)
+    expect(jobs.find((j) => j.track_id === 't249')?.archived).toBe(true)
+    expect(jobs.find((j) => j.track_id === 'live')?.archived).toBeUndefined()
+
+    const small = q.jobs({ limit: 5 })
+    expect(small.filter((j) => j.state === 'done')).toHaveLength(5)
+    const platformJobs = q.jobs({ platform: 'bilibili' })
+    expect(platformJobs.every((j) => j.platform === 'bilibili')).toBe(true)
+    expect(platformJobs.filter((j) => j.state === 'done')).toHaveLength(0)
+  })
   it('syncPlaylist enqueues only new, unarchived tracks', async () => {
     q.enqueue({ platform: 'netease', id: '1' }); await q.drain() // 1 now archived
     const n = q.syncPlaylist('s1', [{ platform: 'netease', id: '1' }, { platform: 'netease', id: '2' }])

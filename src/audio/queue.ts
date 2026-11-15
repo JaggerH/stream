@@ -66,6 +66,13 @@ export interface QueueDeps {
 
 const MAX_ATTEMPTS = 3
 
+/** 终态任务在列表里保留的尾部条数（默认值；`jobs({limit})` 可调）。GET /api/downloads 是
+ *  热路径——历史上它全表读再逐行查归档状态，几千条历史任务一次就是几百毫秒的事件循环
+ *  同步重活（loop-lag 反复点名、node-cron 误班）。前端真正消费的是活跃任务 + 最近的终态
+ *  （进度、失败提示、「已下载」徽标），几百条之前的历史没人看。 */
+const TERMINAL_TAIL_DEFAULT = 200
+const TERMINAL_TAIL_MAX = 1000
+
 /** download_job queue (manual / batch / auto share one machine) + per-playlist sync toggle.
  *  better-sqlite3 is synchronous; the worker is an async loop driven by drain() or an
  *  interval pump in bootstrap. Single-flight: one queued/running job per (platform, track). */
@@ -151,8 +158,10 @@ export class DownloadQueue {
     for (const listener of this.listeners) listener(job)
   }
 
-  private mapJob(r: any): JobView {
+  /** `archivedFlags` 缺省时（单条 emit 路径）退回逐行查；列表路径必须传批量结果。 */
+  private mapJob(r: any, archivedFlags?: Record<string, boolean>): JobView {
     const ref = { platform: r.platform, id: r.track_id }
+    const key = `${ref.platform}:${ref.id}`
     const progress = this.progressByJob.get(r.id)
     return {
       id: r.id,
@@ -163,7 +172,7 @@ export class DownloadQueue {
       last_error: r.last_error ?? undefined,
       downloaded_bytes: progress?.downloaded_bytes,
       total_bytes: progress?.total_bytes,
-      archived: this.deps.archive.status([ref])[`${ref.platform}:${ref.id}`] ?? false,
+      archived: archivedFlags ? archivedFlags[key] : this.deps.archive.status([ref])[key] ?? false,
     }
   }
 
@@ -194,11 +203,24 @@ export class DownloadQueue {
     ).run(ref.platform, ref.id, JSON.stringify(ref), opts.priority ?? 0, now, now, opts.force ? 1 : 0).lastInsertRowid as number
   }
 
-  jobs(filter: { platform?: string } = {}): JobView[] {
-    const rows = filter.platform
-      ? this.db.prepare('SELECT * FROM download_job WHERE platform = ? ORDER BY id').all(filter.platform)
-      : this.db.prepare('SELECT * FROM download_job ORDER BY id').all()
-    return (rows as any[]).map((r) => this.mapJob(r))
+  jobs(filter: { platform?: string; limit?: number } = {}): JobView[] {
+    // 活跃任务全量 + 终态只带最近 limit 条。归档状态一次批量查（archive.status 本来就吃
+    // 整个 ref 数组），只查终态行——排队/在跑的行没有"已下载"可言。
+    const limit = Math.min(Math.max(0, filter.limit ?? TERMINAL_TAIL_DEFAULT), TERMINAL_TAIL_MAX)
+    const p = filter.platform
+    const activeRows = (p
+      ? this.db.prepare(`SELECT * FROM download_job WHERE platform = ? AND state IN ('queued','running') ORDER BY id`)
+      : this.db.prepare(`SELECT * FROM download_job WHERE state IN ('queued','running') ORDER BY id`)
+    ).all(...(p ? [p] : [])) as any[]
+    const terminalRows = (p
+      ? this.db.prepare(`SELECT * FROM download_job WHERE platform = ? AND state NOT IN ('queued','running') ORDER BY id DESC LIMIT ?`)
+      : this.db.prepare(`SELECT * FROM download_job WHERE state NOT IN ('queued','running') ORDER BY id DESC LIMIT ?`)
+    ).all(...(p ? [p] : []), limit) as any[]
+    const rows = [...activeRows, ...terminalRows]
+    const flags = this.deps.archive.status(
+      terminalRows.map((r) => ({ platform: r.platform, id: r.track_id })),
+    )
+    return rows.map((r) => this.mapJob(r, flags))
   }
 
   private nextJob(): any {

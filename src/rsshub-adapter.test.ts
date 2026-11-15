@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest'
+import { isMissingConfigMessage } from './rsshub-adapter.ts'
 import { resolveRoute, RssHubAdapter } from './rsshub-adapter.ts'
 import type { SourceManifest } from './manifest/types.ts'
 
@@ -191,6 +192,26 @@ describe('RSSHub feed response validation', () => {
   it('rejects an RSSHub error response instead of reporting an empty collection', async () => {
     await expect(adapterFor({ error: { message: 'No headers based on this input can be generated.' } })
       .fetch({}, manifest)).rejects.toThrow(/No headers based on this input/)
+  })
+
+  it('「路由未配置」信封 → 抛声明 config 类别的错误，消息里说清楚要配置', async () => {
+    let thrown: unknown
+    try {
+      await adapterFor({ error: { message: 'Twitter RSS is disabled due to the lack of relevant config' } }).fetch({}, manifest)
+    } catch (e) {
+      thrown = e
+    }
+    expect(thrown).toBeInstanceOf(Error)
+    expect((thrown as Error).message).toContain('需要配置')
+    expect((thrown as Error).message).toContain('Twitter RSS is disabled')
+    expect((thrown as { failureCategory?: string }).failureCategory).toBe('config')
+  })
+
+  it('isMissingConfigMessage 认得出 RSSHub 的各种「缺配置」说法，不误伤普通错误', () => {
+    expect(isMissingConfigMessage('Twitter RSS is disabled due to the lack of relevant config')).toBe(true)
+    expect(isMissingConfigMessage('this route requires config: missing relevant config for key')).toBe(true)
+    expect(isMissingConfigMessage('Cannot read properties of null (reading undefined')).toBe(false)
+    expect(isMissingConfigMessage('Request failed with status code 503')).toBe(false)
   })
 
   it.each([null, {}, { title: 'feed' }, { item: {} }])('rejects a response without an item array: %j', async (response) => {
