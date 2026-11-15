@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest'
-import { DouyinTiktokDownloadApiAdapter, DOUYIN_SERVICE, isDouyinUrl, type AdapterDeps } from './adapter.ts'
+import { DouyinTiktokDownloadApiAdapter, DOUYIN_SERVICE, isDouyinUrl, normalizeDouyinEntryUrl, type AdapterDeps } from './adapter.ts'
 import { DETAIL_UNAVAILABLE_FIELD } from '../douyin-detail.ts'
 import { isUnavailable } from '../../../shared/package-sdk/errors.ts'
 import type { ApiBinding, SourceManifest } from '../../../src/manifest/types.ts'
@@ -322,6 +322,54 @@ describe('DouyinTiktokDownloadApiAdapter — resolveVideoPlayAddr (video-douyin 
     const err = await adapter(deps({ readSource })).resolveVideoPlayAddr('https://v.douyin.com/abcXYZ/').catch((e: unknown) => e)
     expect(isUnavailable(err)).toBe(false)
     expect((err as Error).message).toMatch(/webpackChunk/)
+  })
+})
+
+// 网页版弹窗地址：在任意页面点开一个视频，地址栏就是「当前页 + modal_id」。用户整条复制粘贴，
+// recipe 拿它当入口会落在用户主页 / 搜索页 / 精选页上（报「落地页不是 /video/<id>」），而真正的
+// 作品页地址就藏在 modal_id 里 —— 规范化成主站作品页链接再进 recipe。
+describe('normalizeDouyinEntryUrl — modal_id 弹窗地址 → 主站作品页', () => {
+  it.each([
+    ['https://www.douyin.com/user/self?from_tab_name=main&modal_id=7684184358583930148&showTab=favorite_collection',
+     'https://www.douyin.com/video/7684184358583930148'],
+    ['https://www.douyin.com/jingxuan?modal_id=7684184358583930148',
+     'https://www.douyin.com/video/7684184358583930148'],
+    ['https://www.douyin.com/search/%E7%BE%8E%E9%A3%9F?modal_id=7684184358583930148',
+     'https://www.douyin.com/video/7684184358583930148'],
+    ['https://www.douyin.com/discover?modal_id=7684184358583930148',
+     'https://www.douyin.com/video/7684184358583930148'],
+  ])('%s → %s', (input, want) => {
+    expect(normalizeDouyinEntryUrl(input)).toBe(want)
+  })
+
+  it('不是弹窗地址的链接原样返回', () => {
+    for (const u of [
+      'https://www.douyin.com/video/7684184358583930148',
+      'https://v.douyin.com/abcXYZ/',
+      'https://www.iesdouyin.com/share/video/7662668719604420273/?region=CN',
+      'https://www.douyin.com/user/MS4wLjABAAAA?from_tab_name=main',
+      'https://www.tiktok.com/@a/video/1',
+    ]) expect(normalizeDouyinEntryUrl(u)).toBe(u)
+  })
+
+  it('modal_id 不是数字（空 / 别的参数形状）不改写', () => {
+    expect(normalizeDouyinEntryUrl('https://www.douyin.com/user/self?modal_id=')).toBe(
+      'https://www.douyin.com/user/self?modal_id=')
+    expect(normalizeDouyinEntryUrl('https://www.douyin.com/user/self?modal_id=abc')).toBe(
+      'https://www.douyin.com/user/self?modal_id=abc')
+  })
+
+  it('解析不了的输入原样返回，不抛', () => {
+    expect(normalizeDouyinEntryUrl('not a url at all')).toBe('not a url at all')
+  })
+
+  it('hybridVideoData 把弹窗地址规范化后递给 douyin-detail（recipe 收到的入口是作品页）', async () => {
+    const { seen, readSource } = recipeSource({ aweme_id: '7684184358583930148', video: { play_addr: { url_list: [
+      'https://www.douyin.com/aweme/v1/play/?video_id=x',
+    ] } } })
+    await adapter(deps({ readSource })).resolveVideoPlayAddr(
+      'https://www.douyin.com/user/self?from_tab_name=main&modal_id=7684184358583930148&showTab=favorite_collection')
+    expect(seen).toEqual([{ sourceId: 'douyin-detail', params: { url: 'https://www.douyin.com/video/7684184358583930148' } }])
   })
 })
 

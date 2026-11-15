@@ -50,6 +50,31 @@ export function isDouyinUrl(url: string): boolean {
   return /(^|\.)(douyin|iesdouyin)\.com([/?]|$)/.test(url.replace(/^https?:\/\//, ''))
 }
 
+/**
+ * douyin.com 下「当前页 + `modal_id`」的弹窗地址 → 主站作品页。
+ *
+ * 网页版在**任意**页面（用户主页 `/user/self`、`/jingxuan`、`/search/...`、`/discover`）点开一个
+ * 视频弹窗，地址栏都是「当前页 + `modal_id=<作品 id>`」——用户整条复制粘贴，recipe 拿它当
+ * `entryUrl` 就落在那个外壳页上，报「落地页不是 /video/<id>」；而真正的作品页地址就藏在
+ * `modal_id` 里。这是**调用方给的输入**，在进 recipe 之前改写掉（`hybridVideoData` 的最前端，
+ * 两条消费成员——贴链接抓媒体与播放解析——都经过它）。
+ *
+ * 只改写 host 是 douyin.com（或子域）且 `modal_id` 是纯数字的地址；其余（含解析不了的输入）
+ * 原样返回，不抛——规范化失败不该把一条本来能跑的链接变成另一条错误。
+ */
+export function normalizeDouyinEntryUrl(url: string): string {
+  try {
+    const u = new URL(url)
+    const h = u.hostname.toLowerCase()
+    if (h !== 'douyin.com' && !h.endsWith('.douyin.com')) return url
+    const modal = u.searchParams.get('modal_id')
+    if (!modal || !/^\d+$/.test(modal)) return url
+    return `https://www.douyin.com/video/${modal}`
+  } catch {
+    return url
+  }
+}
+
 /** Named normalizers a declarative source may reference via `api.normalize`. bilibili/tiktok
  *  return raw items (their presenter reads them); douyin bridges each aweme to StreamItem. */
 const NORMALIZERS: Record<string, Normalizer> = { douyin: (raw) => toDouyinItem(raw as DouyinAweme) }
@@ -277,6 +302,8 @@ export class DouyinTiktokDownloadApiAdapter implements Adapter {
    * 和「回了一条作品」得分得开，调用方拿到 `{}` 只会静默产出一条没媒体的成功。
    */
   async hybridVideoData(url: string): Promise<Record<string, unknown>> {
+    // 弹窗地址（任意页 + modal_id）先规范化成作品页再分路 —— 见 normalizeDouyinEntryUrl。
+    url = normalizeDouyinEntryUrl(url)
     if (isDouyinUrl(url)) return readDouyinAweme(this.deps.readSource, url)
     const r = await this.get<{ data?: Record<string, unknown> }>('/api/hybrid/video_data', { url, minimal: 'false' })
     if (!r.data || typeof r.data !== 'object') {
