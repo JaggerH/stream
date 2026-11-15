@@ -4653,7 +4653,8 @@ export function createHttpApp(deps: HttpDeps): Hono {
       return c.json(errorBody('conflict', 'a job for this item is already queued or running'), 409)
     }
     // force：识别本就是「再算一遍」，命中缓存直接返回旧记录反而是错的。
-    conversions.start('identify', itemId, { inputId: stt?.id, force: true })
+    // 详情页「识别本集说话人」按钮 = 用户显式发起，排队插到后台巡检任务前面。
+    conversions.start('identify', itemId, { inputId: stt?.id, force: true, priority: 'user' })
     return c.json({ status: 'queued' }, 202)
   })
   app.post('/api/voiceprint/item/:itemId/clusters/:cluster/enroll', async (c) => {

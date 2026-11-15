@@ -446,6 +446,8 @@ export function buildMcpExtras(boot: McpExtrasDeps): McpExtras {
             // 所以「已经取过正文的条目 + 刚拨开的 diarize」不 force 就是静默失效。force 只在调用方
             // 明说重跑时给——第二次点转成文字，多数时候要的就是缓存那份，别替用户重新计费。
             force: opts?.rerun,
+            // 用户经对话显式发起（详情页动作行 / 模型转述用户意图），排队插到后台巡检前面。
+            priority: 'user',
             snapshot: {
               title: it?.title ?? handle,
               source: it?.stream_id ?? 'netdisk',
@@ -489,6 +491,8 @@ export function buildMcpExtras(boot: McpExtrasDeps): McpExtras {
       if (!it && !bound) return { status: 'error', error: 'item not found' }
       return boot.conversions!.start('identify', handle, {
         force: opts?.rerun,
+        // 用户显式发起，同 extract：插到后台巡检任务前面。
+        priority: 'user',
         snapshot: { title: it?.title ?? handle, source: it?.stream_id ?? 'netdisk', url: it?.url },
       }).record
     },

@@ -78,7 +78,7 @@ Two invariants:
 
 ### 3.2 Background-Automatically-Derived Layers: Put the Artifact Directly into the Upstream Receipt, Do Not "Give Half + Add a Reminder"
 
-Some layers are **automatically derived** in the background (transcription settled -> extract frames to obtain on-screen text, `src/conversions/derive.ts`). When the upstream tool
+Some layers are **derived as independent conversions** (`src/conversions/derive.ts`). `frames` (on-screen text) runs **only when the user explicitly starts it** (since 2026-11 it is no longer auto-dispatched after transcription; a 10-minute video can take over ten minutes to scan and used to hold the user's next conversion behind it in the queue). When such a layer exists on the item — the user started one — the receipt rules below apply. When the upstream tool
 hands over its receipt, that layer may not have finished yet, or it may already be in the database. Each of the two situations has a pitfall, and both are very quiet:
 
 **Pitfall one: if the model does not know it exists, it is equivalent to not existing.** And the model will not say "I don't know"; it will say **`系统没有提供这个工具` ("the system did not provide this tool")** — which sounds like a factual statement about the system.

@@ -55,7 +55,7 @@ describe('抖音：from-url 产出 → 转写取音轨', () => {
       // 抖音没有独立音轨：audio 那一档 null，退到 progressive 整片（与 resolveMember 的合同一致）。
       return format === 'audio'
         ? Promise.resolve(null)
-        : Promise.resolve({ kind: 'progressive', url: 'https://v26-web.douyinvod.com/a/v.mp4', headers: {} })
+        : Promise.resolve({ kind: 'progressive' as const, url: 'https://v26-web.douyinvod.com/a/v.mp4', headers: {} })
     })
     vi.stubGlobal('fetch', vi.fn(bytesResponse))
     const out = await resolveMediaBytes(r.media, { resolveVideo })
@@ -89,7 +89,7 @@ describe('B 站：from-url 产出 → 转写取音轨', () => {
     const resolveVideo: VideoResolver = vi.fn(async (platform, vid, format) => {
       calls.push([platform, vid, format])
       return format === 'audio'
-        ? Promise.resolve({ kind: 'progressive', url: 'https://upos.example/audio.m4s', headers: {} })
+        ? Promise.resolve({ kind: 'progressive' as const, url: 'https://upos.example/audio.m4s', headers: {} })
         : Promise.resolve(null)
     })
     vi.stubGlobal('fetch', vi.fn(bytesResponse))

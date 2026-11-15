@@ -510,7 +510,8 @@ export const conversionsPlugin = {
     )
 
     // 「屏幕上写着什么」——抽帧 + 逐帧 OCR，只留转写拿不到的那部分（幻灯片要点、代码、图表数字）。
-    // 转写落定且是视频时由 derive.ts 自动派生；也可以单独 POST 一条。
+    // 只在用户显式发起时跑（POST /api/conversions kind=frames）——2026-11 起不再自动派生，
+    // 10 分钟的视频抽帧能跑十几分钟，会压住用户的下一条转换。
     conversionConverters.push(
       makeFramesConverter({
         // 只读上游那条 extract（时间轴 + media），不写 store。
@@ -548,8 +549,8 @@ export const conversionsPlugin = {
       // 失败重排的定时器走记账版（见 trackedSchedule）——runner 自己没有 stop 面，
       // 关停时留在飞的那些回调会打到已经关掉的库上。
       schedule: trackedSchedule,
-      // 转成文字是一条会自己往上长的梯子：转写落定后自动去补说话人、是视频再自动去抽帧取画面
-      // 文字。规则表见 conversions/derive.ts。
+      // 转成文字的梯子：起转写时并肩去补说话人。接力派生的规则表（derive.ts）今天为空——
+      // 最贵的抽帧一层已改为用户点击才跑，不再自动接力。
       derivations: CONVERSION_DERIVATIONS,
       costarts: CONVERSION_COSTARTS,
       onSettled: (rec) => {

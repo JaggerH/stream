@@ -86,6 +86,8 @@ export function registerConversionsRoutes(app: Hono, deps: ConversionsDeps): voi
         snapshot: body.snapshot ?? resolved.snapshot,
         inputId: body.input,
         force: body.force,
+        // 走 HTTP 进来的都是用户此刻显式发起（UI 按钮/脚本），排队时插到后台巡检任务前面。
+        priority: 'user',
       })
       if (!created) return c.json(record, 200) // 命中缓存：状态码本身就区分了新建与复用
       c.header('Location', `/api/conversions/${record.id}`)

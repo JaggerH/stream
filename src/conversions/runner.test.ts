@@ -254,6 +254,98 @@ describe('ConversionRunner', () => {
     expect(runner.list({ item: 'c' }).items[0].queuePos).toBe(1)
   })
 
+  // 2026-11：抽帧改为用户点击才跑之后，队列里会同时出现「用户盯着的那条」和「后台巡检
+  // 慢慢排的那批」（归堆取文、声纹扫库）。后台任务可以等，用户盯着的那条不能等——
+  // 用户显式发起的（HTTP POST / MCP 的 extract、identify、语音指纹按钮）一律插到
+  // 所有排队的后台任务前面；后台之间仍按入队顺序。
+  describe('排队优先级', () => {
+    /** 记录起跑顺序的假 converter：放行后把 itemId 记进 order，然后卡住下一个。 */
+    function gatedConverter(order: string[], gate: Array<() => void>): Converter {
+      return makeConverter({
+        async run(ctx) {
+          await new Promise<void>((resolve) => gate.push(resolve))
+          order.push(ctx.itemId)
+          return { ok: true, result: {} }
+        },
+      })
+    }
+
+    it('后台任务在跑时，新入队的用户 extract 先于其它排队的后台任务被执行', async () => {
+      const order: string[] = []
+      const gate: Array<() => void> = []
+      const { runner } = setup([gatedConverter(order, gate)])
+      // 后台巡检起的（缺省 priority='background'）：第一条占住并发，其余排队
+      const bg1 = runner.start('extract', 'bg-1', {})
+      const bg2 = runner.start('extract', 'bg-2', {})
+      const bg3 = runner.start('extract', 'bg-3', {})
+      // 用户此刻点「转成文字」
+      const user1 = runner.start('extract', 'user-1', { priority: 'user' })
+      await settle()
+
+      expect(runner.get(bg1.record.id)!.status).toBe('running') // 在跑的不被打断
+      expect(runner.get(bg2.record.id)!.status).toBe('queued')
+      expect(runner.get(bg3.record.id)!.status).toBe('queued')
+      gate.shift()!() // bg-1 落定，pump() 挑下一条
+      await settle()
+      // 放行了下一条：必须是 user-1（不是队头的 bg-2）——order 要等它自己被放行才记进去
+      expect(runner.get(user1.record.id)!.status).toBe('running')
+      gate.shift()!()
+      await settle()
+      expect(order).toEqual(['bg-1', 'user-1'])
+      expect(runner.get(bg2.record.id)!.status).toBe('running') // 后台照旧接着跑
+
+      gate.shift()!()
+      await settle()
+      gate.shift()!()
+      await settle()
+      expect(order).toEqual(['bg-1', 'user-1', 'bg-2', 'bg-3']) // 后台之间仍按入队顺序
+    })
+
+    it('用户任务之间仍按入队顺序，不互相插队', async () => {
+      const order: string[] = []
+      const gate: Array<() => void> = []
+      const { runner } = setup([gatedConverter(order, gate)])
+      runner.start('extract', 'u-1', { priority: 'user' })
+      runner.start('extract', 'u-2', { priority: 'user' })
+      runner.start('extract', 'u-3', { priority: 'user' })
+      for (let i = 0; i < 3; i++) {
+        gate.shift()!()
+        await settle()
+      }
+      expect(order).toEqual(['u-1', 'u-2', 'u-3'])
+    })
+
+    it('缺省 priority 的任务（巡检、派生、并肩、重启恢复）走后台档', async () => {
+      const order: string[] = []
+      const gate: Array<() => void> = []
+      const { runner } = setup([gatedConverter(order, gate)])
+      runner.start('extract', 'bg-1', {})
+      runner.start('extract', 'bg-2', {})
+      for (let i = 0; i < 2; i++) {
+        gate.shift()!()
+        await settle()
+      }
+      expect(order).toEqual(['bg-1', 'bg-2'])
+    })
+
+    it('用户手动发起 frames 仍可用——抽帧改为点击才跑，入口必须活着', async () => {
+      const { runner } = setup([
+        makeConverter({
+          kind: 'frames',
+          label: '抽帧取画面文字',
+          stages: ['source', 'sample'],
+          async run() {
+            return { ok: true, result: { track: [], probe: { stop: 'no_source' } } }
+          },
+        }),
+      ])
+      const { record, created } = runner.start('frames', 'item-1', {})
+      expect(created).toBe(true)
+      await settle()
+      expect(runner.get(record.id)!.status).toBe('done')
+    })
+  })
+
   it('cancel dequeues a waiting job and drops its record', async () => {
     const gate: Array<() => void> = []
     const converter = makeConverter({

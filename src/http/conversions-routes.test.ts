@@ -181,6 +181,52 @@ describe('POST /api/conversions', () => {
     for (const k of DERIVED_KINDS) expect(KINDS).toContain(k)
     expect(DERIVED_KINDS).toContain('frames')
   })
+
+  // 用户经 HTTP 发起的（UI 按钮/脚本）必须插到已排队的后台任务前面——后台巡检直接经
+  // runner.start 起任务（缺省 priority），等它排着队时用户点了「转成文字」，这条接线漏了
+  // 的表现就是用户的转换老老实实排在队尾。
+  it('用户发起的转换排在已排队的后台任务前面', async () => {
+    const order: string[] = []
+    const gate: Array<() => void> = []
+    const store = new ConversionStore(':memory:')
+    const runner = new ConversionRunner({
+      store,
+      converters: [
+        converter({
+          async run(ctx) {
+            await new Promise<void>((resolve) => gate.push(resolve))
+            order.push(ctx.itemId)
+            return { ok: true, result: {} }
+          },
+        }),
+      ],
+      derivations: [],
+      costarts: [],
+    })
+    const app = new Hono()
+    registerConversionsRoutes(app, { runner, resolveHandle: vi.fn(() => ({ known: true })) })
+    // 后台巡检起的两条：第一条占住并发，第二条排队
+    runner.start('extract', 'bg-1', {})
+    runner.start('extract', 'bg-2', {})
+    const res = await app.request('/api/conversions', {
+      method: 'POST',
+      body: JSON.stringify({ kind: 'extract', item: 'user-1' }),
+    })
+    expect(res.status).toBe(201)
+    await settle()
+    gate.shift()!()
+    await settle()
+    // 放行 bg-1 之后起跑的必须是用户那条（bg-2 还在队列里）——order 只在各自被放行后记入
+    expect(order).toEqual(['bg-1'])
+    expect(runner.list({ item: 'user-1' }).items[0].status).toBe('running')
+    expect(runner.list({ item: 'bg-2' }).items[0].status).toBe('queued')
+    gate.shift()!()
+    await settle()
+    expect(order).toEqual(['bg-1', 'user-1'])
+    gate.shift()!()
+    await settle()
+    expect(order).toEqual(['bg-1', 'user-1', 'bg-2'])
+  })
 })
 
 describe('GET /api/conversions', () => {

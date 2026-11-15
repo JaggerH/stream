@@ -10,10 +10,14 @@
 //
 // `derivationsFor` 是单循环：某条规则的 `when` 谓词抛出会让**整张规则表**一起中止
 // （外层 runner 接住这个异常，当作「这条记录没有要派生的东西」，见 runner.ts 的 deriveFrom）。
-// 表里现在有两条规则（转写→补说话人、转写→抽帧），这条风险已经是真的：任何一条 `when`
-// 抛出，都会把同一轮里另一条本该派生的规则一起静默吃掉。`when` 必须是纯判断（不碰 store、
-// 不打 I/O），只看传进来的这条记录，不许抛。
-import { segmentsIn } from '../../shared/extract/transcript.ts'
+// 这条风险是真的：任何一条 `when` 抛出，都会把同一轮里另一条本该派生的规则一起静默吃掉。
+// `when` 必须是纯判断（不碰 store、不打 I/O），只看传进来的这条记录，不许抛。
+//
+// **今天表是空的**：抽帧（frames）曾在这里自动接力（转写落定且是视频 → 自动抽帧），
+// 2026-11 改为只在用户点击时才跑——10 分钟的视频抽帧能跑十几分钟，自动接力会把用户
+// 下一条「转成文字」压在队列后面。手动入口：POST /api/conversions kind=frames（单独
+// 一条转换，读上游那条 extract 的时间轴与 media）。表和机制保留：以后真要自动派生
+// 某一层，加一行就行。
 import { transcribableMedia } from '../transcribe/media.ts'
 import type { Media } from '../content/types.ts'
 import type { ConversionKind, ConversionRecord } from './store.ts'
@@ -41,27 +45,28 @@ export interface DerivationRule {
  * 查表，漏掉的那条代价是那页幻灯片的字永远不进正文，且没有任何一处会喊。
  * 只有「media 明确在、且里头一个 video 都没有」（纯音频播客）才拦下来。
  */
-const TRANSCRIPT_TO_FRAMES: DerivationRule = {
-  from: 'extract',
-  to: 'frames',
-  when: (rec) => {
-    if (segmentsIn(rec) === undefined) return false
-    const media = (rec.result as { detail?: { media?: { kind?: string }[] } } | undefined)?.detail?.media
-    if (!media || media.length === 0) return true // 判不出来 → 放行
-    return media.some((m) => m?.kind === 'video')
-  },
-}
+/**
+ * 已下线的接力规则（留档）：转写 → 抽帧取画面文字。
+ *
+ * 2026-11 之前：转写落定且是视频 → 自动派 frames。判据以「带不带时间轴」（`segmentsIn`）
+ * 为「走了转写分支」的凭据，media 里没有 video 才拦（纯音频播客）——判不出就放行，宁可
+ * 多派一条，不可漏掉一页幻灯片的字。
+ *
+ * 下线原因：抽帧是全梯子最贵的一层（10 分钟视频实测 14.5 分钟），自动接力把用户显式
+ * 发起的转换压在队列后面。改为 opt-in 后，「值不值得抽」这道判断交还给用户——
+ * 手动入口照常走 `frames` converter 自己的止损梯子（`converters/frames.ts`）。
+ */
 
-/** 今天全部的**接力**规则（上游落定之后才排）。**加一层就在这里加一行**。 */
-export const CONVERSION_DERIVATIONS: readonly DerivationRule[] = [TRANSCRIPT_TO_FRAMES]
+/** 今天全部的**接力**规则（上游落定之后才排；当前为空，见文件头注）。**加一层就在这里加一行**。 */
+export const CONVERSION_DERIVATIONS: readonly DerivationRule[] = []
 
 // —— 并肩起跑 ——
 
 /**
  * 「起这条转换的同时，还要起哪些」——和上面那张表是**两件事**，别合并。
  *
- * 上面那张表是**接力**：上游的产物就是下游的判据（抽帧要读转写才知道值不值得抽），所以必须
- * 等。这张表是**并肩**：两件事只是碰巧要同一份字节，谁也不是谁的输入，等就是白等。
+ * 上面那张表是**接力**：上游的产物就是下游的判据（今天表空了；以前抽帧那层就是这样——
+ * 要读转写才知道值不值得抽），所以必须等。这张表是**并肩**：两件事只是碰巧要同一份字节，谁也不是谁的输入，等就是白等。
  *
  * 判据只看得到起跑那一刻手里的东西（itemId + options），**没有上游记录可读**——这正是它和
  * `DerivationRule` 用不同签名的原因。

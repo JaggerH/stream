@@ -25,16 +25,15 @@ const OCR = { text: '# 标题', format: 'markdown', branch: 'ocr' }
 const withMedia = (media: unknown[]) => ({ ...TRANSCRIPT, detail: { ...TRANSCRIPT.detail, media } })
 
 describe('derivationsFor', () => {
-  it('转写落定（media 判不出来）→ 派 frames：判不出是不是视频时放行', () => {
-    expect(derivationsFor(rec({ result: TRANSCRIPT }), CONVERSION_DERIVATIONS)).toEqual(['frames'])
+  // 2026-11 起 frames 改为 opt-in：视频抽帧动辄十几分钟，自动接力会把用户下一条「转成文字」
+  // 压在队列后面（现场 2026-11-15：一条 10 分钟视频的 frames 跑了 14.5 分钟，同一时间用户
+  // 点的转成文字排了 14.5 分钟才开跑）。手动入口：POST /api/conversions kind=frames。
+  it('转写落定（哪怕明确是视频）→ 不再自动派 frames：抽帧只在用户点击时才跑', () => {
+    expect(derivationsFor(rec({ result: TRANSCRIPT }), CONVERSION_DERIVATIONS)).toEqual([])
+    expect(derivationsFor(rec({ result: withMedia([{ kind: 'video', vid: 'BV1' }]) }), CONVERSION_DERIVATIONS)).toEqual([])
   })
 
-  it('转写落定且 media 里有视频 → 派 frames', () => {
-    const r = rec({ result: withMedia([{ kind: 'video', vid: 'BV1' }]) })
-    expect(derivationsFor(r, CONVERSION_DERIVATIONS)).toEqual(['frames'])
-  })
-
-  it('media 明确在、里头一个 video 都没有（纯音频播客）→ 不派 frames', () => {
+  it('纯音频播客同样不派 frames', () => {
     const r = rec({ result: withMedia([{ kind: 'audio', url: 'https://x/a.mp3' }]) })
     expect(derivationsFor(r, CONVERSION_DERIVATIONS)).toEqual([])
   })

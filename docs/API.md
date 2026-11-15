@@ -353,8 +353,7 @@ In the system, each Provider corresponds to one full config row in the config st
 
 **One conversion = derive a new artifact from one item.** The five `kind`s are `extract` (convert to text),
 `identify` (add speakers), `frames` (extract frame text), `summary` (summary), and `audio-fp` (acoustic fingerprint).
-They share one table, one lifecycle, and one set of timing. After `extract` settles, it automatically grows upward according to the rule table (`src/conversions/derive.ts`): if it has a timeline
-(= it went through the transcription branch), dispatch `identify`; if it is also video, dispatch `frames`. **A collapse in an upper layer does not take the base away** — that is the entire reason they are independent conversions instead of internal steps inside extract.
+They share one table, one lifecycle, and one set of timing. Speaker identification (`identify`) is dispatched **alongside** `extract` — both read the same audio and neither waits for the other (`src/conversions/derive.ts`). `frames` is **opt-in**: since 2026-11 it only runs when explicitly requested (`POST /api/conversions` with `kind: 'frames'`; it reads the upstream extract's timeline and media), because scanning a 10-minute video can take over ten minutes and the automatic hand-off used to hold the user's next conversion behind it in the queue. **A collapse in an upper layer does not take the base away** — that is the entire reason they are independent conversions instead of internal steps inside extract.
 The `audio-fp` tier outputs an **acoustic fingerprint (chromaprint) used by folding to judge "the same recording"**, not body text for humans to read:
 it does not enter the branch table for `extract`, has no frontend trigger entry, and its only trigger is the background worker for inbox folding
 (`src/story-fold/`). Its `available` is determined by engine probing at startup (ffmpeg's chromaprint muxer →

@@ -107,6 +107,11 @@ export interface StartOptions {
   inputId?: string
   /** true = 无视缓存重跑（默认命中非 error 记录就直接返回它，绝不重复计费）。 */
   force?: boolean
+  /** 排队优先级。`'user'` = 用户此刻显式发起（HTTP POST、MCP 的 extract/identify、语音指纹按钮），
+   *  会插到所有**排队中**的后台任务前面——后台巡检（归堆取文、声纹）可以慢慢等，用户盯着
+   *  的那条不能等（现场 2026-11-15：一条视频的自动抽帧把用户点的转成文字压了 14.5 分钟）。
+   *  缺省 `'background'`：巡检、派生、并肩、重启恢复都算后台。在跑的不会被插队打断。 */
+  priority?: 'user' | 'background'
 }
 
 export type ConversionListing = ConversionRecord & { queuePos?: number }
@@ -119,6 +124,8 @@ interface QueuedJob {
   options: Record<string, unknown>
   controller: AbortController
   attempt: number
+  /** 排队优先级（StartOptions.priority）：用户发起的 `'user'` 在 pump 时插到后台前面。 */
+  priority: 'user' | 'background'
   /** 账本行号（仅接了账本时有）。 */
   jobId?: string
   /** 延迟重排的到期时刻（epoch ms）。带着它留在队列里，pump 跳过未到期者——把等待表达进队列
@@ -174,6 +181,7 @@ export class ConversionRunner {
         options: job.input as Record<string, unknown>,
         controller: new AbortController(),
         attempt: 0,
+        priority: 'background',
         jobId: job.jobId,
       })
       resumed.add(rec.id)
@@ -295,6 +303,7 @@ export class ConversionRunner {
       options: opts.options ?? {},
       controller: new AbortController(),
       attempt: 0,
+      priority: opts.priority ?? 'background',
       jobId,
     })
     this.costartFrom(kind, itemId, opts, record.id)
@@ -418,7 +427,11 @@ export class ConversionRunner {
   private pump(): void {
     while (this.running.size < this.maxConcurrent) {
       const at = this.now()
-      const idx = this.queue.findIndex((j) => j.notBefore === undefined || j.notBefore <= at)
+      const due = (j: QueuedJob) => j.notBefore === undefined || j.notBefore <= at
+      // 用户显式发起的排在所有排队的后台任务前面（同档内仍按入队顺序）；没有用户任务时
+      // 后台照旧 FIFO。延迟重排的 notBefore 照旧挡住未到期者，两种优先级都不越线。
+      const userIdx = this.queue.findIndex((j) => due(j) && j.priority === 'user')
+      const idx = userIdx >= 0 ? userIdx : this.queue.findIndex(due)
       if (idx < 0) return
       const job = this.queue.splice(idx, 1)[0]!
       this.running.set(job.id, job)
