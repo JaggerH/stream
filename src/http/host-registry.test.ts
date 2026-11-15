@@ -163,6 +163,20 @@ describe('parseState', () => {
     expect(parseState(JSON.stringify({ type: 'state', a11yEnabled: true, screenOn: false, keyguardLocked: true, battery: 81, charging: false })))
       .toEqual({ a11yEnabled: true, screenOn: false, keyguardLocked: true, battery: 81, charging: false })
   })
+  it('reads an optional health object and passes it through verbatim', () => {
+    expect(parseState(JSON.stringify({ type: 'state', a11yEnabled: true, screenOn: true, keyguardLocked: false, battery: 90, charging: false, health: { networkOk: true, clockSkewMs: -124_937_630 } })))
+      .toEqual({ a11yEnabled: true, screenOn: true, keyguardLocked: false, battery: 90, charging: false, health: { networkOk: true, clockSkewMs: -124_937_630 } })
+    // The skew is absent until the backend's time frame was measured; networkOk alone is a fact.
+    expect(parseState(JSON.stringify({ type: 'state', a11yEnabled: true, screenOn: true, keyguardLocked: false, battery: 90, charging: false, health: { networkOk: false } })))
+      .toEqual({ a11yEnabled: true, screenOn: true, keyguardLocked: false, battery: 90, charging: false, health: { networkOk: false } })
+  })
+  it('a malformed health object drops the whole frame, never defaults', () => {
+    const base = { a11yEnabled: true, screenOn: true, keyguardLocked: false, battery: 90, charging: false }
+    expect(parseState(JSON.stringify({ type: 'state', ...base, health: 'fine' }))).toBeNull()
+    expect(parseState(JSON.stringify({ type: 'state', ...base, health: [] }))).toBeNull()
+    expect(parseState(JSON.stringify({ type: 'state', ...base, health: { networkOk: 'yes' } }))).toBeNull()
+    expect(parseState(JSON.stringify({ type: 'state', ...base, health: { clockSkewMs: 'a year' } }))).toBeNull()
+  })
   it('is null for anything that is not a well-formed state frame', () => {
     expect(parseState('{"type":"state","a11yEnabled":"yes"}')).toBeNull()
     expect(parseState('{"id":1,"result":null}')).toBeNull()

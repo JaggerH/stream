@@ -46,6 +46,9 @@ class FakeDevice : Device {
         return Shot(jpeg, Rect(0, 0, 1080, 2400), 2.75)
     }
     override fun screenSize() = Rect(0, 0, 1080, 2400)
+    /** Epoch ms of the last user touch the service observed (Device.lastUserInputMs), or null. */
+    var userInputAt: Long? = null
+    override fun lastUserInputMs(): Long? = userInputAt
     override fun status(text: String?) { rec("status $text") }
     override fun sleep(ms: Long) { rec("sleep $ms") }
 }

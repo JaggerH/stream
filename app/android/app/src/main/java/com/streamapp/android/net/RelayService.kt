@@ -16,6 +16,8 @@ import android.os.Handler
 import android.os.HandlerThread
 import android.os.IBinder
 import android.os.PowerManager
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.util.Log
 import com.streamapp.android.BuildConfig
 import com.streamapp.android.a11y.AndroidDevice
@@ -112,12 +114,15 @@ class RelayService : Service() {
         val level = bat?.getIntExtra(BatteryManager.EXTRA_LEVEL, -1) ?: -1
         val scale = bat?.getIntExtra(BatteryManager.EXTRA_SCALE, 100) ?: 100
         val plugged = (bat?.getIntExtra(BatteryManager.EXTRA_PLUGGED, 0) ?: 0) != 0
+        val cm = getSystemService(ConnectivityManager::class.java)
+        val caps = cm.activeNetwork?.let { cm.getNetworkCapabilities(it) }
         return DeviceState(
             a11yEnabled = StreamAccessibilityService.instance != null,
             screenOn = pm.isInteractive,
             keyguardLocked = km.isKeyguardLocked,
             battery = if (level < 0) -1 else level * 100 / scale,
             charging = plugged,
+            networkOk = caps?.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED) == true,
         )
     }
 

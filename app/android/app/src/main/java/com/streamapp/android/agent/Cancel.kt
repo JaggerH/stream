@@ -29,6 +29,7 @@ class CancellableDevice(private val inner: Device, private val cancel: Cancel) :
     override fun isCurrent(node: UiNode) = guard { inner.isCurrent(node) }
     override fun changedSince(version: Long, windowId: String, rect: Rect) = guard { inner.changedSince(version, windowId, rect) }
     override fun foregroundPackage() = guard { inner.foregroundPackage() }
+    override fun lastUserInputMs() = guard { inner.lastUserInputMs() }
     override fun foregroundComponent() = guard { inner.foregroundComponent() }
     override fun launch(packageName: String) = guard { inner.launch(packageName) }
     override fun click(node: UiNode) = guard { inner.click(node) }

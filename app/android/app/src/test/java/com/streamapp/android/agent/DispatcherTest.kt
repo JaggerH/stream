@@ -295,6 +295,72 @@ class DispatcherTest {
         assertTrue(dev.log.toString(), dev.log.isEmpty())
     }
 
+    @Test fun focusAppRefusesWhileTheUserIsUsingTheTargetApp() {
+        dev.fg = "me.ele"
+        dev.userInputAt = System.currentTimeMillis() - 3_000
+        val e = assertThrows(AgentError::class.java) { call("focusApp", """{"match":{"process":"me.ele"}}""") }
+        assertEquals("app-in-use", e.errorCode)
+        assertTrue(e.message!!.startsWith("app-in-use:") && e.message!!.contains("me.ele"))
+        assertEquals("focusApp", e.semantics!!.getString("op"))
+        assertEquals("me.ele", e.semantics!!.getJSONObject("app").getString("id"))
+        assertFalse(dev.log.any { it.startsWith("launch") })
+    }
+
+    @Test fun focusAppRunsWhenTheLastTouchIsOld() {
+        dev.fg = "me.ele"
+        dev.userInputAt = System.currentTimeMillis() - 30_000
+        assertEquals(mapOf("ok" to true), call("focusApp", """{"match":{"process":"me.ele"}}"""))
+        assertTrue("launch me.ele" in dev.log)
+    }
+
+    @Test fun focusAppRunsWhenTheUserIsInAnotherApp() {
+        dev.fg = "com.android.launcher"
+        dev.userInputAt = System.currentTimeMillis() - 1_000
+        dev.launchMakesForeground = "me.ele"
+        assertEquals(mapOf("ok" to true), call("focusApp", """{"match":{"process":"me.ele"}}"""))
+        assertTrue("launch me.ele" in dev.log)
+    }
+
+    @Test fun focusAppRunsWithoutAnyTouchFact() {
+        dev.fg = "me.ele" // userInputAt stays null: the service saw nothing
+        assertEquals(mapOf("ok" to true), call("focusApp", """{"match":{"process":"me.ele"}}"""))
+    }
+
+    @Test fun scopeWindowRefusesWhileTheUserIsUsingThatApp() {
+        dev.userInputAt = System.currentTimeMillis()
+        val e = assertThrows(AgentError::class.java) { call("scopeWindow", """{"match":{"process":"com.sankuai.meituan"}}""") }
+        assertEquals("app-in-use", e.errorCode)
+        assertEquals("scopeWindow", e.semantics!!.getString("op"))
+        assertEquals("com.sankuai.meituan", e.semantics!!.getJSONObject("app").getString("id"))
+    }
+
+    @Test fun aGatedOpRefusesWhileTheUserIsUsingTheScopedApp() {
+        call("scopeWindow", """{"match":{"process":"com.sankuai.meituan"}}""")
+        dev.userInputAt = System.currentTimeMillis()
+        val e = assertThrows(AgentError::class.java) { call("click", """{"rect":{"x":100,"y":200,"w":50,"h":40}}""") }
+        assertEquals("app-in-use", e.errorCode)
+        assertEquals("click", e.semantics!!.getString("op"))
+        assertFalse(dev.log.any { it.startsWith("tap") })
+        // The user is done: the same op runs again.
+        dev.userInputAt = System.currentTimeMillis() - 30_000
+        call("click", """{"rect":{"x":100,"y":200,"w":50,"h":40}}""")
+        assertTrue("tap 125,220 long=false" in dev.log)
+    }
+
+    @Test fun pressRefusesWhileTheUserIsUsingTheApp() {
+        dev.userInputAt = System.currentTimeMillis()
+        val e = assertThrows(AgentError::class.java) { call("press", """{"key":"Home"}""") }
+        assertEquals("app-in-use", e.errorCode)
+        assertFalse(dev.log.any { it == "home" })
+    }
+
+    @Test fun screenshotIsPassiveAndNeverFailsAsAppInUse() {
+        dev.userInputAt = System.currentTimeMillis()
+        assertTrue(map(call("screenshot")).containsKey("base64"))
+        dev.wins = mutableListOf(WindowInfo("1", "com.sankuai.meituan", "美团", true))
+        assertEquals("com.sankuai.meituan/.Main", call("url"))
+    }
+
     @Test fun urlAndSleep() {
         assertEquals("com.sankuai.meituan/.Main", call("url"))
         assertNull(call("sleep", """{"ms":20}"""))

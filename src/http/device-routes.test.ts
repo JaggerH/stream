@@ -155,7 +155,7 @@ describe('device routes', () => {
     const r = store.pair(store.createPairingCode().code, 'K80')
     if (!r.ok) throw new Error('expected ok')
     registry.connect({ send: () => {} }, { deviceId: r.deviceId, platform: 'android', name: 'K80', agentVersion: '0.1.0', ops: [] })
-    const state = { a11yEnabled: false, screenOn: true, keyguardLocked: false, battery: 40, charging: false }
+    const state = { a11yEnabled: false, screenOn: true, keyguardLocked: false, battery: 40, charging: false, health: { networkOk: false, clockSkewMs: -124_937_630 } }
     registry.setState(r.deviceId, state)
     const body = await (await app.request('/devices')).json() as { devices: Array<{ state?: unknown }> }
     expect(body.devices[0].state).toEqual(state)
@@ -215,6 +215,25 @@ describe('device routes', () => {
       const r = await p
       expect(r.status).toBe(502)
       expect(await r.json()).toEqual({ error: 'approval-required: 该动作需要审批', code: 'approval-required', semantics })
+    })
+
+    it('the app-in-use receipt rides the same channel (code + semantics)', async () => {
+      const p = opPost(phoneId, JSON.stringify({ op: 'focusApp', args: { match: { process: 'me.ele' } } }))
+      await vi.waitFor(() => expect(sent).toHaveLength(1))
+      const semantics = { op: 'focusApp', app: { id: 'me.ele', name: '饿了么' } }
+      registry.devices()[0].relay.handleMessage(JSON.stringify({
+        id: JSON.parse(sent[0]).id,
+        error: 'app-in-use: me.ele 正被用户在前台使用，Stream 不抢；等用户用完再试',
+        code: 'app-in-use',
+        semantics,
+      }))
+      const r = await p
+      expect(r.status).toBe(502)
+      expect(await r.json()).toEqual({
+        error: 'app-in-use: me.ele 正被用户在前台使用，Stream 不抢；等用户用完再试',
+        code: 'app-in-use',
+        semantics,
+      })
     })
 
     it('other device codes ride along in the 502 body (stale-ref)', async () => {

@@ -60,18 +60,28 @@ class Dispatcher(private val raw: Device, private val policy: PolicyContext? = n
         busyReason?.let { reason ->
             if (op !in BUSY_PASS) throw AgentError("device-busy: 执行端置忙，等审批期间不执行新动作" + reasonPart(reason), "device-busy")
         }
+        // Occupancy for the action ops — the app the action would land on (the scoped app, else
+        // the foreground one) — before anything happens. focusApp and scopeWindow judge their own
+        // target inside their branch; this is here rather than in gated() so it holds without a
+        // policy too (the JVM tests run one).
+        if (op in GATED || op == "press") {
+            val info = appInfo()
+            requireAppNotInUse(op, info.pkg, info.title)
+        }
         return when (op) {
             "windows" -> device.windows().filter { appVisible(it.process, it.title) }.map { it.toMap() }
             "scopeWindow" -> {
                 val match = obj(args, "match")
                 val w = resolveWindow(match)
                 requireAppVisible(w.process, w.title)
+                requireAppNotInUse("scopeWindow", w.process, w.title)
                 scope = Scope(w.process, if (match.has("title")) match.getString("title") else null)
                 mapOf("window" to w.toMap())
             }
             "focusApp" -> {
                 val pkg = str(obj(args, "match"), "process")
                 requireAppVisible(pkg)
+                requireAppNotInUse("focusApp", pkg)
                 mapOf("ok" to focusApp(pkg))
             }
             "find" -> find(A11yQuery.from(obj(args, "query")))
@@ -208,6 +218,20 @@ class Dispatcher(private val raw: Device, private val policy: PolicyContext? = n
 
     private fun requireAppVisible(pkg: String, title: String? = null) {
         if (!appVisible(pkg, title)) throw AgentError("app-denied: ${pkg.ifEmpty { "当前应用" }} 对调用方不可见（敏感类目缺省拒阅，或已被用户拉黑）", "app-denied")
+    }
+
+    /** The occupancy check: an app holding the foreground that the user touched in the last
+     *  [IN_USE_RECENT_MS] is theirs — an op that would take the screen fails as `app-in-use`
+     *  instead of stealing it (their touches, not our injected gestures: `Device.lastUserInputMs`
+     *  already excludes those). No touch fact at all means we cannot say anyone is using it —
+     *  the check fails open. Suspending, waiting and retrying are the caller's decision. */
+    private fun requireAppNotInUse(op: String, pkg: String, title: String? = null) {
+        val last = device.lastUserInputMs() ?: return
+        if (device.foregroundPackage()?.equals(pkg, ignoreCase = true) != true) return
+        if (System.currentTimeMillis() - last > IN_USE_RECENT_MS) return
+        val app = JSONObject().put("id", pkg).put("name", title?.takeIf { it.isNotBlank() && title != pkg } ?: pkg)
+        throw AgentError("app-in-use: $pkg 正被用户在前台使用，Stream 不抢；等用户用完再试", "app-in-use",
+            JSONObject().put("op", op).put("app", app))
     }
 
     /**
@@ -498,6 +522,10 @@ class Dispatcher(private val raw: Device, private val policy: PolicyContext? = n
     private companion object {
         /** The receipt's control label is masked text trimmed to this bound. */
         const val LABEL_MAX = 64
+
+        /** How recently the user must have touched the screen for their foreground app to count
+         *  as "in use". A reader who has not touched anything this long is not interrupted. */
+        const val IN_USE_RECENT_MS = 10_000L
     }
 }
 

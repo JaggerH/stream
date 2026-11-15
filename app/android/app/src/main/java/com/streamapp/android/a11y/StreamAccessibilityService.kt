@@ -6,6 +6,7 @@ import android.view.accessibility.AccessibilityWindowInfo
 import com.streamapp.android.agent.ChangeLog
 import com.streamapp.android.agent.ForegroundComponents
 import com.streamapp.android.agent.Rect
+import com.streamapp.android.agent.UserInputTracker
 import com.streamapp.android.agent.isPageChange
 
 /** The system-bound half. All op logic lives in `AndroidDevice`; this class only tracks the
@@ -19,6 +20,12 @@ class StreamAccessibilityService : AccessibilityService() {
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent) {
+        if (event.eventType == AccessibilityEvent.TYPE_TOUCH_INTERACTION_START) {
+            // A human touched the screen — unless it was one of our own injected gestures, which
+            // the tracker excludes (the fact `app-in-use` judges on).
+            inputs.onTouchInteraction(System.currentTimeMillis())
+            return
+        }
         if (event.eventType == AccessibilityEvent.TYPE_WINDOWS_CHANGED) {
             noteWindows()
             return
@@ -73,5 +80,7 @@ class StreamAccessibilityService : AccessibilityService() {
         val changes = ChangeLog()
         /** See `Device.foregroundComponent`. */
         val components = ForegroundComponents()
+        /** See `Device.lastUserInputMs`. Static, so it survives a service restart like [changes]. */
+        val inputs = UserInputTracker()
     }
 }

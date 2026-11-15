@@ -104,8 +104,10 @@ export interface DeviceRow {
   pairedAt?: number
   lastSeenAt?: number
   agentVersion?: string
-  /** Latest self-report of an online phone; absent until it has sent one. */
-  state?: { a11yEnabled: boolean; screenOn: boolean; keyguardLocked: boolean; battery: number; charging: boolean }
+  /** Latest self-report of an online phone; absent until it has sent one. `health` carries the
+   *  device facts the app reports (`networkOk`, and `clockSkewMs` once the backend's time frame
+   *  was measured) — facts only, judging them is the consumer's job. */
+  state?: { a11yEnabled: boolean; screenOn: boolean; keyguardLocked: boolean; battery: number; charging: boolean; health?: { networkOk?: boolean; clockSkewMs?: number } }
 }
 
 /** One row of `GET /api/ext/bindings`: a Chrome extension paired onto a device. Never carries the token. */

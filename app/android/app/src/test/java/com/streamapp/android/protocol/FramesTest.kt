@@ -45,10 +45,27 @@ class FramesTest {
     }
 
     @Test fun stateFrame() {
-        val o = JSONObject(Frames.state(DeviceState(a11yEnabled = false, screenOn = true, keyguardLocked = false, battery = 77, charging = true)))
+        val o = JSONObject(Frames.state(DeviceState(a11yEnabled = false, screenOn = true, keyguardLocked = false, battery = 77, charging = true, networkOk = true)))
         assertEquals("state", o.getString("type"))
         assertFalse(o.getBoolean("a11yEnabled"))
         assertEquals(77, o.getInt("battery"))
+    }
+
+    @Test fun stateFrameCarriesHealth() {
+        val o = JSONObject(Frames.state(DeviceState(a11yEnabled = true, screenOn = true, keyguardLocked = false, battery = 50, charging = false, networkOk = false)))
+        assertEquals(false, o.getJSONObject("health").getBoolean("networkOk"))
+        assertFalse(o.getJSONObject("health").has("clockSkewMs"))
+        val withSkew = JSONObject(Frames.state(DeviceState(a11yEnabled = true, screenOn = true, keyguardLocked = false, battery = 50, charging = false, networkOk = true), clockSkewMs = -124_000))
+        assertEquals(-124_000, withSkew.getJSONObject("health").getLong("clockSkewMs"))
+        assertEquals(true, withSkew.getJSONObject("health").getBoolean("networkOk"))
+    }
+
+    @Test fun parsesTheBackendTimeFrame() {
+        assertEquals(1_760_000_000_000, Frames.time("""{"type":"time","serverTime":1760000000000}"""))
+        assertNull(Frames.time("""{"type":"time"}""")) // no serverTime, no fact
+        assertNull(Frames.time("""{"type":"time","serverTime":"soon"}"""))
+        assertNull(Frames.time("""{"type":"control","control":"setBusy","busy":true}"""))
+        assertNull(Frames.time("nope"))
     }
 
     @Test fun abortFrame() {

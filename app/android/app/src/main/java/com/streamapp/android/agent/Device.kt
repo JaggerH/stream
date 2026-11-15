@@ -23,6 +23,10 @@ interface Device {
     /** Whether the live node behind [node] still shows what the snapshot recorded. */
     fun isCurrent(node: UiNode): Boolean
     fun foregroundPackage(): String?
+    /** Epoch ms of the most recent user touch the accessibility service observed — excluding the
+     *  ones our own injected gestures produced (see [UserInputTracker]). `null` when none was
+     *  observed since the service connected. */
+    fun lastUserInputMs(): Long?
     /** `package/activityClass` of the foreground window, or `package` when the activity is unknown. */
     fun foregroundComponent(): String
     fun launch(packageName: String): Boolean

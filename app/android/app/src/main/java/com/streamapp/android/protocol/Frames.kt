@@ -25,6 +25,8 @@ data class DeviceState(
     val keyguardLocked: Boolean,
     val battery: Int,
     val charging: Boolean,
+    /** Whether the OS has validated reachability on the default network. */
+    val networkOk: Boolean,
 )
 
 /** The `host-relay.v2` frames this app sends and receives. */
@@ -82,15 +84,27 @@ object Frames {
             .put("ops", JSONArray(ops))
             .toString()
 
-    fun state(s: DeviceState): String =
-        JSONObject()
+    fun state(s: DeviceState, clockSkewMs: Long? = null): String {
+        val health = JSONObject().put("networkOk", s.networkOk)
+        if (clockSkewMs != null) health.put("clockSkewMs", clockSkewMs)
+        return JSONObject()
             .put("type", "state")
             .put("a11yEnabled", s.a11yEnabled)
             .put("screenOn", s.screenOn)
             .put("keyguardLocked", s.keyguardLocked)
             .put("battery", s.battery)
             .put("charging", s.charging)
+            .put("health", health)
             .toString()
+    }
+
+    /** The backend's `{type:"time", serverTime}` frame — its clock, epoch ms — or null for
+     *  anything else. The device measures its own clock against this once per connection. */
+    fun time(raw: String): Long? {
+        val o = try { JSONObject(raw) } catch (_: Exception) { return null }
+        if (o.optString("type") != "time") return null
+        return (o.opt("serverTime") as? Number)?.toLong()
+    }
 
     /** `phone-stop`: the backend tells this apart from the desktop hotkey when it words the abort. */
     fun abort(): String = JSONObject().put("type", "abort").put("reason", "phone-stop").toString()

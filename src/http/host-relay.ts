@@ -110,15 +110,28 @@ export interface DeviceOpSemantics {
   snapshotRef?: string
 }
 
+/**
+ * 设备错误帧里 `semantics` 的占用回执形状（`device-app-in-use-health`）：执行端拒绝接管用户正在用的
+ * App 时附带的 `app-in-use` 回执——被占用的是哪个 App。后端原样转发，不解释、不裁剪。
+ */
+export interface AppInUseSemantics {
+  op: string
+  app: { id: string; name: string; category?: string }
+}
+
+/** 设备错误帧 `semantics` 的两种合法形状：审批回执（`device-sensitive-semantics`）与占用回执
+ *  （`app-in-use`）。后端不解释，按设备帧原样转发；嵌入方按 `code` 区分。 */
+export type HostOpSemantics = DeviceOpSemantics | AppInUseSemantics
+
 /** agent 回了一个错误帧。`code` 是 agent 给的机器可读分类（`private-target` 等），旧 agent 不带；
- *  `semantics` 是 `approval-required` 的结构化回执（`device-sensitive-semantics`），设备给了才在。 */
+ *  `semantics` 是结构化回执（`approval-required` 的审批回执、`app-in-use` 的占用回执），设备给了才在。 */
 export class HostOpError extends Error {
   /** 显式赋值而不是参数属性：sidequest 的 inline runner 用 Node 原生 import 装载 jobs 文件——
    *  strip-only 模式过不了参数属性（同 `devices/errors.ts` 的既有先例）。 */
   readonly code?: string
-  /** 设备给的审批回执，原样对象；不是 approval-required（或设备没给）时是 undefined。 */
-  readonly semantics?: DeviceOpSemantics
-  constructor(message: string, code?: string, semantics?: DeviceOpSemantics) {
+  /** 设备给的回执，原样对象；设备没给时是 undefined。 */
+  readonly semantics?: HostOpSemantics
+  constructor(message: string, code?: string, semantics?: HostOpSemantics) {
     super(message)
     this.name = 'HostOpError'
     this.code = code
@@ -132,7 +145,7 @@ function opErrorFromFrame(msg: { error?: string; code?: unknown; semantics?: unk
   return new HostOpError(
     msg.error ?? 'unknown error',
     typeof msg.code === 'string' ? msg.code : undefined,
-    typeof msg.semantics === 'object' && msg.semantics !== undefined ? (msg.semantics as DeviceOpSemantics) : undefined,
+    typeof msg.semantics === 'object' && msg.semantics !== undefined ? (msg.semantics as HostOpSemantics) : undefined,
   )
 }
 
@@ -950,6 +963,11 @@ export function hostRelayHandler(
       const replaced = registry.isOnline(hello.deviceId)
       registry.connect(socket, hello)
       if (boundDevice !== undefined) onDeviceSeen?.(boundDevice)
+      // Android 上报设备健康（device-app-in-use-health）：先给它我们的时钟，它以本机时钟减
+      // 这一刻得到偏差，随下一帧 state 带回。桌面 agent 没有等价的事实源，不发。
+      if (hello.platform === 'android') {
+        try { socket.send(JSON.stringify({ type: 'time', serverTime: Date.now() })) } catch { /* 连接死活走它自己的路径 */ }
+      }
       log(
         `[host-relay] device connected ${hello.deviceId} (${hello.platform}, ${hello.name}, v${hello.agentVersion}, ${hello.ops.length} ops)` +
           (replaced ? ' — replaced a live connection' : ''),

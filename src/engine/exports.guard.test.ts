@@ -28,6 +28,7 @@ describe('@streamapp/engine 公开面', () => {
     const src = readFileSync(join(import.meta.dirname, 'index.ts'), 'utf8')
     expect(exportedNames(src)).toEqual(
       [
+        'AppInUseSemantics',
         'CallerFetchGuardOptions',
         'CdpBinding',
         'CdpBindingOptions',
@@ -41,6 +42,7 @@ describe('@streamapp/engine 公开面', () => {
         'DeviceOpSemantics',
         'DeviceSnapshot',
         'ForwardScope',
+        'HostOpSemantics',
         'Stream',
         'StreamCapabilities',
         'StreamDevices',

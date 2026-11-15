@@ -22,9 +22,10 @@ class RelayClientTest {
     }
 
     private val creds = Creds("http://10.9.8.21:8900", "android:abc", "tok")
-    private val state = DeviceState(true, true, false, 90, false)
+    private val state = DeviceState(true, true, false, 90, false, true)
     private val scheduled = mutableListOf<Long>()
     private var cancels = 0
+    private var nowMs = 10_000L
     private val queued = mutableListOf<Runnable>()
     private var deferred = false
     private var revokedWith: String? = null
@@ -36,6 +37,7 @@ class RelayClientTest {
         stateProvider = { state },
         executor = { if (deferred) queued += it else it.run() },
         schedule = { ms, _ -> scheduled += ms; { cancels++ } },
+        now = { nowMs },
         backoff = Backoff(jitter = { 0.0 }),
         callbacks = object : RelayClient.Callbacks {
             override fun status(text: String) {}
@@ -69,6 +71,44 @@ class RelayClientTest {
         t.listener!!.onOpen()
         t.listener!!.onMessage("""{"type":"something"}""")
         assertEquals(2, t.sent.size)
+    }
+
+    @Test fun theFirstStateCarriesNetworkOkButNoClockSkew() {
+        val t = FakeTransport()
+        client(t).start(creds)
+        t.listener!!.onOpen()
+        val health = JSONObject(t.sent[1]).getJSONObject("health")
+        assertEquals(true, health.getBoolean("networkOk"))
+        assertFalse(health.has("clockSkewMs"))
+    }
+
+    @Test fun aTimeFrameSetsTheSkewAndRefreshesTheStateAtOnce() {
+        val t = FakeTransport()
+        val c = client(t)
+        c.start(creds)
+        t.listener!!.onOpen()
+        t.listener!!.onMessage("""{"type":"time","serverTime":9500}""")
+        assertEquals(500, JSONObject(t.sent.last()).getJSONObject("health").getLong("clockSkewMs"))
+        // The measurement rides every later state too, even as the local clock moves on.
+        nowMs = 11_000
+        c.sendState()
+        assertEquals(500, JSONObject(t.sent.last()).getJSONObject("health").getLong("clockSkewMs"))
+    }
+
+    @Test fun aJunkTimeFrameIsIgnoredAndANewConnectionForgetsTheSkew() {
+        val t = FakeTransport()
+        val c = client(t)
+        c.start(creds)
+        t.listener!!.onOpen()
+        t.listener!!.onMessage("""{"type":"time","serverTime":"soon"}""")
+        assertEquals(2, t.sent.size) // nothing extra was sent, nothing measured
+        t.listener!!.onMessage("""{"type":"time","serverTime":9000}""")
+        assertEquals(1000, JSONObject(t.sent.last()).getJSONObject("health").getLong("clockSkewMs"))
+        // A new connection starts the measurement over: no skew until the backend's clock arrives again.
+        t.listener!!.onClosed(1006, "")
+        c.start(creds)
+        t.listener!!.onOpen()
+        assertFalse(JSONObject(t.sent.last()).getJSONObject("health").has("clockSkewMs"))
     }
 
     @Test fun reconnectsWithBackoffButStopsOnRevoke() {

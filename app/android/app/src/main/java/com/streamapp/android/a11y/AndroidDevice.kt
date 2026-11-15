@@ -116,6 +116,8 @@ class AndroidDevice(private val ctx: Context, private val onStop: () -> Unit) : 
 
     override fun foregroundPackage(): String? = svc().rootInActiveWindow?.packageName?.toString()
 
+    override fun lastUserInputMs(): Long? = StreamAccessibilityService.inputs.lastUserInputMs()
+
     override fun foregroundComponent(): String = StreamAccessibilityService.components.componentOf(foregroundPackage())
 
     override fun launch(packageName: String): Boolean {
@@ -162,6 +164,9 @@ class AndroidDevice(private val ctx: Context, private val onStop: () -> Unit) : 
 
     private fun gesture(path: Path, durationMs: Long) {
         syncOverlay()
+        // Whatever touch events the system reports while this gesture is in flight are ours, not
+        // the user's: they must not read as "the user is using the app".
+        StreamAccessibilityService.inputs.gestureDispatched(System.currentTimeMillis(), durationMs)
         val done = CountDownLatch(1)
         val ok = AtomicBoolean(false)
         val g = try {

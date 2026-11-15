@@ -28,6 +28,18 @@ export interface HostHello {
   ports?: number[]
 }
 
+/**
+ * Device-side health facts (`device-app-in-use-health`): the phone reports what only it can see,
+ * and judges none of it. `clockSkewMs` is the device clock minus the backend clock, measured
+ * against the `{type:"time", serverTime}` frame the backend sends after an android `hello`
+ * (positive = the device is ahead); absent until that frame arrived on this connection.
+ * `networkOk` is the OS's validated-reachability verdict on the device's default network.
+ */
+export interface DeviceHealth {
+  clockSkewMs?: number
+  networkOk?: boolean
+}
+
 /** What a phone reports about itself: sent right after `hello`, every 30 s, and on every
  *  accessibility-service change. The backend only stores the latest one. */
 export interface HostDeviceState {
@@ -36,10 +48,14 @@ export interface HostDeviceState {
   keyguardLocked: boolean
   battery: number
   charging: boolean
+  /** Optional device facts; an app that predates them sends no `health` at all. */
+  health?: DeviceHealth
 }
 
 /** `null` for anything that is not a complete state frame. A partial frame is dropped, not
- *  merged: a missing `a11yEnabled` read as `false` would raise a false alarm. */
+ *  merged: a missing `a11yEnabled` read as `false` would raise a false alarm. An optional `health`
+ *  is either absent, an object with well-typed fields, or it sinks the whole frame the same way —
+ *  a malformed `health: "fine"` silently read as "no health" would hide the app's defect. */
 export function parseState(raw: string): HostDeviceState | null {
   let m: Record<string, unknown>
   try {
@@ -51,7 +67,19 @@ export function parseState(raw: string): HostDeviceState | null {
   const { a11yEnabled, screenOn, keyguardLocked, battery, charging } = m
   if (typeof a11yEnabled !== 'boolean' || typeof screenOn !== 'boolean' || typeof keyguardLocked !== 'boolean') return null
   if (typeof battery !== 'number' || typeof charging !== 'boolean') return null
-  return { a11yEnabled, screenOn, keyguardLocked, battery, charging }
+  let health: DeviceHealth | undefined
+  if (m.health !== undefined) {
+    const h = m.health
+    if (h === null || typeof h !== 'object' || Array.isArray(h)) return null
+    const { clockSkewMs, networkOk } = h as Record<string, unknown>
+    if (clockSkewMs !== undefined && typeof clockSkewMs !== 'number') return null
+    if (networkOk !== undefined && typeof networkOk !== 'boolean') return null
+    health = {
+      ...(clockSkewMs !== undefined ? { clockSkewMs } : {}),
+      ...(networkOk !== undefined ? { networkOk } : {}),
+    }
+  }
+  return { a11yEnabled, screenOn, keyguardLocked, battery, charging, ...(health !== undefined ? { health } : {}) }
 }
 
 export interface HostDevice {

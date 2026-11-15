@@ -164,6 +164,29 @@ describe('attachHostRelay device tokens', () => {
     ws.close()
   })
 
+  it('answers an android hello with the backend clock and leaves desktop agents alone', async () => {
+    const { registry, url } = await startWithDevices({ 'dev-token': 'android:k80' }, [])
+    const ws = new WebSocket(url, [HOST_RELAY_PROTOCOL, 'dev-token'])
+    await new Promise((r) => ws.on('open', r))
+    const got = new Promise<string>((r) => ws.once('message', (d) => r(String(d))))
+    ws.send(JSON.stringify(phoneHello('android:k80')))
+    const frame = JSON.parse(await got)
+    expect(frame.type).toBe('time')
+    expect(typeof frame.serverTime).toBe('number')
+    expect(Math.abs(Date.now() - frame.serverTime)).toBeLessThan(5_000)
+    await until(() => registry.devices().length === 1)
+    // A desktop agent has no phone health to feed — the backend sends it no time frame.
+    const ws2 = new WebSocket(url, [HOST_RELAY_PROTOCOL, TOKEN])
+    await new Promise((r) => ws2.on('open', r))
+    const desktopGot = new Promise<string>((r) => ws2.once('message', () => r('got-frame')))
+    ws2.send(JSON.stringify(helloFrame))
+    await until(() => registry.devices().length === 2)
+    const raced = await Promise.race([desktopGot, new Promise<string>((r) => setTimeout(() => r('nothing'), 300))])
+    expect(raced).toBe('nothing')
+    ws.close()
+    ws2.close()
+  })
+
   it('routes state frames to the registry and to onDeviceState, not to the relay', async () => {
     const seenStates: Array<[string, unknown, unknown]> = []
     const { registry, url } = await startWithDevices(

@@ -46,6 +46,7 @@ class RelayClient(
     private val stateProvider: () -> DeviceState,
     private val executor: (Runnable) -> Unit,
     private val schedule: (Long, Runnable) -> () -> Unit,
+    private val now: () -> Long = { System.currentTimeMillis() },
     private val backoff: Backoff = Backoff(),
     private val callbacks: Callbacks,
 ) {
@@ -64,6 +65,10 @@ class RelayClient(
     /** Highest `abortEpoch` seen on this connection, and the lowest one accepted after our aborts. */
     @Volatile private var seenEpoch = 0L
     @Volatile private var minEpoch = 0L
+    /** Device clock minus backend clock, measured when the backend's `time` frame arrived on this
+     *  connection; the backend sends one right after registering our `hello`, and we report the
+     *  measurement in every `state` until the connection ends. */
+    @Volatile private var clockSkewMs: Long? = null
 
     private fun cancelAll(why: String) = synchronized(live) {
         live.forEach { it.cancel(why) }
@@ -81,6 +86,7 @@ class RelayClient(
         // The count is the backend's; a new connection may be a restarted backend counting from 0.
         seenEpoch = 0
         minEpoch = 0
+        clockSkewMs = null
         callbacks.status("正在连接 ${c.backend}")
         transport.open(wsUrl(c.backend), listOf(Frames.PROTOCOL, c.token), listenerFor(g))
     }
@@ -94,7 +100,7 @@ class RelayClient(
         transport.close(1000, "stopped")
     }
 
-    fun sendState() { if (open) transport.send(Frames.state(stateProvider())) }
+    fun sendState() { if (open) transport.send(Frames.state(stateProvider(), clockSkewMs)) }
 
     /** The user tapped Stop: drop everything in hand, tell the backend, keep the connection. */
     fun abort() {
@@ -123,6 +129,13 @@ class RelayClient(
             val d = current ?: return
             Frames.control(text)?.let { c ->
                 handleControl(c, d)
+                return
+            }
+            // The backend's clock: measure our offset against it and report it at once, so the
+            // caller does not wait a heartbeat to learn the device clock is wrong.
+            Frames.time(text)?.let { serverTime ->
+                clockSkewMs = now() - serverTime
+                sendState()
                 return
             }
             val req = Frames.request(text) ?: return
