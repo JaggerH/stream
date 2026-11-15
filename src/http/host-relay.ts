@@ -577,6 +577,34 @@ export class WsHostRelay implements HostRelay {
     }
   }
 
+  /** 发一条带外控制帧（`{type:'control',…}`，device-sensitive-semantics）并按 id 配回复。
+   *
+   *  **不等会话租约、不占单发尾锁**（不走 `send()` 的排队，也不占 `inFlight`）：控制帧对称于
+   *  `abort`，正是"recipe 占着设备时要能从外面发的那一帧"——置忙要把手机从审批等待里拉出来，
+   *  排在租约后面就永远轮不到。回复走同一条 pending 表：设备把控制帧放进与 op 同一个串行执行器
+   *  （busy 与豁免按 op 顺序生效），用 `{id,result}` / `{id,error}` 应答。 */
+  sendControl(frame: Record<string, unknown>): Promise<unknown> {
+    const socket = this.socket
+    if (!socket) return Promise.reject(new HostRelayDisconnected())
+    const id = this.nextId++
+    const name = typeof frame.control === 'string' ? frame.control : 'control'
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.pending.delete(id)
+        reject(new HostRelayTimeout(name))
+      }, this.timeoutMs)
+      timer.unref?.()
+      this.pending.set(id, { op: name, resolve, reject, timer })
+      try {
+        socket.send(JSON.stringify({ ...frame, id }))
+      } catch (e) {
+        this.pending.delete(id)
+        clearTimeout(timer)
+        reject(e)
+      }
+    })
+  }
+
   /** 会话落定：从表里摘掉、清掉建连计时器。只清登记，不通知调用方（通知在各落定路径自己做）。 */
   private closeForwardSession(id: number, s: ForwardWsSession): void {
     this.forwardSessions.delete(id)

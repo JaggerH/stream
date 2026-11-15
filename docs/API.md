@@ -235,6 +235,15 @@ curl -sS -X POST 'http://127.0.0.1:8900/api/devices/android%3A<device-uuid>/ops'
   -H 'Content-Type: application/json' -d '{"op":"windows"}'
 ```
 
+`POST /api/devices/:id/control` sends one out-of-band control frame (`device-sensitive-semantics`) to an online device from the backend machine only, with the same 403/404/502 contract as `/ops` — except that an offline device answers 404 `{error:"device-offline"}`. The body is the frame itself: `{"type":"control","control":"setBusy","busy":true,"reason":"..."}` (busy is required and boolean; the phone never decides how long busy lasts) or `{"type":"control","control":"exemptions","ask":[{"app":"<package>","action":"commit|send|install|setting|call|link"}],"financeVisible":["<package>"]}` (both lists optional, empty = revoke; the frame replaces the phone's whole exemption set). No other `control` value is accepted, malformed frames are 400 and nothing is sent. The correlation `id` is assigned by the backend; the device's `{id,result}` reply becomes 200 `{result}` and `{id,error}` becomes 502 `{error}` (machine-readable codes such as `exemption-invalid` are kept in the message). Unlike recipe ops, the frame is sent out-of-band — it does not queue behind a running recipe's session lease, which is the point: busy must reach the phone while a recipe is holding it.
+
+```bash
+curl -sS -X POST 'http://127.0.0.1:8900/api/devices/android%3A<device-uuid>/control' \
+  -H 'Content-Type: application/json' -d '{"type":"control","control":"setBusy","busy":true,"reason":"等待审批"}'
+```
+
+A device declares the ops it implements in its `hello`. That list is surfaced to embedders: `GET`-style snapshots (`devices.online()` on the instance handle) carry `ops` for each online device, and every successful handshake emits a device-online change (`devices.onChange`) carrying the hello's `ops` — so a reconnect with a different op set is the newest fact, and offline changes carry no `ops`. Consumers decide capability by op name (e.g. a device that does not declare `browser.claim` is not claimable) instead of probing op by op.
+
 **The exempt routes** (registered **before** the gate, with their reasons documented in place): `/api/health`, `/api/ext/verify`,
 `/api/ext/relay-status`, `/api/ext/claimed-tabs`, `/api/ext/debug-log`, `/api/browser-capability[/diagnose]`.
 `POST /api/devices/pair` is also token-exempt, but it is checked inside the gate after Host/Origin.

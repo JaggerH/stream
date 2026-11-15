@@ -204,6 +204,106 @@ describe('device routes', () => {
     })
   })
 
+  describe('POST /api/devices/:id/control', () => {
+    const controlPost = (id: string, body: unknown) =>
+      app.request(`/devices/${encodeURIComponent(id)}/control`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: typeof body === 'string' ? body : JSON.stringify(body),
+      })
+    const sent: string[] = []
+    let phoneId: string
+    beforeEach(() => {
+      sent.length = 0
+      phoneId = 'android:1'
+      registry.connect({ send: (d) => void sent.push(d) }, { deviceId: phoneId, platform: 'android', name: 'K80', agentVersion: '0.1.0', ops: ['find'] })
+    })
+    /** 假设备按 SA3 的回执形状回一帧。 */
+    const reply = (frame: string, body: Record<string, unknown>) =>
+      registry.devices()[0].relay.handleMessage(JSON.stringify({ id: JSON.parse(frame).id, ...body }))
+
+    it('setBusy：发出控制帧（后端分配 id），设备回执转 200', async () => {
+      const p = controlPost(phoneId, { type: 'control', control: 'setBusy', busy: true, reason: '等待审批' })
+      await vi.waitFor(() => expect(sent).toHaveLength(1))
+      const frame = JSON.parse(sent[0]!)
+      expect(frame).toEqual({ type: 'control', control: 'setBusy', busy: true, reason: '等待审批', id: frame.id })
+      reply(sent[0]!, { result: {} })
+      const ok = await p
+      expect(ok.status).toBe(200)
+      expect(await ok.json()).toEqual({ result: {} })
+    })
+
+    it('exemptions：ask / financeVisible 归一后发出，缺省为空数组（清空豁免集）', async () => {
+      const p = controlPost(phoneId, {
+        type: 'control', control: 'exemptions',
+        ask: [{ app: 'com.bank.app', action: 'commit' }, { app: 'com.shop', action: 'send' }],
+        financeVisible: ['com.bank.app'],
+      })
+      await vi.waitFor(() => expect(sent).toHaveLength(1))
+      const frame = JSON.parse(sent[0]!)
+      expect(frame).toEqual({
+        type: 'control', control: 'exemptions',
+        ask: [{ app: 'com.bank.app', action: 'commit' }, { app: 'com.shop', action: 'send' }],
+        financeVisible: ['com.bank.app'], id: frame.id,
+      })
+      reply(sent[0]!, { result: {} })
+      expect((await p).status).toBe(200)
+
+      // 两个字段都缺 = 空数组 = 整体撤销
+      const p2 = controlPost(phoneId, { type: 'control', control: 'exemptions' })
+      await vi.waitFor(() => expect(sent).toHaveLength(2))
+      expect(JSON.parse(sent[1]!)).toEqual({ type: 'control', control: 'exemptions', ask: [], financeVisible: [], id: JSON.parse(sent[1]!).id })
+      reply(sent[1]!, { result: {} })
+      expect((await p2).status).toBe(200)
+    })
+
+    it('设备的错误回执转 502，错误码保留在 message 里', async () => {
+      const p = controlPost(phoneId, { type: 'control', control: 'exemptions', financeVisible: ['com.bank.app'] })
+      await vi.waitFor(() => expect(sent).toHaveLength(1))
+      reply(sent[0]!, { error: 'exemption-invalid: com.bank.app', code: 'exemption-invalid' })
+      const r = await p
+      expect(r.status).toBe(502)
+      const body = await r.json() as { error: string; code?: string }
+      expect(body.error).toContain('exemption-invalid')
+    })
+
+    it('格式不合法 400，设备上一帧都不发', async () => {
+      expect((await controlPost(phoneId, { type: 'op', control: 'setBusy', busy: true })).status).toBe(400)
+      expect((await controlPost(phoneId, { type: 'control', control: 'setBusy' })).status).toBe(400) // 缺 busy
+      expect((await controlPost(phoneId, { type: 'control', control: 'setBusy', busy: 'yes' })).status).toBe(400)
+      expect((await controlPost(phoneId, { type: 'control', control: 'setBusy', busy: true, reason: 3 })).status).toBe(400)
+      expect((await controlPost(phoneId, { type: 'control', control: 'kick' })).status).toBe(400)
+      expect((await controlPost(phoneId, { type: 'control', control: 'exemptions', ask: [{ app: 'x', action: 'pay' }] })).status).toBe(400)
+      expect((await controlPost(phoneId, { type: 'control', control: 'exemptions', financeVisible: [42] })).status).toBe(400)
+      expect((await controlPost(phoneId, 'null')).status).toBe(400)
+      expect((await controlPost(phoneId, 'nope')).status).toBe(400)
+      expect(sent).toEqual([])
+    })
+
+    it('非管理员 403；设备不在线 404 device-offline', async () => {
+      local = false
+      expect((await controlPost(phoneId, { type: 'control', control: 'setBusy', busy: true })).status).toBe(403)
+      local = true
+      const off = await controlPost('android:nope', { type: 'control', control: 'setBusy', busy: true })
+      expect(off.status).toBe(404)
+      expect(await off.json()).toEqual({ error: 'device-offline' })
+      expect(sent).toEqual([])
+    })
+
+    it('op 在途时照样发：控制帧不等会话租约、不占单发尾锁', async () => {
+      const relay = registry.devices()[0].relay
+      const opP = relay.send({ op: 'find', args: {} })
+      await vi.waitFor(() => expect(sent).toHaveLength(1))
+      const p = controlPost(phoneId, { type: 'control', control: 'setBusy', busy: false })
+      // op 没回执、单发尾锁占着，控制帧仍已发出（排队等租约就会卡在这里）
+      await vi.waitFor(() => expect(sent).toHaveLength(2))
+      expect(JSON.parse(sent[1]!).type).toBe('control')
+      relay.handleMessage(JSON.stringify({ id: JSON.parse(sent[1]!).id, result: {} }))
+      expect((await p).status).toBe(200)
+      relay.handleMessage(JSON.stringify({ id: JSON.parse(sent[0]!).id, result: {} }))
+      await opP
+    })
+  })
+
   it('revoking drops the live socket and forgets the token', async () => {
     const r = store.pair(store.createPairingCode().code, 'K80')
     if (!r.ok) throw new Error('expected ok')

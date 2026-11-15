@@ -20,6 +20,49 @@ export const TOKEN_EXEMPT_ROUTES: ReadonlyArray<{ method: string; path: string }
   { method: 'POST', path: '/api/ext/pair' },
 ]
 
+/** `exemptions` 控制帧里 `ask` 项收的动作类目（device-sensitive-semantics 定死的集合）。 */
+const EXEMPT_ACTIONS: ReadonlySet<string> = new Set(['commit', 'send', 'install', 'setting', 'call', 'link'])
+
+/**
+ * 校验一条控制帧（device-sensitive-semantics 定死的格式），返回要发到设备上的帧，不合法返回一句人话。
+ * `type` 必须是 `"control"`，`control` 只认 `setBusy` 与 `exemptions`；`busy` 必须是布尔（置忙不判时长，
+ * 交给 `busy:false`），`reason` 可选字符串；`ask` 项必须是 `{app, action}` 且 `action` 在集合里，
+ * `financeVisible` 必须是非空字符串数组。两个字段缺省为空数组——空列表整体撤销豁免集。调用方给的
+ * `id` 不透传：关联 id 由后端分配（`WsHostRelay.sendControl`）。
+ */
+export function parseControlFrame(body: unknown): Record<string, unknown> | string {
+  if (typeof body !== 'object' || body === null || Array.isArray(body)) return 'body 必须是对象'
+  const b = body as Record<string, unknown>
+  if (b.type !== 'control') return 'type 必须是 "control"'
+  if (b.control === 'setBusy') {
+    if (typeof b.busy !== 'boolean') return 'setBusy 的 busy 必须是布尔'
+    if (b.reason !== undefined && typeof b.reason !== 'string') return 'reason 可选且必须是字符串'
+    return { type: 'control', control: 'setBusy', busy: b.busy, ...(typeof b.reason === 'string' ? { reason: b.reason } : {}) }
+  }
+  if (b.control === 'exemptions') {
+    let ask: Array<{ app: string; action: string }> = []
+    if (b.ask !== undefined) {
+      if (!Array.isArray(b.ask)) return 'ask 可选且必须是数组'
+      for (const x of b.ask) {
+        if (typeof x !== 'object' || x === null || Array.isArray(x)) return 'ask 项必须是 {app, action} 对象'
+        const { app, action } = x as Record<string, unknown>
+        if (typeof app !== 'string' || app.length === 0) return 'ask 项的 app 必须是非空字符串'
+        if (typeof action !== 'string' || !EXEMPT_ACTIONS.has(action)) return 'ask 项的 action 只收 commit|send|install|setting|call|link'
+        ask.push({ app, action })
+      }
+    }
+    let financeVisible: string[] = []
+    if (b.financeVisible !== undefined) {
+      if (!Array.isArray(b.financeVisible) || !b.financeVisible.every((s) => typeof s === 'string' && s.length > 0)) {
+        return 'financeVisible 可选且必须是非空字符串数组'
+      }
+      financeVisible = b.financeVisible as string[]
+    }
+    return { type: 'control', control: 'exemptions', ask, financeVisible }
+  }
+  return 'control 只收 setBusy 或 exemptions'
+}
+
 export interface DeviceRoutesDeps {
   store: DeviceStore
   registry: Pick<HostRelayRegistry, 'devices' | 'kick'>
@@ -142,6 +185,28 @@ export function mountDeviceRoutes(app: Hono, deps: DeviceRoutesDeps): void {
     if (!device) return c.json({ error: '这台设备不在线' }, 404)
     try {
       const result = await device.relay.send({ op: body.op, ...(body.args ? { args: body.args as Record<string, unknown> } : {}) })
+      return c.json({ result: result ?? null })
+    } catch (e) {
+      return c.json({ error: e instanceof Error ? e.message : String(e) }, 502)
+    }
+  })
+
+  /**
+   * 发一条控制帧（device-sensitive-semantics：置忙 / 豁免下发）。管理口：actuate 一台手机，与
+   * `/devices/:id/ops` 同一条「只在本机」的规矩。帧格式在 {@link parseControlFrame} 里按规范校验；
+   * 发送走带外通道（`sendControl`），设备的回执原样转成 200 / 502。
+   */
+  app.post('/devices/:id/control', async (c) => {
+    if (!deps.isAdmin(c)) return c.json({ error: '只能在运行 Stream 的那台机器上调用' }, 403)
+    const id = c.req.param('id')
+    let raw: unknown
+    try { raw = await c.req.json() } catch { return c.json({ error: 'body 不是合法 JSON' }, 400) }
+    const frame = parseControlFrame(raw)
+    if (typeof frame === 'string') return c.json({ error: frame }, 400)
+    const device = deps.registry.devices().find((d) => d.hello.deviceId === id)
+    if (!device) return c.json({ error: 'device-offline' }, 404)
+    try {
+      const result = await device.relay.sendControl(frame)
       return c.json({ result: result ?? null })
     } catch (e) {
       return c.json({ error: e instanceof Error ? e.message : String(e) }, 502)
