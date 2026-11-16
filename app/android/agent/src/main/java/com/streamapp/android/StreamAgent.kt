@@ -4,8 +4,12 @@ import android.accessibilityservice.AccessibilityService
 import android.content.Context
 import android.os.Build
 import android.util.Log
+import android.view.Gravity
+import android.view.View
+import android.view.WindowManager
 import com.streamapp.android.a11y.Overlay
 import com.streamapp.android.a11y.StreamAccessibilityService
+import com.streamapp.android.agent.stopFromIndicator
 import com.streamapp.android.net.Pairing
 import com.streamapp.android.net.RelayService
 import com.streamapp.android.net.probeDeviceState
@@ -94,14 +98,48 @@ public object StreamAgent {
 
     // ---- hooks (experimental) ----
 
-    /** Builds the indicator shown while the agent drives the screen. The default is the takeover banner. */
-    @Volatile public var indicatorProvider: IndicatorProvider = IndicatorProvider { service, onStop -> Overlay(service, onStop) }
+    /** The default indicator provider: the takeover banner. */
+    public val defaultIndicator: IndicatorProvider = IndicatorProvider { service, onStop -> Overlay(service, onStop) }
 
-    /** Reserved: not consulted yet. A future version will ask it before taking over an app. */
+    /**
+     * Builds the indicator shown while the agent drives the screen. The default is the takeover
+     * banner. A replacement takes effect the next time the agent shows its indicator (the current
+     * one is disposed). Build it with [overlayIndicator] so it is attached as an accessibility
+     * overlay: the agent ignores those windows when it judges screen changes, and its gestures and
+     * screenshots know how to get past it (see [AgentIndicator.passThrough],
+     * [AgentIndicator.hideForCapture] and [AgentIndicator.bounds]).
+     */
+    @Volatile public var indicatorProvider: IndicatorProvider = defaultIndicator
+
+    /**
+     * Asked before the agent takes over an app — `focusApp`, `scopeWindow` and every action op —
+     * about the target app and about the app in front (which may be the host app itself). A `true`
+     * fails the op as `app-in-use` naming that app, exactly like the agent's own refusal; `false`
+     * or `null` leaves the decision to the agent's own check. Called on the agent's worker thread;
+     * keep it quick. A hint that throws counts as no opinion.
+     */
     @Volatile public var occupancyHint: OccupancyHint? = null
 
-    /** Told after the user stopped the agent from its indicator (the agent has already aborted its work). */
+    /**
+     * Occupancy policy. Off (the default): an app counts as in use when it is the one the op would
+     * take over, it is in front, and the user touched the screen in the last 10 seconds. On: any app
+     * in front that the user touched in the last 10 seconds counts as in use, whatever the op targets.
+     */
+    @Volatile public var anyRecentTouchOccupies: Boolean = false
+
+    /** Told after the user stopped the agent from its indicator (the agent has already sent its abort). */
     @Volatile public var userStopListener: UserStopListener? = null
+
+    /**
+     * An indicator for [IndicatorProvider.create] that shows the host's own [view] as a
+     * `TYPE_ACCESSIBILITY_OVERLAY` window through the agent's accessibility [service], with the
+     * library's handling of touch pass-through, screenshot hiding, bounds and the 60 s auto-hide.
+     */
+    public fun overlayIndicator(service: AccessibilityService, onStop: () -> Unit, view: IndicatorView): AgentIndicator =
+        Overlay(service, onStop, view)
+
+    /** The user stopped the agent from its indicator: abort first, then tell the host. */
+    internal fun userStopped(abort: () -> Unit) = stopFromIndicator(abort, userStopListener)
 
     // ---- internal plumbing ----
 
@@ -195,8 +233,36 @@ public interface AgentIndicator {
      *  thread right before and after a gesture; return once the change is in effect. */
     public fun passThrough(on: Boolean)
 
+    /**
+     * Called from the agent's worker thread right before a screenshot (`hidden = true`) and right
+     * after it (`false`, always, even when the capture failed). Return `true` once the indicator is
+     * off the screen; the default `false` makes the agent blank [bounds] in the frame instead. An
+     * indicator that does neither shows up in screenshots.
+     */
+    public fun hideForCapture(hidden: Boolean): Boolean = false
+
+    /** Where the indicator is on the screen right now, in screen pixels; null when it is not shown. Any thread. */
+    public fun bounds(): IndicatorBounds? = null
+
     /** Remove the indicator for good. */
     public fun dispose()
+}
+
+/** A screen rectangle, in pixels. */
+public data class IndicatorBounds(public val left: Int, public val top: Int, public val width: Int, public val height: Int)
+
+/** The host's own indicator content, which [StreamAgent.overlayIndicator] attaches as an accessibility overlay. */
+public interface IndicatorView {
+    /** Build the view (main thread). Call [onStop] when the user asks to stop the agent. */
+    public fun create(context: Context, onStop: () -> Unit): View
+
+    /** Show [text] as the current step on a view [create] built (main thread). */
+    public fun bind(view: View, text: String)
+
+    /** The overlay window's gravity, width and height (`WindowManager.LayoutParams` values). */
+    public val gravity: Int get() = Gravity.TOP
+    public val width: Int get() = WindowManager.LayoutParams.MATCH_PARENT
+    public val height: Int get() = WindowManager.LayoutParams.WRAP_CONTENT
 }
 
 public fun interface IndicatorProvider {
@@ -205,7 +271,7 @@ public fun interface IndicatorProvider {
 }
 
 public fun interface OccupancyHint {
-    /** Whether the user is busy with [packageName] right now; null = no opinion. */
+    /** Whether the user is busy with [packageName] right now; null = no opinion. See [StreamAgent.occupancyHint]. */
     public fun inUse(packageName: String): Boolean?
 }
 

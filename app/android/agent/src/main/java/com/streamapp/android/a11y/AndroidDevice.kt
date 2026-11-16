@@ -25,8 +25,8 @@ import java.util.concurrent.atomic.AtomicReference
  * gesture and screenshot callbacks are awaited with latches.
  */
 internal class AndroidDevice(private val ctx: Context, private val onStop: () -> Unit) : Device {
-    private var overlay: AgentIndicator? = null
-    private var overlayFor: StreamAccessibilityService? = null
+    /** The indicator, rebuilt when the service is replaced or the host swaps [StreamAgent.indicatorProvider]. */
+    private val indicator = IndicatorSlot<StreamAccessibilityService>()
     private var lastShotAt = 0L
     private var wake: PowerManager.WakeLock? = null
 
@@ -165,7 +165,6 @@ internal class AndroidDevice(private val ctx: Context, private val onStop: () ->
         }, durationMs)
 
     private fun gesture(path: Path, durationMs: Long) {
-        syncOverlay()
         // Whatever touch events the system reports while this gesture is in flight are ours, not
         // the user's: they must not read as "the user is using the app".
         StreamAccessibilityService.inputs.gestureDispatched(System.currentTimeMillis(), durationMs)
@@ -177,6 +176,7 @@ internal class AndroidDevice(private val ctx: Context, private val onStop: () ->
             throw AgentError("gesture-failed: 手势参数不合法（${e.message}）")
         }
         // The banner would swallow a tap that lands under it.
+        val overlay = currentIndicator()
         overlay?.passThrough(true)
         try {
             val sent = svc().dispatchGesture(g, object : AccessibilityService.GestureResultCallback() {
@@ -191,24 +191,22 @@ internal class AndroidDevice(private val ctx: Context, private val onStop: () ->
         }
     }
 
-    /** Drop the banner when the service it was built on is gone or replaced. */
-    private fun syncOverlay() {
-        if (StreamAccessibilityService.instance !== overlayFor) {
-            overlay?.dispose()
-            overlay = null
-            overlayFor = null
-        }
-    }
+    /** The live indicator; one built on a gone or replaced service, or by a replaced provider, is disposed. */
+    private fun currentIndicator(): AgentIndicator? =
+        indicator.sync(StreamAccessibilityService.instance, StreamAgent.indicatorProvider)
 
     override fun globalBack(): Boolean = svc().performGlobalAction(AccessibilityService.GLOBAL_ACTION_BACK)
     override fun globalHome(): Boolean = svc().performGlobalAction(AccessibilityService.GLOBAL_ACTION_HOME)
 
     /** An all-black frame is retried once (the throttle spaces it 1.1 s later): an app's dark splash
-     *  screen is black for a moment too, and is not a protected window. */
-    override fun screenshot(maskedAreas: List<Rect>): Shot = try {
-        shoot(emptyList(), lastTry = false)
-    } catch (_: AllBlack) {
-        shoot(maskedAreas, lastTry = true)
+     *  screen is black for a moment too, and is not a protected window. Both tries cover
+     *  [maskedAreas]; the indicator stays out of the frame (hidden, else blanked). */
+    override fun screenshot(maskedAreas: List<Rect>): Shot = captureWithout(currentIndicator(), maskedAreas) { areas ->
+        try {
+            shoot(areas, lastTry = false)
+        } catch (_: AllBlack) {
+            shoot(areas, lastTry = true)
+        }
     }
 
     private class AllBlack : Exception()
@@ -281,10 +279,9 @@ internal class AndroidDevice(private val ctx: Context, private val onStop: () ->
     override fun screenSize(): Rect = ctx.resources.displayMetrics.let { Rect(0, 0, it.widthPixels, it.heightPixels) }
 
     override fun status(text: String?) {
-        syncOverlay()
-        val s = StreamAccessibilityService.instance ?: return
-        if (overlayFor !== s) { overlay = StreamAgent.indicatorProvider.create(s, onStop); overlayFor = s }
-        overlay?.show(text)
+        val provider = StreamAgent.indicatorProvider
+        val shown = indicator.obtain(StreamAccessibilityService.instance, provider) { s -> provider.create(s, onStop) }
+        shown?.show(text)
     }
 
     override fun sleep(ms: Long) = Thread.sleep(ms.coerceIn(0, 30_000))

@@ -19,6 +19,7 @@ import com.streamapp.android.StreamAgent
 import com.streamapp.android.a11y.AndroidDevice
 import com.streamapp.android.a11y.StreamAccessibilityService
 import com.streamapp.android.agent.Dispatcher
+import com.streamapp.android.agent.Occupancy
 import com.streamapp.android.policy.PolicyContext
 import com.streamapp.android.protocol.DeviceState
 import com.streamapp.android.store.Credentials
@@ -60,10 +61,9 @@ internal class RelayService : Service() {
         }
         val creds = Credentials.load(this) ?: run { stopSelf(); return START_NOT_STICKY }
         if (client == null) {
-            val device = AndroidDevice(this) {
-                client?.abort()
-                StreamAgent.userStopListener?.onUserStop()
-            }
+            // The indicator's Stop: the existing abort, then the embedding app's listener.
+            val device = AndroidDevice(this) { StreamAgent.userStopped { client?.abort() } }
+            val occupancy = Occupancy(hint = { StreamAgent.occupancyHint }, anyRecentTouch = { StreamAgent.anyRecentTouchOccupies })
             // The policy engine is process-lifetime: its lease id rotates when this service (and
             // with it the process state) starts over, so credentials issued before a restart fail
             // their binding check on replay.
@@ -73,7 +73,7 @@ internal class RelayService : Service() {
             )
             client = RelayClient(
                 transport = OkHttpTransport(http),
-                dispatcher = { Dispatcher(device, policy) },
+                dispatcher = { Dispatcher(device, policy, occupancy) },
                 name = "${Build.MANUFACTURER} ${Build.MODEL}",
                 agentVersion = StreamAgent.version,
                 stateProvider = ::state,

@@ -10,6 +10,14 @@ class PolicyWiringTest {
     @Test fun theRelayServiceWiresThePolicyEngineIntoEveryDispatcher() {
         val src = java.io.File("src/main/java/com/streamapp/android/net/RelayService.kt").readText()
         assertTrue("RelayService must load the policy tables (PolicyContext.fromStreams)", src.contains("PolicyContext.fromStreams"))
-        assertTrue("RelayService must construct every Dispatcher with the policy engine", src.contains("Dispatcher(device, policy)"))
+        assertTrue("RelayService must construct every Dispatcher with the policy engine", src.contains("Dispatcher(device, policy, occupancy)"))
+    }
+
+    /** The same guard for the embedding hooks: the occupancy hook reads the live `StreamAgent`
+     *  settings per op, and the indicator's Stop goes through the abort-then-listener path. */
+    @Test fun theRelayServiceWiresTheEmbeddingHooks() {
+        val src = java.io.File("src/main/java/com/streamapp/android/net/RelayService.kt").readText()
+        assertTrue(src.contains("Occupancy(hint = { StreamAgent.occupancyHint }, anyRecentTouch = { StreamAgent.anyRecentTouchOccupies })"))
+        assertTrue(src.contains("AndroidDevice(this) { StreamAgent.userStopped { client?.abort() } }"))
     }
 }

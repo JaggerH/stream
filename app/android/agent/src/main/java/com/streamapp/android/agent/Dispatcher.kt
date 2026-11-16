@@ -1,5 +1,6 @@
 package com.streamapp.android.agent
 
+import com.streamapp.android.OccupancyHint
 import com.streamapp.android.policy.AskExemption
 import com.streamapp.android.policy.PolicyContext
 import org.json.JSONArray
@@ -43,7 +44,11 @@ private const val HYPEROS_CONFIRM = "com.miui.securitycenter"
  * A null [policy] disables all of that and exists for the JVM unit tests only; production
  * (RelayService) always supplies one.
  */
-internal class Dispatcher(private val raw: Device, private val policy: PolicyContext? = null) {
+internal class Dispatcher(
+    private val raw: Device,
+    private val policy: PolicyContext? = null,
+    private val occupancy: Occupancy = Occupancy(),
+) {
     /** The app (and optional title substring) the agent limited itself to. An Activity change
      *  replaces the window, so the scope is re-resolved against `windows()` on every use. */
     private data class Scope(val process: String, val title: String?)
@@ -231,13 +236,30 @@ internal class Dispatcher(private val raw: Device, private val policy: PolicyCon
      *  [IN_USE_RECENT_MS] is theirs — an op that would take the screen fails as `app-in-use`
      *  instead of stealing it (their touches, not our injected gestures: `Device.lastUserInputMs`
      *  already excludes those). No touch fact at all means we cannot say anyone is using it —
-     *  the check fails open. Suspending, waiting and retrying are the caller's decision. */
+     *  the check fails open. Suspending, waiting and retrying are the caller's decision.
+     *
+     *  Before that, the embedding app's [Occupancy.hint] is asked about the target and about the
+     *  app in front (the embedding app itself, when it is in front): a `true` is the same refusal.
+     *  With [Occupancy.anyRecentTouch] on, a recent touch on whatever app is in front refuses too. */
     private fun requireAppNotInUse(op: String, pkg: String, title: String? = null) {
+        // Read only when needed: without a hint the order of reads is what it always was.
+        val fg by lazy { device.foregroundPackage() }
+        occupancy.hint()?.let { hint ->
+            for (candidate in listOfNotNull(pkg.ifEmpty { null }, fg).distinctBy { it.lowercase() }) {
+                val busy = try { hint.inUse(candidate) } catch (_: RuntimeException) { null }
+                if (busy == true) throw appInUse(op, candidate, title.takeIf { candidate.equals(pkg, ignoreCase = true) })
+            }
+        }
         val last = device.lastUserInputMs() ?: return
-        if (device.foregroundPackage()?.equals(pkg, ignoreCase = true) != true) return
         if (System.currentTimeMillis() - last > IN_USE_RECENT_MS) return
+        val front = fg
+        if (front?.equals(pkg, ignoreCase = true) == true) throw appInUse(op, pkg, title)
+        if (front != null && occupancy.anyRecentTouch()) throw appInUse(op, front, null)
+    }
+
+    private fun appInUse(op: String, pkg: String, title: String?): AgentError {
         val app = JSONObject().put("id", pkg).put("name", title?.takeIf { it.isNotBlank() && title != pkg } ?: pkg)
-        throw AgentError("app-in-use: $pkg 正被用户在前台使用，Stream 不抢；等用户用完再试", "app-in-use",
+        return AgentError("app-in-use: $pkg 正被用户在前台使用，Stream 不抢；等用户用完再试", "app-in-use",
             JSONObject().put("op", op).put("app", app))
     }
 
@@ -535,5 +557,13 @@ internal class Dispatcher(private val raw: Device, private val policy: PolicyCon
         const val IN_USE_RECENT_MS = 10_000L
     }
 }
+
+/** The embedding app's say in the occupancy check, read per op: its [hint] (see
+ *  `StreamAgent.occupancyHint`) and the any-recent-touch policy (see `StreamAgent.anyRecentTouchOccupies`).
+ *  The defaults leave the agent's own check alone. */
+internal class Occupancy(
+    val hint: () -> OccupancyHint? = { null },
+    val anyRecentTouch: () -> Boolean = { false },
+)
 
 internal fun WindowInfo.toMap(): Map<String, Any?> = mapOf("id" to id, "process" to process, "title" to title, "foreground" to foreground)
