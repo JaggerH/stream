@@ -50,28 +50,51 @@ describe('parseHello caps (device-capability-manifest)', () => {
     expect(parseHello(frame({ caps: { 'ui.act': { v: 1, availability: 'always' } } }))?.caps).toEqual({ 'ui.act': { v: 1, availability: 'always' } })
     expect(parseHello(frame({ capsVersion: 1, caps: {} }))?.caps).toEqual({})
   })
-  it('an unknown schema version connects but its caps are ignored, not half-read', () => {
-    const h = parseHello(frame({ capsVersion: 2, caps: { 'ui.tree': { v: 'anything' } } }))
-    expect(h).not.toBeNull()
-    expect(h).not.toHaveProperty('caps')
+  it('an unknown or malformed schema version connects; its caps are ignored, not half-read', () => {
+    for (const capsVersion of [2, '1', 0]) {
+      const drops: string[] = []
+      const h = parseHello(frame({ capsVersion, caps: { 'ui.tree': { v: 'anything' } } }), (w) => drops.push(w))
+      expect(h, String(capsVersion)).not.toBeNull()
+      expect(h).not.toHaveProperty('caps')
+      expect(drops).toHaveLength(1)
+    }
   })
-  it('a malformed manifest under a known version refuses the hello, never a default', () => {
-    for (const bad of [
-      { caps: [] },
-      { caps: 'ui.tree' },
-      { caps: null },
-      { caps: { 'ui.tree': true } },
-      { caps: { 'ui.tree': {} } },
-      { caps: { 'ui.tree': { v: 0 } } },
-      { caps: { 'ui.tree': { v: 1.5 } } },
-      { caps: { 'ui.tree': { v: '1' } } },
-      { caps: { 'ui.tree': { v: 1, availability: 'sometimes' } } },
-      { caps: { 'UI Tree': { v: 1 } } },
-      { caps: { '': { v: 1 } } },
-      { capsVersion: '1', caps: {} },
-      { capsVersion: 0, caps: {} },
-      { caps: Object.fromEntries(Array.from({ length: 65 }, (_, i) => [`c${i}`, { v: 1 }])) },
-    ]) expect(parseHello(frame(bad)), JSON.stringify(bad).slice(0, 80)).toBeNull()
+  it('a container of the wrong type is ignored and the hello still connects', () => {
+    for (const caps of [[], 'ui.tree', null, 3]) {
+      const drops: string[] = []
+      const h = parseHello(frame({ capsVersion: 1, caps }), (w) => drops.push(w))
+      expect(h, JSON.stringify(caps)).not.toBeNull()
+      expect(h).not.toHaveProperty('caps')
+      expect(drops[0]).toMatch(/not an object/)
+    }
+  })
+  it('a malformed entry is dropped on its own; the rest are kept and the hello connects', () => {
+    const drops: string[] = []
+    const h = parseHello(frame({
+      capsVersion: 1,
+      caps: {
+        'ui.tree': { v: 1 },
+        'ui.act': true,
+        'screen.shot': {},
+        'app.launch': { v: 0 },
+        'input.text': { v: 1.5 },
+        'notify.post': { v: '1' },
+        'intent.run': { v: 1, availability: 'sometimes' },
+        'UI Tree': { v: 1 },
+        '': { v: 1 },
+        'app.in_use': { v: 1, availability: 'foreground' },
+      },
+    }), (w) => drops.push(w))
+    expect(h).not.toBeNull()
+    expect(h?.caps).toEqual({ 'ui.tree': { v: 1 }, 'app.in_use': { v: 1, availability: 'foreground' } })
+    expect(drops).toHaveLength(8)
+    expect(drops.some((d) => d.includes('intent.run') && d.includes('sometimes'))).toBe(true)
+  })
+  it('entries past the limit are dropped, the first ones kept', () => {
+    const drops: string[] = []
+    const h = parseHello(frame({ caps: Object.fromEntries(Array.from({ length: 65 }, (_, i) => [`c${i}`, { v: 1 }])) }), (w) => drops.push(w))
+    expect(Object.keys(h!.caps!)).toHaveLength(64)
+    expect(drops).toHaveLength(1)
   })
   it('the registry carries caps on the online change and in devices()', () => {
     const reg = new HostRelayRegistry()

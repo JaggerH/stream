@@ -61,28 +61,40 @@ export const MAX_HELLO_CAPS = 64
 const CAP_ID = /^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)*$/
 
 /**
- * `hello.caps` under `hello.capsVersion`. Missing `caps` = undefined (an agent that predates the
- * manifest). An unknown `capsVersion` = undefined as well — not an error. Under a known version
- * anything malformed is `null` (the whole hello is refused, same rule as `ports`): a non-object,
- * a bad id, a `v` that is not a positive integer, an availability outside the set. Unknown extra
- * fields inside an entry are dropped (additive, not version-bumping).
+ * `hello.caps` under `hello.capsVersion`, read leniently so an older backend never locks out a newer
+ * device. Missing `caps` = undefined (an agent that predates the manifest). A `capsVersion` that is
+ * not a known version (including a malformed one) = undefined: the manifest is ignored, the hello
+ * stands. A container that is not an object = undefined as well. Inside a known version each entry
+ * is judged on its own: a bad id, a `v` that is not a positive integer, an availability outside the
+ * set, or an entry past [MAX_HELLO_CAPS] is dropped and named through [onDrop]; the rest are kept.
+ * Unknown extra fields inside an entry are dropped too.
  */
-function parseCaps(raw: unknown, version: unknown): DeviceCaps | null | undefined {
+function parseCaps(raw: unknown, version: unknown, onDrop: (why: string) => void): DeviceCaps | undefined {
   if (raw === undefined) return undefined
-  if (version !== undefined && (typeof version !== 'number' || !Number.isInteger(version) || version < 1)) return null
   // A manifest without a version is read as version 1: the field was introduced with it.
-  if ((version ?? CAPS_SCHEMA_VERSION) !== CAPS_SCHEMA_VERSION) return undefined
-  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return null
-  const entries = Object.entries(raw as Record<string, unknown>)
-  if (entries.length > MAX_HELLO_CAPS) return null
+  if ((version ?? CAPS_SCHEMA_VERSION) !== CAPS_SCHEMA_VERSION) {
+    onDrop(`capsVersion ${JSON.stringify(version)} is not one this backend reads; manifest ignored`)
+    return undefined
+  }
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
+    onDrop('caps is not an object; manifest ignored')
+    return undefined
+  }
   const out: DeviceCaps = {}
-  for (const [id, e] of entries) {
-    if (id.length > 64 || !CAP_ID.test(id)) return null
-    if (e === null || typeof e !== 'object' || Array.isArray(e)) return null
+  let kept = 0
+  for (const [id, e] of Object.entries(raw as Record<string, unknown>)) {
+    const drop = (why: string) => onDrop(`caps entry ${JSON.stringify(id.slice(0, 64))} dropped: ${why}`)
+    if (kept >= MAX_HELLO_CAPS) { drop(`more than ${MAX_HELLO_CAPS} entries`); continue }
+    if (id.length > 64 || !CAP_ID.test(id)) { drop('bad id'); continue }
+    if (e === null || typeof e !== 'object' || Array.isArray(e)) { drop('not an object'); continue }
     const { v, availability } = e as Record<string, unknown>
-    if (typeof v !== 'number' || !Number.isInteger(v) || v < 1) return null
-    if (availability !== undefined && (typeof availability !== 'string' || !AVAILABILITIES.has(availability))) return null
+    if (typeof v !== 'number' || !Number.isInteger(v) || v < 1) { drop('v is not a positive integer'); continue }
+    if (availability !== undefined && (typeof availability !== 'string' || !AVAILABILITIES.has(availability))) {
+      drop(`unknown availability ${JSON.stringify(availability)}`)
+      continue
+    }
     out[id] = { v, ...(availability !== undefined ? { availability: availability as CapAvailability } : {}) }
+    kept++
   }
   return out
 }
@@ -175,7 +187,7 @@ function parsePorts(v: unknown): number[] | null | undefined {
  * `hello` with a missing `ops` turned into `[]` would make every op on that device fail as
  * "unsupported", and the agent's real defect (it sent a broken hello) would never be named.
  */
-export function parseHello(raw: string): HostHello | null {
+export function parseHello(raw: string, onCapsDrop: (why: string) => void = () => {}): HostHello | null {
   let m: Record<string, unknown>
   try {
     m = JSON.parse(raw)
@@ -191,8 +203,9 @@ export function parseHello(raw: string): HostHello | null {
   if (!Array.isArray(ops) || !ops.every((o) => typeof o === 'string')) return null
   const ports = parsePorts(m.ports)
   if (ports === null) return null
-  const caps = parseCaps(m.caps, m.capsVersion)
-  if (caps === null) return null
+  // Lenient by design (unlike ports): what a device can do is a declaration for consumers, and a
+  // stricter older backend would otherwise refuse every newer device that extends it.
+  const caps = parseCaps(m.caps, m.capsVersion, onCapsDrop)
   return { deviceId, platform: platform as HostPlatform, name, agentVersion, ops: ops as string[], ...(ports ? { ports } : {}), ...(caps ? { caps } : {}) }
 }
 

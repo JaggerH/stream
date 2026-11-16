@@ -15,10 +15,10 @@ afterEach(async () => {
   if (s) await new Promise<void>((r) => s.close(() => r()))
 })
 
-async function start(helloTimeoutMs = 2000, pingIntervalMs?: number) {
+async function start(helloTimeoutMs = 2000, pingIntervalMs?: number, log: (line: string) => void = () => {}) {
   server = createServer()
   const registry = new HostRelayRegistry()
-  attachHostRelay(server, registry, { token: TOKEN, log: () => {}, helloTimeoutMs, ...(pingIntervalMs ? { pingIntervalMs } : {}) })
+  attachHostRelay(server, registry, { token: TOKEN, log, helloTimeoutMs, ...(pingIntervalMs ? { pingIntervalMs } : {}) })
   const srv = server
   await new Promise<void>((r) => srv.listen(0, '127.0.0.1', r))
   const url = `ws://127.0.0.1:${(srv.address() as AddressInfo).port}/api/host`
@@ -60,6 +60,31 @@ describe('attachHostRelay (v2)', () => {
     })
     expect(res.status).toBe(426)
     expect(res.body).toMatch(/Stream Desktop is too old/)
+  })
+
+  it('a hello with a partly malformed capability manifest connects; the bad entries are dropped and logged once', async () => {
+    const lines: string[] = []
+    const { registry, url } = await start(2000, undefined, (l) => lines.push(l))
+    const ws = new WebSocket(url, [HOST_RELAY_PROTOCOL, TOKEN])
+    await new Promise((r) => ws.on('open', r))
+    ws.send(JSON.stringify({ ...helloFrame, capsVersion: 1, caps: { 'ui.tree': { v: 1 }, 'ui.act': { v: 1, availability: 'later' }, 'screen.shot': { v: 0 } } }))
+    await until(() => registry.devices().length === 1)
+    expect(registry.devices()[0]!.hello.caps).toEqual({ 'ui.tree': { v: 1 } })
+    const manifestLines = lines.filter((l) => l.includes('capability manifest'))
+    expect(manifestLines).toHaveLength(1)
+    expect(manifestLines[0]).toMatch(/ui\.act.*later/)
+    ws.close()
+  })
+
+  it('a hello whose caps container has the wrong type still connects, without caps', async () => {
+    const { registry, url } = await start()
+    const ws = new WebSocket(url, [HOST_RELAY_PROTOCOL, TOKEN])
+    await new Promise((r) => ws.on('open', r))
+    ws.send(JSON.stringify({ ...helloFrame, capsVersion: 1, caps: ['ui.tree'] }))
+    await until(() => registry.devices().length === 1)
+    expect(registry.devices()).toHaveLength(1)
+    expect(registry.devices()[0]!.hello).not.toHaveProperty('caps')
+    ws.close()
   })
 
   it('a same-device reconnect routes ops to the newest socket and survives the old one closing', async () => {

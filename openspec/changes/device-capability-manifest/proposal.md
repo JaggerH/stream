@@ -21,8 +21,9 @@
   事件与 `devices.online()` 快照在 `ops` 旁边带 `caps`；`GET /api/devices` 的在线行带 `caps`。类型
   `DeviceCaps` / `DeviceCapability` / `CapAvailability` 从库入口导出。
 - **兼容。** 旧设备不带清单：照常握手，事件与快照里没有 `caps` 这一格。旧后端不认识这两格：照常握手（JSON
-  多余字段被忽略）。`capsVersion` 不是本后端认识的版本：照常握手、清单整个忽略（不半读）。已知版本下清单畸形：
-  与 `ops` / `ports` 同一条规矩，整个 hello 被拒（4001），不默认成空。
+  多余字段被忽略）。`capsVersion` 不是本后端认识的版本，或 `caps` 不是对象：照常握手、清单整个忽略（不半读）。
+  已知版本下单个条目畸形（id 不合规、`v` 不是正整数、不认识的 `availability`、超过 64 项）：只丢这一条，其余照收，
+  每条连接记一行日志——清单永远不让 hello 被拒，旧后端不会因为新设备扩展了词表或取值而拒绝它。
 
 ## Capabilities
 

@@ -914,7 +914,8 @@ export function hostRelayHandler(
         registry.devices().find((d) => d.hello.deviceId === deviceId)?.relay.handleMessage(raw)
         return
       }
-      const hello = parseHello(raw)
+      const capsDropped: string[] = []
+      const hello = parseHello(raw, (why) => capsDropped.push(why))
       if (!hello) {
         log('[host-relay] first frame was not a hello — closing')
         closing = true
@@ -968,6 +969,8 @@ export function hostRelayHandler(
       if (hello.platform === 'android') {
         try { socket.send(JSON.stringify({ type: 'time', serverTime: Date.now() })) } catch { /* 连接死活走它自己的路径 */ }
       }
+      // One line per connection for whatever part of the capability manifest was not read.
+      if (capsDropped.length) log(`[host-relay] ${hello.deviceId} capability manifest: ${capsDropped.slice(0, 8).join('; ')}${capsDropped.length > 8 ? ` (+${capsDropped.length - 8} more)` : ''}`)
       log(
         `[host-relay] device connected ${hello.deviceId} (${hello.platform}, ${hello.name}, v${hello.agentVersion}, ${hello.ops.length} ops)` +
           (replaced ? ' — replaced a live connection' : ''),
