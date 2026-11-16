@@ -1,0 +1,6 @@
+<resources>
+    <string name="app_name">Agent Host</string>
+    <!-- Overrides of the library's user-facing texts. -->
+    <string name="stream_agent_a11y_label">Agent Host</string>
+    <string name="stream_agent_notification_title">Agent Host</string>
+</resources>

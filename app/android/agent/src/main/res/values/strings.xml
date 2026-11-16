@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- What the agent shows the user. A host app overrides any of these by defining a string with the
+     same name in its own resources (app resources win over library ones). -->
+<resources>
+    <!-- The accessibility service's name in system Settings → Accessibility. -->
+    <string name="stream_agent_a11y_label">Stream</string>
+    <!-- Its description on the same page. -->
+    <string name="stream_agent_a11y_description">让 Stream 按你写好的 recipe 在这台手机上点按、读屏。只在后端下发指令时动作，执行中屏幕顶部有提示条，可随时点「停止」。</string>
+    <!-- The connection's foreground-service notification. -->
+    <string name="stream_agent_notification_channel">Stream 连接</string>
+    <string name="stream_agent_notification_title">Stream</string>
+    <string name="stream_agent_notification_connecting">正在连接</string>
+    <!-- Status when the OS refuses to start the connection from the background. -->
+    <string name="stream_agent_start_refused">系统不允许后台启动连接，打开 Stream 一次即可恢复</string>
+    <!-- The Stop button on the takeover banner. -->
+    <string name="stream_agent_indicator_stop">停止</string>
+</resources>

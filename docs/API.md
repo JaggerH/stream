@@ -206,6 +206,33 @@ A ref is current while the screen it was found on is still in front: the same sc
 
 Errors retain their prefixes: `stale-ref` (unknown, malformed or superseded ref, or a ref that is no longer current; find again), `aborted` (Stop was tapped or the connection closed while the op was queued or running; a device action already under way, such as a click or an unlock swipe, completes, so `aborted` does not mean nothing happened), `device-locked` (secure keyguard or unsuccessful wake/unlock), `secure-window` (protected screenshot or all-black capture), `a11y-off` (service unavailable), `blocked-by-os` (background launch/wake blocked, or HyperOS's 「是否允许」 launch prompt in front), `no-scope`, `no-window-match`, `ambiguous-window`, `not-editable`, `action-failed`, `unsupported-key`, and `unsupported-deliver`. An empty find against a background window includes `unbuilt:"a11y-unbuilt: ..."`; it is not reliable evidence of absence. Secure-window detection also rejects all-black images, so that error alone does not prove the screen has `FLAG_SECURE`.
 
+### Embedding the Android agent in another app
+
+The execution agent is a library module, `app/android/agent` (`:agent`, an Android library); the Stream app (`:app`) is a thin shell around it with the pairing screen and setup checklist. Another app can embed the same agent in its own APK by depending on `:agent` — as a Gradle project, or through a composite build as `app/android/sample-host` does:
+
+```bash
+app/android/gradlew -p app/android/sample-host :app:assembleDebug
+```
+
+The library contributes its components and permissions through manifest merging: the relay connection (`com.streamapp.android.net.RelayService`, a `specialUse` foreground service), the accessibility service (`com.streamapp.android.a11y.StreamAccessibilityService`, with its configuration XML), the boot receiver that reconnects a paired device, and the wake activity; permissions `INTERNET`, `WAKE_LOCK`, `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_SPECIAL_USE`, `POST_NOTIFICATIONS` and `RECEIVE_BOOT_COMPLETED`, and a `<queries>` entry for launcher activities. The policy data files ship as library assets (`policy/*.json`). The host keeps what is its own: its launcher activity, the application element, any QR scanner and its camera permission, battery-optimization prompts, and a network security config — a backend reached over plain `http://` on the LAN needs cleartext allowed by the host.
+
+The one public entry point is `com.streamapp.android.StreamAgent`; everything else in the library is `internal` (Kotlin explicit API mode) and may change without notice:
+
+| Member | Purpose |
+|---|---|
+| `pair(context, backend, code, name = defaultDeviceName()): Result<Unit>` | Exchange a one-time pairing code for this device's credential and store it (Keystore-encrypted). Blocking; call off the main thread. Does not connect. |
+| `isReachable(backend): Boolean` | Whether `GET /api/health` answers within ~2 s. Blocking. |
+| `pairedBackend(context): String?`, `unpair(context)` | The paired backend; stop and forget the credential. |
+| `start(context)`, `stop(context)` | Start or stop the foreground connection; an unpaired device stays idle. |
+| `state(context): AgentState` | Snapshot: `paired`, `connection` (`IDLE`, `CONNECTING`, `CONNECTED`, `RECONNECTING`, `REVOKED`, `START_REFUSED`), `statusText`, `displayStatus`, `accessibilityEnabled`, `health` (`DeviceHealth`: screen, keyguard, battery, charging, network; null when unreadable). |
+| `observe(context, listener): AutoCloseable` | Current state at once, then on every connection, pairing or accessibility change, on the thread that made it. |
+| `indicatorProvider`, `occupancyHint`, `userStopListener` | Experimental hooks. The indicator provider builds what the user sees while the agent drives the screen (default: the takeover banner with Stop). `userStopListener` is told after the user stopped the agent. `occupancyHint` is reserved and not consulted yet. |
+| `PairPayload.parse(text)`, `PairPayload.manual(address, code)`, `pairChoices(...)` | Read the pairing QR code or manual input, and label candidate addresses. |
+
+The user-facing texts are library string resources a host overrides by defining the same names in its own resources: `stream_agent_a11y_label` and `stream_agent_a11y_description` (the accessibility service in system settings), `stream_agent_notification_channel`, `stream_agent_notification_title`, `stream_agent_notification_connecting` and `stream_agent_start_refused` (the connection's notification and status), and `stream_agent_indicator_stop` (the banner's Stop button). The notification opens the host's launcher activity. The foreground-service subtype declaration can be replaced with the manifest merger's `tools:node="replace"`; a host that does not want reconnect-on-boot removes the receiver with `tools:node="remove"`.
+
+Component class names are fixed by the library, so an app that already shipped the agent keeps its users' accessibility setting when it switches to the library. One app process runs one agent: the credential store, connection and accessibility service are per application.
+
 ### Sensitive actions on the phone
 
 The app judges what an action would do before it lets the action happen, because only the phone sees it: the control's role and label, the app's category, whether the field takes a password or a one-time code. Error frames for the codes below carry a machine-readable `code` field alongside the usual `code: 人话` message; callers that do not know the codes keep failing as they do today.

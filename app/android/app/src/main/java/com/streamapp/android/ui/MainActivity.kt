@@ -23,20 +23,15 @@ import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
 import com.google.zxing.integration.android.IntentIntegrator
-import com.streamapp.android.a11y.StreamAccessibilityService
-import com.streamapp.android.net.Pairing
-import com.streamapp.android.net.RelayService
-import com.streamapp.android.net.shownStatus
+import com.streamapp.android.StreamAgent
 import com.streamapp.android.protocol.PairPayload
 import com.streamapp.android.protocol.pairChoices
-import com.streamapp.android.store.Credentials
-import okhttp3.OkHttpClient
 import kotlin.concurrent.thread
 
 class MainActivity : Activity() {
     private lateinit var root: LinearLayout
     private lateinit var status: TextView
-    private val http = OkHttpClient()
+    private var watching: AutoCloseable? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -58,25 +53,21 @@ class MainActivity : Activity() {
                 insets
             }
         })
-        if (Credentials.load(this) != null) RelayService.start(this)
+        if (StreamAgent.pairedBackend(this) != null) StreamAgent.start(this)
     }
 
     override fun onResume() {
         super.onResume()
-        RelayService.onStatus = { text ->
-            runOnUiThread { if (::status.isInitialized) status.text = shownStatus(text, Credentials.load(this) != null) }
-        }
         render()
+        watching = StreamAgent.observe(this) { s ->
+            runOnUiThread { if (::status.isInitialized) status.text = s.displayStatus }
+        }
     }
 
     override fun onPause() {
-        RelayService.onStatus = null
+        watching?.close()
+        watching = null
         super.onPause()
-    }
-
-    override fun onDestroy() {
-        RelayService.onStatus = null
-        super.onDestroy()
     }
 
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
@@ -94,24 +85,24 @@ class MainActivity : Activity() {
 
     private fun render() {
         root.removeAllViews()
-        status = text(shownStatus(RelayService.statusText, Credentials.load(this) != null), 18f)
+        val agent = StreamAgent.state(this)
+        status = text(agent.displayStatus, 18f)
         root.addView(status)
 
-        val creds = Credentials.load(this)
-        if (creds == null) {
+        val backend = StreamAgent.pairedBackend(this)
+        if (backend == null) {
             root.addView(button("扫码配对") { scan() })
             root.addView(button("手动输入") { manualDialog() })
         } else {
-            root.addView(text("已配对：${creds.backend}"))
+            root.addView(text("已配对：$backend"))
             root.addView(button("取消配对") {
-                RelayService.stop(this)
-                Credentials.clear(this)
+                StreamAgent.unpair(this)
                 render()
             })
         }
 
         root.addView(text("设置清单", 18f).apply { setPadding(0, dp(20), 0, dp(4)) })
-        checklist()
+        checklist(agent.accessibilityEnabled)
     }
 
     // ---- pairing ----
@@ -144,7 +135,7 @@ class MainActivity : Activity() {
         toast("正在检查哪个地址连得上…")
         thread(name = "pair-probe") {
             val reachable = java.util.concurrent.ConcurrentHashMap<String, Boolean>()
-            p.backends.map { b -> thread { reachable[b] = Pairing.reachable(b, http) } }.forEach { it.join(3_000) }
+            p.backends.map { b -> thread { reachable[b] = StreamAgent.isReachable(b) } }.forEach { it.join(3_000) }
             // A probe that outlived the join may still write; sort and label one fixed copy.
             val choices = pairChoices(p.backends, HashMap(reachable))
             runOnUiThread {
@@ -188,13 +179,13 @@ class MainActivity : Activity() {
         pairing = true
         toast("正在配对…")
         thread(name = "pairing") {
-            val result = Pairing.pair(backend, code, "${Build.MANUFACTURER} ${Build.MODEL}", http)
+            // Stores the credentials on success; starting the connection is ours to do.
+            val result = StreamAgent.pair(this, backend, code)
             runOnUiThread {
                 pairing = false
                 if (isFinishing || isDestroyed) return@runOnUiThread
-                result.onSuccess { c ->
-                    Credentials.save(this, c)
-                    RelayService.start(this)
+                result.onSuccess {
+                    StreamAgent.start(this)
                     render()
                 }.onFailure { toast(it.message ?: "配对失败") }
             }
@@ -205,9 +196,8 @@ class MainActivity : Activity() {
 
     // ---- setup checklist ----
 
-    private fun checklist() {
+    private fun checklist(a11yOn: Boolean) {
         val xiaomi = Build.MANUFACTURER.equals("Xiaomi", ignoreCase = true)
-        val a11yOn = StreamAccessibilityService.instance != null
 
         row("无障碍服务", a11yOn, null, "打开") { open(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
         if (!a11yOn) {

@@ -11,7 +11,7 @@ android {
         minSdk = 30
         targetSdk = 35
         versionCode = 1
-        versionName = "0.1.0"
+        versionName = rootProject.extra["streamVersionName"] as String
     }
     buildTypes {
         release {
@@ -31,7 +31,8 @@ android {
 }
 
 dependencies {
-    implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    // The execution agent itself (services, receiver, policy assets); this module is its shell.
+    implementation(project(":agent"))
     implementation("com.journeyapps:zxing-android-embedded:4.3.0")
     // The scanner opens the camera through androidx.core (ContextCompat / ActivityCompat) but does
     // not depend on it; without this the app crashes as soon as 扫码配对 opens the camera.
