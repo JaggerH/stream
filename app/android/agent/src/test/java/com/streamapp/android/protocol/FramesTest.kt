@@ -42,6 +42,20 @@ class FramesTest {
         assertEquals("android", o.getString("platform"))
         assertEquals("android:x", o.getString("deviceId"))
         assertEquals(2, o.getJSONArray("ops").length())
+        // No manifest given: still declares the schema, with no capabilities.
+        assertEquals(1, o.getInt("capsVersion"))
+        assertEquals(0, o.getJSONObject("caps").length())
+    }
+
+    @Test fun helloCarriesTheCapabilityManifest() {
+        val o = JSONObject(Frames.hello("android:x", "K80", "0.1.0", listOf("find"),
+            listOf(Capability("ui.tree"), Capability("notify.post", v = 2, availability = "push"))))
+        assertEquals(Frames.CAPS_VERSION, o.getInt("capsVersion"))
+        val caps = o.getJSONObject("caps")
+        assertEquals(1, caps.getJSONObject("ui.tree").getInt("v"))
+        assertFalse(caps.getJSONObject("ui.tree").has("availability"))
+        assertEquals(2, caps.getJSONObject("notify.post").getInt("v"))
+        assertEquals("push", caps.getJSONObject("notify.post").getString("availability"))
     }
 
     @Test fun stateFrame() {

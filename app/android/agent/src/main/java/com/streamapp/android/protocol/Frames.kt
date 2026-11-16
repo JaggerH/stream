@@ -19,6 +19,9 @@ internal data class Control(
     val financeVisible: List<String>,
 )
 
+/** One entry of the hello's capability manifest. [availability] null = always (the field is omitted). */
+internal data class Capability(val id: String, val v: Int = 1, val availability: String? = null)
+
 internal data class DeviceState(
     val a11yEnabled: Boolean,
     val screenOn: Boolean,
@@ -32,6 +35,9 @@ internal data class DeviceState(
 /** The `host-relay.v2` frames this app sends and receives. */
 internal object Frames {
     const val PROTOCOL = "host-relay.v2"
+
+    /** The capability manifest schema the hello's `caps` follow. */
+    const val CAPS_VERSION = 1
 
     /** A backend request, or null for anything else. A frame with a non-numeric id is not ours. */
     fun request(raw: String): Request? {
@@ -74,15 +80,27 @@ internal object Frames {
         return o.toString()
     }
 
-    fun hello(deviceId: String, name: String, agentVersion: String, ops: List<String>): String =
-        JSONObject()
+    /** The first frame: who this device is, the ops it implements, and its capability manifest
+     *  (`capsVersion` + `caps`: id → `{v, availability?}`). A backend that predates the manifest
+     *  ignores the two extra fields. */
+    fun hello(deviceId: String, name: String, agentVersion: String, ops: List<String>, caps: List<Capability> = emptyList()): String {
+        val c = JSONObject()
+        for (cap in caps) {
+            val e = JSONObject().put("v", cap.v)
+            if (cap.availability != null) e.put("availability", cap.availability)
+            c.put(cap.id, e)
+        }
+        return JSONObject()
             .put("type", "hello")
             .put("deviceId", deviceId)
             .put("platform", "android")
             .put("name", name)
             .put("agentVersion", agentVersion)
             .put("ops", JSONArray(ops))
+            .put("capsVersion", CAPS_VERSION)
+            .put("caps", c)
             .toString()
+    }
 
     fun state(s: DeviceState, clockSkewMs: Long? = null): String {
         val health = JSONObject().put("networkOk", s.networkOk)

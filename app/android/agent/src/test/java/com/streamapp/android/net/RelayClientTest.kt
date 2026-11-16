@@ -55,6 +55,10 @@ class RelayClientTest {
         assertEquals("hello", JSONObject(t.sent[0]).getString("type"))
         assertEquals("android:abc", JSONObject(t.sent[0]).getString("deviceId"))
         assertEquals("state", JSONObject(t.sent[1]).getString("type"))
+        // The capability manifest rides on the hello: what the ops back, nothing more.
+        val caps = JSONObject(t.sent[0]).getJSONObject("caps")
+        assertEquals(setOf("ui.tree", "ui.act", "screen.shot", "app.launch", "app.in_use", "input.text"), caps.keys().asSequence().toSet())
+        assertEquals(1, JSONObject(t.sent[0]).getInt("capsVersion"))
     }
 
     @Test fun reportsWhereTheConnectionStands() {

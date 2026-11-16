@@ -32,6 +32,60 @@ describe('parseHello', () => {
   })
 })
 
+describe('parseHello caps (device-capability-manifest)', () => {
+  const frame = (extra: Record<string, unknown>) => JSON.stringify({ type: 'hello', ...hello(), ...extra })
+  it('an old agent without caps still connects and has no caps', () => {
+    const h = parseHello(frame({}))
+    expect(h).not.toBeNull()
+    expect(h).not.toHaveProperty('caps')
+  })
+  it('reads a v1 manifest, keeping unknown capability ids and dropping unknown entry fields', () => {
+    const h = parseHello(frame({
+      capsVersion: 1,
+      caps: { 'ui.tree': { v: 1 }, 'screen.shot': { v: 2, availability: 'foreground' }, 'future.thing': { v: 1, availability: 'push', extra: true } },
+    }))
+    expect(h?.caps).toEqual({ 'ui.tree': { v: 1 }, 'screen.shot': { v: 2, availability: 'foreground' }, 'future.thing': { v: 1, availability: 'push' } })
+  })
+  it('a manifest without capsVersion is read as v1; an empty manifest declares none', () => {
+    expect(parseHello(frame({ caps: { 'ui.act': { v: 1, availability: 'always' } } }))?.caps).toEqual({ 'ui.act': { v: 1, availability: 'always' } })
+    expect(parseHello(frame({ capsVersion: 1, caps: {} }))?.caps).toEqual({})
+  })
+  it('an unknown schema version connects but its caps are ignored, not half-read', () => {
+    const h = parseHello(frame({ capsVersion: 2, caps: { 'ui.tree': { v: 'anything' } } }))
+    expect(h).not.toBeNull()
+    expect(h).not.toHaveProperty('caps')
+  })
+  it('a malformed manifest under a known version refuses the hello, never a default', () => {
+    for (const bad of [
+      { caps: [] },
+      { caps: 'ui.tree' },
+      { caps: null },
+      { caps: { 'ui.tree': true } },
+      { caps: { 'ui.tree': {} } },
+      { caps: { 'ui.tree': { v: 0 } } },
+      { caps: { 'ui.tree': { v: 1.5 } } },
+      { caps: { 'ui.tree': { v: '1' } } },
+      { caps: { 'ui.tree': { v: 1, availability: 'sometimes' } } },
+      { caps: { 'UI Tree': { v: 1 } } },
+      { caps: { '': { v: 1 } } },
+      { capsVersion: '1', caps: {} },
+      { capsVersion: 0, caps: {} },
+      { caps: Object.fromEntries(Array.from({ length: 65 }, (_, i) => [`c${i}`, { v: 1 }])) },
+    ]) expect(parseHello(frame(bad)), JSON.stringify(bad).slice(0, 80)).toBeNull()
+  })
+  it('the registry carries caps on the online change and in devices()', () => {
+    const reg = new HostRelayRegistry()
+    const changes: unknown[] = []
+    reg.onChange((c) => changes.push(c))
+    const caps = { 'ui.tree': { v: 1 } }
+    reg.connect(fakeSocket().socket, hello({ caps }))
+    expect(changes.at(-1)).toMatchObject({ online: true, ops: ['click', 'find'], caps })
+    expect(reg.devices()[0].hello.caps).toEqual(caps)
+    reg.connect(fakeSocket().socket, hello())
+    expect(changes.at(-1)).not.toHaveProperty('caps')
+  })
+})
+
 describe('surfaceOf', () => {
   it('windows and macos are the desktop surface; android is its own', () => {
     expect(surfaceOf('windows')).toBe('desktop')

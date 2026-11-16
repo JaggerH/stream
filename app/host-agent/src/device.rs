@@ -326,7 +326,11 @@ pub fn declared_ports(state_dir: &Path) -> Option<Vec<u16>> {
 
 pub fn device_hello(device_id: &str, name: &str, state_dir: &Path) -> Value {
     let ports = declared_ports(state_dir).map(crate::forward::ForwardPorts);
-    relay::hello_frame(device_id, "linux", name, env!("CARGO_PKG_VERSION"), DEVICE_OPS, ports.as_ref().map(|p| p.0.as_slice()))
+    // 无界面设备：能力清单里一项界面能力都没有（op 撑不起），明说为空。
+    relay::with_caps(
+        relay::hello_frame(device_id, "linux", name, env!("CARGO_PKG_VERSION"), DEVICE_OPS, ports.as_ref().map(|p| p.0.as_slice())),
+        &relay::caps_for_ops(DEVICE_OPS),
+    )
 }
 
 /// 单实例锁：对状态目录本身加 flock（`LOCK_EX | LOCK_NB`）。同一状态目录只允许一个 agent
@@ -454,6 +458,9 @@ mod tests {
         assert_eq!(h["agentVersion"], env!("CARGO_PKG_VERSION"));
         // 没配 forward-ports.json：ports 不出现在 hello 里（fail closed）。
         assert!(h.get("ports").is_none(), "{h}");
+        // 能力清单：带 schema 版本，一项界面能力都没有。
+        assert_eq!(h["capsVersion"], relay::CAPS_VERSION);
+        assert_eq!(h["caps"], json!({}), "{h}");
         // 配了：原样进 hello（重复去重）。
         std::fs::write(dir.join("forward-ports.json"), "[8765, 8765, 9000]").unwrap();
         let h2 = device_hello("linux:0b7c", "nas", &dir);

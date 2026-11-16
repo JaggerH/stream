@@ -146,6 +146,53 @@ pub fn hello_frame(device_id: &str, platform: &str, name: &str, version: &str, o
     v
 }
 
+/// 能力清单的 schema 版本（hello 的 `capsVersion`，openspec device-capability-manifest）。
+/// 只有不兼容的形状变化才升；加新能力 id、给条目加可选字段都不升。
+pub const CAPS_VERSION: u32 = 1;
+
+/// 能力清单的一格：`id` → `{ v, availability? }`。`availability` 为 None = 在线即可用（不写出）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Cap {
+    pub id: &'static str,
+    pub v: u32,
+    pub availability: Option<&'static str>,
+}
+
+/// 能力 id 与撑起它的 op：声明的 op 全在，才声明这项能力——清单只说真的能做的。
+/// `app.in_use`（拒绝接管用户正在用的应用）、`notify.post`、`intent.run` 桌面端没有实现，不在表里。
+pub const CAP_OPS: &[(&str, &[&str])] = &[
+    ("ui.tree", &["windows", "find", "readSubtree"]),
+    ("ui.act", &["click", "invoke", "scroll", "press"]),
+    ("screen.shot", &["screenshot"]),
+    ("app.launch", &["focusApp"]),
+    ("input.text", &["type", "setValue", "clearInput"]),
+];
+
+/// 由一份 op 清单推出能力清单（顺序同 [`CAP_OPS`]）。
+pub fn caps_for_ops(ops: &[&str]) -> Vec<Cap> {
+    CAP_OPS
+        .iter()
+        .filter(|(_, need)| need.iter().all(|op| ops.contains(op)))
+        .map(|(id, _)| Cap { id, v: 1, availability: None })
+        .collect()
+}
+
+/// 给一帧 hello 加上能力清单：`capsVersion` 与 `caps`（空清单 = 明说一项都没有）。
+/// 不认识这两格的旧后端照常握手，只是读不到清单。
+pub fn with_caps(mut hello: serde_json::Value, caps: &[Cap]) -> serde_json::Value {
+    let mut m = serde_json::Map::new();
+    for c in caps {
+        let mut e = serde_json::json!({ "v": c.v });
+        if let Some(a) = c.availability {
+            e["availability"] = serde_json::json!(a);
+        }
+        m.insert(c.id.to_string(), e);
+    }
+    hello["capsVersion"] = serde_json::json!(CAPS_VERSION);
+    hello["caps"] = serde_json::Value::Object(m);
+    hello
+}
+
 /// The ops this build can actually perform: every dispatched op, minus those a platform lacks
 /// (`nudge` is only implemented on Windows; elsewhere the trait default returns an error).
 pub fn declared_ops() -> Vec<&'static str> {
@@ -166,13 +213,11 @@ pub fn local_hello() -> serde_json::Value {
         "macos" => "macos",
         _ => "windows",
     };
-    hello_frame(
-        &format!("desktop:{}", host.to_lowercase()),
-        platform,
-        &host,
-        env!("CARGO_PKG_VERSION"),
-        &declared_ops(),
-        None,
+    let ops = declared_ops();
+    let caps = caps_for_ops(&ops);
+    with_caps(
+        hello_frame(&format!("desktop:{}", host.to_lowercase()), platform, &host, env!("CARGO_PKG_VERSION"), &ops, None),
+        &caps,
     )
 }
 
@@ -291,5 +336,31 @@ mod tests {
         }
         assert!(v["deviceId"].as_str().unwrap().starts_with("desktop:"));
         assert!(matches!(v["platform"].as_str().unwrap(), "windows" | "macos"));
+        // 能力清单：桌面端的界面能力都在，app.in_use / notify.post / intent.run 不在。
+        assert_eq!(v["capsVersion"], CAPS_VERSION);
+        let caps = v["caps"].as_object().unwrap();
+        let ids: Vec<&str> = caps.keys().map(|k| k.as_str()).collect();
+        for id in ["ui.tree", "ui.act", "screen.shot", "app.launch", "input.text"] {
+            assert!(ids.contains(&id), "missing {id}: {v}");
+            assert_eq!(caps[id], serde_json::json!({ "v": 1 }));
+        }
+        for id in ["app.in_use", "notify.post", "intent.run"] {
+            assert!(!ids.contains(&id), "declared {id} without ops behind it: {v}");
+        }
+    }
+
+    /// 清单只声明 op 撑得起的能力；availability 有值才写出；空清单也带 schema 版本。
+    #[test]
+    fn caps_follow_the_declared_ops_and_have_the_wire_shape_the_backend_parses() {
+        assert_eq!(caps_for_ops(&["screenshot", "click"]), vec![Cap { id: "screen.shot", v: 1, availability: None }]);
+        assert!(caps_for_ops(&["http.fetch"]).is_empty());
+        let base = hello_frame("desktop:pc", "windows", "PC", "0.1.0", &["screenshot"], None);
+        let v = with_caps(base, &[Cap { id: "screen.shot", v: 2, availability: Some("foreground") }]);
+        assert_eq!(v["capsVersion"], 1);
+        assert_eq!(v["caps"], serde_json::json!({ "screen.shot": { "v": 2, "availability": "foreground" } }));
+        assert_eq!(v["ops"], serde_json::json!(["screenshot"]));
+        let none = with_caps(hello_frame("linux:x", "linux", "nas", "0.1.0", &[], None), &[]);
+        assert_eq!(none["caps"], serde_json::json!({}));
+        assert_eq!(none["capsVersion"], 1);
     }
 }

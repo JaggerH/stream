@@ -168,6 +168,7 @@ export function mountDeviceRoutes(app: Hono, deps: DeviceRoutesDeps): void {
       return {
         ...d, paired: true, online: !!live,
         ...(live ? { agentVersion: live.hello.agentVersion } : {}),
+        ...(live?.hello.caps ? { caps: live.hello.caps } : {}),
         ...(live?.state ? { state: live.state } : {}),
       }
     })
@@ -177,6 +178,7 @@ export function mountDeviceRoutes(app: Hono, deps: DeviceRoutesDeps): void {
       .map((d) => ({
         deviceId: d.hello.deviceId, name: d.hello.name, platform: d.hello.platform,
         paired: false, online: true, agentVersion: d.hello.agentVersion,
+        ...(d.hello.caps ? { caps: d.hello.caps } : {}),
         ...(d.state ? { state: d.state } : {}),
       }))
     return c.json({ devices: [...paired, ...others] })

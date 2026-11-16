@@ -1,6 +1,7 @@
 package com.streamapp.android.net
 
 import com.streamapp.android.AgentConnection
+import com.streamapp.android.agent.ANDROID_CAPS
 import com.streamapp.android.agent.ANDROID_OPS
 import com.streamapp.android.agent.AgentError
 import com.streamapp.android.agent.Cancel
@@ -120,7 +121,7 @@ internal class RelayClient(
             val c = creds ?: return
             backoff.reset()
             current = dispatcher()
-            transport.send(Frames.hello(c.deviceId, name, agentVersion, ANDROID_OPS))
+            transport.send(Frames.hello(c.deviceId, name, agentVersion, ANDROID_OPS, ANDROID_CAPS))
             transport.send(Frames.state(stateProvider()))
             open = true
             callbacks.status("已连接 ${c.backend}", AgentConnection.CONNECTED)

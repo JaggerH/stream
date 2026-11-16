@@ -26,6 +26,65 @@ export interface HostHello {
    * 后还会再校验一次——这格里的是"声明"，不是"唯一防线"。
    */
   ports?: number[]
+  /**
+   * The capability manifest (openspec `device-capability-manifest`): what this device can do, by
+   * capability id, so a consumer can adapt to a device class instead of probing ops one by one.
+   * Absent = the agent predates the manifest (or declared a schema version this backend does not
+   * know); only `ops` is known about it then. Present and empty = the device declares none.
+   */
+  caps?: DeviceCaps
+}
+
+/** The caps schema versions this backend reads. A hello with another `capsVersion` still connects;
+ *  its `caps` are ignored (an incompatible future shape must not be half-read, nor lock the device out). */
+export const CAPS_SCHEMA_VERSION = 1
+
+/** When a capability is usable. `always` (also what an absent value means): whenever the device is
+ *  online. `foreground`: only while the device's agent app is in front. `push`: only by waking the
+ *  device through a push channel. */
+export type CapAvailability = 'always' | 'foreground' | 'push'
+const AVAILABILITIES: ReadonlySet<string> = new Set(['always', 'foreground', 'push'])
+
+/** One declared capability: `v` is the capability's own version (a positive integer). */
+export interface DeviceCapability {
+  v: number
+  availability?: CapAvailability
+}
+
+/** Capability id → descriptor. The vocabulary is open (`ui.tree`, `ui.act`, `screen.shot`,
+ *  `app.launch`, `app.in_use`, `input.text`, `notify.post`, `intent.run` today); an id this backend
+ *  does not know is kept, so a consumer newer than the backend can read it. */
+export type DeviceCaps = Record<string, DeviceCapability>
+
+/** At most this many capabilities per hello; the vocabulary is a handful of ids. */
+export const MAX_HELLO_CAPS = 64
+const CAP_ID = /^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)*$/
+
+/**
+ * `hello.caps` under `hello.capsVersion`. Missing `caps` = undefined (an agent that predates the
+ * manifest). An unknown `capsVersion` = undefined as well — not an error. Under a known version
+ * anything malformed is `null` (the whole hello is refused, same rule as `ports`): a non-object,
+ * a bad id, a `v` that is not a positive integer, an availability outside the set. Unknown extra
+ * fields inside an entry are dropped (additive, not version-bumping).
+ */
+function parseCaps(raw: unknown, version: unknown): DeviceCaps | null | undefined {
+  if (raw === undefined) return undefined
+  if (version !== undefined && (typeof version !== 'number' || !Number.isInteger(version) || version < 1)) return null
+  // A manifest without a version is read as version 1: the field was introduced with it.
+  if ((version ?? CAPS_SCHEMA_VERSION) !== CAPS_SCHEMA_VERSION) return undefined
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return null
+  const entries = Object.entries(raw as Record<string, unknown>)
+  if (entries.length > MAX_HELLO_CAPS) return null
+  const out: DeviceCaps = {}
+  for (const [id, e] of entries) {
+    if (id.length > 64 || !CAP_ID.test(id)) return null
+    if (e === null || typeof e !== 'object' || Array.isArray(e)) return null
+    const { v, availability } = e as Record<string, unknown>
+    if (typeof v !== 'number' || !Number.isInteger(v) || v < 1) return null
+    if (availability !== undefined && (typeof availability !== 'string' || !AVAILABILITIES.has(availability))) return null
+    out[id] = { v, ...(availability !== undefined ? { availability: availability as CapAvailability } : {}) }
+  }
+  return out
 }
 
 /**
@@ -132,7 +191,9 @@ export function parseHello(raw: string): HostHello | null {
   if (!Array.isArray(ops) || !ops.every((o) => typeof o === 'string')) return null
   const ports = parsePorts(m.ports)
   if (ports === null) return null
-  return { deviceId, platform: platform as HostPlatform, name, agentVersion, ops: ops as string[], ...(ports ? { ports } : {}) }
+  const caps = parseCaps(m.caps, m.capsVersion)
+  if (caps === null) return null
+  return { deviceId, platform: platform as HostPlatform, name, agentVersion, ops: ops as string[], ...(ports ? { ports } : {}), ...(caps ? { caps } : {}) }
 }
 
 export function surfaceOf(p: HostPlatform): HostSurface {
@@ -179,7 +240,7 @@ export class HostRelayRegistry {
     // **每次都发 online**，包括顶掉旧连接的重连：嵌入方按事件折在线状态，设备挂起期间它可能
     // 已经把行压成离线（厂商说挂起），重连不发事件就只能等它自己的兜底对账（一个心跳周期一拍）
     // ——那正是恢复后「重连上了但表不翻」的来源。事件幂等，消费方行已在线时无变化。
-    this.emitChange({ deviceId: hello.deviceId, name: hello.name, platform: hello.platform, online: true, at: now, ops: hello.ops })
+    this.emitChange({ deviceId: hello.deviceId, name: hello.name, platform: hello.platform, online: true, at: now, ops: hello.ops, ...(hello.caps ? { caps: hello.caps } : {}) })
     return relay
   }
 
@@ -279,7 +340,8 @@ export class HostRelayRegistry {
 }
 
 /** HostRelayRegistry 的上下线事件载荷（at = 毫秒时间戳）。online 事件带当次 hello 声明的 op 集
- *  （重连换了 op 集合，事件就是最新事实）；offline 不带 ops——设备已断，没有「现在的 ops」。 */
+ *  （重连换了 op 集合，事件就是最新事实）；offline 不带 ops——设备已断，没有「现在的 ops」。
+ *  `caps` 同理：online 事件带当次 hello 的能力清单（没声明就没有这一格），offline 不带。 */
 export interface HostChange {
   deviceId: string
   name: string
@@ -287,4 +349,5 @@ export interface HostChange {
   online: boolean
   at: number
   ops?: string[]
+  caps?: DeviceCaps
 }

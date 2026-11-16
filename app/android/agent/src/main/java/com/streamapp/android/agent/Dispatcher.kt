@@ -11,6 +11,13 @@ internal val ANDROID_OPS = listOf(
     "click", "scroll", "press", "readSubtree", "screenshot", "url", "sleep", "status",
 )
 
+/** The capability manifest the hello declares: only what [ANDROID_OPS] actually back. `ui.tree`
+ *  (windows / find / readSubtree), `ui.act` (click / invoke / scroll / press), `screen.shot`,
+ *  `app.launch` (focusApp), `app.in_use` (the `app-in-use` refusal), `input.text` (setValue / type /
+ *  clearInput). No notification posting or intent running: there are no ops for them. */
+internal val ANDROID_CAPS = listOf("ui.tree", "ui.act", "screen.shot", "app.launch", "app.in_use", "input.text")
+    .map { com.streamapp.android.protocol.Capability(it) }
+
 private val NO_WAKE = setOf("status", "sleep", "windows", "url")
 
 /** Ops that answer even while the caller has set busy: only the always-available observability

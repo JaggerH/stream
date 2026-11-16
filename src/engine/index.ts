@@ -27,7 +27,7 @@ export { callerFetchGuardConfigured } from '../net/caller-fetch-guard.ts'
 
 export type { StreamRuntime } from './runtime.ts'
 export { createRuntime } from './runtime.ts'
-export type { StreamDevices, DeviceChange, DeviceSnapshot } from './devices.ts'
+export type { StreamDevices, DeviceChange, DeviceSnapshot, DeviceCaps, DeviceCapability, CapAvailability } from './devices.ts'
 export { deviceGateway } from './device-gateway.ts'
 export type { DeviceGateway, DeviceGatewayOptions } from './device-gateway.ts'
 /** 设备 op 失败帧的结构化回执类型（device-sensitive-semantics；经管理口 502 透传给嵌入方）。 */

@@ -149,6 +149,7 @@ describe('deviceGateway（宿主自建 server + Hono，basePath /api/stream）',
     const snapDevice = stream.devices.online().devices.find((d) => d.deviceId === deviceId)
     expect(snapDevice?.connectedAt).toEqual(expect.any(Number))
     expect(snapDevice?.ops).toEqual(['browser.tabs'])
+    expect(snapDevice).not.toHaveProperty('caps')
     ws.close()
     await vi.waitFor(() => {
       expect(changes).toContainEqual({ kind: 'device', deviceId, name: '测试机', platform: 'linux', online: false, at: expect.any(Number) })
@@ -157,11 +158,14 @@ describe('deviceGateway（宿主自建 server + Hono，basePath /api/stream）',
     // 重连换 op 集合：online 事件带当次 hello 的 ops（新事实），快照跟着翻
     const ws2 = new WebSocket(`ws://127.0.0.1:${port}/api/stream/host`, [HOST_RELAY_PROTOCOL, token])
     await new Promise<void>((resolve, reject) => { ws2.on('open', resolve); ws2.on('error', reject) })
-    ws2.send(JSON.stringify({ type: 'hello', deviceId, platform: 'linux', name: '测试机', agentVersion: '1.0.1', ops: ['browser.tabs', 'browser.claim'] }))
+    // 这次还带了能力清单（device-capability-manifest）：online 事件与快照都带 caps；上面那次没带的就没有这一格
+    const caps = { 'ui.tree': { v: 1 }, 'notify.post': { v: 1, availability: 'push' } }
+    ws2.send(JSON.stringify({ type: 'hello', deviceId, platform: 'linux', name: '测试机', agentVersion: '1.0.1', ops: ['browser.tabs', 'browser.claim'], capsVersion: 1, caps }))
     await vi.waitFor(() => {
-      expect(changes.at(-1)).toEqual({ kind: 'device', deviceId, name: '测试机', platform: 'linux', online: true, at: expect.any(Number), ops: ['browser.tabs', 'browser.claim'] })
+      expect(changes.at(-1)).toEqual({ kind: 'device', deviceId, name: '测试机', platform: 'linux', online: true, at: expect.any(Number), ops: ['browser.tabs', 'browser.claim'], caps })
     })
     expect(stream.devices.online().devices.find((d) => d.deviceId === deviceId)?.ops).toEqual(['browser.tabs', 'browser.claim'])
+    expect(stream.devices.online().devices.find((d) => d.deviceId === deviceId)?.caps).toEqual(caps)
     ws2.close()
 
     // 别人的路径（这里没有兜底者）：handleUpgrade 返回 false；socket 没人接、客户端悬着——
