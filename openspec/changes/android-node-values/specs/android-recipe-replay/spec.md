@@ -58,3 +58,19 @@ within one second, in either order.
 #### Scenario: the user taps the indicator
 - **WHEN** the user taps the indicator while app P is in front
 - **THEN** a later op on P is not refused as `app-in-use` because of that tap
+
+### Requirement: the indicator's window root carries the host view's view-tree owners
+
+The frame the agent wraps around a host's indicator view (the window root in the view's place)
+SHALL carry the androidx view-tree owners the view resolves (lifecycle, view model store, saved
+state registry, back-press dispatcher, fully-drawn reporter), copied when the view is wrapped and
+again when the window attaches, before the view attaches. An owner kind whose library the host does
+not ship SHALL be skipped without failing.
+
+#### Scenario: a Compose indicator
+- **WHEN** the host's indicator view is a `ComposeView` with its lifecycle and saved-state owners set on it
+- **THEN** the indicator window attaches and draws, and the host process does not crash
+
+#### Scenario: owners set after create
+- **WHEN** the host sets the owners on its view after `create` returned but before the window attaches
+- **THEN** they are found from the window root as well

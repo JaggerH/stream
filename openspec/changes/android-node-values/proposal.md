@@ -30,6 +30,8 @@
 - **自家表面的触摸不算用户在用前台应用**：系统能指出窗口时（事件带窗口 id，或开着触摸浏览时的 active 窗口，否则看事件
   包名），落在无障碍悬浮层或宿主窗口上的不计；`overlayIndicator` 与缺省横幅的视图自己上报触摸；宿主自绘的其他窗口调
   新增的 `StreamAgent.ownSurfaceTouched()`。上报与系统事件谁先到都行（1 秒内互相抵消）。
+- **包住指示器视图的框带上宿主视图的 view-tree owner**：框取代宿主视图成了窗口根，Compose 从窗口根找 lifecycle owner
+  建窗口 recomposer，找不到就抛异常、整个进程崩溃。框在包住时与挂上窗口时把宿主视图的各个 owner 拷到自己身上。
 
 ## Capabilities
 

@@ -111,10 +111,9 @@ internal class Overlay(
             Log.w("Stream", "indicator view failed", e)
             return
         }
-        // A touch on the indicator is not the user using the app under it.
-        val v = OwnTouchFrame(service).apply {
-            addView(built, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
-        }
+        // A touch on the indicator is not the user using the app under it. The frame becomes the
+        // window root in place of the host's view, carrying that view's view-tree owners.
+        val v = OwnTouchFrame(service, built)
         val lp = WindowManager.LayoutParams(
             content.width, content.height,
             WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
@@ -179,9 +178,32 @@ internal class Overlay(
     }
 }
 
-/** A frame that tells the agent about every touch that starts on it, before passing it on: the
- *  agent's own surfaces do not count as the user using the app in front. */
-internal class OwnTouchFrame(context: Context) : FrameLayout(context) {
+/**
+ * The indicator window's root: a frame around the host's [content] that tells the agent about every
+ * touch that starts on it, before passing it on — the agent's own surfaces do not count as the user
+ * using the app in front.
+ *
+ * It takes the window-root place [content] would have had, so it carries [content]'s androidx
+ * view-tree owners ([copyViewTreeOwners]): once when built, and again when the window attaches,
+ * before [content] attaches — a host may set them on its view after [IndicatorView.create]
+ * returned. Without them a Compose [content] cannot find a lifecycle owner from the window root and
+ * throws while the window attaches, which takes the whole process (and the accessibility service)
+ * down. A touch listener on [content] instead of the frame would leave the root alone, but a
+ * view group's own listener only sees touches none of its children took, which for a Compose view
+ * is none of them.
+ */
+internal class OwnTouchFrame(context: Context, private val content: View) : FrameLayout(context) {
+    init {
+        addView(content, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
+        copyViewTreeOwners(content, this)
+    }
+
+    override fun onAttachedToWindow() {
+        // Runs before the children's own onAttachedToWindow (ViewGroup.dispatchAttachedToWindow).
+        copyViewTreeOwners(content, this)
+        super.onAttachedToWindow()
+    }
+
     override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
         if (ev.actionMasked == MotionEvent.ACTION_DOWN) StreamAccessibilityService.inputs.ownSurfaceTouched(System.currentTimeMillis())
         return super.dispatchTouchEvent(ev)
