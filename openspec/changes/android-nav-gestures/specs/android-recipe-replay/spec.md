@@ -20,12 +20,19 @@ and reply `{ok}`. The capability manifest SHALL declare `app.launch` at `v: 2`.
 ### Requirement: scroll prefers accessibility actions
 
 `scroll` SHALL first look, in the scoped window (else the foreground window; never the host app's own
-window), for the visible scrollable node not known to scroll horizontally with the largest on-screen
-area, and scroll it with `ACTION_SCROLL_DOWN`/`ACTION_SCROLL_UP` when the node offers them, else
-`ACTION_SCROLL_FORWARD`/`ACTION_SCROLL_BACKWARD`, one action per step. A refused later step SHALL end
-the scroll with `end: true`. Only when no such node exists, or it refuses the first step, SHALL the
-executor fall back to a swipe gesture over that node (else the window). The reply SHALL carry `method`
-(`a11y` or `gesture`) and `steps`; `a11y: "refused"` marks a fallback after a refused first step.
+window), for the visible scrollable nodes not known to scroll horizontally, and try them in order of
+on-screen area, except that a scrollable nested inside another and covering at least half of its
+on-screen area SHALL be tried before it (an inner list before the wrapper around it). A node is
+scrolled with `ACTION_SCROLL_DOWN`/`ACTION_SCROLL_UP` when it offers them, else
+`ACTION_SCROLL_FORWARD`/`ACTION_SCROLL_BACKWARD` when it offers those, one action per step; a node
+offering neither for the direction counts as refusing. An accepted action SHALL count as a step only
+when the visible content of the node's on-screen area changed afterwards. A candidate that refuses
+its first step or accepts it without effect SHALL give way to the next one (at most three). A later
+step that is refused or has no effect SHALL end the scroll with `end: true`. Only when no candidate
+exists or none moved on its first step SHALL the executor fall back to a swipe gesture over the first
+candidate (else the window). The reply SHALL carry `method` (`a11y` or `gesture`) and `steps`;
+`a11y: "no-effect"` marks a fallback after a candidate accepted its first step without anything
+moving, `a11y: "refused"` one after every candidate refused.
 The fallback swipe SHALL start inside the area's right edge band (48 dp in), hold for 100 ms before
 lifting, and be refused as `action-failed` without dispatching anything when its length would be
 under four touch slops.
@@ -34,6 +41,19 @@ under four touch slops.
 - **WHEN** the scoped window holds a vertical list and the caller sends `scroll {dir: "down", amount: 2}`
 - **THEN** the list receives two accessibility scroll actions, no gesture is dispatched, and the reply
   carries `method: "a11y", steps: 2`
+
+#### Scenario: an outer wrapper around the list
+- **WHEN** a collapsing-toolbar page wraps its list in an outer scroll view and the caller sends
+  `scroll {dir: "down", amount: 1}`
+- **THEN** the inner list receives the accessibility action and the reply carries `method: "a11y"`
+
+#### Scenario: an accepted action that moves nothing
+- **WHEN** every candidate accepts the first scroll action but the content on screen stays the same
+- **THEN** a swipe is dispatched and the reply carries `method: "gesture", a11y: "no-effect"`
+
+#### Scenario: a later step without effect
+- **WHEN** the first step moved the list and the second accepted action leaves it where it was
+- **THEN** the scroll stops with `steps: 1, end: true` and no gesture is dispatched
 
 #### Scenario: no scrollable node
 - **WHEN** the window has no scrollable node

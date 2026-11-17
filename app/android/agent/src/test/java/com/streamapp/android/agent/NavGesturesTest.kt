@@ -96,12 +96,12 @@ class NavGesturesTest {
         assertEquals(listOf("scrollNode list forward"), dev.log.filter { it.startsWith("scrollNode") })
     }
 
-    @Test fun scrollContainerAreaCountsOnlyTheOnScreenPart() {
+    @Test fun scrollCandidateAreaCountsOnlyTheOnScreenPart() {
         // A long list mostly below the window loses to a smaller one fully on screen.
         val offscreen = FakeNode("RecyclerView", "long", rect = Rect(0, 2200, 1080, 5000), isScrollable = true)
         val onscreen = FakeNode("RecyclerView", "short", rect = Rect(0, 100, 1080, 800), isScrollable = true)
-        assertEquals("short", scrollContainer(page(offscreen, onscreen), Rect(0, 0, 1080, 2400))?.name)
-        assertNull(scrollContainer(page(FakeNode("TextView", "x")), Rect(0, 0, 1080, 2400)))
+        assertEquals("short", scrollCandidates(page(offscreen, onscreen), Rect(0, 0, 1080, 2400)).firstOrNull()?.name)
+        assertTrue(scrollCandidates(page(FakeNode("TextView", "x")), Rect(0, 0, 1080, 2400)).isEmpty())
     }
 
     @Test fun aContainerRefusingALaterStepEndsTheScroll() {
@@ -122,6 +122,73 @@ class NavGesturesTest {
         assertEquals("refused", out["a11y"])
         // Inside the container: x = 1000 - 132, y from 400 + 700 to 400 + 300.
         assertTrue(dev.log.toString(), "swipe 868,1100->868,700 hold=100" in dev.log)
+    }
+
+    @Test fun anAcceptedStepThatMovesNothingFallsBackToTheGesture() {
+        // The action answers true but the content stays put: no-effect, then a swipe over the list.
+        dev.roots["1"] = page(FakeNode("RecyclerView", "list", rect = Rect(0, 400, 1000, 1000), isScrollable = true))
+        dev.inert += "list"
+        val out = map(call("scroll", """{"dir":"down","amount":2}"""))
+        assertEquals("gesture", out["method"])
+        assertEquals("no-effect", out["a11y"])
+        assertEquals("coords", out["via"])
+        assertEquals(2, out["steps"])
+        assertEquals(1, dev.log.count { it.startsWith("scrollNode") })
+        assertEquals(2, dev.log.count { it == "swipe 868,1100->868,700 hold=100" })
+    }
+
+    @Test fun nestedScrollablesPickTheInnerList() {
+        // A collapsing-toolbar page: an outer scroll view (toolbar + list) wraps the list itself.
+        val list = FakeNode("RecyclerView", "list", className = "androidx.recyclerview.widget.RecyclerView",
+            rect = Rect(0, 177, 720, 1373), isScrollable = true)
+        val outer = FakeNode("ScrollView", "outer", rect = Rect(0, 59, 720, 1491), isScrollable = true,
+            children = listOf(FakeNode("LinearLayout", "app_bar", rect = Rect(0, 59, 720, 118)), FakeNode("FrameLayout", children = listOf(list), rect = Rect(0, 177, 720, 1373))))
+        val root = page(outer)
+        assertEquals(listOf("list", "outer"), scrollCandidates(root, Rect(0, 0, 720, 1600)).map { it.name })
+        dev.roots["1"] = root
+        val out = map(call("scroll", """{"dir":"down","amount":1}"""))
+        assertEquals(listOf("scrollNode list forward"), dev.log.filter { it.startsWith("scrollNode") })
+        assertEquals("a11y", out["method"])
+    }
+
+    @Test fun aSmallNestedScrollableDoesNotJumpTheQueue() {
+        // A chip row inside the page's scroll view covers far less than half of it: the page first.
+        val chips = FakeNode("RecyclerView", "chips", rect = Rect(0, 200, 1080, 200), isScrollable = true)
+        val outer = FakeNode("ScrollView", "page", rect = Rect(0, 0, 1080, 2400), isScrollable = true, children = listOf(chips))
+        assertEquals(listOf("page", "chips"), scrollCandidates(page(outer), Rect(0, 0, 1080, 2400)).map { it.name })
+    }
+
+    @Test fun aWrapperWithoutEffectGivesWayToTheNextCandidate() {
+        val wrapper = FakeNode("ScrollView", "wrapper", rect = Rect(0, 0, 1080, 2400), isScrollable = true)
+        val side = FakeNode("RecyclerView", "side", rect = Rect(0, 1200, 1080, 1000), isScrollable = true)
+        dev.roots["1"] = page(wrapper, side)
+        dev.inert += "wrapper"
+        val out = map(call("scroll", """{"dir":"down","amount":2}"""))
+        assertEquals(listOf("scrollNode wrapper forward", "scrollNode side forward", "scrollNode side forward"),
+            dev.log.filter { it.startsWith("scrollNode") })
+        assertEquals("a11y", out["method"])
+        assertEquals(2, out["steps"])
+        assertFalse(dev.log.any { it.startsWith("swipe") })
+    }
+
+    @Test fun aLaterStepThatMovesNothingEndsTheScroll() {
+        dev.roots["1"] = page(FakeNode("RecyclerView", "list", rect = Rect(0, 0, 1080, 2400), isScrollable = true))
+        dev.scrollMoves = mutableListOf(true, true, false)
+        val out = map(call("scroll", """{"dir":"down","amount":5}"""))
+        assertEquals("a11y", out["method"])
+        assertEquals(2, out["steps"])
+        assertEquals(true, out["end"])
+        assertEquals(3, dev.log.count { it.startsWith("scrollNode") })
+        assertFalse(dev.log.any { it.startsWith("swipe") })
+    }
+
+    @Test fun contentPrintSeesOnlyVisibleNodesInTheArea() {
+        val root = page(FakeNode("TextView", "a", rect = Rect(0, 100, 100, 50)), FakeNode("TextView", "b", rect = Rect(0, 2000, 100, 50)),
+            FakeNode("TextView", "c", rect = Rect(0, 120, 100, 50), isVisible = false))
+        val p = contentPrint(root, Rect(0, 0, 1080, 1000))
+        assertTrue(p.any { "|a|" in it })
+        assertFalse(p.any { "|b|" in it || "|c|" in it })
+        assertEquals(emptyList<String>(), contentPrint(null, Rect(0, 0, 1, 1)))
     }
 
     @Test fun scrollInTheScopedWindowUsesThatWindowsTree() {

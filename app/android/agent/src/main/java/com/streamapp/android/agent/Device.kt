@@ -36,7 +36,8 @@ internal interface Device {
     fun launch(packageName: String, fresh: Boolean = false): Boolean
     /** One accessibility scroll step on a scrollable container: [forward] = towards content further
      *  down (`ACTION_SCROLL_DOWN` where the node offers it, else `ACTION_SCROLL_FORWARD`). False when
-     *  the container refused (typically: already at that end). */
+     *  the node does not offer that direction or refused (typically: already at that end). True does
+     *  not prove anything moved: the dispatcher compares the content before and after. */
     fun scrollNode(node: UiNode, forward: Boolean): Boolean
     fun click(node: UiNode): Boolean
     fun setText(node: UiNode, text: String): Boolean

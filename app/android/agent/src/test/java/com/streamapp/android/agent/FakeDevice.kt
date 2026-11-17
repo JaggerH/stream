@@ -21,7 +21,14 @@ internal class FakeDevice : Device {
 
     override fun ensureAwake() { if (locked) throw AgentError("device-locked: 锁屏有密码，Stream 解不开"); rec("awake") }
     override fun windows() = wins.toList()
-    override fun windowRoot(windowId: String) = roots[windowId]
+    /** Accessibility scroll steps that moved something so far. A root read after one carries a
+     *  marker row whose label counts them, so the dispatcher's content check sees the page move. */
+    var moved = 0
+    override fun windowRoot(windowId: String): UiNode? {
+        val r = roots[windowId] ?: return null
+        if (moved == 0 || r !is FakeNode) return r
+        return r.copy(children = r.children + FakeNode("TextView", "scrolled $moved", rect = Rect(0, 0, 1080, 2400)))
+    }
     var bounds = mutableMapOf<String, Rect>()
     override fun windowBounds(windowId: String): Rect? = bounds[windowId]
     override fun treeVersion() = changes.version()
@@ -40,9 +47,15 @@ internal class FakeDevice : Device {
     }
     /** What [scrollNode] answers per call, in order; past the end, true. */
     var scrollAnswers = mutableListOf<Boolean>()
+    /** Per accepted [scrollNode] call, in order, whether the content actually moves; past the end, true. */
+    var scrollMoves = mutableListOf<Boolean>()
+    /** Containers (by name) that accept every scroll action and never move. */
+    val inert = mutableSetOf<String>()
     override fun scrollNode(node: UiNode, forward: Boolean): Boolean {
         rec("scrollNode ${node.name} ${if (forward) "forward" else "backward"}")
-        return if (scrollAnswers.isEmpty()) true else scrollAnswers.removeAt(0)
+        val ok = if (scrollAnswers.isEmpty()) true else scrollAnswers.removeAt(0)
+        if (ok && node.name !in inert && (scrollMoves.isEmpty() || scrollMoves.removeAt(0))) moved++
+        return ok
     }
     override fun click(node: UiNode): Boolean { rec("click ${node.name}"); return clickable }
     override fun setText(node: UiNode, text: String): Boolean { rec("setText ${node.name}=$text"); return true }

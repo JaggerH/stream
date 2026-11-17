@@ -478,11 +478,14 @@ internal class Dispatcher(
 
     /**
      * Scrolls the scoped window (else the foreground one) by [amount] steps. Accessibility first:
-     * the largest visible scrollable container that is not known to scroll sideways gets
-     * `ACTION_SCROLL_DOWN`/`UP` (or `FORWARD`/`BACKWARD`) — no touch, nothing under the finger can
-     * be clicked, no fling. A gesture only when the window has no such container, or the container
-     * refuses the very first step (some custom views claim scrollable but ignore the action).
-     * A container refusing a later step has hit its end: the scroll stops there, `end: true`.
+     * the window's scroll candidates ([scrollCandidates]: an inner list before the wrapper around
+     * it, then by on-screen area) get `ACTION_SCROLL_DOWN`/`UP` (or `FORWARD`/`BACKWARD`) — no
+     * touch, nothing under the finger can be clicked, no fling. An action's "true" proves nothing
+     * (an outer wrapper of a nested-scrolling page may accept it and stay put), so every step is
+     * checked against the content on screen. A candidate that refuses its first step, or accepts it
+     * without anything moving, gives way to the next; when none moves, a gesture, with
+     * `a11y: "refused"` or `"no-effect"`. A later step refused or without effect is the end of the
+     * content: the scroll stops there, `end: true`.
      */
     private fun scroll(dir: String, amount: Int): Map<String, Any?> {
         val forward = when (dir) {
@@ -494,31 +497,56 @@ internal class Dispatcher(
         // Unscoped: only a window actually in front (never a background one, never the host's own).
         val win = if (scope != null) scopedWindow() else windows().firstOrNull { it.foreground }
         val bounds = win?.let { device.windowBounds(it.id) } ?: device.screenSize()
-        val container = win?.let { device.windowRoot(it.id) }?.let { scrollContainer(it, bounds) }
-        var refused = false
-        if (container != null) {
-            var done = 0
+        val root = win?.let { device.windowRoot(it.id) }
+        val candidates = if (win != null && root != null) scrollCandidates(root, bounds) else emptyList()
+        var noEffect = false
+        for (c in candidates.take(MAX_SCROLL_CANDIDATES)) {
+            val wid = win!!.id
+            val area = visiblePart(c.rect, bounds) ?: continue
+            var before = contentPrint(device.windowRoot(wid), area)
+            if (!device.scrollNode(c, forward)) continue
+            val first = awaitMove(wid, area, before)
+            if (first == null) { noEffect = true; continue }
+            before = first
+            var done = 1
+            var end = false
             while (done < steps) {
-                if (!device.scrollNode(container, forward)) break
+                val next = if (device.scrollNode(c, forward)) awaitMove(wid, area, before) else null
+                if (next == null) { end = true; break }
+                before = next
                 done++
-                device.sleep(150)
             }
-            if (done > 0) {
-                val out = mutableMapOf<String, Any?>("method" to SCROLL_A11Y, "steps" to done)
-                if (done < steps) out["end"] = true
-                return out
-            }
-            refused = true
+            val out = mutableMapOf<String, Any?>("method" to SCROLL_A11Y, "steps" to done)
+            if (end) out["end"] = true
+            return out
         }
-        val area = container?.let { visiblePart(it.rect, bounds) } ?: bounds
+        val area = candidates.firstOrNull()?.let { visiblePart(it.rect, bounds) } ?: bounds
         val g = swipeGeometry(area, forward, device.touchSlop(), device.density())
         repeat(steps) {
             device.swipe(g.x, g.from, g.x, g.to, SWIPE_MS, SWIPE_HOLD_MS)
             device.sleep(150)
         }
         val out = mutableMapOf<String, Any?>("method" to SCROLL_GESTURE, "steps" to steps)
-        if (refused) out["a11y"] = "refused"
+        if (candidates.isNotEmpty()) out["a11y"] = if (noEffect) "no-effect" else "refused"
         return out
+    }
+
+    /** Waits for the content inside [area] of window [windowId] to differ from [before], then for it
+     *  to settle (an animated scroll still running). The settled print, or null when nothing moved
+     *  within [SCROLL_SETTLE_POLLS] polls. */
+    private fun awaitMove(windowId: String, area: Rect, before: List<String>): List<String>? {
+        var last = before
+        var moved = false
+        // Up to SCROLL_SETTLE_POLLS polls to see a change, then as many again for it to settle.
+        repeat(2 * SCROLL_SETTLE_POLLS) { i ->
+            device.sleep(SCROLL_POLL_MS)
+            val now = contentPrint(device.windowRoot(windowId), area)
+            if (moved && now == last) return now
+            if (now != before) moved = true
+            last = now
+            if (!moved && i + 1 >= SCROLL_SETTLE_POLLS) return null
+        }
+        return if (moved) last else null
     }
 
     private fun settle(args: JSONObject, via: String): Map<String, Any?> {
@@ -640,21 +668,59 @@ internal fun visiblePart(r: Rect, bounds: Rect): Rect? {
     return if (x2 > x1 && y2 > y1) Rect(x1, y1, x2 - x1, y2 - y1) else null
 }
 
-/** The container a scroll acts on: among the visible scrollable nodes under [root] not known to
- *  scroll sideways, the one with the largest on-screen area (the first such in tree order on a tie). */
-internal fun scrollContainer(root: UiNode, bounds: Rect): UiNode? {
-    var best: UiNode? = null
-    var bestArea = 0L
-    fun walk(n: UiNode) {
+/** How many scroll candidates a scroll tries before falling back to a gesture. */
+internal const val MAX_SCROLL_CANDIDATES = 3
+/** After an accessibility scroll step: polls this far apart, this many times, for the content to
+ *  change (and as many again for it to settle). */
+internal const val SCROLL_POLL_MS = 100L
+internal const val SCROLL_SETTLE_POLLS = 6
+
+/**
+ * The containers a scroll tries, best first: the visible scrollable nodes under [root] not known
+ * to scroll sideways and with some part on screen. Ordered by on-screen area (tree order on a
+ * tie), except that a scrollable nested inside another and covering at least half of it comes
+ * before it: a page whose collapsing toolbar wraps the list in an outer scroll view is scrolled
+ * through the list, not the wrapper (the wrapper may accept the action and move nothing).
+ */
+internal fun scrollCandidates(root: UiNode, bounds: Rect): List<UiNode> {
+    class C(val node: UiNode, val area: Long, val ancestors: List<C>)
+    val all = mutableListOf<C>()
+    fun walk(n: UiNode, ancestors: List<C>) {
+        var inner = ancestors
         if (n.isScrollable && n.isVisible && n.scrollAxis != AXIS_HORIZONTAL) {
             val v = visiblePart(n.rect, bounds)
-            val area = if (v == null) 0L else v.w.toLong() * v.h
-            if (area > bestArea) { best = n; bestArea = area }
+            if (v != null) {
+                val c = C(n, v.w.toLong() * v.h, ancestors)
+                all += c
+                inner = ancestors + c
+            }
         }
+        n.children.forEach { walk(it, inner) }
+    }
+    walk(root, emptyList())
+    val byArea = all.sortedByDescending { it.area }
+    val out = LinkedHashSet<C>()
+    fun emit(c: C) {
+        if (c in out) return
+        byArea.filter { d -> c in d.ancestors && d.area * 2 >= c.area }.forEach(::emit)
+        out += c
+    }
+    byArea.forEach(::emit)
+    return out.map { it.node }
+}
+
+/** A cheap fingerprint of what is on screen inside [area]: each visible node overlapping it, by
+ *  class, label, id and position. A scroll that moved anything changes it; null [root] (the window
+ *  is gone) prints empty. */
+internal fun contentPrint(root: UiNode?, area: Rect): List<String> {
+    val out = mutableListOf<String>()
+    fun walk(n: UiNode) {
+        if (!n.isVisible) return
+        if (n.rect.intersects(area)) out += "${n.className}|${n.name}|${n.viewId}|${n.rect.x},${n.rect.y},${n.rect.w},${n.rect.h}"
         n.children.forEach(::walk)
     }
-    walk(root)
-    return best
+    root?.let(::walk)
+    return out
 }
 
 internal data class SwipeGeometry(val x: Int, val from: Int, val to: Int)

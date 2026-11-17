@@ -135,8 +135,14 @@ internal class AndroidDevice(private val ctx: Context, private val onStop: () ->
         val ids = info.actionList.map { it.id }.toSet()
         val directional = if (forward) android.R.id.accessibilityActionScrollDown
             else android.R.id.accessibilityActionScrollUp
-        val action = if (directional in ids) directional
-            else if (forward) AccessibilityNodeInfo.ACTION_SCROLL_FORWARD else AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD
+        val generic = if (forward) AccessibilityNodeInfo.ACTION_SCROLL_FORWARD else AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD
+        val action = when {
+            directional in ids -> directional
+            generic in ids -> generic
+            // The node does not offer this direction at all (e.g. an outer wrapper already at its
+            // end); some such views still answer true to the action without moving.
+            else -> return false
+        }
         return info.performAction(action)
     }
 
