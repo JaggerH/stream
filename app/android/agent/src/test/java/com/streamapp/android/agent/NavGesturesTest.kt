@@ -182,6 +182,29 @@ class NavGesturesTest {
         assertFalse(dev.log.any { it.startsWith("swipe") })
     }
 
+    @Test fun aListDeclaringOnlyTheOtherDirectionIsAtTheEnd() {
+        // At the bottom a list drops its forward action and keeps the backward one: end, no gesture.
+        val list = FakeNode("RecyclerView", "list", rect = Rect(0, 177, 720, 1373), isScrollable = true, scrollsForward = false)
+        val outer = FakeNode("ScrollView", "outer", rect = Rect(0, 59, 720, 1491), isScrollable = true, scrollsForward = false, children = listOf(list))
+        dev.roots["1"] = page(outer)
+        val out = map(call("scroll", """{"dir":"down","amount":10}"""))
+        assertEquals(mapOf("via" to "a11y", "method" to "a11y", "steps" to 0, "end" to true), out)
+        assertFalse(dev.log.any { it.startsWith("scrollNode") || it.startsWith("swipe") })
+        // The other way still scrolls.
+        call("scroll", """{"dir":"up","amount":1}""")
+        assertEquals(listOf("scrollNode list backward"), dev.log.filter { it.startsWith("scrollNode") })
+    }
+
+    @Test fun aContainerDeclaringNoVerticalActionFallsBackRefused() {
+        // A custom view: scrollable, but no scroll action either way.
+        dev.roots["1"] = page(FakeNode("View", "custom", rect = Rect(0, 400, 1000, 1000), isScrollable = true, scrollsForward = false, scrollsBackward = false))
+        val out = map(call("scroll", """{"dir":"down","amount":1}"""))
+        assertEquals("gesture", out["method"])
+        assertEquals("refused", out["a11y"])
+        assertFalse(dev.log.any { it.startsWith("scrollNode") })
+        assertTrue(dev.log.toString(), "swipe 868,1100->868,700 hold=100" in dev.log)
+    }
+
     @Test fun contentPrintSeesOnlyVisibleNodesInTheArea() {
         val root = page(FakeNode("TextView", "a", rect = Rect(0, 100, 100, 50)), FakeNode("TextView", "b", rect = Rect(0, 2000, 100, 50)),
             FakeNode("TextView", "c", rect = Rect(0, 120, 100, 50), isVisible = false))

@@ -11,4 +11,4 @@
 - [x] 6. `docs/API.md` 与 `WindowInfo.self?` 类型
 - [x] 7. 真机修正（关于手机页滚不动）：`scrollCandidates`（内层列表优先于外层包裹、按序试最多三个）、
        每步比对内容指纹（`contentPrint`，无效 = 第一步退回手势 `a11y: "no-effect"`、后续步 `end: true`）、
-       `scrollNode` 只发节点提供的动作；JVM 单测与真机验证（关于手机、设置首页）
+       `scrollNode` 只发节点提供的动作；只声明反方向 = 已到头（`steps: 0, end: true`，不发手势）；JVM 单测与真机验证（关于手机、设置首页）

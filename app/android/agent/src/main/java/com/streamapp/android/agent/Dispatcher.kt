@@ -483,8 +483,9 @@ internal class Dispatcher(
      * touch, nothing under the finger can be clicked, no fling. An action's "true" proves nothing
      * (an outer wrapper of a nested-scrolling page may accept it and stay put), so every step is
      * checked against the content on screen. A candidate that refuses its first step, or accepts it
-     * without anything moving, gives way to the next; when none moves, a gesture, with
-     * `a11y: "refused"` or `"no-effect"`. A later step refused or without effect is the end of the
+     * without anything moving, gives way to the next. A candidate declaring only the opposite
+     * direction is at this end: when nothing else moved, the reply is `steps: 0, end: true` with no
+     * gesture. Otherwise, when none moves, a gesture, with `a11y: "refused"` or `"no-effect"`. A later step refused or without effect is the end of the
      * content: the scroll stops there, `end: true`.
      */
     private fun scroll(dir: String, amount: Int): Map<String, Any?> {
@@ -500,8 +501,13 @@ internal class Dispatcher(
         val root = win?.let { device.windowRoot(it.id) }
         val candidates = if (win != null && root != null) scrollCandidates(root, bounds) else emptyList()
         var noEffect = false
+        var atEnd = false
         for (c in candidates.take(MAX_SCROLL_CANDIDATES)) {
             val wid = win!!.id
+            val offers = if (forward) c.scrollsForward else c.scrollsBackward
+            val opposite = if (forward) c.scrollsBackward else c.scrollsForward
+            // Only the other way declared: the content is already at this end.
+            if (!offers) { if (opposite) atEnd = true; continue }
             val area = visiblePart(c.rect, bounds) ?: continue
             var before = contentPrint(device.windowRoot(wid), area)
             if (!device.scrollNode(c, forward)) continue
@@ -520,6 +526,8 @@ internal class Dispatcher(
             if (end) out["end"] = true
             return out
         }
+        // Nothing moved and a container says it is at this end: so is the scroll, no gesture.
+        if (atEnd) return mapOf("method" to SCROLL_A11Y, "steps" to 0, "end" to true)
         val area = candidates.firstOrNull()?.let { visiblePart(it.rect, bounds) } ?: bounds
         val g = swipeGeometry(area, forward, device.touchSlop(), device.density())
         repeat(steps) {

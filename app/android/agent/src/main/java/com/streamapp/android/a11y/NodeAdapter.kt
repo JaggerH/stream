@@ -23,11 +23,14 @@ internal class AndroidNode(val info: AccessibilityNodeInfo, override val childre
     override val isClickable: Boolean = info.isClickable
     override val isScrollable: Boolean = info.isScrollable
     override val isVisible: Boolean = info.isVisibleToUser
+    private val actionIds: Set<Int> = if (isScrollable) info.actionList.map { it.id }.toSet() else emptySet()
     override val scrollAxis: String? = if (!isScrollable) null else scrollAxisOf(
-        info.actionList.map { it.id }.toSet(),
+        actionIds,
         className,
         info.collectionInfo?.let { it.rowCount to it.columnCount },
     )
+    override val scrollsForward: Boolean = actionIds.any { it in FORWARD_ACTIONS }
+    override val scrollsBackward: Boolean = actionIds.any { it in BACKWARD_ACTIONS }
     override val viewId: String = info.viewIdResourceName ?: ""
 
     companion object {
@@ -45,6 +48,16 @@ internal class HintlessNode(val inner: AndroidNode) : UiNode by inner {
     override val text: String = ""
 }
 
+private val FORWARD_ACTIONS = setOf(
+    android.R.id.accessibilityActionScrollDown,
+    android.R.id.accessibilityActionPageDown,
+    AccessibilityNodeInfo.ACTION_SCROLL_FORWARD,
+)
+private val BACKWARD_ACTIONS = setOf(
+    android.R.id.accessibilityActionScrollUp,
+    android.R.id.accessibilityActionPageUp,
+    AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD,
+)
 private val VERTICAL_ACTIONS = setOf(
     android.R.id.accessibilityActionScrollUp,
     android.R.id.accessibilityActionScrollDown,

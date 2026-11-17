@@ -31,6 +31,11 @@ internal interface UiNode {
     /** The axis a scrollable node scrolls along, as far as its actions or class tell: [AXIS_VERTICAL],
      *  [AXIS_HORIZONTAL], or null when unknown (only forward / backward offered). */
     val scrollAxis: String? get() = null
+    /** Whether a scrollable node declares an action towards content further down (`SCROLL_DOWN`,
+     *  `PAGE_DOWN` or `SCROLL_FORWARD`) / back up (`SCROLL_UP`, `PAGE_UP` or `SCROLL_BACKWARD`). A
+     *  list at its end drops that direction's action and keeps the other one. */
+    val scrollsForward: Boolean get() = isScrollable
+    val scrollsBackward: Boolean get() = isScrollable
     /** The node's resource id, e.g. `com.app:id/password`; "" when the app gave none. */
     val viewId: String get() = ""
 }

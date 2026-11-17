@@ -28,7 +28,9 @@ scrolled with `ACTION_SCROLL_DOWN`/`ACTION_SCROLL_UP` when it offers them, else
 offering neither for the direction counts as refusing. An accepted action SHALL count as a step only
 when the visible content of the node's on-screen area changed afterwards. A candidate that refuses
 its first step or accepts it without effect SHALL give way to the next one (at most three). A later
-step that is refused or has no effect SHALL end the scroll with `end: true`. Only when no candidate
+step that is refused or has no effect SHALL end the scroll with `end: true`. A candidate declaring
+only the opposite direction's scroll action is at that end: when no candidate moved, the reply SHALL
+be `method: "a11y", steps: 0, end: true` and no gesture SHALL be dispatched. Only when no candidate
 exists or none moved on its first step SHALL the executor fall back to a swipe gesture over the first
 candidate (else the window). The reply SHALL carry `method` (`a11y` or `gesture`) and `steps`;
 `a11y: "no-effect"` marks a fallback after a candidate accepted its first step without anything
@@ -54,6 +56,10 @@ under four touch slops.
 #### Scenario: a later step without effect
 - **WHEN** the first step moved the list and the second accepted action leaves it where it was
 - **THEN** the scroll stops with `steps: 1, end: true` and no gesture is dispatched
+
+#### Scenario: already at the end
+- **WHEN** the list declares only `ACTION_SCROLL_UP`/`BACKWARD` and the caller sends `scroll {dir: "down", amount: 10}`
+- **THEN** the reply carries `method: "a11y", steps: 0, end: true` and no gesture is dispatched
 
 #### Scenario: no scrollable node
 - **WHEN** the window has no scrollable node
