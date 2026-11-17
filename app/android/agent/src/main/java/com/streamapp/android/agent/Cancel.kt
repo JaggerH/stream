@@ -31,17 +31,20 @@ internal class CancellableDevice(private val inner: Device, private val cancel: 
     override fun foregroundPackage() = guard { inner.foregroundPackage() }
     override fun lastUserInputMs() = guard { inner.lastUserInputMs() }
     override fun foregroundComponent() = guard { inner.foregroundComponent() }
-    override fun launch(packageName: String) = guard { inner.launch(packageName) }
+    override fun launch(packageName: String, fresh: Boolean) = guard { inner.launch(packageName, fresh) }
+    override fun scrollNode(node: UiNode, forward: Boolean) = guard { inner.scrollNode(node, forward) }
     override fun click(node: UiNode) = guard { inner.click(node) }
     override fun setText(node: UiNode, text: String) = guard { inner.setText(node, text) }
     override fun focusedInput() = guard { inner.focusedInput() }
     override fun imeEnter(node: UiNode) = guard { inner.imeEnter(node) }
     override fun tap(x: Int, y: Int, longPress: Boolean) = guard { inner.tap(x, y, longPress) }
-    override fun swipe(x1: Int, y1: Int, x2: Int, y2: Int, durationMs: Long) = guard { inner.swipe(x1, y1, x2, y2, durationMs) }
+    override fun swipe(x1: Int, y1: Int, x2: Int, y2: Int, durationMs: Long, holdMs: Long) = guard { inner.swipe(x1, y1, x2, y2, durationMs, holdMs) }
     override fun globalBack() = guard { inner.globalBack() }
     override fun globalHome() = guard { inner.globalHome() }
     override fun screenshot(maskedAreas: List<Rect>) = guard { inner.screenshot(maskedAreas) }
     override fun screenSize() = guard { inner.screenSize() }
+    override fun touchSlop() = inner.touchSlop()
+    override fun density() = inner.density()
     override fun status(text: String?) = guard { inner.status(text) }
 
     override fun sleep(ms: Long) {

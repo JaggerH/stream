@@ -26,6 +26,14 @@ internal interface UiNode {
     val isEditable: Boolean get() = false
     val isClickable: Boolean get() = false
     val isScrollable: Boolean get() = false
+    /** Whether the node is on screen for the user (`isVisibleToUser`). */
+    val isVisible: Boolean get() = true
+    /** The axis a scrollable node scrolls along, as far as its actions or class tell: [AXIS_VERTICAL],
+     *  [AXIS_HORIZONTAL], or null when unknown (only forward / backward offered). */
+    val scrollAxis: String? get() = null
     /** The node's resource id, e.g. `com.app:id/password`; "" when the app gave none. */
     val viewId: String get() = ""
 }
+
+internal const val AXIS_VERTICAL = "vertical"
+internal const val AXIS_HORIZONTAL = "horizontal"

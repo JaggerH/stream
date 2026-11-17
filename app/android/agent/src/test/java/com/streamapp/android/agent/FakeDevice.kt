@@ -30,13 +30,28 @@ internal class FakeDevice : Device {
     override fun foregroundPackage() = fg
     var component: String? = null
     override fun foregroundComponent() = component ?: ((fg ?: "") + "/.Main")
-    override fun launch(packageName: String): Boolean { rec("launch $packageName"); launchMakesForeground?.let { fg = it }; return true }
+    /** Runs inside [launch], after the foreground moved: a test can mark the window set changed. */
+    var onLaunch: () -> Unit = {}
+    override fun launch(packageName: String, fresh: Boolean): Boolean {
+        rec(if (fresh) "launch $packageName fresh" else "launch $packageName")
+        launchMakesForeground?.let { fg = it }
+        onLaunch()
+        return true
+    }
+    /** What [scrollNode] answers per call, in order; past the end, true. */
+    var scrollAnswers = mutableListOf<Boolean>()
+    override fun scrollNode(node: UiNode, forward: Boolean): Boolean {
+        rec("scrollNode ${node.name} ${if (forward) "forward" else "backward"}")
+        return if (scrollAnswers.isEmpty()) true else scrollAnswers.removeAt(0)
+    }
     override fun click(node: UiNode): Boolean { rec("click ${node.name}"); return clickable }
     override fun setText(node: UiNode, text: String): Boolean { rec("setText ${node.name}=$text"); return true }
     override fun focusedInput() = focused
     override fun imeEnter(node: UiNode): Boolean { rec("enter"); return true }
     override fun tap(x: Int, y: Int, longPress: Boolean) { rec("tap $x,$y long=$longPress") }
-    override fun swipe(x1: Int, y1: Int, x2: Int, y2: Int, durationMs: Long) { rec("swipe $x1,$y1->$x2,$y2") }
+    override fun swipe(x1: Int, y1: Int, x2: Int, y2: Int, durationMs: Long, holdMs: Long) {
+        rec(if (holdMs > 0) "swipe $x1,$y1->$x2,$y2 hold=$holdMs" else "swipe $x1,$y1->$x2,$y2")
+    }
     override fun globalBack(): Boolean { rec("back"); return true }
     override fun globalHome(): Boolean { rec("home"); return true }
     override fun screenshot(maskedAreas: List<Rect>): Shot {
@@ -46,6 +61,9 @@ internal class FakeDevice : Device {
         return Shot(jpeg, Rect(0, 0, 1080, 2400), 2.75)
     }
     override fun screenSize() = Rect(0, 0, 1080, 2400)
+    var slop = 22
+    override fun touchSlop() = slop
+    override fun density() = 2.75f
     /** Epoch ms of the last user touch the service observed (Device.lastUserInputMs), or null. */
     var userInputAt: Long? = null
     override fun lastUserInputMs(): Long? = userInputAt

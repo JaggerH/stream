@@ -12,6 +12,8 @@ internal data class FakeNode(
     override val isClickable: Boolean = false,
     override val isScrollable: Boolean = false,
     override val viewId: String = "",
+    override val isVisible: Boolean = true,
+    override val scrollAxis: String? = null,
 ) : UiNode
 
 internal fun n(role: String, name: String = "", vararg kids: UiNode) = FakeNode(role, name, children = kids.toList())

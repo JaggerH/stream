@@ -22,6 +22,12 @@ internal class AndroidNode(val info: AccessibilityNodeInfo, override val childre
     override val isEditable: Boolean = info.isEditable
     override val isClickable: Boolean = info.isClickable
     override val isScrollable: Boolean = info.isScrollable
+    override val isVisible: Boolean = info.isVisibleToUser
+    override val scrollAxis: String? = if (!isScrollable) null else scrollAxisOf(
+        info.actionList.map { it.id }.toSet(),
+        className,
+        info.collectionInfo?.let { it.rowCount to it.columnCount },
+    )
     override val viewId: String = info.viewIdResourceName ?: ""
 
     companion object {
@@ -37,4 +43,28 @@ internal class AndroidNode(val info: AccessibilityNodeInfo, override val childre
 /** An input showing only its hint: reads as empty text, acts on the wrapped node. */
 internal class HintlessNode(val inner: AndroidNode) : UiNode by inner {
     override val text: String = ""
+}
+
+private val VERTICAL_ACTIONS = setOf(
+    android.R.id.accessibilityActionScrollUp,
+    android.R.id.accessibilityActionScrollDown,
+    android.R.id.accessibilityActionPageUp,
+    android.R.id.accessibilityActionPageDown,
+)
+private val HORIZONTAL_ACTIONS = setOf(
+    android.R.id.accessibilityActionScrollLeft,
+    android.R.id.accessibilityActionScrollRight,
+    android.R.id.accessibilityActionPageLeft,
+    android.R.id.accessibilityActionPageRight,
+)
+
+/** The axis of a scrollable node: directional actions first, then the class (pagers and horizontal
+ *  scroll views), then a one-row collection. Null when nothing tells. */
+internal fun scrollAxisOf(actions: Set<Int>, className: String, collection: Pair<Int, Int>?): String? {
+    if (actions.any { it in VERTICAL_ACTIONS }) return com.streamapp.android.agent.AXIS_VERTICAL
+    if (actions.any { it in HORIZONTAL_ACTIONS }) return com.streamapp.android.agent.AXIS_HORIZONTAL
+    val simple = className.substringAfterLast('.')
+    if (simple.contains("ViewPager") || simple == "HorizontalScrollView") return com.streamapp.android.agent.AXIS_HORIZONTAL
+    if (collection != null && collection.first == 1 && collection.second > 1) return com.streamapp.android.agent.AXIS_HORIZONTAL
+    return null
 }

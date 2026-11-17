@@ -2,7 +2,9 @@ package com.streamapp.android.agent
 
 import org.json.JSONObject
 
-internal data class WindowInfo(val id: String, val process: String, val title: String, val foreground: Boolean)
+/** [self]: the window belongs to the app this agent runs in (the host). Such rows are listed by
+ *  the `windows` op so a caller can see the host is in front, but never scoped, searched or acted on. */
+internal data class WindowInfo(val id: String, val process: String, val title: String, val foreground: Boolean, val self: Boolean = false)
 internal data class Shot(val jpeg: ByteArray, val window: Rect, val scale: Double)
 
 internal interface Device {
@@ -29,19 +31,31 @@ internal interface Device {
     fun lastUserInputMs(): Long?
     /** `package/activityClass` of the foreground window, or `package` when the activity is unknown. */
     fun foregroundComponent(): String
-    fun launch(packageName: String): Boolean
+    /** Opens the app. [fresh] = at its launcher activity with its task cleared; otherwise the app
+     *  resumes the page it was left on (a running task is brought to the front as it is). */
+    fun launch(packageName: String, fresh: Boolean = false): Boolean
+    /** One accessibility scroll step on a scrollable container: [forward] = towards content further
+     *  down (`ACTION_SCROLL_DOWN` where the node offers it, else `ACTION_SCROLL_FORWARD`). False when
+     *  the container refused (typically: already at that end). */
+    fun scrollNode(node: UiNode, forward: Boolean): Boolean
     fun click(node: UiNode): Boolean
     fun setText(node: UiNode, text: String): Boolean
     fun focusedInput(): UiNode?
     fun imeEnter(node: UiNode): Boolean
     fun tap(x: Int, y: Int, longPress: Boolean)
-    fun swipe(x1: Int, y1: Int, x2: Int, y2: Int, durationMs: Long)
+    /** A straight swipe; with [holdMs] > 0 the finger rests at the end point that long before
+     *  lifting, so the view sees no fling velocity. */
+    fun swipe(x1: Int, y1: Int, x2: Int, y2: Int, durationMs: Long, holdMs: Long = 0)
     fun globalBack(): Boolean
     fun globalHome(): Boolean
     /** A screenshot with the given screen rects covered in black (credential fields and
      *  one-time-code text), so no credential value leaves in a frame. */
     fun screenshot(maskedAreas: List<Rect> = emptyList()): Shot
     fun screenSize(): Rect
+    /** The system's touch slop in pixels: a move shorter than this is still a tap. */
+    fun touchSlop(): Int
+    /** Display density (px per dp). */
+    fun density(): Float
     fun status(text: String?)
     fun sleep(ms: Long)
 }

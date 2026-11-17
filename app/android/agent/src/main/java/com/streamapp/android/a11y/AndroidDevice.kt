@@ -87,8 +87,9 @@ internal class AndroidDevice(private val ctx: Context, private val onStop: () ->
         .mapNotNull { w ->
             val root = w.root ?: return@mapNotNull null
             val pkg = root.packageName?.toString() ?: return@mapNotNull null
-            if (pkg == ctx.packageName) return@mapNotNull null
-            WindowInfo(w.id.toString(), pkg, w.title?.toString() ?: pkg, w.isFocused || w.isActive)
+            // The host app's own windows are listed, marked, so a caller can tell it is in front;
+            // the dispatcher never scopes or acts on them.
+            WindowInfo(w.id.toString(), pkg, w.title?.toString() ?: pkg, w.isFocused || w.isActive, self = pkg == ctx.packageName)
         }
 
     override fun windowBounds(windowId: String): Rect? =
@@ -122,11 +123,21 @@ internal class AndroidDevice(private val ctx: Context, private val onStop: () ->
 
     override fun foregroundComponent(): String = StreamAccessibilityService.components.componentOf(foregroundPackage())
 
-    override fun launch(packageName: String): Boolean {
+    override fun launch(packageName: String, fresh: Boolean): Boolean {
         val i = ctx.packageManager.getLaunchIntentForPackage(packageName)
             ?: throw AgentError("no-window-match: 手机上没装 $packageName")
-        ctx.startActivity(i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED))
+        ctx.startActivity(i.addFlags(launchFlags(fresh)))
         return true
+    }
+
+    override fun scrollNode(node: UiNode, forward: Boolean): Boolean {
+        val info = infoOf(node)
+        val ids = info.actionList.map { it.id }.toSet()
+        val directional = if (forward) android.R.id.accessibilityActionScrollDown
+            else android.R.id.accessibilityActionScrollUp
+        val action = if (directional in ids) directional
+            else if (forward) AccessibilityNodeInfo.ACTION_SCROLL_FORWARD else AccessibilityNodeInfo.ACTION_SCROLL_BACKWARD
+        return info.performAction(action)
     }
 
     /** Click the node, or its nearest clickable ancestor: list rows often put the listener on a parent. */
@@ -158,36 +169,70 @@ internal class AndroidDevice(private val ctx: Context, private val onStop: () ->
     override fun tap(x: Int, y: Int, longPress: Boolean) =
         gesture(Path().apply { moveTo(x.coerceAtLeast(0).toFloat(), y.coerceAtLeast(0).toFloat()) }, if (longPress) 600 else 60)
 
-    override fun swipe(x1: Int, y1: Int, x2: Int, y2: Int, durationMs: Long) =
-        gesture(Path().apply {
+    override fun swipe(x1: Int, y1: Int, x2: Int, y2: Int, durationMs: Long, holdMs: Long) {
+        val ex = x2.coerceAtLeast(0).toFloat()
+        val ey = y2.coerceAtLeast(0).toFloat()
+        val move = Path().apply {
             moveTo(x1.coerceAtLeast(0).toFloat(), y1.coerceAtLeast(0).toFloat())
-            lineTo(x2.coerceAtLeast(0).toFloat(), y2.coerceAtLeast(0).toFloat())
-        }, durationMs)
+            lineTo(ex, ey)
+        }
+        if (holdMs <= 0) return gesture(listOf(GestureDescription.StrokeDescription(move, 0, durationMs)), durationMs)
+        // The finger stops and rests before lifting: the velocity the view reads at ACTION_UP is
+        // ~0, so the list moves by the dragged distance and does not fling on.
+        gesture(listOf(
+            GestureDescription.StrokeDescription(move, 0, durationMs, true),
+            GestureDescription.StrokeDescription(Path().apply { moveTo(ex, ey) }, 0, holdMs, false),
+        ), durationMs + holdMs)
+    }
 
-    private fun gesture(path: Path, durationMs: Long) {
+    private fun gesture(path: Path, durationMs: Long) =
+        gesture(listOf(GestureDescription.StrokeDescription(path, 0, durationMs)), durationMs)
+
+    /** Strokes are dispatched one after another, each as its own gesture: a continued stroke
+     *  (`willContinue`) must follow its predecessor in a separate `dispatchGesture` call. */
+    private fun gesture(strokes: List<GestureDescription.StrokeDescription>, durationMs: Long) {
         // Whatever touch events the system reports while this gesture is in flight are ours, not
         // the user's: they must not read as "the user is using the app".
         StreamAccessibilityService.inputs.gestureDispatched(System.currentTimeMillis(), durationMs)
-        val done = CountDownLatch(1)
-        val ok = AtomicBoolean(false)
-        val g = try {
-            GestureDescription.Builder().addStroke(GestureDescription.StrokeDescription(path, 0, durationMs)).build()
-        } catch (e: IllegalArgumentException) {
-            throw AgentError("gesture-failed: 手势参数不合法（${e.message}）")
-        }
         // The banner would swallow a tap that lands under it.
         val overlay = currentIndicator()
         overlay?.passThrough(true)
         try {
-            val sent = svc().dispatchGesture(g, object : AccessibilityService.GestureResultCallback() {
-                override fun onCompleted(d: GestureDescription) { ok.set(true); done.countDown() }
-                override fun onCancelled(d: GestureDescription) { done.countDown() }
-            }, null)
-            if (!sent || !done.await(durationMs + 3_000, TimeUnit.MILLISECONDS) || !ok.get()) {
-                throw AgentError("gesture-failed: 系统没执行这次手势（被别的手势打断，或无障碍服务失去了手势权限）")
+            var prev: GestureDescription.StrokeDescription? = null
+            for (s in strokes) {
+                val stroke = prev?.let { p -> continued(p, s) } ?: s
+                dispatchOne(stroke)
+                prev = stroke
             }
         } finally {
             overlay?.passThrough(false)
+        }
+    }
+
+    private fun continued(prev: GestureDescription.StrokeDescription, next: GestureDescription.StrokeDescription) =
+        try {
+            prev.continueStroke(next.path, 0, next.duration, next.willContinue())
+        } catch (e: IllegalStateException) {
+            throw AgentError("gesture-failed: 手势参数不合法（${e.message}）")
+        } catch (e: IllegalArgumentException) {
+            throw AgentError("gesture-failed: 手势参数不合法（${e.message}）")
+        }
+
+    private fun dispatchOne(stroke: GestureDescription.StrokeDescription) {
+        val durationMs = stroke.duration
+        val done = CountDownLatch(1)
+        val ok = AtomicBoolean(false)
+        val g = try {
+            GestureDescription.Builder().addStroke(stroke).build()
+        } catch (e: IllegalArgumentException) {
+            throw AgentError("gesture-failed: 手势参数不合法（${e.message}）")
+        }
+        val sent = svc().dispatchGesture(g, object : AccessibilityService.GestureResultCallback() {
+            override fun onCompleted(d: GestureDescription) { ok.set(true); done.countDown() }
+            override fun onCancelled(d: GestureDescription) { done.countDown() }
+        }, null)
+        if (!sent || !done.await(durationMs + 3_000, TimeUnit.MILLISECONDS) || !ok.get()) {
+            throw AgentError("gesture-failed: 系统没执行这次手势（被别的手势打断，或无障碍服务失去了手势权限）")
         }
     }
 
@@ -278,6 +323,10 @@ internal class AndroidDevice(private val ctx: Context, private val onStop: () ->
 
     override fun screenSize(): Rect = ctx.resources.displayMetrics.let { Rect(0, 0, it.widthPixels, it.heightPixels) }
 
+    override fun touchSlop(): Int = android.view.ViewConfiguration.get(ctx).scaledTouchSlop
+
+    override fun density(): Float = ctx.resources.displayMetrics.density
+
     override fun status(text: String?) {
         val provider = StreamAgent.indicatorProvider
         val shown = indicator.obtain(StreamAccessibilityService.instance, provider) { s -> provider.create(s, onStop) }
@@ -286,3 +335,9 @@ internal class AndroidDevice(private val ctx: Context, private val onStop: () ->
 
     override fun sleep(ms: Long) = Thread.sleep(ms.coerceIn(0, 30_000))
 }
+
+/** The launch intent's flags. Resume (default): bring the app's task to the front as it was left.
+ *  Fresh: clear the task, so the app starts at its launcher activity. */
+internal fun launchFlags(fresh: Boolean): Int =
+    if (fresh) Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+    else Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED

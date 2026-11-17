@@ -92,9 +92,13 @@ class DispatcherTest {
         assertTrue("tap 5,5 long=true" in dev.log)
     }
 
-    @Test fun scrollDownSwipesUpOverTheScreen() {
-        call("scroll", """{"dir":"down","amount":1}""")
-        assertTrue("swipe 540,1680->540,720" in dev.log)
+    @Test fun scrollWithNoScrollableContainerSwipesInTheRightEdgeBandAndHolds() {
+        val out = map(call("scroll", """{"dir":"down","amount":1}"""))
+        // 48 dp (x 2.75) inside the right edge; 70% -> 30% of the height; a 100 ms rest before lifting.
+        assertTrue(dev.log.toString(), "swipe 948,1680->948,720 hold=100" in dev.log)
+        assertEquals("gesture", out["method"])
+        assertEquals(1, out["steps"])
+        assertEquals("coords", out["via"])
     }
 
     @Test fun pressMapsKeys() {
@@ -163,12 +167,12 @@ class DispatcherTest {
         assertEquals(listOf("前台"), (map(call("find", """{"query":{"role":"Button"}}"""))["elements"] as List<Map<String, Any?>>).map { it["name"] })
     }
 
-    @Test fun scrollUsesTheScopedWindowBoundsWithoutSnapshotting() {
+    @Test fun scrollWithoutATreeSwipesOverTheScopedWindowBounds() {
         call("scopeWindow", """{"match":{"process":"com.sankuai.meituan"}}""")
         dev.bounds["1"] = Rect(0, 100, 1000, 1000)
         dev.roots.remove("1")
         call("scroll", """{"dir":"down","amount":1}""")
-        assertTrue(dev.log.toString(), "swipe 500,800->500,400" in dev.log)
+        assertTrue(dev.log.toString(), "swipe 868,800->868,400 hold=100" in dev.log)
     }
 
     @Test fun focusAppThatNeverComesToTheFrontIsBlockedByOs() {

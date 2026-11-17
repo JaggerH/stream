@@ -156,6 +156,8 @@ export interface WindowInfo {
   appVersion?: string
   /** 窗口所属进程的 pid；老 agent 不报。 */
   pid?: number
+  /** 安卓：这一行是执行端宿主 App 自己的窗口（只列出，不能 scope、不能操作）。其他行与老 agent 不带。 */
+  self?: boolean
 }
 
 /** 动作**之后**的回读判据（a11y 词汇下的 `expect`，对应浏览器侧 `cdp_act` 的选择器）。 */

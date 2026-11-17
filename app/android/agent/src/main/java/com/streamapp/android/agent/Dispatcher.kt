@@ -12,12 +12,18 @@ internal val ANDROID_OPS = listOf(
     "click", "scroll", "press", "readSubtree", "screenshot", "url", "sleep", "status",
 )
 
+/** Capabilities past their first version; the rest are at v1. */
+private val CAP_VERSIONS = mapOf("app.launch" to 2)
+
 /** The capability manifest the hello declares: only what [ANDROID_OPS] actually back. `ui.tree`
  *  (windows / find / readSubtree), `ui.act` (click / invoke / scroll / press), `screen.shot`,
  *  `app.launch` (focusApp), `app.in_use` (the `app-in-use` refusal), `input.text` (setValue / type /
- *  clearInput). No notification posting or intent running: there are no ops for them. */
+ *  clearInput). No notification posting or intent running: there are no ops for them.
+ *
+ *  `app.launch` is at v2: focusApp takes `fresh: true` (open at the launcher activity, task cleared). */
 internal val ANDROID_CAPS = listOf("ui.tree", "ui.act", "screen.shot", "app.launch", "app.in_use", "input.text")
-    .map { com.streamapp.android.protocol.Capability(it) }
+    .map { com.streamapp.android.protocol.Capability(it, CAP_VERSIONS[it] ?: 1) }
+
 
 private val NO_WAKE = setOf("status", "sleep", "windows", "url")
 
@@ -81,7 +87,8 @@ internal class Dispatcher(
             requireAppNotInUse(op, info.pkg, info.title)
         }
         return when (op) {
-            "windows" -> device.windows().filter { appVisible(it.process, it.title) }.map { it.toMap() }
+            // The host app's own windows are listed too, marked `self` — the one place they appear.
+            "windows" -> device.windows().filter { it.self || appVisible(it.process, it.title) }.map { it.toMap() }
             "scopeWindow" -> {
                 val match = obj(args, "match")
                 val w = resolveWindow(match)
@@ -94,7 +101,9 @@ internal class Dispatcher(
                 val pkg = str(obj(args, "match"), "process")
                 requireAppVisible(pkg)
                 requireAppNotInUse("focusApp", pkg)
-                mapOf("ok" to focusApp(pkg))
+                val fresh = args.optBoolean("fresh", false)
+                val ok = focusApp(pkg, fresh)
+                if (fresh) mapOf("ok" to ok, "fresh" to true) else mapOf("ok" to ok)
             }
             "find" -> find(A11yQuery.from(obj(args, "query")))
             "invoke" -> {
@@ -141,8 +150,8 @@ internal class Dispatcher(
             "scroll" -> {
                 refuseMessage(args)
                 gated(op, args, checkCredential = false, target = { _ -> null }) { _ ->
-                    scroll(str(args, "dir"), int(args, "amount"))
-                    settle(args, "coords")
+                    val r = scroll(str(args, "dir"), int(args, "amount"))
+                    settle(args, if (r["method"] == SCROLL_A11Y) "a11y" else "coords") + r
                 }
             }
             "press" -> {
@@ -200,7 +209,7 @@ internal class Dispatcher(
             if (w != null) return AppInfo(w.process, w.title, p?.categories?.of(w.process, w.title)?.name)
         }
         val fg = device.foregroundPackage()
-        val w = fg?.let { f -> device.windows().firstOrNull { it.process == f } }
+        val w = fg?.let { f -> windows().firstOrNull { it.process == f } }
         return AppInfo(fg ?: "", w?.title ?: fg ?: "", fg?.let { p?.categories?.of(it, w?.title ?: it)?.name })
     }
 
@@ -216,8 +225,12 @@ internal class Dispatcher(
     }
 
     private fun foregroundRoot(): UiNode? =
-        (device.windows().firstOrNull { it.foreground } ?: device.windows().firstOrNull())
-            ?.let { device.windowRoot(it.id) }
+        foregroundWindow()?.let { device.windowRoot(it.id) }
+
+    private fun foregroundWindow(): WindowInfo? = windows().let { ws -> ws.firstOrNull { it.foreground } ?: ws.firstOrNull() }
+
+    /** The windows the agent may scope, search and act on: every window but the host app's own. */
+    private fun windows(): List<WindowInfo> = device.windows().filterNot { it.self }
 
     /** Whether the caller may see this app at all. Deny categories (finance, passwords, the
      *  user's block list) are invisible; a finance app with a task-level visibility exemption
@@ -434,13 +447,19 @@ internal class Dispatcher(
         return hit.node
     }
 
-    private fun focusApp(pkg: String): Boolean {
+    private fun focusApp(pkg: String, fresh: Boolean): Boolean {
         // The old scope belongs to whatever app was in front; never let a later find search it.
         scope = null
-        device.launch(pkg)
+        // A fresh launch of the app already in front replaces its page: until the window set has
+        // changed, "it is in front" still describes the page being torn down.
+        val wasFront = fresh && device.foregroundPackage() == pkg
+        val before = device.treeVersion()
+        device.launch(pkg, fresh)
+        fun arrived() = device.foregroundPackage() == pkg &&
+            (!wasFront || device.changedSince(before, "", Rect(0, 0, 0, 0)))
         // Bounded by attempts (25 x 200 ms), not by the wall clock.
         repeat(25) {
-            if (device.foregroundPackage() == pkg) {
+            if (arrived()) {
                 scope = Scope(pkg, null)
                 return true
             }
@@ -457,27 +476,56 @@ internal class Dispatcher(
         throw AgentError("blocked-by-os: 启动 $pkg 后它没有到前台。可能是系统拦住了后台弹出界面：到 设置 → 应用 → Stream → 其他权限 打开「后台弹出界面」")
     }
 
-    private fun scroll(dir: String, amount: Int) {
-        val area = scope?.let { device.windowBounds(scopedWindow().id) } ?: device.screenSize()
-        val x = area.centerX
-        val hi = area.y + area.h * 7 / 10
-        val lo = area.y + area.h * 3 / 10
-        val (from, to) = when (dir) {
-            "down" -> hi to lo
-            "up" -> lo to hi
+    /**
+     * Scrolls the scoped window (else the foreground one) by [amount] steps. Accessibility first:
+     * the largest visible scrollable container that is not known to scroll sideways gets
+     * `ACTION_SCROLL_DOWN`/`UP` (or `FORWARD`/`BACKWARD`) — no touch, nothing under the finger can
+     * be clicked, no fling. A gesture only when the window has no such container, or the container
+     * refuses the very first step (some custom views claim scrollable but ignore the action).
+     * A container refusing a later step has hit its end: the scroll stops there, `end: true`.
+     */
+    private fun scroll(dir: String, amount: Int): Map<String, Any?> {
+        val forward = when (dir) {
+            "down" -> true
+            "up" -> false
             else -> throw AgentError("missing arg: dir 必须是 up 或 down")
         }
-        repeat(amount.coerceIn(1, 10)) {
-            device.swipe(x, from, x, to, 300)
+        val steps = amount.coerceIn(1, 10)
+        // Unscoped: only a window actually in front (never a background one, never the host's own).
+        val win = if (scope != null) scopedWindow() else windows().firstOrNull { it.foreground }
+        val bounds = win?.let { device.windowBounds(it.id) } ?: device.screenSize()
+        val container = win?.let { device.windowRoot(it.id) }?.let { scrollContainer(it, bounds) }
+        var refused = false
+        if (container != null) {
+            var done = 0
+            while (done < steps) {
+                if (!device.scrollNode(container, forward)) break
+                done++
+                device.sleep(150)
+            }
+            if (done > 0) {
+                val out = mutableMapOf<String, Any?>("method" to SCROLL_A11Y, "steps" to done)
+                if (done < steps) out["end"] = true
+                return out
+            }
+            refused = true
+        }
+        val area = container?.let { visiblePart(it.rect, bounds) } ?: bounds
+        val g = swipeGeometry(area, forward, device.touchSlop(), device.density())
+        repeat(steps) {
+            device.swipe(g.x, g.from, g.x, g.to, SWIPE_MS, SWIPE_HOLD_MS)
             device.sleep(150)
         }
+        val out = mutableMapOf<String, Any?>("method" to SCROLL_GESTURE, "steps" to steps)
+        if (refused) out["a11y"] = "refused"
+        return out
     }
 
     private fun settle(args: JSONObject, via: String): Map<String, Any?> {
         val expect = args.optJSONObject("expect") ?: return mapOf("via" to via)
         device.sleep(300)
         val root = scope?.let { runCatching { device.windowRoot(scopedWindow().id) }.getOrNull() }
-            ?: device.windows().firstOrNull { it.foreground }?.let { device.windowRoot(it.id) }
+            ?: windows().firstOrNull { it.foreground }?.let { device.windowRoot(it.id) }
         val hit = root != null && findAll(root, A11yQuery.from(expect)).isNotEmpty()
         return mapOf("via" to via, "confirmed" to hit)
     }
@@ -485,7 +533,7 @@ internal class Dispatcher(
     private fun resolveWindow(m: JSONObject): WindowInfo {
         val process = if (m.has("process")) m.getString("process") else null
         val title = if (m.has("title")) m.getString("title") else null
-        val hits = device.windows().filter { w ->
+        val hits = windows().filter { w ->
             (process == null || w.process.equals(process, ignoreCase = true)) && (title == null || w.title.contains(title))
         }
         return when (hits.size) {
@@ -498,7 +546,7 @@ internal class Dispatcher(
     /** The window the scope currently points at: among the app's windows, the foreground one, else the first. */
     private fun scopedWindow(): WindowInfo {
         val s = scope ?: throw AgentError("no-scope: 还没限定搜索范围，先 scopeWindow / focusApp")
-        val hits = device.windows().filter { w ->
+        val hits = windows().filter { w ->
             w.process.equals(s.process, ignoreCase = true) && (s.title == null || w.title.contains(s.title))
         }
         return hits.firstOrNull { it.foreground } ?: hits.firstOrNull()
@@ -566,4 +614,62 @@ internal class Occupancy(
     val anyRecentTouch: () -> Boolean = { false },
 )
 
-internal fun WindowInfo.toMap(): Map<String, Any?> = mapOf("id" to id, "process" to process, "title" to title, "foreground" to foreground)
+internal fun WindowInfo.toMap(): Map<String, Any?> {
+    val m = mutableMapOf<String, Any?>("id" to id, "process" to process, "title" to title, "foreground" to foreground)
+    if (self) m["self"] = true
+    return m
+}
+
+internal const val SCROLL_A11Y = "a11y"
+internal const val SCROLL_GESTURE = "gesture"
+private const val SWIPE_MS = 300L
+/** The finger rests this long at the end of a scroll swipe before lifting: no fling. */
+internal const val SWIPE_HOLD_MS = 100L
+/** A scroll swipe shorter than this many touch slops is refused: too close to a tap. */
+internal const val MIN_SWIPE_SLOPS = 4
+/** The swipe runs this far (dp) inside the area's right edge — clear of the row content most
+ *  apps make tappable, and clear of the system's edge back-gesture zone. */
+internal const val EDGE_BAND_DP = 48
+
+/** The part of [r] inside [bounds], or null when they do not overlap. */
+internal fun visiblePart(r: Rect, bounds: Rect): Rect? {
+    val x1 = maxOf(r.x, bounds.x)
+    val y1 = maxOf(r.y, bounds.y)
+    val x2 = minOf(r.x + r.w, bounds.x + bounds.w)
+    val y2 = minOf(r.y + r.h, bounds.y + bounds.h)
+    return if (x2 > x1 && y2 > y1) Rect(x1, y1, x2 - x1, y2 - y1) else null
+}
+
+/** The container a scroll acts on: among the visible scrollable nodes under [root] not known to
+ *  scroll sideways, the one with the largest on-screen area (the first such in tree order on a tie). */
+internal fun scrollContainer(root: UiNode, bounds: Rect): UiNode? {
+    var best: UiNode? = null
+    var bestArea = 0L
+    fun walk(n: UiNode) {
+        if (n.isScrollable && n.isVisible && n.scrollAxis != AXIS_HORIZONTAL) {
+            val v = visiblePart(n.rect, bounds)
+            val area = if (v == null) 0L else v.w.toLong() * v.h
+            if (area > bestArea) { best = n; bestArea = area }
+        }
+        n.children.forEach(::walk)
+    }
+    walk(root)
+    return best
+}
+
+internal data class SwipeGeometry(val x: Int, val from: Int, val to: Int)
+
+/** Where a fallback scroll swipe runs inside [area]: vertically from 70% to 30% of its height
+ *  (reversed for up), at an x inside the area's right edge band. Refused (`action-failed`) when the
+ *  stroke would be shorter than [MIN_SWIPE_SLOPS] touch slops — the app could read it as a tap. */
+internal fun swipeGeometry(area: Rect, forward: Boolean, touchSlop: Int, density: Float): SwipeGeometry {
+    val hi = area.y + area.h * 7 / 10
+    val lo = area.y + area.h * 3 / 10
+    val min = MIN_SWIPE_SLOPS * touchSlop.coerceAtLeast(1)
+    if (hi - lo < min) {
+        throw AgentError("action-failed: 可滚动区域太矮（滑动距离 ${hi - lo}px，不到触摸阈值的 $MIN_SWIPE_SLOPS 倍 ${min}px），手势会被当成点击，不滑")
+    }
+    val inset = (EDGE_BAND_DP * density).toInt().coerceAtLeast(1)
+    val x = (area.x + area.w - inset).coerceAtLeast(area.centerX)
+    return if (forward) SwipeGeometry(x, hi, lo) else SwipeGeometry(x, lo, hi)
+}
