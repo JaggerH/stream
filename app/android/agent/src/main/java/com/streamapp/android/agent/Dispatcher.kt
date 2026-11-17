@@ -13,14 +13,16 @@ internal val ANDROID_OPS = listOf(
 )
 
 /** Capabilities past their first version; the rest are at v1. */
-private val CAP_VERSIONS = mapOf("app.launch" to 2)
+private val CAP_VERSIONS = mapOf("ui.tree" to 2, "app.launch" to 2)
 
 /** The capability manifest the hello declares: only what [ANDROID_OPS] actually back. `ui.tree`
  *  (windows / find / readSubtree), `ui.act` (click / invoke / scroll / press), `screen.shot`,
  *  `app.launch` (focusApp), `app.in_use` (the `app-in-use` refusal), `input.text` (setValue / type /
  *  clearInput). No notification posting or intent running: there are no ops for them.
  *
- *  `app.launch` is at v2: focusApp takes `fresh: true` (open at the launcher activity, task cleared). */
+ *  `app.launch` is at v2: focusApp takes `fresh: true` (open at the launcher activity, task cleared).
+ *  `ui.tree` is at v2: find elements carry control values (`checked`, `range`, `state`) and a found
+ *  label brings its row's value-bearing controls along (`values`). */
 internal val ANDROID_CAPS = listOf("ui.tree", "ui.act", "screen.shot", "app.launch", "app.in_use", "input.text")
     .map { com.streamapp.android.protocol.Capability(it, CAP_VERSIONS[it] ?: 1) }
 
@@ -422,9 +424,26 @@ internal class Dispatcher(
         val version = device.treeVersion()
         val root = device.windowRoot(win.id) ?: throw AgentError("no-window-match: 限定的窗口已经不在了，重新 scopeWindow")
         val hits = findAll(root, q)
-        val ids = refs.snapshot(hits.map { Hit(it, s!!, win.id, version) })
+        // A hit without a value of its own (a row's title) brings the value-bearing controls of
+        // its row along, each with a ref of its own in the same snapshot.
+        val parents = parentsOf(root)
+        val rows = hits.map { if (hasValue(it)) emptyList() else rowValues(it, root, parents) }
+        val nodes = hits.toMutableList()
+        val index = java.util.IdentityHashMap<UiNode, Int>()
+        hits.forEachIndexed { i, n -> index.putIfAbsent(n, i) }
+        for (v in rows.flatten()) if (!index.containsKey(v)) { index[v] = nodes.size; nodes += v }
+        val ids = refs.snapshot(nodes.map { Hit(it, s!!, win.id, version) })
         val els = hits.mapIndexed { i, n ->
-            mapOf("ref" to ids[i], "role" to n.role, "name" to maskName(n), "className" to n.className, "rect" to n.rect.toMap())
+            val el = linkedMapOf<String, Any?>("ref" to ids[i], "role" to n.role, "name" to maskName(n), "className" to n.className, "rect" to n.rect.toMap())
+            el += valueFields(n)
+            if (rows[i].isNotEmpty()) el["values"] = rows[i].map { v ->
+                val m = linkedMapOf<String, Any?>("ref" to ids[index[v]!!], "role" to v.role)
+                maskName(v).takeIf { it.isNotEmpty() }?.let { m["name"] = it }
+                m["rect"] = v.rect.toMap()
+                m += valueFields(v)
+                m
+            }
+            el
         }
         val out = mutableMapOf<String, Any?>("elements" to els)
         if (hits.isEmpty() && !win.foreground) {

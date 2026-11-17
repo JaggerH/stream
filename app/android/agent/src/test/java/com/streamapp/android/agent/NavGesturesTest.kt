@@ -61,7 +61,7 @@ class NavGesturesTest {
 
     @Test fun capsAdvertiseAppLaunchV2() {
         assertEquals(2, ANDROID_CAPS.first { it.id == "app.launch" }.v)
-        assertTrue(ANDROID_CAPS.filter { it.id != "app.launch" }.all { it.v == 1 })
+        assertTrue(ANDROID_CAPS.filter { it.id != "app.launch" && it.id != "ui.tree" }.all { it.v == 1 })
     }
 
     // ---- scroll: accessibility first ---------------------------------------------------

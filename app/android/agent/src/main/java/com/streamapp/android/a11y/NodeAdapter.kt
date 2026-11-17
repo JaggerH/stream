@@ -1,6 +1,11 @@
 package com.streamapp.android.a11y
 
 import android.view.accessibility.AccessibilityNodeInfo
+import com.streamapp.android.agent.RANGE_FLOAT
+import com.streamapp.android.agent.RANGE_INDETERMINATE
+import com.streamapp.android.agent.RANGE_INT
+import com.streamapp.android.agent.RANGE_PERCENT
+import com.streamapp.android.agent.RangeValue
 import com.streamapp.android.agent.Rect
 import com.streamapp.android.agent.UiNode
 
@@ -32,6 +37,9 @@ internal class AndroidNode(val info: AccessibilityNodeInfo, override val childre
     override val scrollsForward: Boolean = actionIds.any { it in FORWARD_ACTIONS }
     override val scrollsBackward: Boolean = actionIds.any { it in BACKWARD_ACTIONS }
     override val viewId: String = info.viewIdResourceName ?: ""
+    override val checked: Boolean? = if (info.isCheckable) info.isChecked else null
+    override val range: RangeValue? = info.rangeInfo?.let { RangeValue(rangeTypeName(it.type), it.current, it.min, it.max) }
+    override val stateDescription: String = info.stateDescription?.toString() ?: ""
 
     companion object {
         /** Depth cap guards against pathological trees (some apps nest hundreds deep). */
@@ -41,6 +49,14 @@ internal class AndroidNode(val info: AccessibilityNodeInfo, override val childre
             return AndroidNode(info, kids)
         }
     }
+}
+
+/** `RangeInfo.RANGE_TYPE_*` as the protocol names it. 3 is `RANGE_TYPE_INDETERMINATE` (API 36). */
+internal fun rangeTypeName(type: Int): String = when (type) {
+    AccessibilityNodeInfo.RangeInfo.RANGE_TYPE_INT -> RANGE_INT
+    AccessibilityNodeInfo.RangeInfo.RANGE_TYPE_PERCENT -> RANGE_PERCENT
+    3 -> RANGE_INDETERMINATE
+    else -> RANGE_FLOAT
 }
 
 /** An input showing only its hint: reads as empty text, acts on the wrapped node. */

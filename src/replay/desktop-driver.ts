@@ -61,6 +61,34 @@ export interface A11yElement {
   /** OPTIONAL per-platform locator hint (Windows/Qt widget class); "" when the backend has none */
   className: string
   rect: Rect
+  /** Android (`ui.tree` v2): a checkable control's state; absent when the node is not checkable. */
+  checked?: boolean
+  /** Android (`ui.tree` v2): a ranged control's value (slider, seek bar, progress bar); absent when it has none. */
+  range?: A11yRange
+  /** Android (`ui.tree` v2): the control's state description (e.g. "100 %", "ON"). */
+  state?: string
+  /** Android (`ui.tree` v2): on an element without a value of its own (a row's title), the
+   *  value-bearing controls of its row, nearest first; each `ref` belongs to the same snapshot. */
+  values?: A11yRowValue[]
+}
+
+/** A ranged control's value (Android `rangeInfo`). A number JSON cannot carry is left out. */
+export interface A11yRange {
+  type: 'int' | 'float' | 'percent' | 'indeterminate'
+  now?: number
+  min?: number
+  max?: number
+}
+
+/** One value-bearing control next to a found label (see `A11yElement.values`). */
+export interface A11yRowValue {
+  ref: string
+  role: string
+  name?: string
+  rect: Rect
+  checked?: boolean
+  range?: A11yRange
+  state?: string
 }
 
 /**

@@ -38,7 +38,25 @@ internal interface UiNode {
     val scrollsBackward: Boolean get() = isScrollable
     /** The node's resource id, e.g. `com.app:id/password`; "" when the app gave none. */
     val viewId: String get() = ""
+    /** A checkable control's state (switch, checkbox, radio button, toggle); null when not checkable. */
+    val checked: Boolean? get() = null
+    /** A ranged control's value (slider, seek bar, progress bar, rating bar) from `rangeInfo`; null when it has none. */
+    val range: RangeValue? get() = null
+    /** The control's `stateDescription` (e.g. a slider's "Default", a switch's "On"); "" when none. */
+    val stateDescription: String get() = ""
 }
+
+/** `AccessibilityNodeInfo.RangeInfo`: [type] is [RANGE_INT], [RANGE_FLOAT], [RANGE_PERCENT] or
+ *  [RANGE_INDETERMINATE] (a progress bar without a known value). */
+internal data class RangeValue(val type: String, val current: Float, val min: Float, val max: Float)
+
+internal const val RANGE_INT = "int"
+internal const val RANGE_FLOAT = "float"
+internal const val RANGE_PERCENT = "percent"
+internal const val RANGE_INDETERMINATE = "indeterminate"
+
+/** Whether [n] carries a value of its own: checked state, a range or a state description. */
+internal fun hasValue(n: UiNode): Boolean = n.checked != null || n.range != null || n.stateDescription.isNotEmpty()
 
 internal const val AXIS_VERTICAL = "vertical"
 internal const val AXIS_HORIZONTAL = "horizontal"

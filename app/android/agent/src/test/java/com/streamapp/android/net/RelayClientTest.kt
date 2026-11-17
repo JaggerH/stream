@@ -60,6 +60,8 @@ class RelayClientTest {
         assertEquals(setOf("ui.tree", "ui.act", "screen.shot", "app.launch", "app.in_use", "input.text"), caps.keys().asSequence().toSet())
         // app.launch v2: focusApp understands `fresh`.
         assertEquals(2, caps.getJSONObject("app.launch").getInt("v"))
+        // ui.tree v2: find elements carry control values.
+        assertEquals(2, caps.getJSONObject("ui.tree").getInt("v"))
         assertEquals(1, caps.getJSONObject("ui.act").getInt("v"))
         assertEquals(1, JSONObject(t.sent[0]).getInt("capsVersion"))
     }

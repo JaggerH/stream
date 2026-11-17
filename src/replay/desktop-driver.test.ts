@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { DESKTOP_OPS, UnsupportedOpError, makeDesktopDriver, type HostOp, type HostRelay, type ReadSpec } from './desktop-driver.ts'
+import { DESKTOP_OPS, UnsupportedOpError, makeDesktopDriver, type A11yElement, type HostOp, type HostRelay, type ReadSpec } from './desktop-driver.ts'
 
 /** A fake Stream Desktop: records every op it receives and answers with `handler`. */
 function fakeRelay(handler: (op: HostOp) => unknown = () => null) {
@@ -26,6 +26,20 @@ describe('DesktopDriver over the host relay', () => {
     const res = await makeDesktopDriver(relay).find({ className: 'HistoryInner', role: 'List' })
     expect(res).toEqual({ elements: [el] })
     expect(sent).toEqual([{ op: 'find', args: { query: { className: 'HistoryInner', role: 'List' } } }])
+  })
+
+  it('find carries an Android control value and a label row values through untouched', async () => {
+    const el: A11yElement = {
+      ref: 'g1-0',
+      role: 'TextView',
+      name: 'Font size',
+      className: 'android.widget.TextView',
+      rect: { x: 68, y: 1087, w: 143, h: 49 },
+      values: [{ ref: 'g1-1', role: 'SeekBar', rect: { x: 213, y: 1177, w: 100, h: 100 }, range: { type: 'float', now: 1, min: 0, max: 6 }, state: '100 %' }],
+    }
+    const sw: A11yElement = { ref: 'g1-2', role: 'Switch', name: 'Dark theme', className: 'android.widget.Switch', rect: { x: 0, y: 0, w: 1, h: 1 }, checked: true, state: 'ON' }
+    const { relay } = fakeRelay((op) => (op.op === 'find' ? { elements: [el, sw] } : null))
+    expect(await makeDesktopDriver(relay).find({ name: 'Font size' })).toEqual({ elements: [el, sw] })
   })
 
   it('find returns no elements when the agent reports nothing', async () => {

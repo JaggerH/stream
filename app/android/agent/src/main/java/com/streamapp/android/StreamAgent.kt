@@ -127,6 +127,18 @@ public object StreamAgent {
      */
     @Volatile public var anyRecentTouchOccupies: Boolean = false
 
+    /**
+     * Tells the agent the user just touched a window of the host's own that is not its indicator —
+     * a panel or input the host draws over other apps — so the touch does not count as the user
+     * using the app in front (the touch fact behind `app-in-use`). Call it when a touch starts on
+     * that window (`ACTION_DOWN`), from any thread. The indicator built by [overlayIndicator] and
+     * the default banner report their own touches, and a touch event the system attributes to an
+     * accessibility overlay or a host window is excluded without it.
+     */
+    public fun ownSurfaceTouched() {
+        StreamAccessibilityService.inputs.ownSurfaceTouched(System.currentTimeMillis())
+    }
+
     /** Told after the user stopped the agent from its indicator (the agent has already sent its abort). */
     @Volatile public var userStopListener: UserStopListener? = null
 

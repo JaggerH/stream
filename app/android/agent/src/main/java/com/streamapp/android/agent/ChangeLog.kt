@@ -33,6 +33,20 @@ internal class ChangeLog(private val capacity: Int = 256) {
 
     @Synchronized fun scrolled(windowId: String, area: Rect?) = add(Key(windowId, area))
 
+    private val pages = object : LinkedHashMap<String, String>() {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, String>?) = size > 64
+    }
+
+    /** A page-change event (`TYPE_WINDOW_STATE_CHANGED`) from window [windowId] naming class [cls].
+     *  Counts as a window change unless that window's last such event named the same class: a
+     *  window getting its focus back (after a focusable overlay or a panel above it closed) repeats
+     *  its activity's event without showing another page. */
+    @Synchronized fun pageEvent(windowId: String, cls: String) {
+        if (pages[windowId] == cls) return
+        pages[windowId] = cls
+        add(Key(null, null))
+    }
+
     @Synchronized fun changedSince(version: Long, windowId: String, rect: Rect): Boolean {
         if (version < forgottenUpTo) return true
         return latest.any { (k, s) ->

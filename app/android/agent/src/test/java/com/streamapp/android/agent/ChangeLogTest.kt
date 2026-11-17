@@ -80,4 +80,19 @@ class ChangeLogTest {
         repeat(5) { log.scrolled("2", Rect(it, 0, 1, 1)) } // five different areas
         assertTrue(log.changedSince(v, "1", row))
     }
+
+    @Test fun aWindowRepeatingItsPageEventIsNotAnotherPage() {
+        val log = ChangeLog()
+        log.pageEvent("5", "com.app.SearchActivity")
+        val v = log.version()
+        // The window got its focus back after an overlay above it closed: same window, same class.
+        log.pageEvent("5", "com.app.SearchActivity")
+        assertFalse(log.changedSince(v, "5", row))
+        log.pageEvent("5", "com.app.ResultActivity")
+        assertTrue(log.changedSince(v, "5", row))
+        // Another window with the same class is another page.
+        val w = log.version()
+        log.pageEvent("6", "com.app.ResultActivity")
+        assertTrue(log.changedSince(w, "5", row))
+    }
 }

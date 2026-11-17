@@ -9,7 +9,9 @@ import android.os.Looper
 import android.util.Log
 import android.view.View
 import android.view.WindowManager
+import android.view.MotionEvent
 import android.widget.Button
+import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
 import com.streamapp.android.AgentIndicator
@@ -32,7 +34,10 @@ internal class Overlay(
     private val content: IndicatorView = Banner,
 ) : AgentIndicator {
     private val main = Handler(Looper.getMainLooper())
+    /** The window's root: [content]'s view inside a frame that notes the user's touches. */
     private var view: View? = null
+    /** [content]'s own view, the one [IndicatorView.bind] gets. */
+    private var inner: View? = null
     private var params: WindowManager.LayoutParams? = null
     private val hide = Runnable { remove() }
     /** Between `hideForCapture(true)` and `(false)`: a view added meanwhile starts invisible. */
@@ -48,7 +53,7 @@ internal class Overlay(
         main.removeCallbacks(hide)
         if (text == null) { remove(); return@post }
         if (view == null) add()
-        view?.let { content.bind(it, text) }
+        inner?.let { content.bind(it, text) }
         if (view != null) main.postDelayed(hide, 60_000)
     } }
 
@@ -100,11 +105,15 @@ internal class Overlay(
 
     private fun add() {
         val wm = service.getSystemService(WindowManager::class.java)
-        val v = try {
+        val built = try {
             content.create(service) { onStop(); remove() }
         } catch (e: RuntimeException) {
             Log.w("Stream", "indicator view failed", e)
             return
+        }
+        // A touch on the indicator is not the user using the app under it.
+        val v = OwnTouchFrame(service).apply {
+            addView(built, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
         }
         val lp = WindowManager.LayoutParams(
             content.width, content.height,
@@ -122,6 +131,7 @@ internal class Overlay(
             return
         }
         view = v
+        inner = built
         params = lp
     }
 
@@ -138,6 +148,7 @@ internal class Overlay(
             }
         }
         view = null
+        inner = null
         params = null
         shownAt = null
     }
@@ -165,5 +176,14 @@ internal class Overlay(
         override fun bind(view: View, text: String) {
             (view.tag as? TextView)?.text = text
         }
+    }
+}
+
+/** A frame that tells the agent about every touch that starts on it, before passing it on: the
+ *  agent's own surfaces do not count as the user using the app in front. */
+internal class OwnTouchFrame(context: Context) : FrameLayout(context) {
+    override fun dispatchTouchEvent(ev: MotionEvent): Boolean {
+        if (ev.actionMasked == MotionEvent.ACTION_DOWN) StreamAccessibilityService.inputs.ownSurfaceTouched(System.currentTimeMillis())
+        return super.dispatchTouchEvent(ev)
     }
 }

@@ -82,15 +82,24 @@ internal class AndroidDevice(private val ctx: Context, private val onStop: () ->
         return cond()
     }
 
-    override fun windows(): List<WindowInfo> = svc().windows
-        .filter { it.type != AccessibilityWindowInfo.TYPE_ACCESSIBILITY_OVERLAY }
-        .mapNotNull { w ->
-            val root = w.root ?: return@mapNotNull null
-            val pkg = root.packageName?.toString() ?: return@mapNotNull null
-            // The host app's own windows are listed, marked, so a caller can tell it is in front;
-            // the dispatcher never scopes or acts on them.
-            WindowInfo(w.id.toString(), pkg, w.title?.toString() ?: pkg, w.isFocused || w.isActive, self = pkg == ctx.packageName)
-        }
+    override fun windows(): List<WindowInfo> {
+        val listed = svc().windows.map { w -> w to facts(w) }
+        // An accessibility overlay holding input focus is the active window; the app under it is
+        // still the one in front.
+        val front = pickForeground(listed.map { it.second }, ctx.packageName)?.id
+        return listed
+            .filter { (w, f) -> w.type != AccessibilityWindowInfo.TYPE_ACCESSIBILITY_OVERLAY && f.pkg != null }
+            .map { (w, f) ->
+                val pkg = f.pkg!!
+                val foreground = f.id == front || ((f.active || f.focused) && canBeForeground(f.type, pkg, ctx.packageName))
+                // The host app's own windows are listed, marked, so a caller can tell it is in front;
+                // the dispatcher never scopes or acts on them.
+                WindowInfo(f.id, pkg, w.title?.toString() ?: pkg, foreground, self = pkg == ctx.packageName)
+            }
+    }
+
+    private fun facts(w: AccessibilityWindowInfo) =
+        WindowFacts(w.id.toString(), w.type, w.root?.packageName?.toString(), w.isActive, w.isFocused)
 
     override fun windowBounds(windowId: String): Rect? =
         svc().windows.firstOrNull { it.id.toString() == windowId }?.let { w ->
@@ -117,7 +126,16 @@ internal class AndroidDevice(private val ctx: Context, private val onStop: () ->
         return now.className == snap.className && now.rect == snap.rect && (live.isEditable || now.name == snap.name)
     }
 
-    override fun foregroundPackage(): String? = svc().rootInActiveWindow?.packageName?.toString()
+    /** The package of the window in front ([pickForeground]): the active window's, unless that is
+     *  an overlay or the keyboard (a focusable overlay of the host is active while it takes input). */
+    override fun foregroundPackage(): String? {
+        val ws = svc().windows
+        ws.firstOrNull { it.isActive }?.let { w ->
+            val pkg = w.root?.packageName?.toString()
+            if (canBeForeground(w.type, pkg, ctx.packageName)) return pkg
+        }
+        return pickForeground(ws.map(::facts), ctx.packageName)?.pkg
+    }
 
     override fun lastUserInputMs(): Long? = StreamAccessibilityService.inputs.lastUserInputMs()
 

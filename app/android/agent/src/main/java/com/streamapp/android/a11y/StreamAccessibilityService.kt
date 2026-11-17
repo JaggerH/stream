@@ -16,6 +16,9 @@ internal class StreamAccessibilityService : AccessibilityService() {
     override fun onServiceConnected() {
         // Nodes from the previous binding are dead.
         changes.windowsChanged()
+        // The window set as it stands now is the baseline: the first windows event after a
+        // (re)connect must not count as a change by itself.
+        noteWindows()
         instance = this
         listener?.invoke(true)
         StreamAgent.changed()
@@ -24,8 +27,9 @@ internal class StreamAccessibilityService : AccessibilityService() {
     override fun onAccessibilityEvent(event: AccessibilityEvent) {
         if (event.eventType == AccessibilityEvent.TYPE_TOUCH_INTERACTION_START) {
             // A human touched the screen — unless it was one of our own injected gestures, which
-            // the tracker excludes (the fact `app-in-use` judges on).
-            inputs.onTouchInteraction(System.currentTimeMillis())
+            // the tracker excludes (the fact `app-in-use` judges on), or a touch on an overlay or a
+            // window of the host app, which is not the user using the app in front.
+            inputs.onTouchInteraction(System.currentTimeMillis(), ownSurface = touchedOwnSurface(event))
             return
         }
         if (event.eventType == AccessibilityEvent.TYPE_WINDOWS_CHANGED) {
@@ -42,20 +46,52 @@ internal class StreamAccessibilityService : AccessibilityService() {
             }
         }
         if (event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
-            if (isPageChange(event.contentChangeTypes, event.className?.toString())) changes.windowsChanged()
+            // The keyboard or an overlay opening is not another page.
+            if (isPageChange(event.contentChangeTypes, event.className?.toString()) &&
+                stateChangeCounts(windowTypeOf(event.windowId), event.packageName?.toString(), imePackages())
+            ) {
+                if (event.windowId < 0) changes.windowsChanged()
+                else changes.pageEvent(event.windowId.toString(), event.className?.toString() ?: "")
+            }
             val pkg = event.packageName?.toString() ?: return
             components.windowStateChanged(pkg, event.className?.toString() ?: "")
         }
     }
 
-    /** A window opened, closed or moved. Only app and system windows count: the takeover banner
-     *  (an accessibility overlay) appears, hides and toggles touch pass-through around our own
-     *  ops, and must not stale the refs those ops are about to use. */
+    /** A window opened, closed or moved. Only app and system windows count ([countsForChanges]):
+     *  the takeover banner (an accessibility overlay) appears, hides and toggles touch pass-through
+     *  around our own ops, and the keyboard shows and hides around every text entry; neither must
+     *  stale the refs found on the page under them. */
     private fun noteWindows() {
-        changes.windows(windows.filter { it.type != AccessibilityWindowInfo.TYPE_ACCESSIBILITY_OVERLAY }.map { w ->
+        val ws = windows
+        ws.filter { it.type == AccessibilityWindowInfo.TYPE_INPUT_METHOD }
+            .mapNotNullTo(seenImes) { it.root?.packageName?.toString() }
+        changes.windows(ws.filter { countsForChanges(it.type) }.map { w ->
             val r = android.graphics.Rect().also { w.getBoundsInScreen(it) }
             "${w.id}/${w.type}/$r"
         })
+    }
+
+    private fun windowTypeOf(windowId: Int): Int? =
+        if (windowId < 0) null else windows.firstOrNull { it.id == windowId }?.type
+
+    /** Keyboard packages: the default input method and any whose window was seen. */
+    private fun imePackages(): Set<String> {
+        val def = android.provider.Settings.Secure.getString(contentResolver, android.provider.Settings.Secure.DEFAULT_INPUT_METHOD)
+            ?.substringBefore('/')
+        return if (def.isNullOrEmpty()) seenImes else seenImes + def
+    }
+
+    /** The window a touch landed on, as far as the event tells: its own window id, or — only while
+     *  touch exploration is on, when the system makes the touched window the active one — the
+     *  active window; else the event's package. Unknown counts as not ours. */
+    private fun touchedOwnSurface(event: AccessibilityEvent): Boolean {
+        val ws = windows
+        val w = if (event.windowId >= 0) ws.firstOrNull { it.id == event.windowId }
+            else if (getSystemService(android.view.accessibility.AccessibilityManager::class.java)?.isTouchExplorationEnabled == true) ws.firstOrNull { it.isActive }
+            else null
+        if (w == null) return event.packageName?.toString() == packageName
+        return isOwnSurface(w.type, w.root?.packageName?.toString(), packageName)
     }
 
     override fun onInterrupt() {}
@@ -86,5 +122,7 @@ internal class StreamAccessibilityService : AccessibilityService() {
         val components = ForegroundComponents()
         /** See `Device.lastUserInputMs`. Static, so it survives a service restart like [changes]. */
         val inputs = UserInputTracker()
+        /** Keyboard packages seen as `TYPE_INPUT_METHOD` windows. */
+        private val seenImes: MutableSet<String> = java.util.concurrent.ConcurrentHashMap.newKeySet()
     }
 }
