@@ -28,6 +28,8 @@ internal class CancellableDevice(private val inner: Device, private val cancel: 
     override fun treeVersion() = guard { inner.treeVersion() }
     override fun isCurrent(node: UiNode) = guard { inner.isCurrent(node) }
     override fun changedSince(version: Long, windowId: String, rect: Rect) = guard { inner.changedSince(version, windowId, rect) }
+    override fun scrolledSince(version: Long, windowId: String, rect: Rect) = guard { inner.scrolledSince(version, windowId, rect) }
+    override fun lastA11yEventMs() = inner.lastA11yEventMs()
     override fun foregroundPackage() = guard { inner.foregroundPackage() }
     override fun lastUserInputMs() = guard { inner.lastUserInputMs() }
     override fun foregroundComponent() = guard { inner.foregroundComponent() }

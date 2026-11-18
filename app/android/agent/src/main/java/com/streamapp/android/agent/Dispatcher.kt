@@ -13,7 +13,7 @@ internal val ANDROID_OPS = listOf(
 )
 
 /** Capabilities past their first version; the rest are at v1. */
-private val CAP_VERSIONS = mapOf("ui.tree" to 2, "app.launch" to 2)
+private val CAP_VERSIONS = mapOf("ui.tree" to 3, "app.launch" to 2)
 
 /** The capability manifest the hello declares: only what [ANDROID_OPS] actually back. `ui.tree`
  *  (windows / find / readSubtree), `ui.act` (click / invoke / scroll / press), `screen.shot`,
@@ -22,12 +22,20 @@ private val CAP_VERSIONS = mapOf("ui.tree" to 2, "app.launch" to 2)
  *
  *  `app.launch` is at v2: focusApp takes `fresh: true` (open at the launcher activity, task cleared).
  *  `ui.tree` is at v2: find elements carry control values (`checked`, `range`, `state`) and a found
- *  label brings its row's value-bearing controls along (`values`). */
+ *  label brings its row's value-bearing controls along (`values`).
+ *  `ui.tree` is at v3: find elements carry `hintText` / `isShowingHintText` / `viewId` /
+ *  `editable`, windows carry `type` / `layer`, both replies carry `viewport`, refs persist across
+ *  reads and carry over by identity, stale errors carry `semantics.kind`, actions relocate a ref
+ *  in place and wait for the screen to settle (`settled` / `changedDuringRead` / `effect`). */
 internal val ANDROID_CAPS = listOf("ui.tree", "ui.act", "screen.shot", "app.launch", "app.in_use", "input.text")
     .map { com.streamapp.android.protocol.Capability(it, CAP_VERSIONS[it] ?: 1) }
 
 
 private val NO_WAKE = setOf("status", "sleep", "windows", "url")
+
+/** Window kinds a caller may scope to (and that scope resolution matches): the keyboard and
+ *  accessibility overlays are listed by `windows` but never scoped, searched or acted on. */
+private val SCOPEABLE_TYPES = setOf("application", "system")
 
 /** Ops that answer even while the caller has set busy: only the always-available observability
  *  and timing ops; everything else fails as `device-busy`. Control frames never reach here. */
@@ -56,16 +64,23 @@ internal class Dispatcher(
     private val raw: Device,
     private val policy: PolicyContext? = null,
     private val occupancy: Occupancy = Occupancy(),
+    private val settleTiming: Settle = Settle(),
 ) {
     /** The app (and optional title substring) the agent limited itself to. An Activity change
      *  replaces the window, so the scope is re-resolved against `windows()` on every use. */
     private data class Scope(val process: String, val title: String?)
-    /** A found node, bound to the scope, window and screen-change version it was found under. */
-    private class Hit(val node: UiNode, val scope: Scope, val windowId: String, val version: Long)
+    /** A found node, bound to the scope it was found under (window and read version are the
+     *  ref table's business). */
+    private class Hit(val node: UiNode, val scope: Scope)
     private val refs = RefTable<Hit>()
     private var scope: Scope? = null
     /** [raw] behind the current request's cancel token; replaced at the start of every dispatch. */
     private var device: Device = raw
+    /** Set when the last ref resolution relocated the node in a fresh read; the settle receipt
+     *  reports it as `relocated: true`, once. */
+    private var relocatedLast = false
+    /** The screen's fingerprint just before a gated action ran — the settle wait compares. */
+    private var preActionPrint: List<ElementFp>? = null
 
     /** Per-connection policy state. The relay builds a fresh Dispatcher per connection, so a
      *  disconnect clears busy and every granted exemption on its own. */
@@ -75,6 +90,8 @@ internal class Dispatcher(
 
     fun dispatch(op: String, args: JSONObject, cancel: Cancel = Cancel()): Any? {
         device = CancellableDevice(raw, cancel)
+        relocatedLast = false
+        preActionPrint = null
         if (op !in ANDROID_OPS) throw AgentError("unknown op: $op")
         if (op !in NO_WAKE) device.ensureAwake()
         busyReason?.let { reason ->
@@ -90,7 +107,11 @@ internal class Dispatcher(
         }
         return when (op) {
             // The host app's own windows are listed too, marked `self` — the one place they appear.
-            "windows" -> device.windows().filter { it.self || appVisible(it.process, it.title) }.map { it.toMap() }
+            // Every row carries `viewport` (the screen the windows sit on) beside its type and layer.
+            "windows" -> {
+                val vp = device.screenSize().let { mapOf("width" to it.w, "height" to it.h) }
+                device.windows().filter { it.self || appVisible(it.process, it.title) }.map { it.toMap() + ("viewport" to vp) }
+            }
             "scopeWindow" -> {
                 val match = obj(args, "match")
                 val w = resolveWindow(match)
@@ -110,14 +131,14 @@ internal class Dispatcher(
             "find" -> find(A11yQuery.from(obj(args, "query")))
             "invoke" -> {
                 val ref = str(args, "ref")
-                gated(op, args, checkCredential = false, target = { fresh -> resolveRef(ref, fresh) }) { t ->
+                gated(op, args, checkCredential = false, target = { fresh, reloc -> resolveRef(ref, fresh, reloc) }) { t ->
                     if (!device.click(t!!)) throw AgentError("action-failed: 节点不可点，换坐标点击")
                     settle(args, "invoke")
                 }
             }
             "setValue" -> {
                 val ref = str(args, "ref")
-                gated(op, args, checkCredential = true, target = { fresh -> resolveRef(ref, fresh) }) { t ->
+                gated(op, args, checkCredential = true, target = { fresh, reloc -> resolveRef(ref, fresh, reloc) }) { t ->
                     if (!device.setText(t!!, str(args, "text"))) throw AgentError("not-editable: $ref 不接受 ACTION_SET_TEXT")
                     settle(args, "value")
                 }
@@ -125,14 +146,14 @@ internal class Dispatcher(
             "type" -> {
                 refuseMessage(args)
                 val text = str(args, "text")
-                gated(op, args, checkCredential = true, target = { _ -> focused() }) { t ->
+                gated(op, args, checkCredential = true, target = { _, _ -> focused() }) { t ->
                     if (!device.setText(t!!, t.text + text)) throw AgentError("not-editable: 焦点输入框不接受 ACTION_SET_TEXT")
                     settle(args, "value")
                 }
             }
             "clearInput" -> {
                 refuseMessage(args)
-                gated(op, args, checkCredential = true, target = { _ -> focused() }) { t ->
+                gated(op, args, checkCredential = true, target = { _, _ -> focused() }) { t ->
                     if (!device.setText(t!!, "")) throw AgentError("not-editable: 焦点输入框不接受 ACTION_SET_TEXT")
                     settle(args, "value")
                 }
@@ -140,7 +161,7 @@ internal class Dispatcher(
             "click" -> {
                 refuseMessage(args)
                 val r = rect(obj(args, "rect"))
-                gated(op, args, checkCredential = false, target = { _ -> pointTarget(r) }) { _ ->
+                gated(op, args, checkCredential = false, target = { _, _ -> pointTarget(r) }) { _ ->
                     when (args.optString("button", "left")) {
                         "left" -> device.tap(r.centerX, r.centerY, longPress = false)
                         "right" -> device.tap(r.centerX, r.centerY, longPress = true)
@@ -151,7 +172,7 @@ internal class Dispatcher(
             }
             "scroll" -> {
                 refuseMessage(args)
-                gated(op, args, checkCredential = false, target = { _ -> null }) { _ ->
+                gated(op, args, checkCredential = false, target = { _, _ -> null }) { _ ->
                     val r = scroll(str(args, "dir"), int(args, "amount"))
                     settle(args, if (r["method"] == SCROLL_A11Y) "a11y" else "coords") + r
                 }
@@ -165,12 +186,13 @@ internal class Dispatcher(
                 // Navigation too answers to deny-category visibility, before anything happens.
                 val info = appInfo()
                 requireAppVisible(info.pkg, info.title)
+                preActionPrint = readTree(digestRoot()).fps
                 if (key == "Enter") {
                     // The Enter that sends a message or submits a form is a commit: the same
                     // judgment and the same approval flow as a typed newline.
-                    return gated(op, args, checkCredential = false, target = { _ -> focused() }) { t ->
+                    return gated(op, args, checkCredential = false, target = { _, _ -> focused() }) { t ->
                         if (!device.imeEnter(t!!)) throw AgentError("action-failed: 系统没执行 $key")
-                        mapOf("via" to "coords")
+                        settle(args, "coords")
                     }
                 }
                 val done = when (key) {
@@ -179,7 +201,7 @@ internal class Dispatcher(
                     else -> throw AgentError("unsupported-key: $key（安卓只认 Back / Home / Enter）")
                 }
                 if (!done) throw AgentError("action-failed: 系统没执行 $key")
-                mapOf("via" to "coords")
+                settle(args, "coords")
             }
             "readSubtree" -> {
                 if (scope == null) requireAppVisible(device.foregroundPackage() ?: "")
@@ -289,10 +311,13 @@ internal class Dispatcher(
         op: String,
         args: JSONObject,
         checkCredential: Boolean,
-        target: (Boolean) -> UiNode?,
+        target: (fresh: Boolean, relocate: Boolean,) -> UiNode?,
         execute: (UiNode?) -> T,
     ): T {
-        val p = policy ?: return execute(target(true))
+        val p = policy ?: run {
+            preActionPrint = readTree(digestRoot()).fps
+            return execute(target(true, true))
+        }
         val info = appInfo()
         // Deny outranks everything below it, including an approval credential.
         requireAppVisible(info.pkg, info.title)
@@ -300,17 +325,20 @@ internal class Dispatcher(
         if (approval != null && op in GATED) {
             // Gate order (design D1): the credential field is refused before the credential is
             // even checked — a write to a password or code field never consumes anything, and a
-            // lenient ref resolution cannot preempt the screen check below.
-            if (checkCredential) refuseCredentialField(target(false))
+            // lenient ref resolution cannot preempt the screen check below. A fresh resolution
+            // never relocates under a credential: the approval binds the screen it was approved on.
+            if (checkCredential) refuseCredentialField(target(false, false))
             checkApproval(op, args, approval)
-            val t = target(true)
+            val t = target(true, false)
             p.consume(approval.getString("id"))
+            preActionPrint = readTree(digestRoot()).fps
             return execute(t)
         }
-        val t = target(true)
+        val t = target(true, true)
         if (checkCredential) refuseCredentialField(t)
         val reasons = p.gate.reasons(op, t, args.optString("text", ""), info.pkg, info.title, digestRoot())
         if (reasons.isNotEmpty() && !p.gate.exempted(info.pkg, reasons, askExemptions)) throw approvalRequired(op, args, info, t, reasons)
+        preActionPrint = readTree(digestRoot()).fps
         return execute(t)
     }
 
@@ -432,9 +460,20 @@ internal class Dispatcher(
         val index = java.util.IdentityHashMap<UiNode, Int>()
         hits.forEachIndexed { i, n -> index.putIfAbsent(n, i) }
         for (v in rows.flatten()) if (!index.containsKey(v)) { index[v] = nodes.size; nodes += v }
-        val ids = refs.snapshot(nodes.map { Hit(it, s!!, win.id, version) })
+        // Fingerprints drive the ref carry-over: the whole read's, plus each reported node's.
+        val read = readTree(root)
+        val byNode = java.util.IdentityHashMap<UiNode, ElementFp>()
+        read.entries.forEach { (n, fp) -> byNode.putIfAbsent(n, fp) }
+        val fps = nodes.map { byNode[it] ?: fpFallback(it) }
+        val shortEdge = shortEdgeOf(device.screenSize())
+        val ids = refs.snapshot(nodes.map { Hit(it, s!!) }, fps, read.fps, win.id, version, shortEdge, device::changedSince)
+        val masker = policy?.masker
         val els = hits.mapIndexed { i, n ->
             val el = linkedMapOf<String, Any?>("ref" to ids[i], "role" to n.role, "name" to maskName(n), "className" to n.className, "rect" to n.rect.toMap())
+            n.hintText.takeIf { it.isNotEmpty() && masker?.isCredentialField(n) != true }?.let { el["hintText"] = it }
+            if (n.isShowingHint) el["isShowingHintText"] = true
+            readableResourceId(n.viewId)?.let { el["viewId"] = it }
+            el["editable"] = n.isEditable
             el += valueFields(n)
             if (rows[i].isNotEmpty()) el["values"] = rows[i].map { v ->
                 val m = linkedMapOf<String, Any?>("ref" to ids[index[v]!!], "role" to v.role)
@@ -446,24 +485,51 @@ internal class Dispatcher(
             el
         }
         val out = mutableMapOf<String, Any?>("elements" to els)
+        out["viewport"] = device.screenSize().let { mapOf("width" to it.w, "height" to it.h) }
         if (hits.isEmpty() && !win.foreground) {
             out["unbuilt"] = "a11y-unbuilt: 限定的窗口不在前台，空结果不可采信"
         }
         return out
     }
 
-    /** The node behind [ref]. Fresh resolution also demands the screen it was found on still be
-     *  in front; a lenient one (the credential-field pre-check on an approval resend) only
-     *  demands the ref still belong to this scope and this ref generation. */
-    private fun resolveRef(ref: String, fresh: Boolean = true): UiNode {
+    /**
+     * The node behind [ref]. Fresh resolution also demands the screen it was found on still be
+     * in front; a lenient one (the credential-field pre-check on an approval resend) only
+     * demands the ref still belong to this scope. When the node is no longer where it was
+     * found — and [relocate] is allowed — the dispatcher looks it up again in a fresh read by
+     * identity ([relocate]): the same control keeps the action, the reply reports `relocated`.
+     * Not allowed with an approval credential: the credential binds the screen it was approved
+     * on, and a relocated target would sidestep that binding.
+     */
+    private fun resolveRef(ref: String, fresh: Boolean = true, relocate: Boolean = true): UiNode {
         val hit = refs.resolve(ref)
-        fun stale(why: String): Nothing = throw StaleRefException("stale-ref: $ref $why; find it again")
-        if (hit.scope != scope) stale("was found under another scope")
-        if (!fresh) return hit.node
-        if (scopedWindow().id != hit.windowId) stale("belongs to a window that is no longer the scoped one")
-        if (device.changedSince(hit.version, hit.windowId, hit.node.rect)) stale("predates a window change or a scroll over it")
-        if (!device.isCurrent(hit.node)) stale("now shows something else (the node was recycled)")
-        return hit.node
+        fun stale(kind: String, why: String): Nothing = throw StaleRefException("stale-ref: $ref $why; find it again", kind, ref)
+        if (hit.value.scope != scope) stale(STALE_REF_RETIRED, "was found under another scope")
+        if (!fresh) return hit.value.node
+        val win = scopedWindow()
+        if (win.id != hit.windowId) stale(STALE_REF_RETIRED, "belongs to a window that is no longer the scoped one")
+        val scrolledOver = device.scrolledSince(hit.version, hit.windowId, hit.fp.rect)
+        if (scrolledOver) stale(STALE_ELEMENT_MOVED, "a scroll ran over it (list rows recycle)")
+        if (!device.changedSince(hit.version, hit.windowId, hit.fp.rect) && device.isCurrent(hit.value.node)) {
+            return hit.value.node
+        }
+        if (!relocate) stale(STALE_ELEMENT_MOVED, "no longer where it was found")
+        val again = relocateRef(hit, win) ?: stale(STALE_ELEMENT_MOVED, "no longer where it was found (no unique match now)")
+        relocatedLast = true
+        return again
+    }
+
+    /** Finds [hit]'s control in a fresh read of the scoped window and re-binds the ref to it.
+     *  Null when nothing uniquely matches. */
+    private fun relocateRef(hit: Tracked<Hit>, win: WindowInfo): UiNode? {
+        val version = device.treeVersion()
+        val root = device.windowRoot(win.id) ?: return null
+        val read = readTree(root)
+        val before = refs.lastReadOf(win.id).ifEmpty { listOf(hit.fp) }
+        val found = relocate(hit.fp, before, read.fps, shortEdgeOf(device.screenSize())) as? Relocation.Found ?: return null
+        val node = read.nodeAt(found.index)
+        refs.refresh(hit.ref, Hit(node, hit.value.scope), read.fps[found.index], version)
+        return node
     }
 
     private fun focusApp(pkg: String, fresh: Boolean): Boolean {
@@ -576,20 +642,59 @@ internal class Dispatcher(
         return if (moved) last else null
     }
 
+    /**
+     * The post-action quiet wait (design informed by Mika's ChangeWait — see the openspec
+     * change). Waits until accessibility events have been quiet for [Settle.quietMs] and the
+     * tree fingerprint differs from the one before the action ([preActionPrint]); stops at
+     * [Settle.capMs] at the latest, so a page whose events never stop (a countdown, a progress
+     * bar) does not hold the op. The reply reports `settled`, `changedDuringRead` and, from the
+     * fingerprints, `effect`; `expect` is judged after the wait, and a relocation reports
+     * `relocated: true` once.
+     */
     private fun settle(args: JSONObject, via: String): Map<String, Any?> {
-        val expect = args.optJSONObject("expect") ?: return mapOf("via" to via)
-        device.sleep(300)
-        val root = scope?.let { runCatching { device.windowRoot(scopedWindow().id) }.getOrNull() }
-            ?: windows().firstOrNull { it.foreground }?.let { device.windowRoot(it.id) }
-        val hit = root != null && findAll(root, A11yQuery.from(expect)).isNotEmpty()
-        return mapOf("via" to via, "confirmed" to hit)
+        val before = preActionPrint
+        val out = LinkedHashMap<String, Any?>()
+        out["via"] = via
+        var changed = false
+        var settled = false
+        var last = before
+        if (before != null) {
+            val end = System.currentTimeMillis() + settleTiming.capMs
+            while (true) {
+                device.sleep(settleTiming.pollMs)
+                val now = System.currentTimeMillis()
+                val quietFor = device.lastA11yEventMs()?.let { now - it } ?: Long.MAX_VALUE
+                val cur = readTree(printRoot()).fps
+                if (cur != before) changed = true
+                last = cur
+                if (quietFor >= settleTiming.quietMs && changed) { settled = true; break }
+                if (now >= end) break
+            }
+            out["settled"] = settled
+            out["changedDuringRead"] = changed
+            out["effect"] = effectOf(before, last ?: before)
+        }
+        if (relocatedLast) out["relocated"] = true
+        relocatedLast = false
+        val expect = args.optJSONObject("expect")
+        if (expect != null) {
+            val root = printRoot()
+            out["confirmed"] = root != null && findAll(root, A11yQuery.from(expect)).isNotEmpty()
+        }
+        return out
     }
+
+    /** The window the settle wait and `expect` read: the scoped one, else the foreground one. */
+    private fun printRoot(): UiNode? =
+        runCatching { scope?.let { device.windowRoot(scopedWindow().id) } }.getOrNull()
+            ?: windows().firstOrNull { it.foreground }?.let { device.windowRoot(it.id) }
 
     private fun resolveWindow(m: JSONObject): WindowInfo {
         val process = if (m.has("process")) m.getString("process") else null
         val title = if (m.has("title")) m.getString("title") else null
         val hits = windows().filter { w ->
-            (process == null || w.process.equals(process, ignoreCase = true)) && (title == null || w.title.contains(title))
+            w.type in SCOPEABLE_TYPES &&
+                (process == null || w.process.equals(process, ignoreCase = true)) && (title == null || w.title.contains(title))
         }
         return when (hits.size) {
             0 -> throw AgentError("no-window-match: 没有窗口匹配 $m")
@@ -598,11 +703,13 @@ internal class Dispatcher(
         }
     }
 
-    /** The window the scope currently points at: among the app's windows, the foreground one, else the first. */
+    /** The window the scope currently points at: among the app's windows, the foreground one, else
+     *  the first scopeable one (the keyboard and accessibility overlays are never the target). */
     private fun scopedWindow(): WindowInfo {
         val s = scope ?: throw AgentError("no-scope: 还没限定搜索范围，先 scopeWindow / focusApp")
         val hits = windows().filter { w ->
-            w.process.equals(s.process, ignoreCase = true) && (s.title == null || w.title.contains(s.title))
+            w.type in SCOPEABLE_TYPES &&
+                w.process.equals(s.process, ignoreCase = true) && (s.title == null || w.title.contains(s.title))
         }
         return hits.firstOrNull { it.foreground } ?: hits.firstOrNull()
             ?: throw AgentError("no-window-match: 限定的应用 ${s.process} 现在没有窗口")
@@ -670,7 +777,7 @@ internal class Occupancy(
 )
 
 internal fun WindowInfo.toMap(): Map<String, Any?> {
-    val m = mutableMapOf<String, Any?>("id" to id, "process" to process, "title" to title, "foreground" to foreground)
+    val m = mutableMapOf<String, Any?>("id" to id, "process" to process, "title" to title, "foreground" to foreground, "type" to type, "layer" to layer)
     if (self) m["self"] = true
     return m
 }

@@ -33,7 +33,11 @@ internal class FakeDevice : Device {
     override fun windowBounds(windowId: String): Rect? = bounds[windowId]
     override fun treeVersion() = changes.version()
     override fun changedSince(version: Long, windowId: String, rect: Rect) = changes.changedSince(version, windowId, rect)
+    override fun scrolledSince(version: Long, windowId: String, rect: Rect) = changes.scrolledSince(version, windowId, rect)
     override fun isCurrent(node: UiNode) = node !in changed
+    /** Epoch ms of the last accessibility event the (fake) service saw, or null. */
+    var lastEventAt: Long? = null
+    override fun lastA11yEventMs(): Long? = lastEventAt
     override fun foregroundPackage() = fg
     var component: String? = null
     override fun foregroundComponent() = component ?: ((fg ?: "") + "/.Main")
@@ -83,3 +87,6 @@ internal class FakeDevice : Device {
     override fun status(text: String?) { rec("status $text") }
     override fun sleep(ms: Long) { rec("sleep $ms") }
 }
+
+/** The settle wait, sped up for JVM tests (production defaults are on [Settle]). */
+internal val FAST_SETTLE = Settle(pollMs = 5, quietMs = 10, capMs = 40)

@@ -119,9 +119,20 @@ export interface AppInUseSemantics {
   app: { id: string; name: string; category?: string }
 }
 
-/** 设备错误帧 `semantics` 的两种合法形状：审批回执（`device-sensitive-semantics`）与占用回执
- *  （`app-in-use`）。后端不解释，按设备帧原样转发；嵌入方按 `code` 区分。 */
-export type HostOpSemantics = DeviceOpSemantics | AppInUseSemantics
+/**
+ * 设备错误帧里 `semantics` 的 stale 分型回执形状（`android-observation-fields`）：`stale-ref` 附带
+ * 的 kind——`snapshot_unknown`（ref 不认识或编号没发过）、`ref_not_in_snapshot`（发过但已不在保留
+ * 表）、`ref_retired`（scope 或窗口已不是当前的）、`element_moved`（节点不在原地且找回失败）。后端
+ * 原样转发，不解释、不裁剪。
+ */
+export interface StaleRefSemantics {
+  kind: 'snapshot_unknown' | 'ref_not_in_snapshot' | 'ref_retired' | 'element_moved'
+  ref: string
+}
+
+/** 设备错误帧 `semantics` 的三种合法形状：审批回执（`device-sensitive-semantics`）、占用回执
+ *  （`app-in-use`）与 stale 分型（`stale-ref`）。后端不解释，按设备帧原样转发；嵌入方按 `code` 区分。 */
+export type HostOpSemantics = DeviceOpSemantics | AppInUseSemantics | StaleRefSemantics
 
 /** agent 回了一个错误帧。`code` 是 agent 给的机器可读分类（`private-target` 等），旧 agent 不带；
  *  `semantics` 是结构化回执（`approval-required` 的审批回执、`app-in-use` 的占用回执），设备给了才在。 */

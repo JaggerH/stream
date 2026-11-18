@@ -18,8 +18,16 @@ internal class ChangeLog(private val capacity: Int = 256) {
     private var seq = 0L
     private var forgottenUpTo = 0L
     private var lastWindows: List<String>? = null
+    private var lastEventAt = 0L
 
     @Synchronized fun version(): Long = seq
+
+    /** Records that an accessibility event arrived (any event; the agent's own surfaces
+     *  excluded by the caller). The settle wait's quiet clock reads [lastEventAtMs]. */
+    @Synchronized fun event() { lastEventAt = System.currentTimeMillis() }
+
+    /** Epoch ms of the most recent event, or null when none was seen since the service started. */
+    @Synchronized fun lastEventAtMs(): Long? = if (lastEventAt == 0L) null else lastEventAt
 
     @Synchronized fun windowsChanged() = add(Key(null, null))
 
@@ -51,6 +59,15 @@ internal class ChangeLog(private val capacity: Int = 256) {
         if (version < forgottenUpTo) return true
         return latest.any { (k, s) ->
             s > version && (k.windowId == null || (k.windowId == windowId && (k.area == null || k.area.intersects(rect))))
+        }
+    }
+
+    /** Whether a scroll was logged over [rect] in [windowId] since [version] — window-level
+     *  changes do not count. This is the "list rows may have been recycled" signal. */
+    @Synchronized fun scrolledSince(version: Long, windowId: String, rect: Rect): Boolean {
+        if (version < forgottenUpTo) return true
+        return latest.any { (k, s) ->
+            s > version && k.windowId == windowId && (k.area == null || k.area.intersects(rect))
         }
     }
 

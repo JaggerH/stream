@@ -70,6 +70,19 @@ export interface A11yElement {
   /** Android (`ui.tree` v2): on an element without a value of its own (a row's title), the
    *  value-bearing controls of its row, nearest first; each `ref` belongs to the same snapshot. */
   values?: A11yRowValue[]
+  /** Android (`ui.tree` v3): the input's hint text (its prompt); absent when the node has none
+   *  and never present on a credential field. A prompt is not a value: `isShowingHintText`
+   *  tells it apart from user-entered text. */
+  hintText?: string
+  /** Android (`ui.tree` v3): the node is showing its hint text (the system says so, or the
+   *  text equals the hint); present only when true. */
+  isShowingHintText?: boolean
+  /** Android (`ui.tree` v3): the node's resource id, when it is readable (at least four
+   *  characters of letters/digits/underscores with three letters in a row); obfuscated ids
+   *  (e.g. `a1b2`) are left out. */
+  viewId?: string
+  /** Android (`ui.tree` v3): whether the node accepts text (an input). */
+  editable?: boolean
 }
 
 /** A ranged control's value (Android `rangeInfo`). A number JSON cannot carry is left out. */
@@ -138,6 +151,8 @@ export interface A11yFindResult {
   elements: A11yElement[]
   /** agent 给的那句人话（前缀 `a11y-unbuilt:`）；没挂旗时**没有这个字段**。 */
   unbuilt?: string
+  /** Android (`ui.tree` v3): the screen the read happened on, in physical pixels. */
+  viewport?: { width: number; height: number }
 }
 
 /** How to read one field off an item element (the item itself, or a descendant match). */
@@ -209,6 +224,15 @@ export interface DesktopExpect {
 export interface ActOutcome {
   via?: 'invoke' | 'coords' | 'value' | 'message'
   confirmed?: boolean
+  /** Android (`ui.act` v3 settle): whether the screen went quiet and changed after the action. */
+  settled?: boolean
+  /** Android (`ui.act` v3 settle): whether anything changed on screen while the agent was waiting. */
+  changedDuringRead?: boolean
+  /** Android (`ui.act` v3 settle): what the action did — `done`, `small_change` (a countdown
+   *  tick), `no_effect` or `place_changed` (the same controls moved — a scroll). */
+  effect?: 'done' | 'small_change' | 'no_effect' | 'place_changed'
+  /** Android (`ui.act` v3): the ref was re-bound to the same control in a fresh read. */
+  relocated?: boolean
 }
 
 /**
@@ -447,14 +471,22 @@ export function makeDesktopDriver(raw: HostRelay, ops: ReadonlySet<string> = DES
     },
     ...(traced.withSession ? { withSession: traced.withSession.bind(traced) } : {}),
   }
-  /** agent 回的是 `{via}` 或 `{via, confirmed:bool}`——原样透传，**不把缺失补成 true**。
+  /** agent 回的是 `{via}` 或 `{via, confirmed:bool, settled…}`——原样透传，**不把缺失补成 true**。
    *  `via` 也一样只认 agent 说的：猜一个"大概走了 invoke"就把这个字段的全部价值抹掉了。 */
   const outcome = (v: unknown): ActOutcome => {
-    const raw = v as { confirmed?: unknown; via?: unknown } | undefined
+    const raw = v as { confirmed?: unknown; via?: unknown; settled?: unknown; changedDuringRead?: unknown; effect?: unknown; relocated?: unknown } | undefined
     const c = raw?.confirmed
     const via =
       raw?.via === 'invoke' || raw?.via === 'coords' || raw?.via === 'value' || raw?.via === 'message' ? raw.via : undefined
-    return { ...(via ? { via } : {}), ...(typeof c === 'boolean' ? { confirmed: c } : {}) }
+    const effect = raw?.effect === 'done' || raw?.effect === 'small_change' || raw?.effect === 'no_effect' || raw?.effect === 'place_changed' ? raw.effect : undefined
+    return {
+      ...(via ? { via } : {}),
+      ...(typeof c === 'boolean' ? { confirmed: c } : {}),
+      ...(typeof raw?.settled === 'boolean' ? { settled: raw.settled } : {}),
+      ...(typeof raw?.changedDuringRead === 'boolean' ? { changedDuringRead: raw.changedDuringRead } : {}),
+      ...(effect ? { effect } : {}),
+      ...(raw?.relocated === true ? { relocated: true } : {}),
+    }
   }
   return {
     async focusApp(match) {
@@ -472,14 +504,15 @@ export function makeDesktopDriver(raw: HostRelay, ops: ReadonlySet<string> = DES
       // 整个 spec 就是 args（host-agent 侧的 LaunchSpec 同形），字段全可选
       return (await relay.send({ op: 'ensureApp', args: { ...spec } })) as EnsureAppOutcome
     },
-    // agent 回 `{elements, unbuilt?}`。**老 agent 回的是裸数组**——照收，但不凭空造出
+    // agent 回 `{elements, unbuilt?, viewport?}`。**老 agent 回的是裸数组**——照收，但不凭空造出
     // `unbuilt`：那一档是"没验到"，谎报成"验过了、结果是空"正是这次要消灭的东西。
     async find(query) {
       const r = await relay.send({ op: 'find', args: { query } })
       if (Array.isArray(r)) return { elements: r as A11yElement[] }
-      const raw = r as { elements?: A11yElement[]; unbuilt?: unknown } | undefined
+      const raw = r as { elements?: A11yElement[]; unbuilt?: unknown; viewport?: { width: number; height: number } } | undefined
       const unbuilt = typeof raw?.unbuilt === 'string' ? raw.unbuilt : undefined
-      return { elements: raw?.elements ?? [], ...(unbuilt ? { unbuilt } : {}) }
+      const viewport = raw?.viewport && typeof raw.viewport.width === 'number' && typeof raw.viewport.height === 'number' ? raw.viewport : undefined
+      return { elements: raw?.elements ?? [], ...(unbuilt ? { unbuilt } : {}), ...(viewport ? { viewport } : {}) }
     },
     async invoke(ref, expect) {
       return outcome(await relay.send({ op: 'invoke', args: { ref, ...(expect ? { expect } : {}) } }))

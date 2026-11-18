@@ -62,7 +62,7 @@ class PolicyGateTest {
         dev.roots["1"] = root
         dev.fg = pkg
         if (freshPolicy || !this::policy.isInitialized) policy = PolicyContext.fromSourceTree("gate-device")
-        d = Dispatcher(dev, policy)
+        d = Dispatcher(dev, policy, settleTiming = com.streamapp.android.agent.FAST_SETTLE)
         runCatching { call("scopeWindow", """{"match":{"process":"$pkg"}}""") }
     }
 
@@ -209,7 +209,7 @@ class PolicyGateTest {
         val approval = approvalOf(e)
         // The process restarted: the device is the same, the lease is not.
         policy = PolicyContext.fromSourceTree("gate-device")
-        d = Dispatcher(dev, policy)
+        d = Dispatcher(dev, policy, settleTiming = com.streamapp.android.agent.FAST_SETTLE)
         call("scopeWindow", """{"match":{"process":"com.example.shop"}}""")
         assertEquals("approval-mismatch", errCode("invoke", """{"ref":"${ref("Button", 1800)}","approval":$approval}"""))
         assertFalse(dev.log.any { it.startsWith("click") })
@@ -277,7 +277,7 @@ class PolicyGateTest {
         call("click", """{"rect":{"x":0,"y":0,"w":2,"h":2}}""")
         // A reconnect builds a fresh dispatcher: busy is gone.
         d.setBusy(true, null)
-        d = Dispatcher(dev, policy)
+        d = Dispatcher(dev, policy, settleTiming = com.streamapp.android.agent.FAST_SETTLE)
         call("scopeWindow", """{"match":{"process":"com.example.shop"}}""")
         call("click", """{"rect":{"x":0,"y":0,"w":2,"h":2}}""")
     }

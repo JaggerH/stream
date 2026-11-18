@@ -37,6 +37,8 @@ internal class AndroidNode(val info: AccessibilityNodeInfo, override val childre
     override val scrollsForward: Boolean = actionIds.any { it in FORWARD_ACTIONS }
     override val scrollsBackward: Boolean = actionIds.any { it in BACKWARD_ACTIONS }
     override val viewId: String = info.viewIdResourceName ?: ""
+    override val hintText: String = info.hintText?.toString() ?: ""
+    override val isShowingHint: Boolean = info.isShowingHintText || (hintText.isNotEmpty() && text == hintText)
     override val checked: Boolean? = if (info.isCheckable) info.isChecked else null
     override val range: RangeValue? = info.rangeInfo?.let { RangeValue(rangeTypeName(it.type), it.current, it.min, it.max) }
     override val stateDescription: String = info.stateDescription?.toString() ?: ""

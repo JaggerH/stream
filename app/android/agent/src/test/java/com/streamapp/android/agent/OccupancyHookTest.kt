@@ -12,7 +12,7 @@ class OccupancyHookTest {
     private var hint: OccupancyHint? = null
     private var anyTouch = false
     private val asked = mutableListOf<String>()
-    private val d = Dispatcher(dev, occupancy = Occupancy(hint = { hint }, anyRecentTouch = { anyTouch }))
+    private val d = Dispatcher(dev, occupancy = Occupancy(hint = { hint }, anyRecentTouch = { anyTouch }), settleTiming = FAST_SETTLE)
 
     private fun call(op: String, args: String = "{}") = d.dispatch(op, JSONObject(args))
     private fun hintSaying(vararg busy: String) = OccupancyHint { p -> asked += p; if (p in busy) true else null }

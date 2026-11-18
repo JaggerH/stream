@@ -18,7 +18,7 @@ class NavGesturesTest {
     @Before fun setUp() {
         dev = FakeDevice()
         dev.roots["1"] = FakeNode("FrameLayout", rect = Rect(0, 0, 1080, 2400))
-        d = Dispatcher(dev)
+        d = Dispatcher(dev, settleTiming = FAST_SETTLE)
     }
 
     // ---- focusApp fresh ---------------------------------------------------------------
@@ -188,7 +188,7 @@ class NavGesturesTest {
         val outer = FakeNode("ScrollView", "outer", rect = Rect(0, 59, 720, 1491), isScrollable = true, scrollsForward = false, children = listOf(list))
         dev.roots["1"] = page(outer)
         val out = map(call("scroll", """{"dir":"down","amount":10}"""))
-        assertEquals(mapOf("via" to "a11y", "method" to "a11y", "steps" to 0, "end" to true), out)
+        assertEquals(mapOf("via" to "a11y", "method" to "a11y", "steps" to 0, "end" to true, "settled" to false, "changedDuringRead" to false, "effect" to "no_effect"), out)
         assertFalse(dev.log.any { it.startsWith("scrollNode") || it.startsWith("swipe") })
         // The other way still scrolls.
         call("scroll", """{"dir":"up","amount":1}""")
@@ -263,7 +263,7 @@ class NavGesturesTest {
         val out = rows(call("windows"))
         assertEquals(2, out.size)
         assertFalse(out[0].containsKey("self"))
-        assertEquals(mapOf("id" to "5", "process" to "com.example.host", "title" to "Host", "foreground" to true, "self" to true), out[1])
+        assertEquals(mapOf("id" to "5", "process" to "com.example.host", "title" to "Host", "foreground" to true, "self" to true, "type" to "application", "layer" to 0, "viewport" to mapOf("width" to 1080, "height" to 2400)), out[1])
     }
 
     @Test fun theHostWindowCannotBeScoped() {

@@ -34,7 +34,7 @@ class RelayClientTest {
 
     private fun client(t: FakeTransport, dev: Device = FakeDevice()) = RelayClient(
         transport = t,
-        dispatcher = { Dispatcher(dev) },
+        dispatcher = { Dispatcher(dev, settleTiming = com.streamapp.android.agent.FAST_SETTLE) },
         name = "K80", agentVersion = "0.1.0",
         stateProvider = { state },
         executor = { if (deferred) queued += it else it.run() },
@@ -61,7 +61,7 @@ class RelayClientTest {
         // app.launch v2: focusApp understands `fresh`.
         assertEquals(2, caps.getJSONObject("app.launch").getInt("v"))
         // ui.tree v2: find elements carry control values.
-        assertEquals(2, caps.getJSONObject("ui.tree").getInt("v"))
+        assertEquals(3, caps.getJSONObject("ui.tree").getInt("v"))
         assertEquals(1, caps.getJSONObject("ui.act").getInt("v"))
         assertEquals(1, JSONObject(t.sent[0]).getInt("capsVersion"))
     }

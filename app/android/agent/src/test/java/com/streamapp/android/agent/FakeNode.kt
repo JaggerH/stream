@@ -12,6 +12,8 @@ internal data class FakeNode(
     override val isClickable: Boolean = false,
     override val isScrollable: Boolean = false,
     override val viewId: String = "",
+    override val hintText: String = "",
+    override val isShowingHint: Boolean = false,
     override val isVisible: Boolean = true,
     override val scrollAxis: String? = null,
     override val scrollsForward: Boolean = isScrollable,

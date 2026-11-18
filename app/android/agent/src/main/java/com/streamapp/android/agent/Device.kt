@@ -3,8 +3,18 @@ package com.streamapp.android.agent
 import org.json.JSONObject
 
 /** [self]: the window belongs to the app this agent runs in (the host). Such rows are listed by
- *  the `windows` op so a caller can see the host is in front, but never scoped, searched or acted on. */
-internal data class WindowInfo(val id: String, val process: String, val title: String, val foreground: Boolean, val self: Boolean = false)
+ *  the `windows` op so a caller can tell it is in front, but never scoped, searched or acted on.
+ *  [type] is the window's kind — `application`, `input`, `system` or `accessibility_overlay`;
+ *  [layer] its z-order. */
+internal data class WindowInfo(
+    val id: String,
+    val process: String,
+    val title: String,
+    val foreground: Boolean,
+    val self: Boolean = false,
+    val type: String = "application",
+    val layer: Int = 0,
+)
 internal data class Shot(val jpeg: ByteArray, val window: Rect, val scale: Double)
 
 internal interface Device {
@@ -22,6 +32,13 @@ internal interface Device {
      *  or a view in window [windowId] scrolled over [rect] — the moments list rows get recycled.
      *  A carousel ticking elsewhere on the page does not count. */
     fun changedSince(version: Long, windowId: String, rect: Rect): Boolean
+    /** Whether, since [version], a view in window [windowId] scrolled over [rect] — window-level
+     *  changes do not count (a dialog opening over the page does not mean rows recycled). */
+    fun scrolledSince(version: Long, windowId: String, rect: Rect): Boolean
+    /** Epoch ms of the most recent accessibility event the service saw (its own surfaces
+     *  excluded), or null when none was seen since the service connected. The settle wait's
+     *  quiet clock. */
+    fun lastA11yEventMs(): Long?
     /** Whether the live node behind [node] still shows what the snapshot recorded. */
     fun isCurrent(node: UiNode): Boolean
     fun foregroundPackage(): String?
@@ -63,8 +80,9 @@ internal interface Device {
 
 /** An op failure. [code] is the machine-readable family (`approval-required`, `device-busy`…);
  *  when null, the caller derives it from the message's `<code>: <人话>` prefix. [semantics]
- *  carries the structured receipt an `approval-required` reply shows the approver. */
-internal class AgentError(msg: String, val code: String? = null, val semantics: JSONObject? = null) : Exception(msg) {
+ *  carries the structured receipt an `approval-required` reply shows the approver. Open so
+ *  [StaleRefException] can carry its kind through the same channel. */
+internal open class AgentError(msg: String, val code: String? = null, val semantics: JSONObject? = null) : Exception(msg) {
     val errorCode: String
         get() = code ?: message?.substringBefore(':')?.trim()?.takeIf { it.isNotBlank() && ' ' !in it } ?: ""
 }

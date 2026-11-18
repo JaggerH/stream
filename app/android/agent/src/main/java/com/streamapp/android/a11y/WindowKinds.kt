@@ -47,3 +47,13 @@ internal fun stateChangeCounts(windowType: Int?, pkg: String?, imePackages: Set<
  *  own surface rather than on the app in front: any accessibility overlay, or any window of [host]. */
 internal fun isOwnSurface(type: Int?, pkg: String?, host: String): Boolean =
     type == TYPE_ACCESSIBILITY_OVERLAY || (pkg != null && pkg == host)
+
+/** The `windows` receipt's `type` for an `AccessibilityWindowInfo.TYPE_*`: application, input
+ *  (method), accessibility overlay; everything else (system panes, split-screen divider,
+ *  magnification) reports as `system`. */
+internal fun windowTypeName(type: Int): String = when (type) {
+    android.view.accessibility.AccessibilityWindowInfo.TYPE_APPLICATION -> "application"
+    android.view.accessibility.AccessibilityWindowInfo.TYPE_INPUT_METHOD -> "input"
+    TYPE_ACCESSIBILITY_OVERLAY -> "accessibility_overlay"
+    else -> "system"
+}

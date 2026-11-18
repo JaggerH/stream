@@ -30,13 +30,17 @@ internal class StreamAccessibilityService : AccessibilityService() {
             // the tracker excludes (the fact `app-in-use` judges on), or a touch on an overlay or a
             // window of the host app, which is not the user using the app in front.
             inputs.onTouchInteraction(System.currentTimeMillis(), ownSurface = touchedOwnSurface(event))
+            changes.event()
             return
         }
         if (event.eventType == AccessibilityEvent.TYPE_WINDOWS_CHANGED) {
+            changes.event()
             noteWindows()
             return
         }
         if (event.packageName?.toString() == packageName) return // the banner and WakeActivity are not "the foreground"
+        // Every other event feeds the settle wait's quiet clock: quiet means the screen stopped reacting.
+        changes.event()
         if (event.eventType == AccessibilityEvent.TYPE_VIEW_SCROLLED) {
             if (event.windowId < 0) {
                 changes.windowsChanged() // no window to pin it to: assume the worst

@@ -42,7 +42,7 @@ class NodeValuesTest {
         dev.wins = mutableListOf(WindowInfo("1", "com.android.settings", "Settings", true))
         dev.fg = "com.android.settings"
         dev.roots["1"] = page(list(fontRow, wifiRow, plainRow))
-        d = Dispatcher(dev)
+        d = Dispatcher(dev, settleTiming = FAST_SETTLE)
         call("scopeWindow", """{"match":{"process":"com.android.settings"}}""")
     }
 
@@ -60,7 +60,7 @@ class NodeValuesTest {
 
     @Test fun aNodeWithoutAValueCarriesNoValueKeys() {
         val e = find("""{"name":"About phone"}""").single()
-        assertEquals(setOf("ref", "role", "name", "className", "rect"), e.keys)
+        assertEquals(setOf("ref", "role", "name", "className", "rect", "editable"), e.keys)
     }
 
     @Test fun aFoundLabelBringsItsRowsSliderAlong() {
@@ -75,7 +75,7 @@ class NodeValuesTest {
         assertFalse(v.containsKey("name")) // unnamed: left out
         // The value's ref is a ref like any other: it acts on the slider.
         call("invoke", """{"ref":"${v["ref"]}"}""")
-        assertEquals("click ", dev.log.last())
+        assertTrue("click " in dev.log)
     }
 
     @Test fun aRowContainerHitReportsTheValueInsideIt() {

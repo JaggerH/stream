@@ -38,6 +38,10 @@ internal interface UiNode {
     val scrollsBackward: Boolean get() = isScrollable
     /** The node's resource id, e.g. `com.app:id/password`; "" when the app gave none. */
     val viewId: String get() = ""
+    /** The node's hint text (an input's prompt), "" when it has none. */
+    val hintText: String get() = ""
+    /** Whether the node is showing its hint text: the system says so, or the text equals the hint. */
+    val isShowingHint: Boolean get() = hintText.isNotEmpty() && text == hintText
     /** A checkable control's state (switch, checkbox, radio button, toggle); null when not checkable. */
     val checked: Boolean? get() = null
     /** A ranged control's value (slider, seek bar, progress bar, rating bar) from `rangeInfo`; null when it has none. */

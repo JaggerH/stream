@@ -88,13 +88,16 @@ internal class AndroidDevice(private val ctx: Context, private val onStop: () ->
         // still the one in front.
         val front = pickForeground(listed.map { it.second }, ctx.packageName)?.id
         return listed
-            .filter { (w, f) -> w.type != AccessibilityWindowInfo.TYPE_ACCESSIBILITY_OVERLAY && f.pkg != null }
+            .filter { (_, f) -> f.pkg != null }
             .map { (w, f) ->
                 val pkg = f.pkg!!
+                // Overlays and keyboards are listed (with their kind and z-order) so a caller can
+                // tell them apart; they are never the foreground and never a scope target.
                 val foreground = f.id == front || ((f.active || f.focused) && canBeForeground(f.type, pkg, ctx.packageName))
                 // The host app's own windows are listed, marked, so a caller can tell it is in front;
                 // the dispatcher never scopes or acts on them.
-                WindowInfo(f.id, pkg, w.title?.toString() ?: pkg, foreground, self = pkg == ctx.packageName)
+                WindowInfo(f.id, pkg, w.title?.toString() ?: pkg, foreground, self = pkg == ctx.packageName,
+                    type = windowTypeName(w.type), layer = w.layer)
             }
     }
 
@@ -114,6 +117,11 @@ internal class AndroidDevice(private val ctx: Context, private val onStop: () ->
 
     override fun changedSince(version: Long, windowId: String, rect: Rect): Boolean =
         StreamAccessibilityService.changes.changedSince(version, windowId, rect)
+
+    override fun scrolledSince(version: Long, windowId: String, rect: Rect): Boolean =
+        StreamAccessibilityService.changes.scrolledSince(version, windowId, rect)
+
+    override fun lastA11yEventMs(): Long? = StreamAccessibilityService.changes.lastEventAtMs()
 
     /** Re-reads the node from the app: gone, or showing another label, class or place, means the
      *  view behind it now holds something else (a recycled row) and the ref must not act. An

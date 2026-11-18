@@ -251,6 +251,25 @@ describe('device routes', () => {
       expect('semantics' in body).toBe(false)
     })
 
+    it('the stale-ref kind receipt rides the same channel (code + semantics)', async () => {
+      const p = opPost(phoneId, JSON.stringify({ op: 'invoke', args: { ref: 'r7' } }))
+      await vi.waitFor(() => expect(sent).toHaveLength(1))
+      const semantics = { kind: 'element_moved', ref: 'r7' }
+      registry.devices()[0].relay.handleMessage(JSON.stringify({
+        id: JSON.parse(sent[0]).id,
+        error: 'stale-ref: r7 no longer where it was found; find it again',
+        code: 'stale-ref',
+        semantics,
+      }))
+      const r = await p
+      expect(r.status).toBe(502)
+      expect(await r.json()).toEqual({
+        error: 'stale-ref: r7 no longer where it was found; find it again',
+        code: 'stale-ref',
+        semantics,
+      })
+    })
+
     it('a backend-side failure (disconnect) keeps the old {error} shape with no code/semantics', async () => {
       const p = opPost(phoneId, JSON.stringify({ op: 'find', args: {} }))
       await vi.waitFor(() => expect(sent).toHaveLength(1))

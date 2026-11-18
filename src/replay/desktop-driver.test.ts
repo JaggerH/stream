@@ -42,6 +42,25 @@ describe('DesktopDriver over the host relay', () => {
     expect(await makeDesktopDriver(relay).find({ name: 'Font size' })).toEqual({ elements: [el, sw] })
   })
 
+  it('find carries ui.tree v3 fields (hint, viewId, editable) and the viewport through untouched', async () => {
+    const el: A11yElement = {
+      ref: 'r3',
+      role: 'EditText',
+      name: '',
+      className: 'android.widget.EditText',
+      rect: { x: 0, y: 0, w: 900, h: 80 },
+      hintText: '搜索商家',
+      isShowingHintText: true,
+      viewId: 'com.app:id/search',
+      editable: true,
+    }
+    const { relay } = fakeRelay((op) => (op.op === 'find' ? { elements: [el], viewport: { width: 1080, height: 2400 } } : null))
+    expect(await makeDesktopDriver(relay).find({ role: 'EditText' })).toEqual({
+      elements: [el],
+      viewport: { width: 1080, height: 2400 },
+    })
+  })
+
   it('find returns no elements when the agent reports nothing', async () => {
     const { relay } = fakeRelay()
     expect(await makeDesktopDriver(relay).find({ name: 'nope' })).toEqual({ elements: [] })

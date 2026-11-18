@@ -64,7 +64,7 @@ class MaskingTest {
         dev.wins = mutableListOf(WindowInfo("1", "com.example.bank", "某某银行", true))
         dev.roots["1"] = screen()
         shots = RecordingDevice(dev)
-        d = Dispatcher(shots, PolicyContext.fromSourceTree("mask-device"))
+        d = Dispatcher(shots, PolicyContext.fromSourceTree("mask-device"), settleTiming = com.streamapp.android.agent.FAST_SETTLE)
         call("scopeWindow", """{"match":{"process":"com.example.bank"}}""")
     }
 

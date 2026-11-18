@@ -50,6 +50,7 @@ describe('@streamapp/engine 公开面', () => {
         'StreamCapabilities',
         'StreamDevices',
         'StreamHostHooks',
+        'StaleRefSemantics',
         'StreamRuntime',
         'StreamSecrets',
         'StreamTools',

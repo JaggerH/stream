@@ -17,7 +17,7 @@ class DispatcherTest {
     @Before fun setUp() {
         dev = FakeDevice()
         dev.roots["1"] = FakeNode("FrameLayout", children = listOf(input, search), rect = Rect(0, 0, 1080, 2400))
-        d = Dispatcher(dev)
+        d = Dispatcher(dev, settleTiming = FAST_SETTLE)
     }
 
     @Test fun declaresExactlyTheSixteenOps() {
@@ -42,23 +42,26 @@ class DispatcherTest {
         assertEquals(mapOf("x" to 100, "y" to 200, "w" to 50, "h" to 40), els[0]["rect"])
         assertFalse(found.containsKey("unbuilt"))
         val out = map(call("invoke", """{"ref":"${els[0]["ref"]}"}"""))
-        assertEquals(mapOf("via" to "invoke"), out)
+        assertEquals("invoke", out["via"])
+        assertEquals(false, out["settled"])
         assertTrue("click 搜索" in dev.log)
     }
 
-    @Test fun aRefFromAnOlderFindIsStale() {
+    @Test fun aRefSurvivesLaterFindsOfOtherElements() {
         call("scopeWindow", """{"match":{"process":"com.sankuai.meituan"}}""")
         @Suppress("UNCHECKED_CAST") val ref = (map(call("find", """{"query":{"role":"Button"}}"""))["elements"] as List<Map<String, Any?>>)[0]["ref"]
         call("find", """{"query":{"role":"EditText"}}""")
-        assertThrows(StaleRefException::class.java) { call("invoke", """{"ref":"$ref"}""") }
+        val out = map(call("invoke", """{"ref":"$ref"}"""))
+        assertEquals("invoke", out["via"])
+        assertTrue("click 搜索" in dev.log)
     }
 
     @Test fun expectAddsConfirmedAndItsAbsenceDoesNot() {
         call("scopeWindow", """{"match":{"process":"com.sankuai.meituan"}}""")
         @Suppress("UNCHECKED_CAST") val ref = (map(call("find", """{"query":{"role":"Button"}}"""))["elements"] as List<Map<String, Any?>>)[0]["ref"]
-        assertEquals(mapOf("via" to "invoke", "confirmed" to true), map(call("invoke", """{"ref":"$ref","expect":{"role":"EditText"}}""")))
+        assertEquals(mapOf("via" to "invoke", "confirmed" to true), map(call("invoke", """{"ref":"$ref","expect":{"role":"EditText"}}""")).filterKeys { it == "via" || it == "confirmed" })
         @Suppress("UNCHECKED_CAST") val ref2 = (map(call("find", """{"query":{"role":"Button"}}"""))["elements"] as List<Map<String, Any?>>)[0]["ref"]
-        assertEquals(mapOf("via" to "invoke", "confirmed" to false), map(call("invoke", """{"ref":"$ref2","expect":{"name":"不存在"}}""")))
+        assertEquals(false, map(call("invoke", """{"ref":"$ref2","expect":{"name":"不存在"}}"""))["confirmed"])
     }
 
     @Test fun emptyResultInABackgroundWindowCarriesUnbuilt() {
@@ -77,7 +80,7 @@ class DispatcherTest {
 
     @Test fun typeAppendsToTheFocusedInput() {
         dev.focused = FakeNode("EditText", "框", text = "麦")
-        assertEquals(mapOf("via" to "value"), map(call("type", """{"text":"当劳"}""")))
+        assertEquals("value", map(call("type", """{"text":"当劳"}"""))["via"])
         assertTrue("setText 框=麦当劳" in dev.log)
     }
 
@@ -198,7 +201,7 @@ class DispatcherTest {
 
     @Test fun aKeyTheSystemRefusesFails() {
         val refusing = object : Device by dev { override fun globalBack() = false }
-        assertTrue(assertThrows(AgentError::class.java) { Dispatcher(refusing).dispatch("press", JSONObject("""{"key":"Back"}""")) }.message!!.startsWith("action-failed:"))
+        assertTrue(assertThrows(AgentError::class.java) { Dispatcher(refusing, settleTiming = FAST_SETTLE).dispatch("press", JSONObject("""{"key":"Back"}""")) }.message!!.startsWith("action-failed:"))
     }
 
     @Test fun unknownOpAndMissingArg() {
@@ -211,13 +214,13 @@ class DispatcherTest {
         return (map(call("find", """{"query":$query}"""))["elements"] as List<Map<String, Any?>>)[0]["ref"] as String
     }
 
-    @Test fun aRefIsStaleAfterAWindowChange() {
+    @Test fun aWindowChangeWithTheSameTreeClicksRelocated() {
         call("scopeWindow", """{"match":{"process":"com.sankuai.meituan"}}""")
         val ref = firstRef("""{"role":"Button"}""")
         dev.windowChanged()
-        val e = assertThrows(StaleRefException::class.java) { call("invoke", """{"ref":"$ref"}""") }
-        assertTrue(e.message!!.startsWith("stale-ref:"))
-        assertFalse(dev.log.toString(), dev.log.any { it.startsWith("click") })
+        val out = map(call("invoke", """{"ref":"$ref"}"""))
+        assertEquals(true, out["relocated"])
+        assertTrue("click 搜索" in dev.log)
     }
 
     @Test fun aScrollOverTheRefStalesIt() {
@@ -254,11 +257,14 @@ class DispatcherTest {
         assertFalse(dev.log.any { it.startsWith("click") })
     }
 
-    @Test fun aRefIsStaleWhenItsNodeNowShowsSomethingElse() {
+    @Test fun aRecycledNodeWithoutAUniqueMatchIsElementMoved() {
         call("scopeWindow", """{"match":{"process":"com.sankuai.meituan"}}""")
         val ref = firstRef("""{"role":"Button"}""")
         dev.changed += search // a recycled list row: same view, another item
-        assertThrows(StaleRefException::class.java) { call("invoke", """{"ref":"$ref"}""") }
+        dev.roots["1"] = FakeNode("FrameLayout", children = listOf(input, FakeNode("Button", "别的东西", rect = Rect(5, 5, 30, 20))))
+        val e = assertThrows(StaleRefException::class.java) { call("invoke", """{"ref":"$ref"}""") }
+        assertTrue(e.message!!.startsWith("stale-ref:"))
+        assertEquals("element_moved", e.kind)
         assertFalse(dev.log.any { it.startsWith("click") })
     }
 
