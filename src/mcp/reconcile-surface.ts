@@ -234,7 +234,7 @@ export function planFingerprint(plan: readonly FingerprintablePlanAction[]): str
   const lines = plan
     .map((a) => {
       const other = a.dstDir ?? a.newName ?? a.keptPath ?? a.dupOf ?? a.oldPath ?? ''
-      return `${a.kind} ${a.src?.path ?? ''} ${other}`
+      return `${a.kind}\u0000${a.src?.path ?? ''}\u0000${other}`
     })
     .sort()
   return createHash('sha256').update(lines.join('\n')).digest('hex').slice(0, 16)
