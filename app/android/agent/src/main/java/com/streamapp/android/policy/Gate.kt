@@ -1,5 +1,6 @@
 package com.streamapp.android.policy
 
+import com.streamapp.android.agent.Rect
 import com.streamapp.android.agent.UiNode
 
 /** One ask exemption the caller granted: app (package or display name) × action kind. */
@@ -62,7 +63,8 @@ internal class Gate(private val detect: Detect, private val categories: Categori
                 if (cat == "stores" && !claim && (detect.isInstallLabel(label) || detect.isAffirmative(label))) out += "install"
                 if (isCallTarget(t)) out += "call"
                 if (t.isClickable && detect.looksLikeURL(label) && cat != "browsers") out += "link-leave-app"
-                if (cat == "settings" && (isSwitch(t) || detect.isSettingLabel(label))) out += "setting"
+                if (cat == "settings" && (isSwitch(t) || detect.isSettingLabel(label) ||
+                        detect.isStepperLabel(label) || isStepperIcon(t, root) || isSlider(t))) out += "setting"
                 // A claim is free by itself, but not when it stands in a payment confirmation:
                 // the screen asks a commit question, so the same button is the pay step there.
                 if (claim && screenAsksCommit(root, t)) out += "commit-label"
@@ -87,6 +89,11 @@ internal class Gate(private val detect: Detect, private val categories: Categori
                 if (cat == "messaging" || cat == "social") out += "message-send"
                 else out += "commit-unrecognized"
             }
+            "setValue" -> {
+                // Writing a slider's value is changing a setting, like clicking its track.
+                val t = target ?: return emptyList()
+                if (cat == "settings" && isSlider(t)) out += "setting"
+            }
             "scroll" -> {
                 // Sliders such as 「滑动支付」/ "Slide to pay"; a list that scrolls is no slider.
                 val slider = root?.let { findSlider(it) }
@@ -97,6 +104,8 @@ internal class Gate(private val detect: Detect, private val categories: Categori
                         if (money || detect.hasCurrency(slider.name) || detect.screenHasCurrency(root)) out += "payment-label"
                     }
                 }
+                // A scroll action that lands on a slider changes its value in the Settings app.
+                if (cat == "settings" && root != null && hasScrollableSlider(root)) out += "setting"
             }
             else -> {}
         }
@@ -120,8 +129,43 @@ internal class Gate(private val detect: Detect, private val categories: Categori
     private fun isTab(n: UiNode) = n.role == "Tab" || n.className.substringAfterLast('.').startsWith("Tab")
     private fun isList(n: UiNode) = n.isScrollable || n.role.contains("List") || n.role.contains("Recycler")
     private fun isSwitch(n: UiNode) = n.className.substringAfterLast('.').let { it.contains("Switch") || it.contains("CheckBox") || it.contains("ToggleButton") || it.contains("RadioButton") }
-    private fun isSlider(n: UiNode) = !n.isScrollable &&
-        (n.role.contains("Seek", true) || n.role.contains("Slider", true) || n.className.substringAfterLast('.').contains("Seek"))
+    private fun isSlider(n: UiNode) = !n.isScrollable && sliderShape(n)
+    private fun sliderShape(n: UiNode) = n.role.contains("Seek", true) || n.role.contains("Slider", true) ||
+        n.className.substringAfterLast('.').let { it.contains("Seek") || it.contains("Slider") }
+
+    /** A ＋ / － icon button beside a slider: the stepper's other form. */
+    private fun isStepperIcon(t: UiNode, root: UiNode?): Boolean {
+        if (root == null || !t.isClickable || t.name.trim() !in STEPPER_ICONS) return false
+        var hit = false
+        fun walk(n: UiNode) {
+            if (hit) return
+            if (isSlider(n) && beside(t.rect, n.rect)) { hit = true; return }
+            n.children.forEach(::walk)
+        }
+        walk(root)
+        return hit
+    }
+
+    /** Same row (the vertical ranges overlap by at least half the smaller height), close
+     *  horizontally: how a stepper's ＋ / － sits at the ends of a slider. */
+    private fun beside(a: Rect, b: Rect): Boolean {
+        val overlap = minOf(a.y + a.h, b.y + b.h) - maxOf(a.y, b.y)
+        if (overlap < minOf(a.h, b.h) / 2) return false
+        val gap = maxOf(0, maxOf(a.x, b.x) - minOf(a.x + a.w, b.x + b.w))
+        return gap <= ICON_GAP_PX
+    }
+
+    /** A slider that a `scroll` action could land on (declares its own scroll actions). */
+    private fun hasScrollableSlider(root: UiNode): Boolean {
+        var hit = false
+        fun walk(n: UiNode) {
+            if (hit) return
+            if (n.isScrollable && sliderShape(n)) { hit = true; return }
+            n.children.forEach(::walk)
+        }
+        walk(root)
+        return hit
+    }
 
     /** Whether the screen asks a commit question ("Delete this message?") somewhere other than the target. */
     private fun screenAsksCommit(root: UiNode?, target: UiNode?): Boolean {
@@ -189,5 +233,10 @@ internal class Gate(private val detect: Detect, private val categories: Categori
             "call_button", "callbutton", "call_action", "dial_button", "dialbutton",
             "dialpad_floating_action_button", "voice_call", "video_call", "start_call", "make_call",
         )
+
+        /** Labels of a stepper's ＋ / － icon buttons. */
+        private val STEPPER_ICONS = setOf("+", "-", "＋", "－", "−")
+        /** How close horizontally a ＋ / － must be to the slider to count as its stepper (px). */
+        private const val ICON_GAP_PX = 160
     }
 }

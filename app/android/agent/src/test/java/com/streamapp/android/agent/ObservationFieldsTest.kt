@@ -54,9 +54,9 @@ class ObservationFieldsTest {
         assertFalse(el.containsKey("isShowingHintText"))
     }
 
-    @Test fun uiTreeIsDeclaredAtV5() {
-        // v5 adds the scroll phase timings, the scroll bounds and the remembered container.
-        assertEquals(5, ANDROID_CAPS.first { it.id == "ui.tree" }.v)
+    @Test fun uiTreeIsDeclaredAtV6() {
+        // v6 adds range stepCount / valueText and the collapsing-toolbar step rule.
+        assertEquals(6, ANDROID_CAPS.first { it.id == "ui.tree" }.v)
     }
 
     // ---- windows fields -----------------------------------------------------------------

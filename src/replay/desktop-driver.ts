@@ -67,6 +67,9 @@ export interface A11yElement {
   range?: A11yRange
   /** Android (`ui.tree` v2): the control's state description (e.g. "100 %", "ON"). */
   state?: string
+  /** Android (`ui.tree` v6): what the control says its value is — its state description when it
+   *  has one, else its text (a Settings slider's "Default"). Only value-bearing controls carry it. */
+  valueText?: string
   /** Android (`ui.tree` v2): on an element without a value of its own (a row's title), the
    *  value-bearing controls of its row, nearest first; each `ref` belongs to the same snapshot. */
   values?: A11yRowValue[]
@@ -94,9 +97,13 @@ export interface A11yElement {
 /** A ranged control's value (Android `rangeInfo`). A number JSON cannot carry is left out. */
 export interface A11yRange {
   type: 'int' | 'float' | 'percent' | 'indeterminate'
+  /** `rangeInfo.current`, verbatim (no unit conversion). */
   now?: number
   min?: number
   max?: number
+  /** Android (`ui.tree` v6): an int range's number of discrete positions (`max − min + 1`);
+   *  absent on float, percent and indeterminate ranges. */
+  stepCount?: number
 }
 
 /** One value-bearing control next to a found label (see `A11yElement.values`). */
@@ -108,6 +115,8 @@ export interface A11yRowValue {
   checked?: boolean
   range?: A11yRange
   state?: string
+  /** Android (`ui.tree` v6): see `A11yElement.valueText`. */
+  valueText?: string
 }
 
 /**

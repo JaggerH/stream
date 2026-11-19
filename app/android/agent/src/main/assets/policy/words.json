@@ -1234,6 +1234,16 @@
   "restore",
   "factory"
  ],
+ "stepperWords": [
+  "increase",
+  "decrease"
+ ],
+ "cjkStepperPrefixes": [
+  "增大",
+  "减小",
+  "加",
+  "减"
+ ],
  "slideVerbs": [
   "slide",
   "swipe",

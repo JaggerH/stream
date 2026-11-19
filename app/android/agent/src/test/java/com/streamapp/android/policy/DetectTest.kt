@@ -117,6 +117,16 @@ class DetectTest {
         assertTrue(d.isSettingLabel("Reset network settings"))
     }
 
+    @Test fun stepperButtons() {
+        assertTrue(d.isStepperLabel("Increase font size"))
+        assertTrue(d.isStepperLabel("Decrease font size"))
+        assertTrue(d.isStepperLabel("增大字号"))
+        assertTrue(d.isStepperLabel("减小"))
+        assertFalse(d.isStepperLabel("Font size"))
+        assertFalse(d.isStepperLabel("Delete this chat"))
+        assertFalse(d.isStepperLabel("＋"))
+    }
+
     @Test fun slideToPay() {
         assertTrue(commit("Slide to pay"))
         assertTrue(commit("Swipe to confirm"))

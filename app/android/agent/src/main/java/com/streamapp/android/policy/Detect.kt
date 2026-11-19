@@ -261,6 +261,16 @@ internal class Detect(private val w: Words) {
         return ws.size in 1..MAX_COMMIT_WORDS && w.settingVerbs.contains(ws[0])
     }
 
+    /** Stepper buttons that change a setting in place: `Increase font size` / `Decrease font size`,
+     *  「增大字号」/「减小」 — a leading word in the stepper tables. The caller scopes this to the
+     *  Settings app; a shopping list's quantity ± is not a setting. */
+    fun isStepperLabel(label: String): Boolean {
+        if (label.isEmpty()) return false
+        if (hasCJK(label)) return hasPrefixAny(cjkCore(label), w.cjkStepperPrefixes)
+        val ws = labelWords(label)
+        return ws.isNotEmpty() && w.stepperWords.contains(ws[0])
+    }
+
     fun isQuestion(s: String): Boolean {
         val t = s.trim()
         return t.contains('?') || t.contains('？') || t.endsWith("吗") || t.endsWith("嗎") ||

@@ -44,6 +44,9 @@ internal class Words(o: JSONObject) {
     val callPhrases = e("callPhrases")
     val cjkCallPrefixes = e("cjkCallPrefixes")
     val settingVerbs = s("settingVerbs")
+    /** Stepper buttons that change a setting in place (`Increase font size` / `Decrease font size`). */
+    val stepperWords = s("stepperWords")
+    val cjkStepperPrefixes = e("cjkStepperPrefixes")
     val searchWords = e("searchWords")
     val passwordWords = e("passwordWords")
     val otpWords = e("otpWords")

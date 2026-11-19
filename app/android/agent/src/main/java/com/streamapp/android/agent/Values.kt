@@ -14,8 +14,10 @@ internal const val ROW_CLIMB = 3
 /** At most this many value-bearing controls are reported for one row; more means a group, not a row. */
 internal const val MAX_ROW_VALUES = 3
 
-/** The value fields of [n] as an element carries them: `checked`, `range` (`{type, now, min, max}`)
- *  and `state`, each only when the node has it. Empty for a node without a value. */
+/** The value fields of [n] as an element carries them: `checked`, `range`
+ *  (`{type, now, min, max, stepCount?}`) and `state`, each only when the node has it, plus
+ *  `valueText` (what the control says its value is) on a value-bearing control. Empty for a
+ *  node without a value. */
 internal fun valueFields(n: UiNode): Map<String, Any> {
     val m = LinkedHashMap<String, Any>()
     n.checked?.let { m["checked"] = it }
@@ -25,9 +27,21 @@ internal fun valueFields(n: UiNode): Map<String, Any> {
         jsonNumber(r.current)?.let { range["now"] = it }
         jsonNumber(r.min)?.let { range["min"] = it }
         jsonNumber(r.max)?.let { range["max"] = it }
+        // The number of discrete positions an int range offers (0–3 is four). A float or percent
+        // range has no steps, and a range without both finite bounds cannot say.
+        if (r.type == RANGE_INT && r.min.isFinite() && r.max.isFinite() && r.max >= r.min) {
+            range["stepCount"] = (r.max - r.min).toInt() + 1
+        }
         m["range"] = range
     }
     if (n.stateDescription.isNotEmpty()) m["state"] = n.stateDescription
+    // What the control says its value is — a slider's "Default", a field's "100 %": the state
+    // description, else its text. Only value-bearing controls carry it; a plain label would
+    // only repeat its name.
+    if (hasValue(n)) {
+        val valueText = n.stateDescription.trim().ifEmpty { n.text.trim() }
+        if (valueText.isNotEmpty()) m["valueText"] = valueText
+    }
     return m
 }
 

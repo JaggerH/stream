@@ -117,7 +117,7 @@ class NodeValuesTest {
         dev.roots["1"] = page(list(FakeNode("LinearLayout", rect = Rect(0, 100, 1080, 400), children = listOf(title, far, near))))
         @Suppress("UNCHECKED_CAST") val v = find("""{"name":"Volume"}""").single()["values"] as List<Map<String, Any?>>
         assertEquals(listOf("SeekBar", "Switch"), v.map { it["role"] })
-        assertEquals(mapOf("type" to "int", "now" to 7L, "min" to 0L, "max" to 15L), v[0]["range"])
+        assertEquals(mapOf("type" to "int", "now" to 7L, "min" to 0L, "max" to 15L, "stepCount" to 16), v[0]["range"])
         assertEquals(false, v[1]["checked"])
     }
 
@@ -157,5 +157,45 @@ class NodeValuesTest {
     @Test fun anIndeterminateRangeStillSaysSo() {
         dev.roots["1"] = page(FakeNode("ProgressBar", rect = Rect(0, 0, 100, 10), range = RangeValue(RANGE_INDETERMINATE, 0f, 0f, 0f)))
         assertEquals("indeterminate", (find("""{"role":"ProgressBar"}""").single()["range"] as Map<*, *>)["type"])
+    }
+
+    // ---- slider values: stepCount and valueText ----------------------------------------
+
+    @Test fun anIntSliderCarriesItsStepCountAndValueText() {
+        dev.roots["1"] = page(FakeNode("SeekBar", "", className = "android.widget.SeekBar",
+            rect = Rect(0, 100, 800, 40), range = RangeValue(RANGE_INT, 0f, 0f, 3f), stateDescription = "Default"))
+        val s = find("""{"role":"SeekBar"}""").single()
+        assertEquals(mapOf("type" to "int", "now" to 0L, "min" to 0L, "max" to 3L, "stepCount" to 4), s["range"])
+        assertEquals("Default", s["valueText"])
+    }
+
+    @Test fun aFloatSliderHasNoStepCount() {
+        dev.roots["1"] = page(FakeNode("SeekBar", "", className = "android.widget.SeekBar",
+            rect = Rect(0, 100, 800, 40), range = RangeValue(RANGE_FLOAT, 1.3f, 0.85f, 2.0f)))
+        val s = find("""{"role":"SeekBar"}""").single()
+        val r = s["range"] as Map<*, *>
+        assertEquals("float", r["type"])
+        assertEquals(1.3, r["now"])
+        assertFalse(r.containsKey("stepCount"))
+        assertFalse(s.containsKey("valueText")) // neither a state description nor text
+    }
+
+    @Test fun aPercentSliderRoundTripsVerbatim() {
+        dev.roots["1"] = page(FakeNode("SeekBar", "", className = "android.widget.SeekBar",
+            rect = Rect(0, 100, 800, 40), range = RangeValue(RANGE_PERCENT, 40f, 0f, 100f), stateDescription = "40 %"))
+        val s = find("""{"role":"SeekBar"}""").single()
+        assertEquals(mapOf("type" to "percent", "now" to 40L, "min" to 0L, "max" to 100L), s["range"])
+        assertEquals("40 %", s["valueText"])
+    }
+
+    @Test fun aRowValueCarriesItsValueText() {
+        val title = FakeNode("TextView", "Font size", rect = Rect(68, 1087, 143, 49))
+        val slider = FakeNode("SeekBar", "", className = "android.widget.SeekBar",
+            rect = Rect(169, 1177, 382, 101), range = RangeValue(RANGE_INT, 3f, 0f, 3f), stateDescription = "Largest")
+        dev.roots["1"] = page(list(FakeNode("LinearLayout", rect = Rect(0, 1053, 720, 259), children = listOf(title, slider))))
+        @Suppress("UNCHECKED_CAST")
+        val v = find("""{"role":"TextView","name":"Font size"}""").single()["values"] as List<Map<String, Any?>>
+        assertEquals("Largest", v.single()["valueText"])
+        assertEquals(4, (v.single()["range"] as Map<*, *>)["stepCount"])
     }
 }

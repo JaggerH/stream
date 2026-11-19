@@ -62,8 +62,8 @@ class RelayClientTest {
         assertEquals(2, caps.getJSONObject("app.launch").getInt("v"))
         // ui.ocr v1: `find` takes `ocr` and a blind coordinate tap is judged by the text under it.
         assertEquals(1, caps.getJSONObject("ui.ocr").getInt("v"))
-        // ui.tree v5: scroll phase timings, scroll bounds and the remembered container.
-        assertEquals(5, caps.getJSONObject("ui.tree").getInt("v"))
+        // ui.tree v6: range stepCount / valueText and the collapsing-toolbar step rule.
+        assertEquals(6, caps.getJSONObject("ui.tree").getInt("v"))
         assertEquals(1, caps.getJSONObject("ui.act").getInt("v"))
         assertEquals(1, JSONObject(t.sent[0]).getInt("capsVersion"))
     }

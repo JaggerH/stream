@@ -13,7 +13,7 @@ internal val ANDROID_OPS = listOf(
 )
 
 /** Capabilities past their first version; the rest are at v1. */
-private val CAP_VERSIONS = mapOf("ui.tree" to 5, "app.launch" to 2)
+private val CAP_VERSIONS = mapOf("ui.tree" to 6, "app.launch" to 2)
 
 /** The capability manifest the hello declares: only what [ANDROID_OPS] actually back. `ui.tree`
  *  (windows / find / readSubtree), `ui.act` (click / invoke / scroll / press), `screen.shot`,
@@ -32,6 +32,9 @@ private val CAP_VERSIONS = mapOf("ui.tree" to 5, "app.launch" to 2)
  *  `ui.tree` is at v5: `scroll` carries the phase timings in `timing`, bounds each step and the
  *  whole op (returning the completed steps and `stopped: "time"` at the bound), and remembers the
  *  container that moved for the rest of the op.
+ *  `ui.tree` is at v6: a `find` range carries `stepCount` for int ranges and value-bearing
+ *  controls carry `valueText`; a scroll step counts as moved only when the list's own content
+ *  moved — a collapsing app bar that shifts the whole list is not list movement.
  *
  *  `ui.ocr` (v1) is the on-device text tier: `find` takes `ocr` (`auto` / `on` / `off`) and
  *  returns `role: "ocr-text"` elements with `source: "ocr"` when the accessibility tree cannot
@@ -772,26 +775,39 @@ internal class Dispatcher(
             val opposite = if (forward) c.scrollsBackward else c.scrollsForward
             // Only the other way declared: the content is already at this end.
             if (!offers) { if (opposite) atEnd = true; continue }
-            val area = visiblePart(c.rect, bounds) ?: continue
-            var last = changeRead(wid, area, timing)
+            if (visiblePart(c.rect, bounds) == null) continue
+            var last = changeRead(wid, c, bounds, timing)
             if (now() >= deadline) { timedOut = true; break }
-            if (!timedScrollNode(c, forward, timing)) continue
-            // The action is already in flight; if it used up the op's budget, its movement cannot
-            // be checked — report the steps verified so far as a time stop, not as the content's end.
-            if (now() >= deadline) { timedOut = true; break }
-            val first = awaitMove(wid, area, last, timing, deadline)
-            if (first == null) { noEffect = true; continue }
-            last = first
-            var done = 1
+            var done = 0
             var end = false
+            var shifts = 0
+            var started = false
+            var accepted = false
             while (done < steps) {
                 if (now() >= deadline) { timedOut = true; break }
-                if (!timedScrollNode(c, forward, timing)) { end = true; break }
+                if (!timedScrollNode(c, forward, timing)) { if (started || shifts > 0) end = true; break }
+                accepted = true
+                // The action is already in flight; if it used up the op's budget, its movement cannot
+                // be checked — report the steps verified so far as a time stop, not as the content's end.
                 if (now() >= deadline) { timedOut = true; break }
-                val next = awaitMove(wid, area, last, timing, deadline)
-                if (next == null) { end = true; break }
-                last = next
-                done++
+                val move = awaitMove(wid, c, bounds, last, timing, deadline)
+                if (move == null) { if (started || shifts > 0) end = true; break }
+                last = move.read
+                when {
+                    move.listMoved -> { started = true; done++ }
+                    move.layoutShifted -> {
+                        // The app bar folded the whole list up: progress, but not a list move. Step
+                        // the same container again; a page that only ever shifts gives way.
+                        if (++shifts > MAX_LAYOUT_SHIFTS) break
+                    }
+                    else -> { started = true; done++ }
+                }
+            }
+            if (!started) {
+                // The container accepted but never scrolled its own content (a refused action or
+                // only layout shifts): this candidate gives way.
+                if (accepted) noEffect = true
+                continue
             }
             timing.steps = done
             val out = mutableMapOf<String, Any?>("method" to SCROLL_A11Y, "steps" to done)
@@ -931,13 +947,38 @@ internal class Dispatcher(
     private fun untilTimeoutMs(args: JSONObject) =
         args.optLong("timeoutMs", UNTIL_DEFAULT_MS).coerceIn(0, UNTIL_MAX_MS)
 
-    /** Reads the content print and the first visible item of [area] in one tree read. */
-    private fun changeRead(windowId: String, area: Rect, timing: ScrollTiming): MoveCheck {
+    /** Reads the content print, the first item (relative and absolute) and the container's own
+     *  rect in one tree read. The container is looked up again in the fresh read, so a list that
+     *  moved with a collapsing app bar still reports where it is now. */
+    private fun changeRead(windowId: String, container: UiNode?, bounds: Rect, timing: ScrollTiming): MoveCheck {
         val started = now()
         val root = device.windowRoot(windowId)
-        val read = MoveCheck(contentPrint(root, area), firstItemPrint(root, area))
+        val same = container?.let { locate(root, it) } ?: container
+        val area = same?.let { visiblePart(it.rect, bounds) } ?: bounds
+        val read = MoveCheck(
+            contentPrint(root, area),
+            firstItemPrint(same ?: root),
+            firstItemPrint(same ?: root, absolute = true),
+        )
         timing.changeCheckMs += now() - started
         return read
+    }
+
+    /** [node] as it appears in [root] now, by class, name and id among scrollable nodes — null
+     *  when the read does not bring it back (the caller keeps the old snapshot then). */
+    private fun locate(root: UiNode?, node: UiNode): UiNode? {
+        if (root == null) return null
+        var hit: UiNode? = null
+        fun walk(n: UiNode) {
+            if (hit != null) return
+            if (n.isScrollable && n.className == node.className && n.name == node.name && n.viewId == node.viewId) {
+                hit = n
+                return
+            }
+            n.children.forEach(::walk)
+        }
+        walk(root)
+        return hit
     }
 
     private fun timedScrollNode(node: UiNode, forward: Boolean, timing: ScrollTiming): Boolean {
@@ -951,19 +992,20 @@ internal class Dispatcher(
 
     /**
      * Waits after an accessibility scroll step, bounded by [deadline] and [SCROLL_STEP_CAP_MS].
-     * The step is complete — and the read returned — as soon as the content print has moved and
-     * the scroll container's first visible item changed position (the list moved, whatever else
-     * is animating), or the print stopped changing between two reads. A page whose carousel or
-     * countdown never goes still therefore ends the step on its first read instead of running the
-     * whole poll budget. Null when nothing moved at all.
+     * Null when nothing moved at all. A step is over when either the container's first item
+     * changed position relative to the container (the list scrolled), or the content stopped
+     * changing between two reads. A read where the first item's absolute position changed while
+     * its relative one did not is a layout shift — a collapsing toolbar folding the whole list
+     * up — not a list move; the caller keeps the container and steps again.
      */
     private fun awaitMove(
         windowId: String,
-        area: Rect,
+        container: UiNode,
+        bounds: Rect,
         before: MoveCheck,
         timing: ScrollTiming,
         deadline: Long,
-    ): MoveCheck? {
+    ): StepMove? {
         var last = before
         var moved = false
         val end = minOf(deadline, now() + SCROLL_STEP_CAP_MS)
@@ -971,14 +1013,18 @@ internal class Dispatcher(
         while (polls < SCROLL_STEP_MAX_POLLS && now() < end) {
             polls++
             device.sleep(SCROLL_POLL_MS)
-            val read = changeRead(windowId, area, timing)
+            val read = changeRead(windowId, container, bounds, timing)
             if (read.print != before.print) moved = true
-            if (moved && (read.first != before.first || read.first != last.first || read.print == last.print)) {
-                return read
-            }
+            val listMoved = read.first != before.first
+            val shifted = !listMoved && read.firstAbs != before.firstAbs
+            val settled = read.print == last.print
+            if (moved && listMoved) return StepMove(read, listMoved = true, layoutShifted = false, settled = settled)
+            if (moved && settled) return StepMove(read, listMoved = false, layoutShifted = shifted, settled = true)
             last = read
         }
-        return if (moved) last else null
+        if (!moved) return null
+        val listMoved = last.first != before.first
+        return StepMove(last, listMoved = listMoved, layoutShifted = !listMoved && last.firstAbs != before.firstAbs, settled = false)
     }
 
     /**
@@ -1202,8 +1248,17 @@ internal class ScrollTiming {
     )
 }
 
-/** The content print of an area and the position of its first visible item, from one read. */
-private class MoveCheck(val print: List<String>, val first: String?)
+/** The content print of an area and the first item's print — relative to its container and
+ *  absolute — from one read. */
+private class MoveCheck(val print: List<String>, val first: String?, val firstAbs: String?)
+
+/** What one scroll step did: the read, and whether the list moved, only the layout shifted (a
+ *  collapsing toolbar folding away), or the content settled without the list moving. */
+private class StepMove(val read: MoveCheck, val listMoved: Boolean, val layoutShifted: Boolean, val settled: Boolean)
+
+/** After a scroll action only shifted the container's layout, how many such steps a candidate may
+ *  take before it gives way; the whole op's deadline still bounds it. */
+internal const val MAX_LAYOUT_SHIFTS = 6
 
 /** What one [Dispatcher.scroll] run did: its receipt and the container that moved, if any. */
 private class ScrollRun(val receipt: MutableMap<String, Any?>, val node: UiNode?)
@@ -1256,20 +1311,24 @@ internal fun contentPrint(root: UiNode?, area: Rect): List<String> {
     return out
 }
 
-/** The identity and position of the first visible, named, non-scrollable node inside [area]
- *  (document order) — the list's first visible item. A scroll that moved the list changes it; a
- *  countdown that retitles the same row in place does not, so an animating page cannot fake a
- *  move (and a move is not hidden by one). Null when nothing named is inside [area]. */
-internal fun firstItemPrint(root: UiNode?, area: Rect): String? {
-    fun walk(n: UiNode): String? {
+/** The first named, non-scrollable node under [root] (the scroll container), by class, resource
+ *  id and position. By default the position is relative to the node's nearest scrollable ancestor
+ *  (the container's own viewport): the print does not change when the whole container moves — a
+ *  collapsing toolbar folding away above it — only when its content scrolls. [absolute] instead
+ *  reports the screen position, for telling a layout shift from a list move. Null when nothing
+ *  named is under [root]. */
+internal fun firstItemPrint(root: UiNode?, absolute: Boolean = false): String? {
+    fun walk(n: UiNode, viewport: Rect?): String? {
         if (!n.isVisible) return null
-        if (!n.isScrollable && n.name.isNotBlank() && n.rect.intersects(area)) {
-            return "${n.className}|${n.viewId}|${n.rect.x},${n.rect.y},${n.rect.w},${n.rect.h}"
+        if (!n.isScrollable && n.name.isNotBlank()) {
+            val v = if (absolute || viewport == null) Rect(0, 0, 0, 0) else viewport
+            return "${n.className}|${n.viewId}|${n.rect.x - v.x},${n.rect.y - v.y},${n.rect.w},${n.rect.h}"
         }
-        for (c in n.children) walk(c)?.let { return it }
+        val vp = if (n.isScrollable) n.rect else viewport
+        for (c in n.children) walk(c, vp)?.let { return it }
         return null
     }
-    return root?.let(::walk)
+    return root?.let { walk(it, if (it.isScrollable) it.rect else null) }
 }
 
 internal data class SwipeGeometry(val x: Int, val from: Int, val to: Int)

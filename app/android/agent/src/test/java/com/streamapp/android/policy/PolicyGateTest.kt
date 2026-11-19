@@ -4,7 +4,9 @@ import com.streamapp.android.agent.AgentError
 import com.streamapp.android.agent.Dispatcher
 import com.streamapp.android.agent.FakeDevice
 import com.streamapp.android.agent.FakeNode
+import com.streamapp.android.agent.RANGE_INT
 import com.streamapp.android.agent.Rect
+import com.streamapp.android.agent.RangeValue
 import com.streamapp.android.agent.WindowInfo
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
@@ -75,6 +77,12 @@ class PolicyGateTest {
         @Suppress("UNCHECKED_CAST")
         val els = map(call("find", """{"query":{"role":"$role"}}"""))["elements"] as List<Map<String, Any?>>
         return els.first { (it["rect"] as Map<String, Int>)["y"] == y }["ref"] as String
+    }
+
+    private fun refName(role: String, name: String): String {
+        @Suppress("UNCHECKED_CAST")
+        val els = map(call("find", """{"query":{"role":"$role","name":"$name"}}"""))["elements"] as List<Map<String, Any?>>
+        return els.single()["ref"] as String
     }
 
     /** A credential carrying exactly the digests of the receipt an ask produced. */
@@ -177,6 +185,75 @@ class PolicyGateTest {
         setUpApp("com.example.shop", "商店")
         call("scroll", """{"dir":"down","amount":1}""")
         assertTrue(dev.log.any { it.startsWith("swipe") })
+    }
+
+    // ---- settings: steppers and sliders ------------------------------------------------
+
+    /** Android 16's Display size & text page: the font size slider with its flanking buttons. */
+    private fun fontSizePage() = single(
+        FakeNode("TextView", "Font size", className = "android.widget.TextView", rect = Rect(100, 900, 600, 60)),
+        FakeNode("ImageButton", "Decrease font size", className = "android.widget.ImageButton", rect = Rect(60, 1000, 100, 100), isClickable = true),
+        FakeNode("SeekBar", "", className = "android.widget.SeekBar", rect = Rect(200, 1000, 680, 100),
+            range = RangeValue(RANGE_INT, 0f, 0f, 3f)),
+        FakeNode("ImageButton", "Increase font size", className = "android.widget.ImageButton", rect = Rect(920, 1000, 100, 100), isClickable = true),
+    )
+
+    @Test fun aSettingStepperAsksBeforeChangingIt() {
+        setUpApp("com.android.settings", "设置", root = fontSizePage())
+        for (name in listOf("Decrease font size", "Increase font size")) {
+            val e = err("invoke", """{"ref":"${refName("ImageButton", name)}"}""")
+            assertEquals(name, "approval-required", e.errorCode)
+            assertTrue(name, reasons(e).contains("setting"))
+        }
+        assertFalse(dev.log.any { it.startsWith("click") })
+    }
+
+    @Test fun aPlusMinusIconBesideTheSliderAsks() {
+        setUpApp("com.android.settings", "设置", root = single(
+            FakeNode("SeekBar", "", className = "android.widget.SeekBar", rect = Rect(200, 1000, 680, 100),
+                range = RangeValue(RANGE_INT, 0f, 0f, 3f)),
+            FakeNode("FrameLayout", "＋", className = "android.widget.FrameLayout", rect = Rect(920, 1000, 100, 100), isClickable = true),
+        ))
+        val e = err("invoke", """{"ref":"${refName("FrameLayout", "＋")}"}""")
+        assertEquals("approval-required", e.errorCode)
+        assertTrue(reasons(e).contains("setting"))
+        assertFalse(dev.log.any { it.startsWith("click") })
+    }
+
+    @Test fun aSettingSlidersTrackInvokeAndValueAsk() {
+        setUpApp("com.android.settings", "设置", root = fontSizePage())
+        // Clicking the track.
+        val click = err("click", """{"rect":{"x":540,"y":1050,"w":1,"h":1}}""")
+        assertEquals("approval-required", click.errorCode)
+        assertTrue(reasons(click).contains("setting"))
+        assertFalse(dev.log.any { it.startsWith("tap") })
+        // Invoking the slider (its scroll actions change the value).
+        val invoke = err("invoke", """{"ref":"${refName("SeekBar", "")}"}""")
+        assertEquals("approval-required", invoke.errorCode)
+        assertTrue(reasons(invoke).contains("setting"))
+        // Writing it.
+        val write = err("setValue", """{"ref":"${refName("SeekBar", "")}","text":"2"}""")
+        assertEquals("approval-required", write.errorCode)
+        assertTrue(reasons(write).contains("setting"))
+        assertFalse(dev.log.any { it.startsWith("setText") })
+    }
+
+    @Test fun aQuantityStepperAndASliderOutsideSettingsRunFree() {
+        // A shopping app's quantity ± is not a system setting.
+        setUpApp("com.example.shop", "商店", root = single(
+            FakeNode("Button", "-", className = "android.widget.Button", rect = Rect(100, 1000, 80, 80), isClickable = true),
+            FakeNode("TextView", "1", className = "android.widget.TextView", rect = Rect(200, 1010, 100, 60)),
+            FakeNode("Button", "+", className = "android.widget.Button", rect = Rect(320, 1000, 80, 80), isClickable = true),
+        ))
+        call("invoke", """{"ref":"${refName("Button", "+")}"}""")
+        assertTrue("click +" in dev.log)
+        // A media app's slider is not a system setting either.
+        setUpApp("com.example.music", "音乐", root = single(
+            FakeNode("SeekBar", "Volume", className = "android.widget.SeekBar", rect = Rect(100, 1000, 880, 100),
+                range = RangeValue(RANGE_INT, 5f, 0f, 10f)),
+        ))
+        call("invoke", """{"ref":"${refName("SeekBar", "Volume")}"}""")
+        assertTrue("click Volume" in dev.log)
     }
 
     // ---- coupon claims ----------------------------------------------------------------
