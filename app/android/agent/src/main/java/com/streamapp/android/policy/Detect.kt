@@ -17,6 +17,8 @@ internal class Detect(private val w: Words) {
     val excludedStarts = w.excludedStarts.map { tokenize(it) }
     val moneyPhrases = w.moneyPhrases.map { tokenize(it) }
     val callPhrases = w.callPhrases.map { tokenize(it) }
+    private val claimWords = w.claimWords
+    private val claimPhrases = w.claimPhrases.map { tokenize(it) }
     private val cancelSingles = w.cancelWords.filter { !it.contains(' ') }.toSet()
     private val cancelPhrases = w.cancelWords.filter { it.contains(' ') }.map { tokenize(it) }
 
@@ -87,6 +89,9 @@ internal class Detect(private val w: Words) {
     /** Whether a button label is a commit, in any supported language. */
     fun isCommitLabel(label: String): Boolean {
         if (label.isEmpty() || isDismissal(label)) return false
+        // A bare claim (「确认领取235元」/ "Get coupon") hands over a coupon or reward and costs
+        // nothing; one that also names paying or activating (「领取并开通会员」) is a commit.
+        if (namesClaim(label)) return claimNamesPayment(label)
         if (hasCJK(label)) {
             val core = cjkCore(label)
             val runes = core.codePointCount(0, core.length)
@@ -151,8 +156,37 @@ internal class Detect(private val w: Words) {
         return ws.indices.any { w.commitVerbs.contains(ws[it]) || startsWithPhrase(ws, it, commitPhrases) }
     }
 
+    /** Whether a label names claiming a coupon, reward or red packet — in Chinese (领取 / 领券 /
+     *  立即领 / 去领 / 抢券 / 领红包, including 「确认领取…」) or English (claim / collect / get coupon). */
+    private fun namesClaim(label: String): Boolean {
+        if (label.isEmpty()) return false
+        if (hasCJK(label)) {
+            val core = cjkCore(label)
+            return w.cjkClaimWords.any { core.contains(it) }
+        }
+        val ws = labelWords(label)
+        return ws.any { claimWords.contains(it) } || containsPhrase(ws, claimPhrases)
+    }
+
+    /** Whether the same label also names paying, activating, buying, subscribing or renewing:
+     *  「领取并开通 ¥9.9」 is a paid action, not a bare claim. */
+    private fun claimNamesPayment(label: String): Boolean {
+        if (hasCJK(label)) {
+            val core = cjkCore(label)
+            return containsAny(core, w.cjkMoneyKeywords) || containsAny(core, w.cjkClaimExceptions)
+        }
+        val ws = labelWords(label)
+        return ws.any { w.moneyWords.contains(it) || w.claimExceptionWords.contains(it) } ||
+            containsPhrase(ws, moneyPhrases)
+    }
+
+    /** A claim that costs nothing: not a commit, not a payment. The caller still gates a claim on
+     *  a screen that asks a commit question (a payment confirmation dialog). */
+    fun isClaimLabel(label: String): Boolean = namesClaim(label) && !claimNamesPayment(label)
+
     /** Whether a commit's label moves money by itself: pays, buys, sells, swaps, lends, borrows. */
     fun movesMoney(label: String): Boolean {
+        if (isClaimLabel(label)) return false
         if (hasCJK(label) && containsAny(cjkCore(label), w.cjkMoneyKeywords)) return true
         val ws = labelWords(label)
         return ws.any { w.moneyWords.contains(it) } || containsPhrase(ws, moneyPhrases)

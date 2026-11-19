@@ -24,6 +24,13 @@ internal class Words(o: JSONObject) {
     val excludedStarts = e("excludedStarts")
     val slideVerbs = s("slideVerbs")
     val cjkCommitPrefixes = e("cjkCommitPrefixes")
+    /** Claiming a coupon, reward or red packet — a free action, not a commit. */
+    val cjkClaimWords = e("cjkClaimWords")
+    val claimWords = s("claimWords")
+    val claimPhrases = e("claimPhrases")
+    /** Words that turn a claim into a paid action (activate, renew, subscribe): no longer a bare claim. */
+    val cjkClaimExceptions = e("cjkClaimExceptions")
+    val claimExceptionWords = s("claimExceptionWords")
     val moneyWords = s("moneyWords")
     val moneyPhrases = e("moneyPhrases")
     val cjkMoneyKeywords = e("cjkMoneyKeywords")

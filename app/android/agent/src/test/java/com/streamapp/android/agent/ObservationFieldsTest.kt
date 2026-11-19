@@ -54,8 +54,9 @@ class ObservationFieldsTest {
         assertFalse(el.containsKey("isShowingHintText"))
     }
 
-    @Test fun uiTreeIsDeclaredAtV3() {
-        assertEquals(3, ANDROID_CAPS.first { it.id == "ui.tree" }.v)
+    @Test fun uiTreeIsDeclaredAtV4() {
+        // v4 adds scroll-until and the ANR marker on windows rows.
+        assertEquals(4, ANDROID_CAPS.first { it.id == "ui.tree" }.v)
     }
 
     // ---- windows fields -----------------------------------------------------------------

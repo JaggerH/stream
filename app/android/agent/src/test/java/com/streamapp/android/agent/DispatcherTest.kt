@@ -71,6 +71,21 @@ class DispatcherTest {
         assertTrue((r["unbuilt"] as String).startsWith("a11y-unbuilt:"))
     }
 
+    @Test fun theWindowsReceiptMarksTheAnrDialogAndItsApp() {
+        dev.wins = mutableListOf(WindowInfo("1", "android", "系统界面", true, type = "system", anr = true, appPackage = "com.tencent.mm"))
+        @Suppress("UNCHECKED_CAST")
+        val rows = call("windows") as List<Map<String, Any?>>
+        assertEquals("system", rows[0]["type"])
+        assertEquals(true, rows[0]["anr"])
+        assertEquals("com.tencent.mm", rows[0]["appPackage"])
+        // No row carries the extra fields when the window is ordinary.
+        dev.wins = mutableListOf(WindowInfo("1", "com.sankuai.meituan", "美团", true))
+        @Suppress("UNCHECKED_CAST")
+        val plain = call("windows") as List<Map<String, Any?>>
+        assertFalse(plain[0].containsKey("anr"))
+        assertFalse(plain[0].containsKey("appPackage"))
+    }
+
     @Test fun ambiguousAndMissingWindows() {
         dev.wins = mutableListOf(WindowInfo("1", "p", "A", true), WindowInfo("2", "p", "B", false))
         assertTrue(assertThrows(AgentError::class.java) { call("scopeWindow", """{"match":{"process":"p"}}""") }.message!!.startsWith("ambiguous-window:"))

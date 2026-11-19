@@ -185,6 +185,21 @@ describe('device routes', () => {
       expect(await ok.json()).toEqual({ result: { elements: [] } })
     })
 
+    it('carries the scroll-until and ANR fields through untouched', async () => {
+      // The device's optional fields are the contract; the backend forwards `result` verbatim.
+      const until = opPost(phoneId, JSON.stringify({ op: 'scroll', args: { dir: 'down', amount: 1, until: '排序' } }))
+      await vi.waitFor(() => expect(sent).toHaveLength(1))
+      const untilResult = { found: false, scrolls: 20, stopped: 'steps', visible: ['商品 A', '商品 B'] }
+      registry.devices()[0].relay.handleMessage(JSON.stringify({ id: JSON.parse(sent[0]).id, result: untilResult }))
+      expect(await (await until).json()).toEqual({ result: untilResult })
+
+      const windows = opPost(phoneId, JSON.stringify({ op: 'windows' }))
+      await vi.waitFor(() => expect(sent).toHaveLength(2))
+      const rows = [{ id: '9', process: 'android', title: '系统界面', foreground: true, type: 'system', layer: 42, anr: true, appPackage: 'com.tencent.mm' }]
+      registry.devices()[0].relay.handleMessage(JSON.stringify({ id: JSON.parse(sent[1]).id, result: rows }))
+      expect(await (await windows).json()).toEqual({ result: rows })
+    })
+
     it('reports an agent error as 502 with the message', async () => {
       const p = opPost(phoneId, JSON.stringify({ op: 'invoke', args: { ref: 'n3' } }))
       await vi.waitFor(() => expect(sent).toHaveLength(1))

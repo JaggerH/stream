@@ -5,6 +5,7 @@ import android.view.accessibility.AccessibilityWindowInfo.TYPE_APPLICATION
 import android.view.accessibility.AccessibilityWindowInfo.TYPE_INPUT_METHOD
 import android.view.accessibility.AccessibilityWindowInfo.TYPE_MAGNIFICATION_OVERLAY
 import android.view.accessibility.AccessibilityWindowInfo.TYPE_SPLIT_SCREEN_DIVIDER
+import java.util.Locale
 
 /** What the agent reads of one accessibility window to judge it: [type] is
  *  `AccessibilityWindowInfo.TYPE_*`, [pkg] its root's package (null when the root is unreadable). */
@@ -56,4 +57,43 @@ internal fun windowTypeName(type: Int): String = when (type) {
     android.view.accessibility.AccessibilityWindowInfo.TYPE_INPUT_METHOD -> "input"
     TYPE_ACCESSIBILITY_OVERLAY -> "accessibility_overlay"
     else -> "system"
+}
+
+/**
+ * Words the system's "app isn't responding" (ANR) dialog uses, in the languages the app ships.
+ * The dialog is a system window; its title usually names the app but not the problem, so the
+ * message text is what tells it apart from the notification shade or a volume pane.
+ */
+private val ANR_WORDS = listOf(
+    "应用无响应", "应用没有响应", "应用未响应", "没有响应", "沒有響應", "未响应", "未響應",
+    "沒有回應", "没有回应", "无响应", "無回應", "無響應",
+    "isn't responding", "isn’t responding", "is not responding",
+    "応答していません", "応答なし", "응답 없음", "응답하지 않음",
+    "no responde", "no está respondiendo", "ne répond pas", "reagiert nicht",
+    "non risponde", "не отвечает",
+)
+
+/**
+ * Whether a system window is the ANR dialog. The AOSP dialog's buttons carry `android:id/aerr_*`,
+ * which no translation changes; a build that renames them is caught by its message words.
+ */
+internal fun looksLikeAnr(title: String, labels: List<String>, viewIds: List<String>): Boolean {
+    if (viewIds.any { it.contains("aerr_", ignoreCase = true) }) return true
+    val text = (listOf(title) + labels).joinToString("\n").lowercase(Locale.ROOT)
+    return ANR_WORDS.any { text.contains(it) }
+}
+
+private val SYSTEM_PACKAGES = setOf("android", "com.android.systemui")
+
+/**
+ * The app an ANR dialog is about: the dialog's own package when that names an app rather than the
+ * system, else the application window directly below it (accessibility windows arrive top first).
+ * Null when neither says which app it is; the host's own windows never count.
+ */
+internal fun anrOwner(windows: List<WindowFacts>, index: Int, host: String): String? {
+    val own = windows[index].pkg
+    if (own != null && own != host && own !in SYSTEM_PACKAGES) return own
+    return windows.drop(index + 1)
+        .firstOrNull { it.type == TYPE_APPLICATION && it.pkg != null && it.pkg != host }
+        ?.pkg
 }

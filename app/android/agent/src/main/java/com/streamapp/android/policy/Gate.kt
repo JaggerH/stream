@@ -38,18 +38,22 @@ internal class Gate(private val detect: Detect, private val categories: Categori
                 val t = target ?: return emptyList()
                 if (isInput(t) || isTab(t) || isList(t)) return emptyList()
                 val label = t.name
+                val claim = detect.isClaimLabel(label)
                 val (commit, money) = detect.commitParts(label)
                 if (commit) out += "commit-label"
                 if (detect.isAffirmative(label) && screenAsksCommit(root, t)) out += "dialog-confirm"
-                if (cat == "stores" && (detect.isInstallLabel(label) || detect.isAffirmative(label))) out += "install"
+                if (cat == "stores" && !claim && (detect.isInstallLabel(label) || detect.isAffirmative(label))) out += "install"
                 if (isCallTarget(t)) out += "call"
                 if (t.isClickable && detect.looksLikeURL(label) && cat != "browsers") out += "link-leave-app"
                 if (cat == "settings" && (isSwitch(t) || detect.isSettingLabel(label))) out += "setting"
+                // A claim is free by itself, but not when it stands in a payment confirmation:
+                // the screen asks a commit question, so the same button is the pay step there.
+                if (claim && screenAsksCommit(root, t)) out += "commit-label"
                 // A payment: a commit that moves money by itself, or any commit or store install
                 // on a screen that shows an amount.
-                if ((commit || out.contains("install")) &&
-                    (money || detect.hasCurrency(label) || (root != null && detect.screenHasCurrency(root)))
-                ) out += "payment-label"
+                val moneyShown = detect.hasCurrency(label) || (root != null && detect.screenHasCurrency(root))
+                if ((commit || out.contains("install")) && (money || moneyShown)) out += "payment-label"
+                if (claim && out.contains("commit-label") && moneyShown) out += "payment-label"
                 if (out.isEmpty() && unrecognizedCommit(t, root)) out += "commit-unrecognized"
             }
             "type", "press" -> {
@@ -147,7 +151,7 @@ internal class Gate(private val detect: Detect, private val categories: Categori
         if (!t.isClickable && t.role != "Button") return false
         val label = t.name
         if (label.isNotEmpty()) {
-            if (detect.isCommitLabel(label) || detect.isInstallLabel(label) || detect.isCallLabel(label) ||
+            if (detect.isCommitLabel(label) || detect.isClaimLabel(label) || detect.isInstallLabel(label) || detect.isCallLabel(label) ||
                 detect.isSettingLabel(label) || detect.isAffirmative(label) || detect.looksLikeURL(label) ||
                 detect.isDismissal(label) || detect.isPlaceLabel(label) || detect.isSearchLabel(label)
             ) return false

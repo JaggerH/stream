@@ -166,6 +166,39 @@ class DetectTest {
         assertFalse(d.mentionsCommit("Your package is on the way"))
     }
 
+    // ---- claiming a coupon ------------------------------------------------------------
+
+    @Test fun claimLabelsNeitherCommitNorMoveMoney() {
+        assertFalse(commit("确认领取235元"))
+        assertFalse(money("确认领取235元"))
+        assertFalse(commit("领券"))
+        assertFalse(commit("立即领"))
+        assertFalse(commit("去领"))
+        assertFalse(commit("抢券"))
+        assertFalse(commit("领红包"))
+        assertFalse(commit("领取优惠券"))
+        assertFalse(commit("Claim"))
+        assertFalse(commit("Get coupon"))
+        assertFalse(commit("Collect"))
+        assertFalse(money("领取 ¥235"))
+        assertFalse(money("Get coupon ¥235"))
+    }
+
+    @Test fun claimWithAPaymentOrActivationWordStaysACommit() {
+        assertTrue(commit("领取并开通会员 ¥9.9"))
+        assertTrue(commit("领取并购买"))
+        assertTrue(commit("Claim and subscribe"))
+        assertTrue(commit("Claim and pay"))
+        assertTrue(commit("Collect payment"))
+        // The price is what makes it a payment, not the claim itself.
+        assertFalse(money("领取并开通会员 ¥9.9"))
+    }
+
+    @Test fun claimIsNotASettingOrACall() {
+        assertFalse(d.isSettingLabel("领取"))
+        assertFalse(d.isCallLabel("领券"))
+    }
+
     // ---- credential fields -----------------------------------------------------------
 
     private fun cred(isPassword: Boolean, label: String, viewId: String = "") =

@@ -13,7 +13,7 @@ internal val ANDROID_OPS = listOf(
 )
 
 /** Capabilities past their first version; the rest are at v1. */
-private val CAP_VERSIONS = mapOf("ui.tree" to 3, "app.launch" to 2)
+private val CAP_VERSIONS = mapOf("ui.tree" to 4, "app.launch" to 2)
 
 /** The capability manifest the hello declares: only what [ANDROID_OPS] actually back. `ui.tree`
  *  (windows / find / readSubtree), `ui.act` (click / invoke / scroll / press), `screen.shot`,
@@ -26,7 +26,9 @@ private val CAP_VERSIONS = mapOf("ui.tree" to 3, "app.launch" to 2)
  *  `ui.tree` is at v3: find elements carry `hintText` / `isShowingHintText` / `viewId` /
  *  `editable`, windows carry `type` / `layer`, both replies carry `viewport`, refs persist across
  *  reads and carry over by identity, stale errors carry `semantics.kind`, actions relocate a ref
- *  in place and wait for the screen to settle (`settled` / `changedDuringRead` / `effect`). */
+ *  in place and wait for the screen to settle (`settled` / `changedDuringRead` / `effect`).
+ *  `ui.tree` is at v4: `scroll` takes `until` (bounded scroll-until with a receipt), and a system
+ *  ANR dialog's `windows` row carries `anr: true` plus the app package it is about. */
 internal val ANDROID_CAPS = listOf("ui.tree", "ui.act", "screen.shot", "app.launch", "app.in_use", "input.text")
     .map { com.streamapp.android.protocol.Capability(it, CAP_VERSIONS[it] ?: 1) }
 
@@ -65,6 +67,8 @@ internal class Dispatcher(
     private val policy: PolicyContext? = null,
     private val occupancy: Occupancy = Occupancy(),
     private val settleTiming: Settle = Settle(),
+    /** The clock the scroll-until bounds read; tests advance it without waiting. */
+    private val now: () -> Long = { System.currentTimeMillis() },
 ) {
     /** The app (and optional title substring) the agent limited itself to. An Activity change
      *  replaces the window, so the scope is re-resolved against `windows()` on every use. */
@@ -173,8 +177,11 @@ internal class Dispatcher(
             "scroll" -> {
                 refuseMessage(args)
                 gated(op, args, checkCredential = false, target = { _, _ -> null }) { _ ->
-                    val r = scroll(str(args, "dir"), int(args, "amount"))
-                    settle(args, if (r["method"] == SCROLL_A11Y) "a11y" else "coords") + r
+                    val dir = str(args, "dir")
+                    val until = args.optString("until", "").trim()
+                    val r = if (until.isEmpty()) scroll(dir, int(args, "amount"))
+                    else scrollUntil(dir, until, untilMaxSteps(args), untilTimeoutMs(args))
+                    settle(args, if (r["method"] == SCROLL_GESTURE) "coords" else "a11y") + r
                 }
             }
             "press" -> {
@@ -624,6 +631,98 @@ internal class Dispatcher(
         return out
     }
 
+    /**
+     * `scroll` with `until`: one scroll step at a time until the wanted text is visible on screen,
+     * stopping at the first of three bounds — the content's end (two steps leave the tree
+     * unchanged), `maxSteps` (default [UNTIL_DEFAULT_STEPS]) or `timeoutMs` (default
+     * [UNTIL_DEFAULT_MS]) — so the caller's own op timeout never has to be the thing that ends it.
+     * The receipt says whether the text was found, how many steps ran, why scrolling stopped and a
+     * few labels still visible there. One step per check is the point, so the ordinary `amount`
+     * argument plays no part here.
+     */
+    private fun scrollUntil(dir: String, until: String, maxSteps: Int, timeoutMs: Long): Map<String, Any?> {
+        val win = if (scope != null) scopedWindow() else windows().firstOrNull { it.foreground }
+        val bounds = win?.let { device.windowBounds(it.id) } ?: device.screenSize()
+        val deadline = now() + timeoutMs
+        var scrolls = 0
+        var idle = 0
+        var method: String? = null
+        fun root(): UiNode? = win?.let { device.windowRoot(it.id) }
+            ?: windows().firstOrNull { it.foreground }?.let { device.windowRoot(it.id) }
+
+        var current = root()
+        untilHit(current, until)?.let { return untilFound(it, 0, null) }
+        while (true) {
+            if (scrolls >= maxSteps) return untilMiss(current, scrolls, method, "steps")
+            if (now() >= deadline) return untilMiss(current, scrolls, method, "time")
+            val before = current ?: return untilMiss(null, scrolls, method, "no-window")
+            val print = contentPrint(before, bounds)
+            val step = scroll(dir, 1)
+            scrolls++
+            method = (step["method"] as? String) ?: method
+            val after = root()
+            current = after
+            // Two consecutive steps over an unchanged tree are the end of the content.
+            if (contentPrint(after, bounds) == print) idle++ else idle = 0
+            untilHit(after, until)?.let { return untilFound(it, scrolls, method) }
+            if (idle >= 2) return untilMiss(after, scrolls, method, "end")
+        }
+    }
+
+    /** The first visible node whose name (or text) contains [needle], case-insensitively. */
+    private fun untilHit(root: UiNode?, needle: String): UiNode? {
+        if (root == null) return null
+        var hit: UiNode? = null
+        fun walk(n: UiNode) {
+            if (hit != null) return
+            if (n.isVisible && (n.name.contains(needle, ignoreCase = true) || n.text.contains(needle, ignoreCase = true))) {
+                hit = n
+                return
+            }
+            n.children.forEach(::walk)
+        }
+        walk(root)
+        return hit
+    }
+
+    private fun untilFound(node: UiNode, scrolls: Int, method: String?): Map<String, Any?> {
+        val out = linkedMapOf<String, Any?>("found" to true, "scrolls" to scrolls)
+        method?.let { out["method"] = it }
+        out["match"] = linkedMapOf(
+            "name" to maskName(node).take(LABEL_MAX),
+            "role" to node.role,
+            "rect" to node.rect.toMap(),
+        )
+        return out
+    }
+
+    private fun untilMiss(root: UiNode?, scrolls: Int, method: String?, stopped: String): Map<String, Any?> {
+        val out = linkedMapOf<String, Any?>("found" to false, "scrolls" to scrolls, "stopped" to stopped)
+        method?.let { out["method"] = it }
+        out["visible"] = visibleLabels(root)
+        return out
+    }
+
+    /** A few labels still on screen, last in document order (the bottom of the page) — where a
+     *  scroll that did not find its target stopped. Masked and bounded like a receipt's control. */
+    private fun visibleLabels(root: UiNode?): List<String> {
+        val names = LinkedHashSet<String>()
+        fun walk(n: UiNode) {
+            if (!n.isVisible) return
+            val name = maskName(n)
+            if (name.isNotBlank()) names += name.take(LABEL_MAX)
+            n.children.forEach(::walk)
+        }
+        root?.let(::walk)
+        return names.toList().takeLast(VISIBLE_LABEL_COUNT)
+    }
+
+    private fun untilMaxSteps(args: JSONObject) =
+        args.optInt("maxSteps", UNTIL_DEFAULT_STEPS).coerceIn(1, UNTIL_MAX_STEPS)
+
+    private fun untilTimeoutMs(args: JSONObject) =
+        args.optLong("timeoutMs", UNTIL_DEFAULT_MS).coerceIn(0, UNTIL_MAX_MS)
+
     /** Waits for the content inside [area] of window [windowId] to differ from [before], then for it
      *  to settle (an animated scroll still running). The settled print, or null when nothing moved
      *  within [SCROLL_SETTLE_POLLS] polls. */
@@ -779,6 +878,10 @@ internal class Occupancy(
 internal fun WindowInfo.toMap(): Map<String, Any?> {
     val m = mutableMapOf<String, Any?>("id" to id, "process" to process, "title" to title, "foreground" to foreground, "type" to type, "layer" to layer)
     if (self) m["self"] = true
+    if (anr) {
+        m["anr"] = true
+        appPackage?.let { m["appPackage"] = it }
+    }
     return m
 }
 
@@ -808,6 +911,13 @@ internal const val MAX_SCROLL_CANDIDATES = 3
  *  change (and as many again for it to settle). */
 internal const val SCROLL_POLL_MS = 100L
 internal const val SCROLL_SETTLE_POLLS = 6
+
+/** Scroll-until bounds: defaults, clamps, and how many labels a miss reports. */
+internal const val UNTIL_DEFAULT_STEPS = 20
+internal const val UNTIL_MAX_STEPS = 50
+internal const val UNTIL_DEFAULT_MS = 15_000L
+internal const val UNTIL_MAX_MS = 60_000L
+internal const val VISIBLE_LABEL_COUNT = 5
 
 /**
  * The containers a scroll tries, best first: the visible scrollable nodes under [root] not known

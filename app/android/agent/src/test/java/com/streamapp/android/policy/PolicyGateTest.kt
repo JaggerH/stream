@@ -179,6 +179,50 @@ class PolicyGateTest {
         assertTrue(dev.log.any { it.startsWith("swipe") })
     }
 
+    // ---- coupon claims ----------------------------------------------------------------
+
+    private fun button(label: String, y: Int = 1800) =
+        FakeNode("Button", label, className = "android.widget.Button", rect = Rect(0, y, 1080, 120), isClickable = true)
+
+    @Test fun aCouponClaimRunsWithoutApproval() {
+        setUpApp("com.example.shop", "商店", root = single(button("确认领取235元")))
+        call("invoke", """{"ref":"${ref("Button", 1800)}"}""")
+        assertTrue("click 确认领取235元" in dev.log)
+        // The same in English; a coupon's face value is not a payment.
+        setUpApp("com.example.shop", "Shop", root = single(button("Get coupon ¥235")))
+        call("invoke", """{"ref":"${ref("Button", 1800)}"}""")
+        assertTrue("click Get coupon ¥235" in dev.log)
+    }
+
+    @Test fun aClaimThatAlsoActivatesStillGates() {
+        setUpApp("com.example.shop", "商店", root = single(button("领取并开通会员 ¥9.9")))
+        val e = err("invoke", """{"ref":"${ref("Button", 1800)}"}""")
+        assertEquals("approval-required", e.errorCode)
+        assertTrue(reasons(e).contains("commit-label"))
+        assertTrue(reasons(e).contains("payment-label"))
+        assertFalse(dev.log.any { it.startsWith("click") })
+    }
+
+    @Test fun aClaimInsideAPaymentConfirmationStillGates() {
+        setUpApp("com.example.shop", "商店", root = single(
+            FakeNode("TextView", "确认支付 ¥235 吗？", className = "android.widget.TextView", rect = Rect(0, 100, 1080, 60)),
+            button("确认领取235元"),
+        ))
+        val e = err("invoke", """{"ref":"${ref("Button", 1800)}"}""")
+        assertEquals("approval-required", e.errorCode)
+        assertTrue(reasons(e).contains("commit-label"))
+        assertFalse(dev.log.any { it.startsWith("click") })
+    }
+
+    @Test fun theRealCheckoutButtonsStillGate() {
+        for (label in listOf("去结算", "提交订单", "立即支付 ¥129", "确认付款")) {
+            setUpApp("com.example.shop", "商店", root = single(button(label)))
+            val e = err("invoke", """{"ref":"${ref("Button", 1800)}"}""")
+            assertEquals(label, "approval-required", e.errorCode)
+            assertTrue(label, reasons(e).contains("commit-label"))
+        }
+    }
+
     // ---- the four checks ------------------------------------------------------------
 
     @Test fun approvalThenResendExecutesExactlyOnce() {

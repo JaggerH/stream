@@ -14,6 +14,10 @@ internal data class WindowInfo(
     val self: Boolean = false,
     val type: String = "application",
     val layer: Int = 0,
+    /** The system's "app isn't responding" dialog. The agent only reports it; it never taps. */
+    val anr: Boolean = false,
+    /** For an ANR dialog, the package of the app it is about — when the phone can tell. */
+    val appPackage: String? = null,
 )
 internal data class Shot(val jpeg: ByteArray, val window: Rect, val scale: Double)
 

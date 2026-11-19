@@ -86,4 +86,29 @@ class WindowKindsTest {
         assertFalse(isOwnSurface(app, "com.android.settings", host))
         assertFalse(isOwnSurface(null, null, host))
     }
+
+    @Test fun theSystemAnrDialogIsRecognizedByItsIdsOrItsWords() {
+        // The AOSP dialog's buttons carry android:id/aerr_*; OEM builds may only translate the text.
+        assertTrue(looksLikeAnr("", emptyList(), listOf("android:id/aerr_wait")))
+        assertTrue(looksLikeAnr("", listOf("微信没有响应"), emptyList()))
+        assertTrue(looksLikeAnr("", listOf("應用程式沒有回應"), emptyList()))
+        assertTrue(looksLikeAnr("System UI isn't responding", emptyList(), emptyList()))
+        assertTrue(looksLikeAnr("", listOf("応答していません"), emptyList()))
+        assertTrue(looksLikeAnr("", listOf("응답 없음"), emptyList()))
+        // An ordinary system window is not an ANR dialog.
+        assertFalse(looksLikeAnr("微信", listOf("微信", "发送"), emptyList()))
+        assertFalse(looksLikeAnr("", emptyList(), listOf("android:id/button1")))
+    }
+
+    @Test fun theAnrOwnerIsTheAppWindowBelowTheDialog() {
+        // The dialog itself is the system's; the app it is about is the application window under it.
+        val under = listOf(w("9", system, "android", active = true), w("5", app, "com.tencent.mm"))
+        assertEquals("com.tencent.mm", anrOwner(under, 0, host))
+        // Some builds let the dialog's root name the app directly.
+        val own = listOf(w("9", system, "com.tencent.mm", active = true))
+        assertEquals("com.tencent.mm", anrOwner(own, 0, host))
+        // A host window below it is not the owner; neither is another system window.
+        assertNull(anrOwner(listOf(w("9", system, "android", active = true), w("5", app, host)), 0, host))
+        assertNull(anrOwner(listOf(w("9", system, "android", active = true), w("8", system, "com.android.systemui")), 0, host))
+    }
 }

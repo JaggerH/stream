@@ -84,21 +84,48 @@ internal class AndroidDevice(private val ctx: Context, private val onStop: () ->
 
     override fun windows(): List<WindowInfo> {
         val listed = svc().windows.map { w -> w to facts(w) }
+        val facts = listed.map { it.second }
         // An accessibility overlay holding input focus is the active window; the app under it is
         // still the one in front.
-        val front = pickForeground(listed.map { it.second }, ctx.packageName)?.id
-        return listed
-            .filter { (_, f) -> f.pkg != null }
-            .map { (w, f) ->
-                val pkg = f.pkg!!
-                // Overlays and keyboards are listed (with their kind and z-order) so a caller can
-                // tell them apart; they are never the foreground and never a scope target.
-                val foreground = f.id == front || ((f.active || f.focused) && canBeForeground(f.type, pkg, ctx.packageName))
-                // The host app's own windows are listed, marked, so a caller can tell it is in front;
-                // the dispatcher never scopes or acts on them.
-                WindowInfo(f.id, pkg, w.title?.toString() ?: pkg, foreground, self = pkg == ctx.packageName,
-                    type = windowTypeName(w.type), layer = w.layer)
+        val front = pickForeground(facts, ctx.packageName)?.id
+        return listed.mapIndexedNotNull { i, (w, f) ->
+            val pkg = f.pkg ?: return@mapIndexedNotNull null
+            // Overlays and keyboards are listed (with their kind and z-order) so a caller can
+            // tell them apart; they are never the foreground and never a scope target.
+            val foreground = f.id == front || ((f.active || f.focused) && canBeForeground(f.type, pkg, ctx.packageName))
+            // The system's "app isn't responding" dialog is a system window; report it as one and
+            // name the app it is about where the phone can tell. The agent never taps its buttons.
+            val anr = f.type == AccessibilityWindowInfo.TYPE_SYSTEM && anrDialog(w)
+            // The host app's own windows are listed, marked, so a caller can tell it is in front;
+            // the dispatcher never scopes or acts on them.
+            WindowInfo(f.id, pkg, w.title?.toString() ?: pkg, foreground, self = pkg == ctx.packageName,
+                type = if (anr) "system" else windowTypeName(w.type), layer = w.layer,
+                anr = anr, appPackage = if (anr) anrOwner(facts, i, ctx.packageName) else null)
+        }
+    }
+
+    /** Whether this system window is the ANR dialog: its title plus a bounded sample of its
+     *  controls (the AOSP buttons carry `android:id/aerr_*`; a translated build is caught by its
+     *  words). System windows are rare, so the sample costs little. */
+    private fun anrDialog(w: AccessibilityWindowInfo): Boolean {
+        val title = w.title?.toString().orEmpty()
+        val root = w.root ?: return looksLikeAnr(title, emptyList(), emptyList())
+        val labels = mutableListOf<String>()
+        val ids = mutableListOf<String>()
+        var budget = ANR_PROBE_NODES
+        fun walk(n: AccessibilityNodeInfo, depth: Int) {
+            if (budget <= 0 || depth > ANR_PROBE_DEPTH) return
+            budget--
+            n.text?.toString()?.takeIf { it.isNotBlank() }?.let { labels += it }
+            n.contentDescription?.toString()?.takeIf { it.isNotBlank() }?.let { labels += it }
+            n.viewIdResourceName?.let { ids += it }
+            for (k in 0 until n.childCount) {
+                val c = n.getChild(k) ?: continue
+                walk(c, depth + 1)
             }
+        }
+        walk(root, 0)
+        return looksLikeAnr(title, labels, ids)
     }
 
     private fun facts(w: AccessibilityWindowInfo) =
@@ -373,3 +400,8 @@ internal class AndroidDevice(private val ctx: Context, private val onStop: () ->
 internal fun launchFlags(fresh: Boolean): Int =
     if (fresh) Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
     else Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED
+
+/** How much of a system window the ANR probe reads: enough for a dialog's message and buttons,
+ *  never a whole page. */
+private const val ANR_PROBE_NODES = 32
+private const val ANR_PROBE_DEPTH = 4
