@@ -203,6 +203,20 @@ class PolicyGateTest {
         assertFalse(dev.log.any { it.startsWith("click") })
     }
 
+    @Test fun aClaimWrappedAroundASubmitStillGates() {
+        for (label in listOf("提交订单并领红包", "领券并提交", "确认订单 领取优惠", "积分兑换 领取")) {
+            setUpApp("com.example.shop", "商店", root = single(button(label)))
+            val e = err("invoke", """{"ref":"${ref("Button", 1800)}"}""")
+            assertEquals(label, "approval-required", e.errorCode)
+            assertTrue(label, reasons(e).contains("commit-label"))
+            assertFalse(label, dev.log.any { it.startsWith("click") })
+        }
+        // A bare claim with only its modifiers still runs free.
+        setUpApp("com.example.shop", "商店", root = single(button("去领取")))
+        call("invoke", """{"ref":"${ref("Button", 1800)}"}""")
+        assertTrue("click 去领取" in dev.log)
+    }
+
     @Test fun aClaimInsideAPaymentConfirmationStillGates() {
         setUpApp("com.example.shop", "商店", root = single(
             FakeNode("TextView", "确认支付 ¥235 吗？", className = "android.widget.TextView", rect = Rect(0, 100, 1080, 60)),

@@ -168,16 +168,57 @@ internal class Detect(private val w: Words) {
         return ws.any { claimWords.contains(it) } || containsPhrase(ws, claimPhrases)
     }
 
-    /** Whether the same label also names paying, activating, buying, subscribing or renewing:
-     *  「领取并开通 ¥9.9」 is a paid action, not a bare claim. */
+    /** Whether the same label also names something beyond the free claim: paying, activating,
+     *  buying, subscribing, renewing, submitting, ordering or redeeming (「领取并开通 ¥9.9」,
+     *  「提交订单并领红包」). The claim words and the modifiers in front of them (确认 / 立即 / 去)
+     *  are removed first; what is left is judged as a label on its own, so the rule does not
+     *  depend on a claim-exception table keeping up with every commit verb. */
     private fun claimNamesPayment(label: String): Boolean {
         if (hasCJK(label)) {
-            val core = cjkCore(label)
-            return containsAny(core, w.cjkMoneyKeywords) || containsAny(core, w.cjkClaimExceptions)
+            val rest = stripClaimWords(cjkCore(label))
+            if (rest.isEmpty()) return false
+            return containsAny(rest, w.cjkMoneyKeywords) || containsAny(rest, w.cjkClaimExceptions) ||
+                w.cjkCommitPrefixes.any { rest.contains(it) }
         }
-        val ws = labelWords(label)
-        return ws.any { w.moneyWords.contains(it) || w.claimExceptionWords.contains(it) } ||
-            containsPhrase(ws, moneyPhrases)
+        val rest = stripClaimTokens(labelWords(label))
+        if (rest.isEmpty()) return false
+        return rest.any { w.moneyWords.contains(it) || w.claimExceptionWords.contains(it) || w.commitVerbs.contains(it) } ||
+            containsPhrase(rest, moneyPhrases) || containsPhrase(rest, commitPhrases)
+    }
+
+    /** 确认 / 立即 / 去 immediately before a claim word belong to the claim (「确认领取」), not a
+     *  commit; a 确认 elsewhere in the label stays and is judged with the rest. */
+    private val claimModifiers = listOf("确认", "確認", "立即", "去")
+
+    /** [core] without every claim word and the modifier directly in front of it. */
+    private fun stripClaimWords(core: String): String {
+        var rest = core
+        for (word in w.cjkClaimWords) {
+            while (true) {
+                val at = rest.indexOf(word)
+                if (at < 0) break
+                val modifier = claimModifiers.firstOrNull {
+                    at >= it.length && rest.regionMatches(at - it.length, it, 0, it.length)
+                }
+                rest = rest.removeRange(if (modifier != null) at - modifier.length else at, at + word.length)
+            }
+        }
+        return rest
+    }
+
+    /** [ws] without every claim word or claim phrase. */
+    private fun stripClaimTokens(ws: List<String>): List<String> {
+        val out = mutableListOf<String>()
+        var i = 0
+        while (i < ws.size) {
+            val phrase = claimPhrases.firstOrNull { p -> p.size <= ws.size - i && ws.subList(i, i + p.size) == p }
+            when {
+                phrase != null -> i += phrase.size
+                claimWords.contains(ws[i]) -> i++
+                else -> { out += ws[i]; i++ }
+            }
+        }
+        return out
     }
 
     /** A claim that costs nothing: not a commit, not a payment. The caller still gates a claim on

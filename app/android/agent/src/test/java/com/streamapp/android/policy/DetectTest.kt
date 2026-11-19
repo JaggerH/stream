@@ -190,8 +190,27 @@ class DetectTest {
         assertTrue(commit("Claim and subscribe"))
         assertTrue(commit("Claim and pay"))
         assertTrue(commit("Collect payment"))
+        assertTrue(commit("Claim and submit"))
         // The price is what makes it a payment, not the claim itself.
         assertFalse(money("领取并开通会员 ¥9.9"))
+    }
+
+    @Test fun aClaimThatStillSubmitsAnOrderStaysACommit() {
+        // The claim word is only the free part of the label; what is left still commits.
+        assertTrue(commit("提交订单并领红包"))
+        assertTrue(commit("领券并提交"))
+        assertTrue(commit("确认订单 领取优惠"))
+        assertTrue(commit("积分兑换 领取"))
+        assertTrue(commit("领取并下单"))
+        assertTrue(commit("领红包并拼单"))
+        assertTrue(commit("参团后领取"))
+    }
+
+    @Test fun aClaimWithOnlyItsModifiersStaysFree() {
+        assertFalse(commit("确认领取235元"))
+        assertFalse(commit("领券"))
+        assertFalse(commit("立即领"))
+        assertFalse(commit("去领取"))
     }
 
     @Test fun claimIsNotASettingOrACall() {

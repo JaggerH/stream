@@ -20,3 +20,10 @@
 - [x] 2. `:agent:testDebugUnitTest` 全量（346 条，6 条 `OwnTouchFrameTest` 是 lean aarch64 的 Robolectric 环境性失败，单列）
 - [x] 3. `:app:testDebugUnitTest`
 - [x] 4. Stream 全量测试 + `pnpm -r typecheck`；rebase、推到 `ci/scroll-until-claim`
+
+## 计划 4：R1 —— 领取词不能吞掉同一标签里的提交
+
+- [x] 1. 先补失败测试：`DetectTest` / `PolicyGateTest` 的「提交订单并领红包」「领券并提交」「确认订单 领取优惠」「积分兑换 领取」「领取并下单」「领红包并拼单」「参团后领取」照拦，「确认领取235元」「领券」「立即领」「去领取」照放；英文 "Claim and submit" 照拦
+- [x] 2. `Detect.claimNamesPayment` 改成移除领取词及紧邻的 确认 / 確認 / 立即 / 去 后，剩余部分按提交词 / 钱词 / 例外词判断；`cjkClaimExceptions` 补 提交、订单、兑换、拼单、参团、确认收货、结账等中英繁对应
+- [x] 3. `docs/API.md` 与两个 capability 的 delta 同步规则与词表
+- [x] 4. `:agent:testDebugUnitTest` 全量（349 条，6 条 `OwnTouchFrameTest` 仍为环境性失败）+ `pnpm -r typecheck`；推回 `ci/scroll-until-claim`
