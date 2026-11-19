@@ -31,8 +31,12 @@ private val CAP_VERSIONS = mapOf("ui.tree" to 5, "app.launch" to 2)
  *  ANR dialog's `windows` row carries `anr: true` plus the app package it is about.
  *  `ui.tree` is at v5: `scroll` carries the phase timings in `timing`, bounds each step and the
  *  whole op (returning the completed steps and `stopped: "time"` at the bound), and remembers the
- *  container that moved for the rest of the op. */
-internal val ANDROID_CAPS = listOf("ui.tree", "ui.act", "screen.shot", "app.launch", "app.in_use", "input.text")
+ *  container that moved for the rest of the op.
+ *
+ *  `ui.ocr` (v1) is the on-device text tier: `find` takes `ocr` (`auto` / `on` / `off`) and
+ *  returns `role: "ocr-text"` elements with `source: "ocr"` when the accessibility tree cannot
+ *  see, and a coordinate click whose point no node names is judged by the OCR text there. */
+internal val ANDROID_CAPS = listOf("ui.tree", "ui.act", "screen.shot", "app.launch", "app.in_use", "input.text", "ui.ocr")
     .map { com.streamapp.android.protocol.Capability(it, CAP_VERSIONS[it] ?: 1) }
 
 
@@ -72,6 +76,9 @@ internal class Dispatcher(
     private val settleTiming: Settle = Settle(),
     /** The clock the scroll-until bounds read; tests advance it without waiting. */
     private val now: () -> Long = { System.currentTimeMillis() },
+    /** The device-side text recognizer behind `find`'s `ocr` argument. Null (the JVM default)
+     *  means OCR is unavailable: reads report it, and a click the tree cannot name stays blind. */
+    private val ocrEngine: () -> OcrEngine? = { null },
 ) {
     /** The app (and optional title substring) the agent limited itself to. An Activity change
      *  replaces the window, so the scope is re-resolved against `windows()` on every use. */
@@ -88,6 +95,13 @@ internal class Dispatcher(
     private var relocatedLast = false
     /** The screen's fingerprint just before a gated action ran — the settle wait compares. */
     private var preActionPrint: List<ElementFp>? = null
+    /** The last OCR read of this dispatch, for the reply (`ocr` and `timing.ocrMs`). */
+    private var ocrNote: Map<String, Any?>? = null
+    private var ocrMs: Long? = null
+    /** The last click's target had neither an accessibility name nor OCR text: the gate treats
+     *  it as a blind click (see [Gate.reasons]). */
+    private var clickBlind = false
+    private val ocr = OcrFrames(ocrEngine, now)
 
     /** Per-connection policy state. The relay builds a fresh Dispatcher per connection, so a
      *  disconnect clears busy and every granted exemption on its own. */
@@ -99,6 +113,9 @@ internal class Dispatcher(
         device = CancellableDevice(raw, cancel)
         relocatedLast = false
         preActionPrint = null
+        ocrNote = null
+        ocrMs = null
+        clickBlind = false
         if (op !in ANDROID_OPS) throw AgentError("unknown op: $op")
         if (op !in NO_WAKE) device.ensureAwake()
         busyReason?.let { reason ->
@@ -135,11 +152,14 @@ internal class Dispatcher(
                 val ok = focusApp(pkg, fresh)
                 if (fresh) mapOf("ok" to ok, "fresh" to true) else mapOf("ok" to ok)
             }
-            "find" -> find(A11yQuery.from(obj(args, "query")))
+            "find" -> find(A11yQuery.from(obj(args, "query")), OcrMode.parse(args.optString("ocr", "auto")))
             "invoke" -> {
                 val ref = str(args, "ref")
                 gated(op, args, checkCredential = false, target = { fresh, reloc -> resolveRef(ref, fresh, reloc) }) { t ->
-                    if (!device.click(t!!)) throw AgentError("action-failed: 节点不可点，换坐标点击")
+                    // An OCR line has no accessibility action behind it: its ref acts as a tap on
+                    // the line's centre, which is what its rect means.
+                    val ok = if (t is OcrTextNode) { device.tap(t.rect.centerX, t.rect.centerY, longPress = false); true } else device.click(t!!)
+                    if (!ok) throw AgentError("action-failed: 节点不可点，换坐标点击")
                     settle(args, "invoke")
                 }
             }
@@ -168,13 +188,18 @@ internal class Dispatcher(
             "click" -> {
                 refuseMessage(args)
                 val r = rect(obj(args, "rect"))
-                gated(op, args, checkCredential = false, target = { _, _ -> pointTarget(r) }) { _ ->
+                gated(op, args, checkCredential = false, target = { _, _ -> clickTarget(r) }, blind = { clickBlind }) { _ ->
                     when (args.optString("button", "left")) {
                         "left" -> device.tap(r.centerX, r.centerY, longPress = false)
                         "right" -> device.tap(r.centerX, r.centerY, longPress = true)
                         else -> throw AgentError("unsupported-key: 安卓没有中键")
                     }
-                    settle(args, "coords")
+                    // The gate may have recognized the screen to name the target; say what that
+                    // cost, the same way a `find` does.
+                    LinkedHashMap(settle(args, "coords")).apply {
+                        ocrNote?.let { put("ocr", it) }
+                        ocrMs?.let { put("timing", linkedMapOf<String, Any?>("ocrMs" to it)) }
+                    }
                 }
             }
             "scroll" -> {
@@ -335,6 +360,8 @@ internal class Dispatcher(
         args: JSONObject,
         checkCredential: Boolean,
         target: (fresh: Boolean, relocate: Boolean,) -> UiNode?,
+        /** Whether the resolved target carried no label from either tree — the blind-click rule. */
+        blind: () -> Boolean = { false },
         execute: (UiNode?) -> T,
     ): T {
         val p = policy ?: run {
@@ -359,7 +386,7 @@ internal class Dispatcher(
         }
         val t = target(true, true)
         if (checkCredential) refuseCredentialField(t)
-        val reasons = p.gate.reasons(op, t, args.optString("text", ""), info.pkg, info.title, digestRoot())
+        val reasons = p.gate.reasons(op, t, args.optString("text", ""), info.pkg, info.title, digestRoot(), blind())
         if (reasons.isNotEmpty() && !p.gate.exempted(info.pkg, reasons, askExemptions)) throw approvalRequired(op, args, info, t, reasons)
         preActionPrint = readTree(digestRoot()).fps
         return execute(t)
@@ -433,6 +460,41 @@ internal class Dispatcher(
         return hit
     }
 
+    /**
+     * What a coordinate tap would land on, for the gate: the named accessibility node under the
+     * point; else, when the node is nameless or absent, the OCR line under it — the case a
+     * self-drawn page makes (a canvas control leaves a nameless container in the tree while the
+     * label exists only as pixels). A structural hit (an input, a list, a tab) keeps its own
+     * node even without a name: those are not commits. With neither label the click is blind
+     * ([clickBlind]); the category rule in [Gate] decides what that means.
+     */
+    private fun clickTarget(r: Rect): UiNode? {
+        val node = pointTarget(r)
+        clickBlind = false
+        if (node != null && namesItself(node)) return node
+        val line = ocrAt(r)
+        if (line != null) return line
+        clickBlind = true
+        return node
+    }
+
+    /** Whether [n] is meaningful to the gate on its own (a label, or a structural role). */
+    private fun namesItself(n: UiNode) =
+        n.name.isNotBlank() || n.isEditable || n.isScrollable || n.role == "Tab" || n.role.contains("List")
+
+    /** The OCR line covering [r]'s centre, recognizing the current frame when the catalog has no
+     *  result for it yet. Null when no line is there (or recognition cannot run — blind then). */
+    private fun ocrAt(r: Rect): OcrTextNode? {
+        if (policy == null) return null
+        val win = runCatching {
+            if (scope != null) scopedWindow() else windows().firstOrNull { it.foreground }
+        }.getOrNull() ?: return null
+        if (!win.foreground) return null
+        val root = runCatching { device.windowRoot(win.id) }.getOrNull() ?: return null
+        val line = recognizeFrame(root).at(r.centerX, r.centerY) ?: return null
+        return OcrTextNode(line.text, line.rect, line.confidence)
+    }
+
     // ---- control frames (busy, exemptions) ------------------------------------------
 
     fun setBusy(busy: Boolean, reason: String?) {
@@ -466,7 +528,7 @@ internal class Dispatcher(
 
     private fun maskName(n: UiNode): String = policy?.masker?.maskedName(n) ?: n.name
 
-    private fun find(q: A11yQuery): Map<String, Any?> {
+    private fun find(q: A11yQuery, ocrMode: OcrMode): Map<String, Any?> {
         val s = scope
         if (s == null) requireAppVisible(device.foregroundPackage() ?: "")
         val win = scopedWindow()
@@ -479,12 +541,18 @@ internal class Dispatcher(
         // its row along, each with a ref of its own in the same snapshot.
         val parents = parentsOf(root)
         val rows = hits.map { if (hasValue(it)) emptyList() else rowValues(it, root, parents) }
+        // Fingerprints drive the ref carry-over: the whole read's, plus each reported node's.
+        val read = readTree(root)
+        // The text tier, when asked for or when the tree cannot see. Its lines are queried with
+        // the same query as the tree's nodes, so `nameContains` finds them the same way.
+        val ocrHits = ocrLines(root, win, ocrMode, read).let { lines ->
+            if (lines.isEmpty()) emptyList() else findAll(OcrRoot(lines.map { OcrTextNode(it.text, it.rect, it.confidence) }, device.screenSize()), q)
+        }
         val nodes = hits.toMutableList()
         val index = java.util.IdentityHashMap<UiNode, Int>()
         hits.forEachIndexed { i, n -> index.putIfAbsent(n, i) }
         for (v in rows.flatten()) if (!index.containsKey(v)) { index[v] = nodes.size; nodes += v }
-        // Fingerprints drive the ref carry-over: the whole read's, plus each reported node's.
-        val read = readTree(root)
+        for (v in ocrHits) if (!index.containsKey(v)) { index[v] = nodes.size; nodes += v }
         val byNode = java.util.IdentityHashMap<UiNode, ElementFp>()
         read.entries.forEach { (n, fp) -> byNode.putIfAbsent(n, fp) }
         val fps = nodes.map { byNode[it] ?: fpFallback(it) }
@@ -506,13 +574,77 @@ internal class Dispatcher(
                 m
             }
             el
+        } + ocrHits.map { n ->
+            linkedMapOf<String, Any?>(
+                "ref" to ids[index[n]!!], "role" to n.role, "name" to n.name, "className" to n.className,
+                "rect" to n.rect.toMap(), "editable" to false, "source" to "ocr",
+                "confidence" to (n as OcrTextNode).confidence,
+            )
         }
         val out = mutableMapOf<String, Any?>("elements" to els)
         out["viewport"] = device.screenSize().let { mapOf("width" to it.w, "height" to it.h) }
         if (hits.isEmpty() && !win.foreground) {
             out["unbuilt"] = "a11y-unbuilt: 限定的窗口不在前台，空结果不可采信"
         }
+        ocrNote?.let { out["ocr"] = it }
+        ocrMs?.let { out["timing"] = linkedMapOf<String, Any?>("ocrMs" to it) }
         return out
+    }
+
+    /**
+     * The OCR lines a `find` reports: none unless the caller asked (`on`), or the tree cannot see
+     * (fewer than [OCR_NAMED_NODE_MIN] visible named nodes) and the caller left it to `auto`. Only
+     * a window actually in front is captured — a screenshot of a background window would show
+     * another app's screen, so it is skipped and said so in the receipt.
+     */
+    private fun ocrLines(root: UiNode, win: WindowInfo, mode: OcrMode, read: TreeRead): List<OcrText> {
+        val named = read.entries.count { it.second.identityName.isNotBlank() }
+        val want = when (mode) {
+            OcrMode.OFF -> false
+            OcrMode.ON -> true
+            OcrMode.AUTO -> named < OCR_NAMED_NODE_MIN
+        }
+        if (!want) return emptyList()
+        if (!win.foreground) {
+            ocrNote = linkedMapOf("ran" to false, "cached" to false, "texts" to 0,
+                "error" to "ocr-skipped: 限定的窗口不在前台，截图会拍到别的界面")
+            return emptyList()
+        }
+        return recognizeFrame(root)
+    }
+
+    /**
+     * Captures the scoped screen (credential areas covered) and reads it, or reuses the last read
+     * of the same frame. Every outcome lands in [ocrNote]/[ocrMs] for the reply; a refusal or an
+     * engine failure leaves no lines instead of failing the op.
+     */
+    private fun recognizeFrame(root: UiNode?): List<OcrText> {
+        val p = policy
+        val (areas, locatable) = p?.masker?.areasToCover(root) ?: (emptyList<Rect>() to true)
+        if (!locatable) {
+            ocrNote = linkedMapOf("ran" to false, "cached" to false, "texts" to 0,
+                "error" to "secure-window: 凭据区域定位不全，这一帧不交给识别")
+            return emptyList()
+        }
+        if (!ocr.available()) {
+            ocrNote = linkedMapOf("ran" to false, "cached" to false, "texts" to 0,
+                "error" to "ocr-unavailable: 设备上没有可用的文字识别引擎")
+            return emptyList()
+        }
+        val shot = try {
+            device.screenshot(areas)
+        } catch (e: AgentError) {
+            ocrNote = linkedMapOf("ran" to false, "cached" to false, "texts" to 0,
+                "error" to "${e.errorCode}: ${e.message}")
+            return emptyList()
+        }
+        val r = ocr.read(shot)
+        ocrMs = r.ms
+        val note = linkedMapOf<String, Any?>("ran" to (r.error == null), "cached" to r.cached, "texts" to r.texts.size)
+        r.error?.let { note["error"] = it }
+        ocrNote = note
+        val masker = p?.masker
+        return r.texts.map { if (masker != null) it.copy(text = masker.maskCodeDigits(it.text)) else it }
     }
 
     /**
@@ -533,6 +665,12 @@ internal class Dispatcher(
         if (win.id != hit.windowId) stale(STALE_REF_RETIRED, "belongs to a window that is no longer the scoped one")
         val scrolledOver = device.scrolledSince(hit.version, hit.windowId, hit.fp.rect)
         if (scrolledOver) stale(STALE_ELEMENT_MOVED, "a scroll ran over it (list rows recycle)")
+        // An OCR line has no live node to re-read; any change over its area is the most the agent
+        // can say, and a line that moves is not relocated (it would be a guess).
+        if (hit.value.node is OcrTextNode) {
+            if (device.changedSince(hit.version, hit.windowId, hit.fp.rect)) stale(STALE_ELEMENT_MOVED, "the screen changed under the OCR text")
+            return hit.value.node
+        }
         if (!device.changedSince(hit.version, hit.windowId, hit.fp.rect) && device.isCurrent(hit.value.node)) {
             return hit.value.node
         }

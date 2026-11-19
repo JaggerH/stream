@@ -33,6 +33,10 @@ kotlin { explicitApi() }
 
 dependencies {
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    // On-device text recognition (Apache-2.0) for the OCR tier: `find`'s `ocr` argument and the
+    // text under a coordinate tap the accessibility tree cannot name. The tessdata models are
+    // downloaded on first use, not bundled (see ocr/TesseractOcrEngine.kt and THIRD-PARTY-NOTICE).
+    implementation("cz.adaptech.tesseract4android:tesseract4android:4.9.0")
     // The view-tree owners (lifecycle, view model store, saved state, back press, fully drawn) the
     // indicator's window root carries over from the host's view. Compile-only: the agent imposes
     // none of them; a host that renders with Compose (or any other user of these owners) already

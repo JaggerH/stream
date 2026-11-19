@@ -10,7 +10,11 @@ class PolicyWiringTest {
     @Test fun theRelayServiceWiresThePolicyEngineIntoEveryDispatcher() {
         val src = java.io.File("src/main/java/com/streamapp/android/net/RelayService.kt").readText()
         assertTrue("RelayService must load the policy tables (PolicyContext.fromStreams)", src.contains("PolicyContext.fromStreams"))
-        assertTrue("RelayService must construct every Dispatcher with the policy engine", src.contains("Dispatcher(device, policy, occupancy)"))
+        assertTrue("RelayService must construct every Dispatcher with the policy engine", src.contains("Dispatcher(device, policy, occupancy"))
+        // The text tier is part of the gate (a blind coordinate tap is judged by it); a
+        // production dispatcher without the engine would fail every such click safe but blind.
+        assertTrue("RelayService must hand the dispatcher the OCR engine", src.contains("ocrEngine = { ocr.value }"))
+        assertTrue("and the engine must be the on-device Tesseract one", src.contains("TesseractOcrEngine(this)"))
     }
 
     /** The same guard for the embedding hooks: the occupancy hook reads the live `StreamAgent`

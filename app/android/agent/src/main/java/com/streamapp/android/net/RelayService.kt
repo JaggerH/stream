@@ -20,6 +20,7 @@ import com.streamapp.android.a11y.AndroidDevice
 import com.streamapp.android.a11y.StreamAccessibilityService
 import com.streamapp.android.agent.Dispatcher
 import com.streamapp.android.agent.Occupancy
+import com.streamapp.android.ocr.TesseractOcrEngine
 import com.streamapp.android.policy.PolicyContext
 import com.streamapp.android.protocol.DeviceState
 import com.streamapp.android.store.Credentials
@@ -71,9 +72,12 @@ internal class RelayService : Service() {
                 { path -> assets.open(path) },
                 creds.deviceId,
             )
+            // The text tier's engine is process-lifetime and lazy: the models are fetched and the
+            // native library loaded only when a read (or a blind coordinate tap) first needs them.
+            val ocr = lazy { TesseractOcrEngine(this) }
             client = RelayClient(
                 transport = OkHttpTransport(http),
-                dispatcher = { Dispatcher(device, policy, occupancy) },
+                dispatcher = { Dispatcher(device, policy, occupancy, ocrEngine = { ocr.value }) },
                 name = "${Build.MANUFACTURER} ${Build.MODEL}",
                 agentVersion = StreamAgent.version,
                 stateProvider = ::state,

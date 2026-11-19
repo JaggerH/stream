@@ -57,9 +57,11 @@ class RelayClientTest {
         assertEquals("state", JSONObject(t.sent[1]).getString("type"))
         // The capability manifest rides on the hello: what the ops back, nothing more.
         val caps = JSONObject(t.sent[0]).getJSONObject("caps")
-        assertEquals(setOf("ui.tree", "ui.act", "screen.shot", "app.launch", "app.in_use", "input.text"), caps.keys().asSequence().toSet())
+        assertEquals(setOf("ui.tree", "ui.act", "screen.shot", "app.launch", "app.in_use", "input.text", "ui.ocr"), caps.keys().asSequence().toSet())
         // app.launch v2: focusApp understands `fresh`.
         assertEquals(2, caps.getJSONObject("app.launch").getInt("v"))
+        // ui.ocr v1: `find` takes `ocr` and a blind coordinate tap is judged by the text under it.
+        assertEquals(1, caps.getJSONObject("ui.ocr").getInt("v"))
         // ui.tree v5: scroll phase timings, scroll bounds and the remembered container.
         assertEquals(5, caps.getJSONObject("ui.tree").getInt("v"))
         assertEquals(1, caps.getJSONObject("ui.act").getInt("v"))

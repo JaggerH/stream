@@ -29,13 +29,30 @@ internal class Gate(private val detect: Detect, private val categories: Categori
     /**
      * [target] is the node the action lands on (null for `scroll`), [typedText] the text a
      * `type` would enter, [pkg]/[title] the foreground or scoped app, [root] the current tree.
+     * [blind] says the click's point had neither an accessibility label nor OCR text.
      */
-    fun reasons(op: String, target: UiNode?, typedText: String?, pkg: String, title: String, root: UiNode?): List<String> {
+    fun reasons(
+        op: String,
+        target: UiNode?,
+        typedText: String?,
+        pkg: String,
+        title: String,
+        root: UiNode?,
+        blind: Boolean = false,
+    ): List<String> {
         val cat = categories.of(pkg, title)?.name
         val out = mutableListOf<String>()
+        val blindCommit = blind && cat != null && cat in BLIND_CLICK_CATEGORIES
         when (op) {
             "click", "invoke" -> {
-                val t = target ?: return emptyList()
+                val t = target
+                if (t == null) {
+                    // No node under the point. In a shopping / payment / finance app that is
+                    // exactly where a self-drawn commit button lives: ask rather than guess.
+                    if (blindCommit) out += "commit-unrecognized"
+                    if (out.isNotEmpty() && cat != null && categories.askOf(cat).contains("commit")) out += "app-category-ask"
+                    return out
+                }
                 if (isInput(t) || isTab(t) || isList(t)) return emptyList()
                 val label = t.name
                 val claim = detect.isClaimLabel(label)
@@ -55,6 +72,9 @@ internal class Gate(private val detect: Detect, private val categories: Categori
                 if ((commit || out.contains("install")) && (money || moneyShown)) out += "payment-label"
                 if (claim && out.contains("commit-label") && moneyShown) out += "payment-label"
                 if (out.isEmpty() && unrecognizedCommit(t, root)) out += "commit-unrecognized"
+                // The node under the point had no label and no OCR text named it either: the
+                // structural fallback above could not see a drawn commit either way.
+                if (blindCommit && out.none { kindOf(it) == "commit" }) out += "commit-unrecognized"
             }
             "type", "press" -> {
                 // A newline (typed into the field, or the IME's Enter on it) submits in many
@@ -161,6 +181,10 @@ internal class Gate(private val detect: Detect, private val categories: Categori
     }
 
     companion object {
+        /** Apps where money or goods change hands: a click the trees cannot name is treated as a
+         *  possible commit (one extra approval is cheaper than one slipped order). */
+        private val BLIND_CLICK_CATEGORIES = setOf("shopping", "payments", "finance")
+
         private val CALL_ID_PARTS = listOf(
             "call_button", "callbutton", "call_action", "dial_button", "dialbutton",
             "dialpad_floating_action_button", "voice_call", "video_call", "start_call", "make_call",

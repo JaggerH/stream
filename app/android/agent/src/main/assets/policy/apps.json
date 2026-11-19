@@ -355,6 +355,27 @@
     "Singpass"
    ]
   },
+  "payments": {
+   "deny": false,
+   "ids": [
+    "com.eg.android.AlipayGphone",
+    "com.alipay.android.app",
+    "com.unionpay",
+    "com.unionpay.mobilepay",
+    "com.samsung.android.spay",
+    "com.miui.wallet",
+    "com.huawei.wallet",
+    "com.google.android.apps.walletnfcrel"
+   ],
+   "names": [
+    "Alipay",
+    "UnionPay",
+    "Samsung Pay",
+    "Mi Wallet",
+    "Huawei Wallet",
+    "Wallet"
+   ]
+  },
   "phone": {
    "deny": false,
    "ids": [
@@ -387,6 +408,59 @@
    ],
    "names": [
     "Settings"
+   ]
+  },
+  "shopping": {
+   "deny": false,
+   "ids": [
+    "com.taobao.taobao",
+    "com.tmall.wireless",
+    "com.taobao.idlefish",
+    "com.jingdong.app.mall",
+    "com.xunmeng.pinduoduo",
+    "com.achievo.vipshop",
+    "com.suning.mobile.ebuy",
+    "com.alibaba.wireless",
+    "com.amazon.mShop.android.shopping",
+    "com.ebay.mobile",
+    "com.etsy.android",
+    "com.shopee.sg",
+    "com.shopee.tw",
+    "com.shopee.id",
+    "com.shopee.my",
+    "com.shopee.ph",
+    "com.shopee.th",
+    "com.shopee.vn",
+    "com.lazada.android",
+    "com.einnovation.temu",
+    "com.walmart.android",
+    "com.contextlogic.wish",
+    "com.mercadolibre"
+   ],
+   "names": [
+    "Taobao",
+    "Tmall",
+    "Xianyu",
+    "JD",
+    "Pinduoduo",
+    "VIP.com",
+    "Suning",
+    "1688",
+    "Amazon",
+    "eBay",
+    "Etsy",
+    "Shopee",
+    "Lazada",
+    "Temu",
+    "Walmart",
+    "Wish",
+    "Mercado Libre",
+    "淘宝",
+    "天猫",
+    "京东",
+    "拼多多",
+    "闲鱼",
+    "唯品会"
    ]
   },
   "social": {

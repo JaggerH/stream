@@ -75,7 +75,11 @@ internal class FakeDevice : Device {
     }
     override fun globalBack(): Boolean { rec("back"); return true }
     override fun globalHome(): Boolean { rec("home"); return true }
+    /** How many frames the tests drew (the OCR tier takes one per read it runs on). */
+    var screenshots = 0
+        private set
     override fun screenshot(maskedAreas: List<Rect>): Shot {
+        screenshots++
         val jpeg = if (maskedAreas.isEmpty()) byteArrayOf(1, 2, 3)
         // The covered areas leave a mark in the bytes, so tests can assert masking happened.
         else byteArrayOf(1, 2, 3) + byteArrayOf(maskedAreas.size.toByte())

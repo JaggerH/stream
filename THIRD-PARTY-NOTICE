@@ -10,6 +10,20 @@ one-time-code and exclusion words in eleven UI languages) in
 `app/android/app/src/main/java/com/streamapp/android/policy/`.
 Source and license: https://github.com/DIYgod/pinky (Apache-2.0).
 
+## Tesseract4Android, Tesseract, Leptonica — Apache-2.0 / BSD-2-Clause
+
+The Android agent's on-device text recognition (capability `ui.ocr`) links
+Tesseract4Android, the Android packaging of Tesseract OCR. Tesseract4Android and Tesseract are
+Apache-2.0; the Leptonica image library they use is BSD-2-Clause.
+Sources: https://github.com/adaptech-cz/Tesseract4Android, https://github.com/tesseract-ocr/tesseract,
+http://www.leptonica.org
+
+## tessdata_fast — Apache-2.0
+
+The Chinese and English recognition models (`chi_sim.traineddata`, `eng.traineddata`) the Android
+agent downloads on first use are from tessdata_fast 4.1.0.
+Source and license: https://github.com/tesseract-ocr/tessdata_fast (Apache-2.0).
+
 ## agent-desktop — Apache-2.0
 
 The Windows desktop package embeds the agent-desktop CLI, used as the

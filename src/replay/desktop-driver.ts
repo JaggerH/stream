@@ -83,6 +83,12 @@ export interface A11yElement {
   viewId?: string
   /** Android (`ui.tree` v3): whether the node accepts text (an input). */
   editable?: boolean
+  /** Android (`ui.ocr` v1): where the element came from. Absent on plain accessibility
+   *  elements (same meaning as `"a11y"`); `"ocr"` on a text line the on-device recognizer read
+   *  — role `"ocr-text"`, `className` `"ocr"`, the line as `name`, its box as `rect`. */
+  source?: 'a11y' | 'ocr'
+  /** Android (`ui.ocr` v1): the recognizer's mean confidence for an OCR line, 0..1. */
+  confidence?: number
 }
 
 /** A ranged control's value (Android `rangeInfo`). A number JSON cannot carry is left out. */
@@ -153,6 +159,30 @@ export interface A11yFindResult {
   unbuilt?: string
   /** Android (`ui.tree` v3): the screen the read happened on, in physical pixels. */
   viewport?: { width: number; height: number }
+  /** Android (`ui.ocr` v1): whether the text tier was considered, whether the result came from
+   *  the same-frame cache, how many lines it produced, and why it produced none when it could
+   *  not run (`error`). Absent when the read never considered OCR. */
+  ocr?: { ran: boolean; cached: boolean; texts: number; error?: string }
+  /** Android (`ui.ocr` v1): phase timings; `ocrMs` is the recognition time (0 on a cache hit). */
+  timing?: { ocrMs?: number }
+}
+
+/** How an Android `find` treats the on-device text tier (`ui.ocr`): `auto` (the default) only
+ *  when the accessibility tree cannot see, `on` always, `off` never. Other agents ignore it. */
+export type OcrRequest = 'auto' | 'on' | 'off'
+
+/** Android `ui.ocr` receipts, read leniently: an unknown shape is dropped, not guessed. */
+function parseOcrReceipt(v: unknown): A11yFindResult['ocr'] {
+  if (v === null || typeof v !== 'object' || Array.isArray(v)) return undefined
+  const o = v as Record<string, unknown>
+  if (typeof o.ran !== 'boolean' || typeof o.cached !== 'boolean' || typeof o.texts !== 'number') return undefined
+  return { ran: o.ran, cached: o.cached, texts: o.texts, ...(typeof o.error === 'string' ? { error: o.error } : {}) }
+}
+
+function parseOcrTiming(v: unknown): A11yFindResult['timing'] {
+  if (v === null || typeof v !== 'object' || Array.isArray(v)) return undefined
+  const ms = (v as Record<string, unknown>).ocrMs
+  return typeof ms === 'number' ? { ocrMs: ms } : undefined
 }
 
 /** How to read one field off an item element (the item itself, or a descendant match). */
@@ -296,7 +326,7 @@ export interface DesktopDriver {
    *  桌面上搜、别的窗口的元素会漏进结果。 */
   scopeWindow(match: AppMatch): Promise<WindowInfo>
   /** 命中的元素 + 「这次空结果可能是没读到」的那面旗（见 `A11yFindResult`）。 */
-  find(query: A11yQuery): Promise<A11yFindResult>
+  find(query: A11yQuery, options?: { ocr?: OcrRequest }): Promise<A11yFindResult>
   invoke(ref: string, expect?: DesktopExpect): Promise<ActOutcome>
   /**
    * 把一段文字**写进某个元素**（UIA ValuePattern 一类），不经键盘。
@@ -506,13 +536,27 @@ export function makeDesktopDriver(raw: HostRelay, ops: ReadonlySet<string> = DES
     },
     // agent 回 `{elements, unbuilt?, viewport?}`。**老 agent 回的是裸数组**——照收，但不凭空造出
     // `unbuilt`：那一档是"没验到"，谎报成"验过了、结果是空"正是这次要消灭的东西。
-    async find(query) {
-      const r = await relay.send({ op: 'find', args: { query } })
+    async find(query, options) {
+      const r = await relay.send({ op: 'find', args: { query, ...(options?.ocr ? { ocr: options.ocr } : {}) } })
       if (Array.isArray(r)) return { elements: r as A11yElement[] }
-      const raw = r as { elements?: A11yElement[]; unbuilt?: unknown; viewport?: { width: number; height: number } } | undefined
+      const raw = r as {
+        elements?: A11yElement[]
+        unbuilt?: unknown
+        viewport?: { width: number; height: number }
+        ocr?: unknown
+        timing?: unknown
+      } | undefined
       const unbuilt = typeof raw?.unbuilt === 'string' ? raw.unbuilt : undefined
       const viewport = raw?.viewport && typeof raw.viewport.width === 'number' && typeof raw.viewport.height === 'number' ? raw.viewport : undefined
-      return { elements: raw?.elements ?? [], ...(unbuilt ? { unbuilt } : {}), ...(viewport ? { viewport } : {}) }
+      const ocr = parseOcrReceipt(raw?.ocr)
+      const timing = parseOcrTiming(raw?.timing)
+      return {
+        elements: raw?.elements ?? [],
+        ...(unbuilt ? { unbuilt } : {}),
+        ...(viewport ? { viewport } : {}),
+        ...(ocr ? { ocr } : {}),
+        ...(timing ? { timing } : {}),
+      }
     },
     async invoke(ref, expect) {
       return outcome(await relay.send({ op: 'invoke', args: { ref, ...(expect ? { expect } : {}) } }))
