@@ -188,7 +188,15 @@ class NavGesturesTest {
         val outer = FakeNode("ScrollView", "outer", rect = Rect(0, 59, 720, 1491), isScrollable = true, scrollsForward = false, children = listOf(list))
         dev.roots["1"] = page(outer)
         val out = map(call("scroll", """{"dir":"down","amount":10}"""))
-        assertEquals(mapOf("via" to "a11y", "method" to "a11y", "steps" to 0, "end" to true, "settled" to false, "changedDuringRead" to false, "effect" to "no_effect"), out)
+        assertEquals("a11y", out["via"])
+        assertEquals("a11y", out["method"])
+        assertEquals(0, out["steps"])
+        assertEquals(true, out["end"])
+        assertEquals(false, out["settled"])
+        assertEquals(false, out["changedDuringRead"])
+        assertEquals("no_effect", out["effect"])
+        // The receipt also carries the phase breakdown (optional, v5).
+        assertTrue(out.containsKey("timing"))
         assertFalse(dev.log.any { it.startsWith("scrollNode") || it.startsWith("swipe") })
         // The other way still scrolls.
         call("scroll", """{"dir":"up","amount":1}""")

@@ -13,7 +13,7 @@ internal val ANDROID_OPS = listOf(
 )
 
 /** Capabilities past their first version; the rest are at v1. */
-private val CAP_VERSIONS = mapOf("ui.tree" to 4, "app.launch" to 2)
+private val CAP_VERSIONS = mapOf("ui.tree" to 5, "app.launch" to 2)
 
 /** The capability manifest the hello declares: only what [ANDROID_OPS] actually back. `ui.tree`
  *  (windows / find / readSubtree), `ui.act` (click / invoke / scroll / press), `screen.shot`,
@@ -28,7 +28,10 @@ private val CAP_VERSIONS = mapOf("ui.tree" to 4, "app.launch" to 2)
  *  reads and carry over by identity, stale errors carry `semantics.kind`, actions relocate a ref
  *  in place and wait for the screen to settle (`settled` / `changedDuringRead` / `effect`).
  *  `ui.tree` is at v4: `scroll` takes `until` (bounded scroll-until with a receipt), and a system
- *  ANR dialog's `windows` row carries `anr: true` plus the app package it is about. */
+ *  ANR dialog's `windows` row carries `anr: true` plus the app package it is about.
+ *  `ui.tree` is at v5: `scroll` carries the phase timings in `timing`, bounds each step and the
+ *  whole op (returning the completed steps and `stopped: "time"` at the bound), and remembers the
+ *  container that moved for the rest of the op. */
 internal val ANDROID_CAPS = listOf("ui.tree", "ui.act", "screen.shot", "app.launch", "app.in_use", "input.text")
     .map { com.streamapp.android.protocol.Capability(it, CAP_VERSIONS[it] ?: 1) }
 
@@ -177,11 +180,24 @@ internal class Dispatcher(
             "scroll" -> {
                 refuseMessage(args)
                 gated(op, args, checkCredential = false, target = { _, _ -> null }) { _ ->
+                    val timing = ScrollTiming()
+                    val deadline = now() + SCROLL_TOTAL_CAP_MS
                     val dir = str(args, "dir")
                     val until = args.optString("until", "").trim()
-                    val r = if (until.isEmpty()) scroll(dir, int(args, "amount"))
-                    else scrollUntil(dir, until, untilMaxSteps(args), untilTimeoutMs(args))
-                    settle(args, if (r["method"] == SCROLL_GESTURE) "coords" else "a11y") + r
+                    val r = if (until.isEmpty()) {
+                        scroll(dir, int(args, "amount"), timing, deadline = deadline).receipt
+                    } else {
+                        scrollUntil(dir, until, untilMaxSteps(args), untilTimeoutMs(args), timing, deadline)
+                    }
+                    val settleStarted = now()
+                    val settleOut = settle(args, if (r["method"] == SCROLL_GESTURE) "coords" else "a11y", brief = true)
+                    timing.settleMs = now() - settleStarted
+                    // The settle receipt first, then the scroll's own keys (as before), then the
+                    // phase breakdown: every new field is optional.
+                    LinkedHashMap<String, Any?>(settleOut).apply {
+                        putAll(r)
+                        put("timing", timing.toMap())
+                    }
                 }
             }
             "press" -> {
@@ -575,12 +591,25 @@ internal class Dispatcher(
      * touch, nothing under the finger can be clicked, no fling. An action's "true" proves nothing
      * (an outer wrapper of a nested-scrolling page may accept it and stay put), so every step is
      * checked against the content on screen. A candidate that refuses its first step, or accepts it
-     * without anything moving, gives way to the next. A candidate declaring only the opposite
-     * direction is at this end: when nothing else moved, the reply is `steps: 0, end: true` with no
-     * gesture. Otherwise, when none moves, a gesture, with `a11y: "refused"` or `"no-effect"`. A later step refused or without effect is the end of the
-     * content: the scroll stops there, `end: true`.
+     * without anything moving, gives way to the next; once a candidate's step moved, that node is
+     * the scroll's container and the later steps use it (no other candidate is tried). A candidate
+     * declaring only the opposite direction is at this end: when nothing else moved, the reply is
+     * `steps: 0, end: true` with no gesture. Otherwise, when none moves, a gesture, with
+     * `a11y: "refused"` or `"no-effect"`. A later step refused or without effect is the end of the
+     * content: the scroll stops there, `end: true`. The whole run is bounded by [deadline]
+     * ([SCROLL_TOTAL_CAP_MS] by default): at the bound the reply carries the steps that completed
+     * and `stopped: "time"`, so the caller's op timeout does not have to end it.
+     *
+     * When [only] is given (a container an earlier step confirmed), only that node is tried; this
+     * is how `until` keeps the container it picked instead of re-ranking the candidates.
      */
-    private fun scroll(dir: String, amount: Int): Map<String, Any?> {
+    private fun scroll(
+        dir: String,
+        amount: Int,
+        timing: ScrollTiming,
+        only: UiNode? = null,
+        deadline: Long = now() + SCROLL_TOTAL_CAP_MS,
+    ): ScrollRun {
         val forward = when (dir) {
             "down" -> true
             "up" -> false
@@ -591,9 +620,14 @@ internal class Dispatcher(
         val win = if (scope != null) scopedWindow() else windows().firstOrNull { it.foreground }
         val bounds = win?.let { device.windowBounds(it.id) } ?: device.screenSize()
         val root = win?.let { device.windowRoot(it.id) }
-        val candidates = if (win != null && root != null) scrollCandidates(root, bounds) else emptyList()
+        val candidates = when {
+            only != null -> listOf(only)
+            win != null && root != null -> scrollCandidates(root, bounds)
+            else -> emptyList()
+        }
         var noEffect = false
         var atEnd = false
+        var timedOut = false
         for (c in candidates.take(MAX_SCROLL_CANDIDATES)) {
             val wid = win!!.id
             val offers = if (forward) c.scrollsForward else c.scrollsBackward
@@ -601,71 +635,107 @@ internal class Dispatcher(
             // Only the other way declared: the content is already at this end.
             if (!offers) { if (opposite) atEnd = true; continue }
             val area = visiblePart(c.rect, bounds) ?: continue
-            var before = contentPrint(device.windowRoot(wid), area)
-            if (!device.scrollNode(c, forward)) continue
-            val first = awaitMove(wid, area, before)
+            var last = changeRead(wid, area, timing)
+            if (now() >= deadline) { timedOut = true; break }
+            if (!timedScrollNode(c, forward, timing)) continue
+            // The action is already in flight; if it used up the op's budget, its movement cannot
+            // be checked — report the steps verified so far as a time stop, not as the content's end.
+            if (now() >= deadline) { timedOut = true; break }
+            val first = awaitMove(wid, area, last, timing, deadline)
             if (first == null) { noEffect = true; continue }
-            before = first
+            last = first
             var done = 1
             var end = false
             while (done < steps) {
-                val next = if (device.scrollNode(c, forward)) awaitMove(wid, area, before) else null
+                if (now() >= deadline) { timedOut = true; break }
+                if (!timedScrollNode(c, forward, timing)) { end = true; break }
+                if (now() >= deadline) { timedOut = true; break }
+                val next = awaitMove(wid, area, last, timing, deadline)
                 if (next == null) { end = true; break }
-                before = next
+                last = next
                 done++
             }
+            timing.steps = done
             val out = mutableMapOf<String, Any?>("method" to SCROLL_A11Y, "steps" to done)
             if (end) out["end"] = true
-            return out
+            if (timedOut) out["stopped"] = "time"
+            return ScrollRun(out, c)
+        }
+        if (timedOut) {
+            timing.steps = 0
+            return ScrollRun(mutableMapOf("method" to SCROLL_A11Y, "steps" to 0, "stopped" to "time"), null)
         }
         // Nothing moved and a container says it is at this end: so is the scroll, no gesture.
-        if (atEnd) return mapOf("method" to SCROLL_A11Y, "steps" to 0, "end" to true)
+        if (atEnd) {
+            timing.steps = 0
+            return ScrollRun(mutableMapOf("method" to SCROLL_A11Y, "steps" to 0, "end" to true), null)
+        }
         val area = candidates.firstOrNull()?.let { visiblePart(it.rect, bounds) } ?: bounds
         val g = swipeGeometry(area, forward, device.touchSlop(), device.density())
-        repeat(steps) {
+        var swipes = 0
+        while (swipes < steps && now() < deadline) {
+            val started = now()
             device.swipe(g.x, g.from, g.x, g.to, SWIPE_MS, SWIPE_HOLD_MS)
+            timing.gestureMs += now() - started
             device.sleep(150)
+            swipes++
         }
-        val out = mutableMapOf<String, Any?>("method" to SCROLL_GESTURE, "steps" to steps)
+        timing.steps = swipes
+        val out = mutableMapOf<String, Any?>("method" to SCROLL_GESTURE, "steps" to swipes)
         if (candidates.isNotEmpty()) out["a11y"] = if (noEffect) "no-effect" else "refused"
-        return out
+        if (swipes < steps) out["stopped"] = "time"
+        return ScrollRun(out, null)
     }
 
     /**
      * `scroll` with `until`: one scroll step at a time until the wanted text is visible on screen,
      * stopping at the first of three bounds — the content's end (two steps leave the tree
-     * unchanged), `maxSteps` (default [UNTIL_DEFAULT_STEPS]) or `timeoutMs` (default
-     * [UNTIL_DEFAULT_MS]) — so the caller's own op timeout never has to be the thing that ends it.
-     * The receipt says whether the text was found, how many steps ran, why scrolling stopped and a
-     * few labels still visible there. One step per check is the point, so the ordinary `amount`
-     * argument plays no part here.
+     * unchanged), `maxSteps` (default [UNTIL_DEFAULT_STEPS]) or the time bound (`timeoutMs`,
+     * default [UNTIL_DEFAULT_MS] and never past the op's [SCROLL_TOTAL_CAP_MS] deadline) — so the
+     * caller's own op timeout never has to be the thing that ends it. The first container whose
+     * step moved is remembered ([scroll]'s `only`) and used for every later step; the candidates
+     * are not re-ranked. The receipt says whether the text was found, how many steps ran, why
+     * scrolling stopped, a few labels still visible there and the phase timings. One step per
+     * check is the point, so the ordinary `amount` argument plays no part here.
      */
-    private fun scrollUntil(dir: String, until: String, maxSteps: Int, timeoutMs: Long): Map<String, Any?> {
+    private fun scrollUntil(
+        dir: String,
+        until: String,
+        maxSteps: Int,
+        timeoutMs: Long,
+        timing: ScrollTiming,
+        opDeadline: Long,
+    ): Map<String, Any?> {
         val win = if (scope != null) scopedWindow() else windows().firstOrNull { it.foreground }
         val bounds = win?.let { device.windowBounds(it.id) } ?: device.screenSize()
-        val deadline = now() + timeoutMs
+        val deadline = minOf(now() + timeoutMs, opDeadline)
         var scrolls = 0
         var idle = 0
         var method: String? = null
+        var chosen: UiNode? = null
         fun root(): UiNode? = win?.let { device.windowRoot(it.id) }
             ?: windows().firstOrNull { it.foreground }?.let { device.windowRoot(it.id) }
+        fun done(out: Map<String, Any?>): Map<String, Any?> =
+            LinkedHashMap<String, Any?>(out).apply { put("timing", timing.toMap()) }
 
         var current = root()
-        untilHit(current, until)?.let { return untilFound(it, 0, null) }
+        untilHit(current, until)?.let { return done(untilFound(it, 0, null)) }
         while (true) {
-            if (scrolls >= maxSteps) return untilMiss(current, scrolls, method, "steps")
-            if (now() >= deadline) return untilMiss(current, scrolls, method, "time")
-            val before = current ?: return untilMiss(null, scrolls, method, "no-window")
+            if (scrolls >= maxSteps) return done(untilMiss(current, scrolls, method, "steps"))
+            if (now() >= deadline) return done(untilMiss(current, scrolls, method, "time"))
+            val before = current ?: return done(untilMiss(null, scrolls, method, "no-window"))
             val print = contentPrint(before, bounds)
-            val step = scroll(dir, 1)
+            val step = scroll(dir, 1, timing, only = chosen, deadline = deadline)
+            chosen = step.node ?: chosen
             scrolls++
-            method = (step["method"] as? String) ?: method
+            timing.steps = scrolls
+            method = (step.receipt["method"] as? String) ?: method
             val after = root()
             current = after
             // Two consecutive steps over an unchanged tree are the end of the content.
             if (contentPrint(after, bounds) == print) idle++ else idle = 0
-            untilHit(after, until)?.let { return untilFound(it, scrolls, method) }
-            if (idle >= 2) return untilMiss(after, scrolls, method, "end")
+            untilHit(after, until)?.let { return done(untilFound(it, scrolls, method)) }
+            if (idle >= 2) return done(untilMiss(after, scrolls, method, "end"))
         }
     }
 
@@ -723,20 +793,52 @@ internal class Dispatcher(
     private fun untilTimeoutMs(args: JSONObject) =
         args.optLong("timeoutMs", UNTIL_DEFAULT_MS).coerceIn(0, UNTIL_MAX_MS)
 
-    /** Waits for the content inside [area] of window [windowId] to differ from [before], then for it
-     *  to settle (an animated scroll still running). The settled print, or null when nothing moved
-     *  within [SCROLL_SETTLE_POLLS] polls. */
-    private fun awaitMove(windowId: String, area: Rect, before: List<String>): List<String>? {
+    /** Reads the content print and the first visible item of [area] in one tree read. */
+    private fun changeRead(windowId: String, area: Rect, timing: ScrollTiming): MoveCheck {
+        val started = now()
+        val root = device.windowRoot(windowId)
+        val read = MoveCheck(contentPrint(root, area), firstItemPrint(root, area))
+        timing.changeCheckMs += now() - started
+        return read
+    }
+
+    private fun timedScrollNode(node: UiNode, forward: Boolean, timing: ScrollTiming): Boolean {
+        val started = now()
+        return try {
+            device.scrollNode(node, forward)
+        } finally {
+            timing.a11yMs += now() - started
+        }
+    }
+
+    /**
+     * Waits after an accessibility scroll step, bounded by [deadline] and [SCROLL_STEP_CAP_MS].
+     * The step is complete — and the read returned — as soon as the content print has moved and
+     * the scroll container's first visible item changed position (the list moved, whatever else
+     * is animating), or the print stopped changing between two reads. A page whose carousel or
+     * countdown never goes still therefore ends the step on its first read instead of running the
+     * whole poll budget. Null when nothing moved at all.
+     */
+    private fun awaitMove(
+        windowId: String,
+        area: Rect,
+        before: MoveCheck,
+        timing: ScrollTiming,
+        deadline: Long,
+    ): MoveCheck? {
         var last = before
         var moved = false
-        // Up to SCROLL_SETTLE_POLLS polls to see a change, then as many again for it to settle.
-        repeat(2 * SCROLL_SETTLE_POLLS) { i ->
+        val end = minOf(deadline, now() + SCROLL_STEP_CAP_MS)
+        var polls = 0
+        while (polls < SCROLL_STEP_MAX_POLLS && now() < end) {
+            polls++
             device.sleep(SCROLL_POLL_MS)
-            val now = contentPrint(device.windowRoot(windowId), area)
-            if (moved && now == last) return now
-            if (now != before) moved = true
-            last = now
-            if (!moved && i + 1 >= SCROLL_SETTLE_POLLS) return null
+            val read = changeRead(windowId, area, timing)
+            if (read.print != before.print) moved = true
+            if (moved && (read.first != before.first || read.first != last.first || read.print == last.print)) {
+                return read
+            }
+            last = read
         }
         return if (moved) last else null
     }
@@ -749,8 +851,13 @@ internal class Dispatcher(
      * bar) does not hold the op. The reply reports `settled`, `changedDuringRead` and, from the
      * fingerprints, `effect`; `expect` is judged after the wait, and a relocation reports
      * `relocated: true` once.
+     *
+     * A [brief] wait is for `scroll`: a scroll is not a commit, so it stops after the first poll
+     * that sees the tree change, capped at [SCROLL_SETTLE_CAP_MS] and without waiting for
+     * accessibility quiescence. `settled` keeps its meaning (quiet and changed) and is simply
+     * false on a page that never goes still.
      */
-    private fun settle(args: JSONObject, via: String): Map<String, Any?> {
+    private fun settle(args: JSONObject, via: String, brief: Boolean = false): Map<String, Any?> {
         val before = preActionPrint
         val out = LinkedHashMap<String, Any?>()
         out["via"] = via
@@ -758,15 +865,22 @@ internal class Dispatcher(
         var settled = false
         var last = before
         if (before != null) {
-            val end = System.currentTimeMillis() + settleTiming.capMs
-            while (true) {
+            val cap = if (brief) minOf(settleTiming.capMs, SCROLL_SETTLE_CAP_MS) else settleTiming.capMs
+            val end = now() + cap
+            // The deadline is the bound; the poll count only keeps an injected clock that does
+            // not advance (a test) from looping forever.
+            var polls = 0
+            while (polls < SETTLE_MAX_POLLS) {
+                polls++
                 device.sleep(settleTiming.pollMs)
-                val now = System.currentTimeMillis()
+                val now = now()
                 val quietFor = device.lastA11yEventMs()?.let { now - it } ?: Long.MAX_VALUE
                 val cur = readTree(printRoot()).fps
                 if (cur != before) changed = true
                 last = cur
                 if (quietFor >= settleTiming.quietMs && changed) { settled = true; break }
+                // A scroll is not a commit: one read is enough to report what changed.
+                if (brief) break
                 if (now >= end) break
             }
             out["settled"] = settled
@@ -907,17 +1021,54 @@ internal fun visiblePart(r: Rect, bounds: Rect): Rect? {
 
 /** How many scroll candidates a scroll tries before falling back to a gesture. */
 internal const val MAX_SCROLL_CANDIDATES = 3
-/** After an accessibility scroll step: polls this far apart, this many times, for the content to
- *  change (and as many again for it to settle). */
+
+/** After an accessibility scroll step: polls this far apart, for at most this long, for the
+ *  content to move (and to stop moving). A page whose carousel or countdown never stops changing
+ *  ends its step as soon as the container's first visible item has changed position. */
 internal const val SCROLL_POLL_MS = 100L
-internal const val SCROLL_SETTLE_POLLS = 6
+internal const val SCROLL_STEP_CAP_MS = 800L
+/** A bound on the polls of one step, so a clock that does not advance cannot hang the op. */
+private const val SCROLL_STEP_MAX_POLLS = (SCROLL_STEP_CAP_MS / SCROLL_POLL_MS).toInt() + 1
+
+/** One scroll op returns within this bound (checked between steps: an action already in flight
+ *  finishes, then the op returns with the steps it completed and `stopped: "time"`). */
+internal const val SCROLL_TOTAL_CAP_MS = 10_000L
+
+/** The post-action settle check after a scroll: one short check, no wait for quiet. */
+internal const val SCROLL_SETTLE_CAP_MS = 200L
+
+/** A safety bound on the settle wait: with a clock that advances, the time cap ends it first. */
+private const val SETTLE_MAX_POLLS = 100_000
 
 /** Scroll-until bounds: defaults, clamps, and how many labels a miss reports. */
 internal const val UNTIL_DEFAULT_STEPS = 20
 internal const val UNTIL_MAX_STEPS = 50
-internal const val UNTIL_DEFAULT_MS = 15_000L
+internal const val UNTIL_DEFAULT_MS = 10_000L
 internal const val UNTIL_MAX_MS = 60_000L
 internal const val VISIBLE_LABEL_COUNT = 5
+
+/** How long each phase of one scroll op took, in ms. `steps` is the completed step count. */
+internal class ScrollTiming {
+    var a11yMs = 0L
+    var gestureMs = 0L
+    var settleMs = 0L
+    var changeCheckMs = 0L
+    var steps = 0
+
+    fun toMap(): Map<String, Any?> = linkedMapOf(
+        "a11yMs" to a11yMs,
+        "gestureMs" to gestureMs,
+        "settleMs" to settleMs,
+        "changeCheckMs" to changeCheckMs,
+        "steps" to steps,
+    )
+}
+
+/** The content print of an area and the position of its first visible item, from one read. */
+private class MoveCheck(val print: List<String>, val first: String?)
+
+/** What one [Dispatcher.scroll] run did: its receipt and the container that moved, if any. */
+private class ScrollRun(val receipt: MutableMap<String, Any?>, val node: UiNode?)
 
 /**
  * The containers a scroll tries, best first: the visible scrollable nodes under [root] not known
@@ -965,6 +1116,22 @@ internal fun contentPrint(root: UiNode?, area: Rect): List<String> {
     }
     root?.let(::walk)
     return out
+}
+
+/** The identity and position of the first visible, named, non-scrollable node inside [area]
+ *  (document order) — the list's first visible item. A scroll that moved the list changes it; a
+ *  countdown that retitles the same row in place does not, so an animating page cannot fake a
+ *  move (and a move is not hidden by one). Null when nothing named is inside [area]. */
+internal fun firstItemPrint(root: UiNode?, area: Rect): String? {
+    fun walk(n: UiNode): String? {
+        if (!n.isVisible) return null
+        if (!n.isScrollable && n.name.isNotBlank() && n.rect.intersects(area)) {
+            return "${n.className}|${n.viewId}|${n.rect.x},${n.rect.y},${n.rect.w},${n.rect.h}"
+        }
+        for (c in n.children) walk(c)?.let { return it }
+        return null
+    }
+    return root?.let(::walk)
 }
 
 internal data class SwipeGeometry(val x: Int, val from: Int, val to: Int)

@@ -24,7 +24,11 @@ internal class FakeDevice : Device {
     /** Accessibility scroll steps that moved something so far. A root read after one carries a
      *  marker row whose label counts them, so the dispatcher's content check sees the page move. */
     var moved = 0
+    /** Runs at the start of every tree read, so a test can charge the read time or change the
+     *  page between two reads. */
+    var onRead: () -> Unit = {}
     override fun windowRoot(windowId: String): UiNode? {
+        onRead()
         val r = roots[windowId] ?: return null
         if (moved == 0 || r !is FakeNode) return r
         return r.copy(children = r.children + FakeNode("TextView", "scrolled $moved", rect = Rect(0, 0, 1080, 2400)))

@@ -60,8 +60,8 @@ class RelayClientTest {
         assertEquals(setOf("ui.tree", "ui.act", "screen.shot", "app.launch", "app.in_use", "input.text"), caps.keys().asSequence().toSet())
         // app.launch v2: focusApp understands `fresh`.
         assertEquals(2, caps.getJSONObject("app.launch").getInt("v"))
-        // ui.tree v4: scroll-until and the ANR marker on windows rows.
-        assertEquals(4, caps.getJSONObject("ui.tree").getInt("v"))
+        // ui.tree v5: scroll phase timings, scroll bounds and the remembered container.
+        assertEquals(5, caps.getJSONObject("ui.tree").getInt("v"))
         assertEquals(1, caps.getJSONObject("ui.act").getInt("v"))
         assertEquals(1, JSONObject(t.sent[0]).getInt("capsVersion"))
     }
