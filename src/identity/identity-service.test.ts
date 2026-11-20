@@ -33,14 +33,15 @@ const EM: IdentityFacility = { facility: 'eastmoney', hosts: ['eastmoneysec.com'
 
 function setup(opts: Partial<Omit<IdentityServiceDeps, 'facilities'>> & { facilities?: IdentityFacility[]; cookies?: Record<string, string[]>; answers?: Record<string, ProbeResult> } = {}) {
   const { facilities, cookies: c0, answers: a0, ...over } = opts
-  const store = new SiteIdentityStore(join(mkdtempSync(join(tmpdir(), 'idsvc-')), 'stream.db'))
+  // 表的写入时间也吃同一个假时钟：节流用例按 verifiedAt 判窗口。
+  const store = new SiteIdentityStore(join(mkdtempSync(join(tmpdir(), 'idsvc-')), 'stream.db'), over.now ? { now: over.now } : {})
   // 节点 → 域 → 在场的 cookie 名
   const cookies = c0 ?? {}
   const answers = a0 ?? {}
   const fp: Record<string, string | null> = {}
   const probe = vi.fn(async (node: ProbeNode, w: { kind: string }) =>
     answers[`${w.kind === 'page' ? 'xhs' : 'bilibili'}@${node.nodeId}`] ?? ({ state: 'unknown', reason: 'no answer' } as ProbeResult))
-  const svc = makeIdentityService({
+  const deps: IdentityServiceDeps = {
     facilities: () => facilities ?? [XHS, BILI, ZZ, EM],
     nodeOfBinding: (b) => NODES.find((n) => n.bindingId === b),
     onlineNodes: () => NODES,
@@ -51,9 +52,13 @@ function setup(opts: Partial<Omit<IdentityServiceDeps, 'facilities'>> & { facili
     prober: { probe },
     store,
     debounceMs: 5,
+    // 重连去抖有自己的用例（假时钟）；这里关掉，同一个用例里第二次 nodeConnected 才真的会跑。
+    reconnectDebounceMs: 0,
     ...over,
-  })
-  return { svc, store, probe, fp, cookies, answers }
+  }
+  const svc = makeIdentityService(deps)
+  return { svc, store, probe, fp, cookies, answers, restart: () => makeIdentityService(deps) }
+
 }
 
 describe('节点连上', () => {
@@ -207,5 +212,133 @@ describe('执行前核对（verify，D9）', () => {
     expect(await svc.verify('eastmoney', WORK)).toBeUndefined()
     expect(await svc.verify('nope', WORK)).toBeUndefined()
     expect(probe).not.toHaveBeenCalled()
+  })
+})
+
+describe('页面探测的节流（D15）', () => {
+  const HOUR = 60 * 60_000
+  const PRESENT = { 'node_work:xiaohongshu.com': ['web_session'] }
+  const ANSWER = { 'xhs@node_work': { state: 'signed-in', accountId: 'A' } as ProbeResult }
+
+  it('会话 cookie 没变、12 小时内核对过：跳过，不开标签；开标签打 info，跳过打 debug', async () => {
+    let t = 0
+    const logs: string[] = []
+    const dbg: string[] = []
+    const { svc, probe, store, fp } = setup({
+      facilities: [XHS], cookies: PRESENT, answers: ANSWER,
+      now: () => t, log: (l) => logs.push(l), debug: (l) => dbg.push(l),
+    })
+    fp['node_work:xiaohongshu.com'] = 'fp-A'
+    await svc.nodeConnected(WORK.bindingId)
+    expect(probe).toHaveBeenCalledTimes(1)
+    expect(logs.join('\n')).toContain('xhs')
+    expect(logs.join('\n')).toContain('node_work')
+    expect(logs.join('\n')).toContain('首次')
+
+    t = HOUR
+    await svc.nodeConnected(WORK.bindingId)
+    expect(probe).toHaveBeenCalledTimes(1)
+    expect(dbg.join('\n')).toContain('跳过')
+    expect(store.get('xhs', 'node_work')?.verifiedAt).toBe(0) // 跳过不改核对时间
+  })
+
+  it('重启之后（新的服务实例、同一张表）仍然跳过：指纹落了盘', async () => {
+    let t = 0
+    const { svc, probe, fp, restart } = setup({
+      facilities: [XHS], cookies: PRESENT, answers: ANSWER, now: () => t,
+    })
+    fp['node_work:xiaohongshu.com'] = 'fp-A'
+    await svc.nodeConnected(WORK.bindingId)
+    expect(probe).toHaveBeenCalledTimes(1)
+
+    t = 60_000
+    await restart().nodeConnected(WORK.bindingId)
+    expect(probe).toHaveBeenCalledTimes(1)
+  })
+
+  it('超过核对窗口：重探一次，原因写「过期」', async () => {
+    let t = 0
+    const logs: string[] = []
+    const { svc, probe, fp } = setup({
+      facilities: [XHS], cookies: PRESENT, answers: ANSWER, now: () => t, log: (l) => logs.push(l),
+    })
+    fp['node_work:xiaohongshu.com'] = 'fp-A'
+    await svc.nodeConnected(WORK.bindingId)
+    t = 12 * HOUR + 1
+    await svc.nodeConnected(WORK.bindingId)
+    expect(probe).toHaveBeenCalledTimes(2)
+    expect(logs.join('\n')).toContain('过期')
+  })
+
+  it('会话 cookie 变了：立即重探，原因写「cookie 变化」', async () => {
+    let t = 0
+    const logs: string[] = []
+    const { svc, probe, fp } = setup({
+      facilities: [XHS], cookies: PRESENT, answers: ANSWER, now: () => t, log: (l) => logs.push(l),
+    })
+    fp['node_work:xiaohongshu.com'] = 'fp-A'
+    await svc.nodeConnected(WORK.bindingId)
+    t = 60_000
+    fp['node_work:xiaohongshu.com'] = 'fp-B'
+    await svc.nodeConnected(WORK.bindingId)
+    expect(probe).toHaveBeenCalledTimes(2)
+    expect(logs.join('\n')).toContain('cookie 变化')
+  })
+
+  it('窗口可配置', async () => {
+    let t = 0
+    const { svc, probe, fp } = setup({
+      facilities: [XHS], cookies: PRESENT, answers: ANSWER, now: () => t, pageProbeTtlMs: HOUR,
+    })
+    fp['node_work:xiaohongshu.com'] = 'fp-A'
+    await svc.nodeConnected(WORK.bindingId)
+    t = HOUR + 1
+    await svc.nodeConnected(WORK.bindingId)
+    expect(probe).toHaveBeenCalledTimes(2)
+  })
+
+  it('http 形状不受页面节流影响', async () => {
+    let t = 0
+    const { svc, probe } = setup({
+      facilities: [BILI], now: () => t, answers: { 'bilibili@node_work': { state: 'signed-in', accountId: '123' } },
+    })
+    await svc.nodeConnected(WORK.bindingId)
+    t = 60_000
+    await svc.nodeConnected(WORK.bindingId)
+    expect(probe).toHaveBeenCalledTimes(2)
+  })
+
+  it('同一节点 60 秒内的重连合并为一轮', async () => {
+    let t = 0
+    const dbg: string[] = []
+    const { svc, probe } = setup({
+      facilities: [BILI], now: () => t, reconnectDebounceMs: 60_000, debug: (l) => dbg.push(l),
+      answers: { 'bilibili@node_work': { state: 'signed-in', accountId: '123' } },
+    })
+    await svc.nodeConnected(WORK.bindingId)
+    expect(probe).toHaveBeenCalledTimes(1)
+    t = 6_000
+    await svc.nodeConnected(WORK.bindingId)
+    expect(probe).toHaveBeenCalledTimes(1)
+    expect(dbg.join('\n')).toContain('重连')
+    t = 60_000
+    await svc.nodeConnected(WORK.bindingId)
+    expect(probe).toHaveBeenCalledTimes(2)
+  })
+
+  it('插件停用：page / http / 手动刷新 / 登录之后 / 执行前核对都不探', async () => {
+    const { svc, probe, store } = setup({
+      facilities: [XHS, BILI], cookies: PRESENT, facilityEnabled: () => false,
+      answers: { ...ANSWER, 'bilibili@node_work': { state: 'signed-in', accountId: '123' } },
+    })
+    await svc.nodeConnected(WORK.bindingId)
+    expect(probe).not.toHaveBeenCalled()
+    await svc.refresh()
+    expect(probe).not.toHaveBeenCalled()
+    expect(await svc.afterLogin('xhs', WORK.bindingId)).toBeUndefined()
+    expect(await svc.verify('xhs', WORK)).toBeUndefined()
+    expect(await svc.verify('bilibili', WORK)).toBeUndefined()
+    expect(probe).not.toHaveBeenCalled()
+    expect(store.list()).toEqual([])
   })
 })

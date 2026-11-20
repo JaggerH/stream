@@ -13,7 +13,7 @@ import { storagePlugin } from './storage.ts'
 import { eventsPlugin } from './events.ts'
 import { harvestPlugin } from './harvest.ts'
 import { authPlugin } from './auth.ts'
-import { identityPlugin } from './identity.ts'
+import { facilityEnabled, identityPlugin } from './identity.ts'
 import { SiteIdentityStore } from '../../identity/identity-store.ts'
 import { runtimeConfigPlugin } from './runtime-config.ts'
 import type { PluginSummary } from '../../mcp/tools.ts'
@@ -92,5 +92,24 @@ describe('identityPlugin', () => {
     await quiesceKernel(kernel)
     expect(kernel.siteIdentities).toBeUndefined()
     expect(kernel.identityRouter).toBeUndefined()
+  })
+})
+
+describe('facilityEnabled（停用的插件不探测，D15）', () => {
+  const judge = (enabled: Record<string, boolean>, pkgOf: Record<string, string> = { xhs: 'xhs' }) => facilityEnabled({
+    networkForFacility: (f) => pkgOf[f] ? { packageId: pkgOf[f]!, facility: f, hosts: [] } : undefined,
+    plugins: [{ id: 'xhs' }, { id: 'bilibili' }] as never,
+    isPluginEnabled: (p) => enabled[p.id] ?? true,
+  })
+
+  it('开关是活的：关掉的包不探，其余的照旧', () => {
+    expect(judge({ xhs: false })('xhs')).toBe(false)
+    expect(judge({ xhs: true })('xhs')).toBe(true)
+    expect(judge({})('xhs')).toBe(true)
+  })
+
+  it('没有包声明 / 目录里没有这个插件：不挡探测', () => {
+    expect(judge({ xhs: false })('zhuanzhuan')).toBe(true)
+    expect(judge({}, { zhuanzhuan: 'zhuanzhuan' })('zhuanzhuan')).toBe(true)
   })
 })

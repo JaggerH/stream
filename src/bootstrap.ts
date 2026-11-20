@@ -634,7 +634,11 @@ export async function bootstrap(
   // 站点身份（browser-identity 计划 3）：节点上各 facility 登着谁。建在 harvest / auth / packages / sources 之上，
   // 所以排在 auth 后面。表打不开就不挂——它不决定任何执行，只是少一张表。
   if (opts.identities) {
-    await kernel.plugin(identityPlugin, { store: opts.identities, deviceFetch, ...(opts.nodes && { nodes: opts.nodes }), log })
+    await kernel.plugin(identityPlugin, {
+      store: opts.identities, deviceFetch, ...(opts.nodes && { nodes: opts.nodes }), log,
+      // 跳过页面探测 / 合并重连只在 debug 级出声：正常运行时用户不该看到它们。
+      debug: (line) => console.debug(line),
+    })
   }
 
   // adapter 装配整域进内核：四个宿主 adapter（builtin/rsshub/browser/replay）手织 + 带 code
