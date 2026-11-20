@@ -65,4 +65,19 @@ class OcrTest {
         assertEquals(small, listOf(big, small).at(250, 1980))
         assertNull(listOf(big).at(2000, 3000))
     }
+
+    @Test fun theRectTakesEveryLineDrawnUnderIt() {
+        val cart = OcrText("加入购物车", Rect(40, 1140, 200, 60), 0.9)
+        val buy = OcrText("立即购买", Rect(480, 1140, 200, 60), 0.9)
+        val spec = OcrText("规格", Rect(60, 900, 120, 50), 0.9)
+        val bar = Rect(20, 1150, 680, 110) // the whole bottom bar the caller tapped
+        assertEquals(listOf(cart, buy), listOf(cart, buy, spec).under(bar))
+        // The bar's centre pixel is on neither label; the rect still takes both.
+        assertNull(listOf(cart, buy).at(bar.centerX, bar.centerY))
+        // A line wholly outside, or one that merely touches the rect, does not count.
+        assertEquals(emptyList<OcrText>(), listOf(spec).under(bar))
+        assertEquals(emptyList<OcrText>(), listOf(OcrText("远处的字", Rect(0, 1600, 300, 60), 0.9)).under(bar))
+        // A small tap on a big line still takes the line: the smaller of the two is covered.
+        assertEquals(listOf(cart), listOf(cart).under(Rect(60, 1160, 20, 20)))
+    }
 }

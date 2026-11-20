@@ -7,6 +7,14 @@ import com.streamapp.android.agent.UiNode
 internal data class AskExemption(val app: String, val action: String)
 
 /**
+ * What the text tier read for a click the accessibility tree could not name: the labels drawn
+ * inside the tapped rect ([labels], one entry per recognized line) and every line recognized on
+ * the frame ([screen]) — the only "screen" a self-drawn page has. The labels are judged one by
+ * one: joining them would let a commit hide inside a harmless neighbour's text.
+ */
+internal class TextTier(val labels: List<String>, val screen: String)
+
+/**
  * The sensitive-action gate: for one gated op, which reasons require an approval request.
  * Structure outweighs the word tables; an unrecognized commit-shaped label still gates through
  * `commit-unrecognized` (better one extra approval than one slipped commit). Reasons are an open
@@ -30,7 +38,8 @@ internal class Gate(private val detect: Detect, private val categories: Categori
     /**
      * [target] is the node the action lands on (null for `scroll`), [typedText] the text a
      * `type` would enter, [pkg]/[title] the foreground or scoped app, [root] the current tree.
-     * [blind] says the click's point had neither an accessibility label nor OCR text.
+     * [blind] says the click's point had neither an accessibility label nor OCR text; [text] is
+     * what the text tier read under the tapped rect instead, when the tree could not name it.
      */
     fun reasons(
         op: String,
@@ -40,6 +49,7 @@ internal class Gate(private val detect: Detect, private val categories: Categori
         title: String,
         root: UiNode?,
         blind: Boolean = false,
+        text: TextTier? = null,
     ): List<String> {
         val cat = categories.of(pkg, title)?.name
         val out = mutableListOf<String>()
@@ -55,25 +65,15 @@ internal class Gate(private val detect: Detect, private val categories: Categori
                     return out
                 }
                 if (isInput(t) || isTab(t) || isList(t)) return emptyList()
-                val label = t.name
-                val claim = detect.isClaimLabel(label)
-                val (commit, money) = detect.commitParts(label)
-                if (commit) out += "commit-label"
-                if (detect.isAffirmative(label) && screenAsksCommit(root, t)) out += "dialog-confirm"
-                if (cat == "stores" && !claim && (detect.isInstallLabel(label) || detect.isAffirmative(label))) out += "install"
-                if (isCallTarget(t)) out += "call"
-                if (t.isClickable && detect.looksLikeURL(label) && cat != "browsers") out += "link-leave-app"
-                if (cat == "settings" && (isSwitch(t) || detect.isSettingLabel(label) ||
-                        detect.isStepperLabel(label) || isStepperIcon(t, root) || isSlider(t))) out += "setting"
-                // A claim is free by itself, but not when it stands in a payment confirmation:
-                // the screen asks a commit question, so the same button is the pay step there.
-                if (claim && screenAsksCommit(root, t)) out += "commit-label"
-                // A payment: a commit that moves money by itself, or any commit or store install
-                // on a screen that shows an amount.
-                val moneyShown = detect.hasCurrency(label) || (root != null && detect.screenHasCurrency(root))
-                if ((commit || out.contains("install")) && (money || moneyShown)) out += "payment-label"
-                if (claim && out.contains("commit-label") && moneyShown) out += "payment-label"
-                if (out.isEmpty() && unrecognizedCommit(t, root)) out += "commit-unrecognized"
+                if (text == null) {
+                    out += labelReasons(t.name, t, cat, root, null)
+                } else {
+                    // The tree cannot name this point: every line drawn inside the tapped rect is
+                    // a label of its own, judged like an accessibility label, with the frame's
+                    // text standing in for the screen.
+                    out += text.labels.flatMap { labelReasons(it, t, cat, root, text.screen) }.distinct()
+                    if (out.isEmpty()) out += textTierDefaults(text, root, cat)
+                }
                 // The node under the point had no label and no OCR text named it either: the
                 // structural fallback above could not see a drawn commit either way.
                 if (blindCommit && out.none { kindOf(it) == "commit" }) out += "commit-unrecognized"
@@ -131,6 +131,56 @@ internal class Gate(private val detect: Detect, private val categories: Categori
     fun exempted(pkg: String, reasons: List<String>, exemptions: Set<AskExemption>): Boolean =
         reasons.mapNotNull { kindOf(it) }.isNotEmpty() &&
             reasons.mapNotNull { kindOf(it) }.all { kind -> exemptions.any { it.app == pkg && it.action == kind } }
+
+    /** One label's share of a click's reasons: the word tables plus the structure signals of the
+     *  node the action lands on. [screen] is the text tier's stand-in for the screen when the
+     *  tree could not see it; null for an accessibility label, whose screen is [root]. */
+    private fun labelReasons(label: String, t: UiNode, cat: String?, root: UiNode?, screen: String?): List<String> {
+        val out = mutableListOf<String>()
+        val claim = detect.isClaimLabel(label)
+        val (commit, money) = detect.commitParts(label)
+        if (commit) out += "commit-label"
+        if (detect.isAffirmative(label) && screenAsksCommit(root, t)) out += "dialog-confirm"
+        if (cat == "stores" && !claim && (detect.isInstallLabel(label) || detect.isAffirmative(label))) out += "install"
+        if (isCallTarget(t, label)) out += "call"
+        if (t.isClickable && detect.looksLikeURL(label) && cat != "browsers") out += "link-leave-app"
+        if (cat == "settings" && (isSwitch(t) || detect.isSettingLabel(label) ||
+                detect.isStepperLabel(label) || isStepperIcon(t, root) || isSlider(t))) out += "setting"
+        // A claim is free by itself, but not when it stands in a payment confirmation:
+        // the screen asks a commit question, so the same button is the pay step there.
+        if (claim && screenAsksCommit(root, t)) out += "commit-label"
+        // A payment: a commit that moves money by itself, or any commit or store install
+        // on a screen that shows an amount.
+        val moneyShown = detect.hasCurrency(label) || (root != null && detect.screenHasCurrency(root)) ||
+            (screen != null && detect.hasCurrency(screen))
+        if ((commit || out.contains("install")) && (money || moneyShown)) out += "payment-label"
+        if (claim && out.contains("commit-label") && moneyShown) out += "payment-label"
+        if (out.isEmpty() && unrecognizedCommit(t, root, label)) out += "commit-unrecognized"
+        return out
+    }
+
+    /**
+     * A text-tier label the tables leave free, in an app where a misread tap costs money or
+     * goods. An affirmative (「确定」) on a self-drawn screen confirms whatever that screen asks,
+     * so it keeps the blind click's conservative default — except on a screen that visibly
+     * offers a cart and names no commit: there the 确定 only closes a spec sheet, the same free
+     * step as the 加入购物车 beside it. An amount anywhere on the screen (or under the rect)
+     * turns the affirmative into a payment confirmation. Elsewhere the click runs as before: the
+     * blind rule does not reach apps outside [BLIND_CLICK_CATEGORIES] either.
+     */
+    private fun textTierDefaults(text: TextTier, root: UiNode?, cat: String?): List<String> {
+        if (cat == null || cat !in BLIND_CLICK_CATEGORIES) return emptyList()
+        if (text.labels.none { detect.isAffirmative(it) }) return emptyList()
+        val money = detect.hasCurrency(text.screen) || (root != null && detect.screenHasCurrency(root))
+        if (money) return listOf("payment-label")
+        if (cartOnly(text.screen)) return emptyList()
+        return listOf("commit-unrecognized")
+    }
+
+    /** A screen that offers a cart and names no commit: a spec sheet, where a confirmation button
+     *  is the sheet's own. A commit word or an amount makes the same button a purchase step. */
+    private fun cartOnly(screen: String) =
+        detect.mentionsCart(screen) && !detect.mentionsCommit(screen) && !detect.hasCurrency(screen)
 
     // ---- structure ------------------------------------------------------------------
 
@@ -212,17 +262,16 @@ internal class Gate(private val detect: Detect, private val categories: Categori
     }
 
     /** A call target by resource id, mirroring the common ids of dialer buttons. */
-    private fun isCallTarget(t: UiNode): Boolean {
+    private fun isCallTarget(t: UiNode, label: String = t.name): Boolean {
         val id = t.viewId.lowercase()
         if (CALL_ID_PARTS.any { id.contains(it) }) return true
-        return detect.isCallLabel(t.name)
+        return detect.isCallLabel(label)
     }
 
     /** The conservative fallback: a clickable button the tables cannot place, standing where
      *  commits stand — in a form or a confirmation dialog. Icon buttons count by structure. */
-    private fun unrecognizedCommit(t: UiNode, root: UiNode?): Boolean {
+    private fun unrecognizedCommit(t: UiNode, root: UiNode?, label: String = t.name): Boolean {
         if (!t.isClickable && t.role != "Button") return false
-        val label = t.name
         if (label.isNotEmpty()) {
             if (detect.isCommitLabel(label) || detect.isClaimLabel(label) || detect.isInstallLabel(label) || detect.isCallLabel(label) ||
                 detect.isSettingLabel(label) || detect.isAffirmative(label) || detect.looksLikeURL(label) ||

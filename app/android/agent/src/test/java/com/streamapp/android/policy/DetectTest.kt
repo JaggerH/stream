@@ -283,4 +283,18 @@ class DetectTest {
         assertFalse(d.isCodeContext("Promo code 482913"))
         assertFalse(d.isCodeContext("价格 ¥4829.13"))
     }
+
+    @Test fun cartActionsAreFoundInAnyLabelOrScreen() {
+        for (label in listOf("加入购物车", "加入購物車", "加购", "Add to cart", "ADD TO BAG", "カートに入れる")) {
+            assertTrue(label, d.mentionsCart(label))
+        }
+        // A cart button is neither a commit nor a payment, with or without a price in its label.
+        assertFalse(commit("加入购物车"))
+        assertFalse(money("加入购物车"))
+        // A screen offers a cart when any of its recognized lines does; a page that never says
+        // so is not read as a spec sheet.
+        assertTrue(d.mentionsCart("规格 数量 ¥299 加入购物车 确定"))
+        assertFalse(d.mentionsCart("规格 数量 ¥299 立即购买"))
+        assertFalse(d.mentionsCart(""))
+    }
 }

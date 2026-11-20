@@ -28,6 +28,9 @@ internal class Words(o: JSONObject) {
     val cjkClaimWords = e("cjkClaimWords")
     val claimWords = s("claimWords")
     val claimPhrases = e("claimPhrases")
+    /** Adding a thing to a cart — a free step, not a commit (「加入购物车」/ "add to cart"). */
+    val cjkCartWords = e("cjkCartWords")
+    val cartPhrases = e("cartPhrases")
     /** Words that turn a claim into a paid action (activate, renew, subscribe): no longer a bare claim. */
     val cjkClaimExceptions = e("cjkClaimExceptions")
     val claimExceptionWords = s("claimExceptionWords")

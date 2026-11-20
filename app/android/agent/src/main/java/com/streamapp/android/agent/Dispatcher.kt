@@ -3,6 +3,7 @@ package com.streamapp.android.agent
 import com.streamapp.android.OccupancyHint
 import com.streamapp.android.policy.AskExemption
 import com.streamapp.android.policy.PolicyContext
+import com.streamapp.android.policy.TextTier
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.Base64
@@ -118,6 +119,10 @@ internal class Dispatcher(
     /** The last click's target had neither an accessibility name nor OCR text: the gate treats
      *  it as a blind click (see [Gate.reasons]). */
     private var clickBlind = false
+    /** What the text tier read for the last coordinate click instead: the labels drawn inside the
+     *  tapped rect and the frame's whole text (see [clickTarget]). Null when the tree named the
+     *  point or recognition could not run. */
+    private var clickText: TextTier? = null
     /** The same for a free swipe's start point: no name from either tree, and the stroke does not
      *  page a scrollable container under it. */
     private var swipeBlind = false
@@ -136,6 +141,7 @@ internal class Dispatcher(
         ocrNote = null
         ocrMs = null
         clickBlind = false
+        clickText = null
         swipeBlind = false
         if (op !in ANDROID_OPS) throw AgentError("unknown op: $op")
         if (op !in NO_WAKE) device.ensureAwake()
@@ -453,7 +459,7 @@ internal class Dispatcher(
         }
         val t = target(true, true)
         if (checkCredential) refuseCredentialField(t)
-        val reasons = p.gate.reasons(op, t, args.optString("text", ""), info.pkg, info.title, digestRoot(), blind())
+        val reasons = p.gate.reasons(op, t, args.optString("text", ""), info.pkg, info.title, digestRoot(), blind(), clickText)
         if (reasons.isNotEmpty() && !p.gate.exempted(info.pkg, reasons, askExemptions)) throw approvalRequired(op, args, info, t, reasons)
         preActionPrint = readTree(digestRoot()).fps
         return execute(t)
@@ -494,6 +500,10 @@ internal class Dispatcher(
         if (target != null) {
             sem.put("control", JSONObject().put("role", target.role).put("label", p.masker.maskedName(target).take(LABEL_MAX)))
         }
+        // What the text tier saw when the point had to be judged by it (or not see it): an ask on
+        // a self-drawn page can be read back instead of guessed at. Counts and errors only —
+        // never the recognized screen text.
+        ocrNote?.let { sem.put("ocr", JSONObject(it)) }
         val root = digestRoot()
         if (root != null) {
             sem.put("bindingDigest", p.bindingDigest(op, args))
@@ -571,39 +581,52 @@ internal class Dispatcher(
 
     /**
      * What a coordinate tap would land on, for the gate: the named accessibility node under the
-     * point; else, when the node is nameless or absent, the OCR line under it — the case a
-     * self-drawn page makes (a canvas control leaves a nameless container in the tree while the
-     * label exists only as pixels). A structural hit (an input, a list, a tab) keeps its own
-     * node even without a name: those are not commits. With neither label the click is blind
-     * ([clickBlind]); the category rule in [Gate] decides what that means.
+     * point; else, when the node is nameless or absent, the OCR text drawn inside the tapped
+     * rect — the case a self-drawn page makes (a canvas control leaves a nameless container in
+     * the tree while the label exists only as pixels). The rect, not its centre pixel: a label
+     * drawn to one side of a button misses the centre, and the tap is not blind. A structural
+     * hit (an input, a list, a tab) keeps its own node even without a name: those are not
+     * commits. With neither label the click is blind ([clickBlind]); the category rule in
+     * [Gate] decides what that means.
      */
     private fun clickTarget(r: Rect): UiNode? {
         val node = pointTarget(r)
         clickBlind = false
+        clickText = null
         if (node != null && namesItself(node)) return node
-        val line = ocrAt(r)
-        if (line != null) return line
-        clickBlind = true
-        return node
+        val frame = recognizedFrame() ?: run { clickBlind = true; return node }
+        val under = frame.under(r)
+        if (under.isEmpty()) {
+            clickBlind = true
+            return node
+        }
+        clickText = TextTier(under.map { it.text }, frame.joinToString(" ") { it.text })
+        return OcrTextNode(under.joinToString(" · ") { it.text }, r, under.minOf { it.confidence })
     }
 
     /** Whether [n] is meaningful to the gate on its own (a label, or a structural role). */
     private fun namesItself(n: UiNode) =
         n.name.isNotBlank() || n.isEditable || n.isScrollable || n.role == "Tab" || n.role.contains("List")
 
-    /** The OCR line covering [r]'s centre, recognizing the current frame when the catalog has no
-     *  result for it yet. Null when no line is there (or recognition cannot run — blind then).
-     *  [root], when the caller already read the scoped (else foreground) window's tree, spares it
-     *  another read. */
+    /** The OCR line covering [r]'s centre. A point with no area (a swipe's start) cannot hold a
+     *  label, so only the centre rule can name it. */
     private fun ocrAt(r: Rect, root: UiNode? = null): OcrTextNode? {
+        val line = recognizedFrame(root)?.at(r.centerX, r.centerY) ?: return null
+        return OcrTextNode(line.text, line.rect, line.confidence)
+    }
+
+    /** Every line the frame's recognition produced, recognizing the current frame when the
+     *  catalog has no result for it yet. Null when recognition cannot run (a background window,
+     *  no scoped window, a protected frame) — the click is blind then. [root], when the caller
+     *  already read the scoped (else foreground) window's tree, spares it another read. */
+    private fun recognizedFrame(root: UiNode? = null): List<OcrText>? {
         if (policy == null) return null
         val win = runCatching {
             if (scope != null) scopedWindow() else windows().firstOrNull { it.foreground }
         }.getOrNull() ?: return null
         if (!win.foreground) return null
         val tree = root ?: runCatching { device.windowRoot(win.id) }.getOrNull() ?: return null
-        val line = recognizeFrame(tree).at(r.centerX, r.centerY) ?: return null
-        return OcrTextNode(line.text, line.rect, line.confidence)
+        return recognizeFrame(tree)
     }
 
     // ---- control frames (busy, exemptions) ------------------------------------------

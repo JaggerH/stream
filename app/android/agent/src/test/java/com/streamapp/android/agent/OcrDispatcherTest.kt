@@ -182,6 +182,10 @@ class OcrDispatcherTest {
         val e = err("click", tapOnAdd)
         assertEquals("approval-required", e.errorCode)
         assertTrue(reasons(e).contains("commit-unrecognized"))
+        // The receipt says what the text tier saw, so a real-device ask can be read back later.
+        val note = e.semantics!!.getJSONObject("ocr")
+        assertEquals(true, note.getBoolean("ran"))
+        assertEquals(0, note.getInt("texts"))
         assertFalse(dev.log.any { it.startsWith("tap") })
     }
 
@@ -212,6 +216,83 @@ class OcrDispatcherTest {
         ))
         call("click", tapOnAdd)
         assertTrue(dev.log.toString(), "tap 400,2060 long=false" in dev.log)
+    }
+
+    // ---- a spec sheet drawn on a canvas ----------------------------------------------
+
+    /** The tap a model sends for a sheet's bottom bar: one rect over the button, whose centre is
+     *  on no glyph — the label is drawn to one side of it, as a canvas button's often is. */
+    private val barTap = """{"rect":{"x":20,"y":1150,"w":680,"h":110}}"""
+    private val cartLine = OcrText("加入购物车", Rect(40, 1140, 200, 60), 0.9)
+    private val confirmLine = OcrText("确定", Rect(480, 1140, 120, 60), 0.9)
+    private val buyLine = OcrText("立即购买", Rect(480, 1140, 200, 60), 0.9)
+    private val priceLine = OcrText("¥299", Rect(40, 300, 160, 50), 0.9)
+
+    @Test fun aLabelInsideTheTappedRectCountsThoughItsCentreMissesIt() {
+        ocr.lines = listOf(cartLine)
+        start(canvas())
+        call("click", barTap)
+        assertTrue(dev.log.toString(), "tap 360,1205 long=false" in dev.log)
+    }
+
+    @Test fun aSpecSheetsConfirmBesideTheCartRuns() {
+        ocr.lines = listOf(cartLine, confirmLine)
+        start(canvas())
+        call("click", barTap)
+        assertTrue(dev.log.toString(), "tap 360,1205 long=false" in dev.log)
+    }
+
+    @Test fun theCartButtonRunsEvenWithAPriceOnTheSheet() {
+        ocr.lines = listOf(cartLine, priceLine)
+        start(canvas())
+        call("click", barTap)
+        assertTrue(dev.log.toString(), "tap 360,1205 long=false" in dev.log)
+    }
+
+    @Test fun aConfirmOnASheetThatShowsAnAmountAsks() {
+        ocr.lines = listOf(confirmLine, priceLine)
+        start(canvas())
+        val e = err("click", barTap)
+        assertEquals("approval-required", e.errorCode)
+        assertTrue(reasons(e).contains("payment-label"))
+        assertFalse(dev.log.any { it.startsWith("tap") })
+    }
+
+    @Test fun aConfirmBesideABuyButtonStillAsks() {
+        ocr.lines = listOf(confirmLine, buyLine.copy(rect = Rect(40, 900, 200, 60)))
+        start(canvas())
+        val e = err("click", barTap)
+        assertEquals("approval-required", e.errorCode)
+        assertTrue(reasons(e).contains("commit-unrecognized"))
+        assertFalse(dev.log.any { it.startsWith("tap") })
+    }
+
+    @Test fun aBuyButtonInsideTheTappedRectAsksAsACommit() {
+        ocr.lines = listOf(buyLine)
+        start(canvas())
+        val e = err("click", barTap)
+        assertEquals("approval-required", e.errorCode)
+        assertTrue(reasons(e).containsAll(listOf("commit-label", "payment-label")))
+        assertFalse(dev.log.any { it.startsWith("tap") })
+    }
+
+    @Test fun aSelfDrawnConfirmOutsideTheMoneyAppsRunsAsBefore() {
+        // The conservative default for a lone 确定 is the blind rule's, scoped like it: an app
+        // where money or goods do not change hands keeps the tap it had.
+        ocr.lines = listOf(confirmLine)
+        start(canvas(), pkg = "com.example.app", title = "Some App")
+        call("click", barTap)
+        assertTrue(dev.log.toString(), "tap 360,1205 long=false" in dev.log)
+    }
+
+    @Test fun aBarHoldingTheCartAndTheBuyButtonAsks() {
+        // The caller's rect spans both buttons: the commit-shaped label under it decides, one card.
+        ocr.lines = listOf(cartLine, buyLine)
+        start(canvas())
+        val e = err("click", barTap)
+        assertEquals("approval-required", e.errorCode)
+        assertTrue(reasons(e).contains("commit-label"))
+        assertFalse(dev.log.any { it.startsWith("tap") })
     }
 
     @Test fun invokingAnOcrRefTapsItsCentre() {

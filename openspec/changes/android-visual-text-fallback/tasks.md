@@ -34,3 +34,19 @@
       模型体积与首次下载；`src/replay/desktop-driver.ts` 的可选类型
 - [x] 11. `THIRD-PARTY-NOTICE` / `NOTICE`
 - [x] 12. `:agent:testDebugUnitTest` 全量 + `pnpm -r typecheck`；环境性基线失败单列
+
+## 计划 4：自绘弹层整块读字
+
+- [x] 13. `Ocr.kt`：`List<OcrText>.under(rect)` —— 与 rect 的重叠达到两者中较小者一半的行才算
+      落在 rect 里（小块点在大标签上取标签，大 rect 取它装下的每一行，只擦边的行不算）
+- [x] 14. `Dispatcher`：坐标点按改读落点 rect 里的**所有**行（不再只看中心像素），每行的文字
+      交给闸分别判定，整帧文字作为「屏幕」上下文；点按回执与 `approval-required` 回执都带
+      `ocr`（只带 ran / cached / texts / error，不带识别出的文字）
+- [x] 15. 闸：`TextTier`（rect 内的行 + 整帧文字）；加购词表（`cjkCartWords` / `cartPhrases`）
+      与 `Detect.isCartLabel` / `mentionsCart`；加购行一律不出卡，单独的「确定」在有金额时
+      按 `payment-label`、在只见加购不见提交字样且无金额时放行、其余保持 `commit-unrecognized`
+- [x] 16. 单测：rect 里但不在中心的标签照样判定；规格弹层「确定」（屏上有加入购物车、无提交
+      字样无金额）放行；带金额的「确定」出卡；「立即购买」出卡；同屏有「立即购买」时「确定」
+      出卡；rect 同时压住加购与立即购买时出卡；OCR 空仍是 `commit-unrecognized`；有名字的
+      无障碍「加入购物车」行为不变；回执带 `ocr`
+- [x] 17. `docs/API.md` 与 openspec（本变更）同步

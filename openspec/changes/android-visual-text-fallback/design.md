@@ -50,13 +50,29 @@ therefore slower, and its cost is visible in `timing.ocrMs`.
 |---|---|
 | a named accessibility node | unchanged (existing tables and structure) |
 | a structural accessibility node without a name (input / list / tab) | unchanged (not a commit) |
-| no named node, OCR text at the point | the OCR text through `commit` / `payment` / `claim` / install / call / setting, with `control.role = "ocr-text"` |
+| no named node, OCR text inside the rect | every line drawn inside the tapped rect is judged on its own through `commit` / `payment` / `claim` / install / call / setting, with `control.role = "ocr-text"`; the frame's whole text stands in for the screen those tables read (an amount, a cart offer, a commit question) |
+| … a cart line (「加入购物车」/「加购」/ "add to cart") | no reason — a free step, whether or not the sheet shows a price |
+| … a lone affirmative (「确定」/「确认」) in `shopping` / `payments` / `finance` | `payment-label` when an amount is under the rect or on the screen; free when the frame offers a cart and names no commit and no amount (a spec sheet's own 确定); `commit-unrecognized` otherwise |
 | neither (blind) | `shopping` / `payments` / `finance` app → `commit-unrecognized` (`approval-required`); any other app → no reason, as before |
 | OCR cannot run (no models, protected frame, engine error) | the click is blind: same blind row (fail-safe, one extra approval at worst) |
 
-`safe labels` for the scenario: 「加入购物车」 does not gate; 「提交订单」「立即支付」「立即购买」
-「领券购买」 do (the last one because a claim that also names a purchase is a commit, the existing
-claim rule, not a special case).
+The rect, not its centre pixel, is what step 2 reads. A canvas button's label is drawn somewhere
+inside the button — left-aligned, above the vertical centre, or in a glyph box shorter than the
+button — so a rect the caller sends over the button can have its centre on blank pixels while the
+label sits inside it. Reading only the centre pixel turns that into a blind click and an extra
+approval on a button the pixels do name. A line counts when it and the rect overlap over at
+least half of the smaller of the two: a small tap inside a big label takes the label, a wide rect
+takes every label it holds, and a line that only touches the edge does not. The lines are judged
+one by one rather than joined into one string — concatenating 「加入购物车」 and 「立即购买」 would
+read as neither label and hide the commit.
+
+`safe labels` for the scenario: 「加入购物车」/「加购」 does not gate, with or without a price on
+the sheet; 「提交订单」「立即支付」「立即购买」「领券购买」 do (the last one because a claim that
+also names a purchase is a commit, the existing claim rule, not a special case). A bare 「确定」
+in a shopping, payments or finance app is the sheet's own confirmation only when the frame shows
+a cart and no commit word and no amount; a sheet that also shows 「立即购买」 or a price makes the
+same 确定 a purchase step. Outside those categories the lone 确定 runs as before, the same scope
+the blind rule has.
 
 ## Categories
 

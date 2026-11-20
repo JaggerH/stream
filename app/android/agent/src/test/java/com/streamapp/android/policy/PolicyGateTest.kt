@@ -314,6 +314,12 @@ class PolicyGateTest {
         }
     }
 
+    @Test fun aVisibleCartButtonRunsFree() {
+        setUpApp("com.example.shop", "商店", root = single(button("加入购物车")))
+        call("invoke", """{"ref":"${ref("Button", 1800)}"}""")
+        assertTrue("click 加入购物车" in dev.log)
+    }
+
     // ---- the four checks ------------------------------------------------------------
 
     @Test fun approvalThenResendExecutesExactlyOnce() {

@@ -125,6 +125,16 @@
   "закрыть",
   "назад"
  ],
+ "cartPhrases": [
+  "add to cart",
+  "add to bag",
+  "add to basket",
+  "add to trolley",
+  "ajouter au panier",
+  "añadir al carrito",
+  "agregar al carrito",
+  "in den warenkorb"
+ ],
  "cjkAffirmatives": [
   "确定",
   "好",
@@ -170,6 +180,18 @@
   "返回",
   "キャンセル",
   "취소"
+ ],
+ "cjkCartWords": [
+  "加入购物车",
+  "加入購物車",
+  "添加购物车",
+  "添加購物車",
+  "放入购物车",
+  "放入購物車",
+  "加购",
+  "加購",
+  "カートに入れる",
+  "장바구니담기"
  ],
  "cjkClaimExceptions": [
   "开通",

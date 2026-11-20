@@ -106,6 +106,32 @@ internal fun List<OcrText>.at(x: Int, y: Int): OcrText? =
     filter { x >= it.rect.x && x < it.rect.x + it.rect.w && y >= it.rect.y && y < it.rect.y + it.rect.h }
         .minByOrNull { it.rect.w.toLong() * it.rect.h.toLong() }
 
+/**
+ * The lines drawn inside [r] — the area the caller tapped, not just its centre pixel. A canvas
+ * button's label is drawn somewhere within the button, and the centre of the tapped rect can miss
+ * every glyph (padding, a label aligned to one side, a text box shorter than the button); the
+ * pixel rule would then call the tap blind though the button is right there, named in pixels.
+ *
+ * A line counts when it and [r] overlap over at least half of the smaller of the two, so a small
+ * tap inside a big label takes the label, a big rect takes every label it holds, and a line that
+ * merely touches the edge does not.
+ */
+internal fun List<OcrText>.under(r: Rect): List<OcrText> {
+    val area = r.w.toLong() * r.h.toLong()
+    if (area <= 0) return emptyList()
+    return filter { t ->
+        val line = t.rect.w.toLong() * t.rect.h.toLong()
+        line > 0 && 2 * overlap(t.rect, r) >= minOf(line, area)
+    }
+}
+
+/** The area two rects share, in px²; 0 when they do not overlap. */
+private fun overlap(a: Rect, b: Rect): Long {
+    val w = minOf(a.x + a.w, b.x + b.w) - maxOf(a.x, b.x)
+    val h = minOf(a.y + a.h, b.y + b.h) - maxOf(a.y, b.y)
+    return if (w > 0 && h > 0) w.toLong() * h.toLong() else 0L
+}
+
 /** A synthetic root so the ordinary query walk can search OCR lines like a window's tree. */
 internal class OcrRoot(private val texts: List<UiNode>, private val bounds: Rect) : UiNode {
     override val role: String = "ocr-root"

@@ -19,6 +19,7 @@ internal class Detect(private val w: Words) {
     val callPhrases = w.callPhrases.map { tokenize(it) }
     private val claimWords = w.claimWords
     private val claimPhrases = w.claimPhrases.map { tokenize(it) }
+    private val cartPhrases = w.cartPhrases.map { tokenize(it) }
     private val cancelSingles = w.cancelWords.filter { !it.contains(' ') }.toSet()
     private val cancelPhrases = w.cancelWords.filter { it.contains(' ') }.map { tokenize(it) }
 
@@ -224,6 +225,18 @@ internal class Detect(private val w: Words) {
     /** A claim that costs nothing: not a commit, not a payment. The caller still gates a claim on
      *  a screen that asks a commit question (a payment confirmation dialog). */
     fun isClaimLabel(label: String): Boolean = namesClaim(label) && !claimNamesPayment(label)
+
+    // ---- cart -----------------------------------------------------------------------
+
+    /** Whether a text offers a cart action anywhere — a screen, not just one button. A
+     *  confirmation button on such a screen is the sheet's own 「确定」 rather than a purchase
+     *  step; a cart button itself is a free step that moves no money (「加入购物车」/「加购」/
+     *  "add to cart"). */
+    fun mentionsCart(text: String): Boolean {
+        if (text.isEmpty()) return false
+        if (hasCJK(text)) return containsAny(cjkCore(text), w.cjkCartWords)
+        return containsPhrase(labelWords(text), cartPhrases)
+    }
 
     /** Whether a commit's label moves money by itself: pays, buys, sells, swaps, lends, borrows. */
     fun movesMoney(label: String): Boolean {
