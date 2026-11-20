@@ -80,6 +80,31 @@ jobs:
           targets: aarch64-apple-darwin
       - run: cargo check --target aarch64-apple-darwin --manifest-path app/host-agent/Cargo.toml
 
+  # The iOS device agent's protocol, gate, refs and approvals run on a host. The second step
+  # also compiles the idevice-backed transport, so a break in the pinned dependency fails here
+  # instead of at app build time.
+  ios-agent:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo test --manifest-path app/ios-agent/core/Cargo.toml
+      - run: cargo test --manifest-path app/ios-agent/core/Cargo.toml --features device
+
+  # The same library for the phone target. A library build produces an rlib and does not link,
+  # so no Xcode SDK is needed here; linking the app is the app shell's release job. The macOS
+  # runner is used because the Apple target's std and flags are native there.
+  ios-agent-ios-check:
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios
+      - run: cargo build --target aarch64-apple-ios --features device --manifest-path app/ios-agent/core/Cargo.toml
+
   # `hosts/<宿主>/` 各自带一套 npm 依赖（不在 pnpm workspace 里，见 hosts/README.md），所以单开
   # 一个 job。加一个宿主目录就往 matrix 加一行——`src/hosts-boundary.guard.test.ts` 断言每个
   # `hosts/*` 都有 `test` 与 `typecheck` 两个脚本，这个 job 就按这两个固定名字调用。

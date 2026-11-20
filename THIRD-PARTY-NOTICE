@@ -10,6 +10,13 @@ one-time-code and exclusion words in eleven UI languages) in
 `app/android/app/src/main/java/com/streamapp/android/policy/`.
 Source and license: https://github.com/DIYgod/pinky (Apache-2.0).
 
+## idevice — MIT
+
+The iOS device agent core (`app/ios-agent/core`) links idevice 0.1.68, pinned exactly, for the
+developer-service transport (RSD/RemoteXPC, CoreDevice HID, display stream, pasteboard,
+screenshot and app services).
+Source and license: https://github.com/jkcoxson/idevice (MIT).
+
 ## Tesseract4Android, Tesseract, Leptonica — Apache-2.0 / BSD-2-Clause
 
 The Android agent's on-device text recognition (capability `ui.ocr`) links

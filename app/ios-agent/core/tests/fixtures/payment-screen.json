@@ -1,0 +1,60 @@
+{
+  "app": {
+    "package": "com.taobao.taobao4iphone",
+    "name": "淘宝"
+  },
+  "root": {
+    "role": "Window",
+    "name": "",
+    "rect": {
+      "x": 0,
+      "y": 0,
+      "w": 390,
+      "h": 844
+    },
+    "children": [
+      {
+        "role": "StaticText",
+        "name": "购物车",
+        "rect": {
+          "x": 20,
+          "y": 60,
+          "w": 350,
+          "h": 30
+        }
+      },
+      {
+        "role": "StaticText",
+        "name": "合计 ¥12.80",
+        "rect": {
+          "x": 20,
+          "y": 640,
+          "w": 350,
+          "h": 30
+        }
+      },
+      {
+        "role": "Button",
+        "name": "立即支付",
+        "rect": {
+          "x": 20,
+          "y": 700,
+          "w": 350,
+          "h": 44
+        },
+        "clickable": true
+      },
+      {
+        "role": "Button",
+        "name": "取消",
+        "rect": {
+          "x": 20,
+          "y": 760,
+          "w": 160,
+          "h": 40
+        },
+        "clickable": true
+      }
+    ]
+  }
+}
