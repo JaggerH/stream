@@ -38,3 +38,28 @@
 - [ ] 23. UIPI：管理员权限窗口 `PERM_DENIED` → 回落路径如实报错
 - [ ] 24. 单 op 启动开销：`status` / `snapshot` 冷启动 p95 < 500ms（超了换 batch / 常驻再量）
 - [ ] 25. 2-3 条现有桌面 recipe 双路对跑（含一条 PostMessage 路），一致率与回落率按回落日志统计
+
+## 计划 5：macOS 委托（本 change 的第二平台）
+
+- [x] 26. 委托层泛化：`AgentDesktopBackend<D>` 组合任意 `Desktop`；平台差异收敛为 `Profile`
+      （role 表、name 来源、className、read:value、权限策略、回执 native 标记）
+- [x] 27. macOS role 表与反向表（只放上游会给 ref 的角色；原生 AX 名不经委托）+ 单测
+- [x] 28. macOS 的 name 三来源 / `AXIdentifier` 当 className / `read:value` 读 `AXValue` + 单测
+- [x] 29. `PERM_DENIED` 在 macOS 整会话降级（本 op 回落 + 本会话不再起 CLI + 一行日志，
+      不弹窗不报错）；Windows 保持逐 op 回落 + 两个方向的单测
+- [x] 30. 回落重新定位在 macOS 按 profile 反查 role（多对一的不猜，退化成按名字 + 唯一命中）
+- [x] 31. `main.rs` 的 macOS `Backend` 换成委托层；trait 默认方法（`nudge_input` /
+      `ocr_engine_info` / `ensure_app` / `browser_*`）转发给 inner
+- [x] 32. release-desktop macOS job 下载 arm64 / x64 的 agent-desktop 包、核 checksums、
+      落 `bin/agent-desktop` 与 `bin/agent-desktop-macos-helper`；两个 darwin 平台包
+      `files` 白名单加行；prepack 闸 `DESKTOP_PLATFORM_FILES` 同步（一并补上 Windows
+      漏掉的 `bin/agent-desktop.exe`）
+- [x] 33. `THIRD-PARTY-NOTICE` 的 agent-desktop 条目补平台说明
+- [x] 34. 常规 test 流程加 macOS target 的交叉 `cargo check`（不链接）
+- [ ] 35. macOS 真机验收（另行组织，清单见 design §12）：授权与缺授权降级、不抢前台点击、
+      set-value 回读、role 映射对比、回落与歧义、锁屏、文件选择面板、启动开销、双路对跑
+- [ ] 36. 后续（非本批）：不带 role 的 `readSubtree` 在委托路径只返回可寻址节点（上游 ref
+      规则），若真机上缺口明显，让读路径不要求 ref（`find` 仍必须要求）
+- [x] 37. 修基线非 Linux 构建：`run_session` 的 `device::OP_HTTP_FETCH` 补 `cfg(target_os =
+      "linux")`（`mod device` 的门同一条）——基线 33e9af3 的 Windows 交叉 check 本来就是
+      红的（E0433），macOS 闸也会被同一处挡住；Linux 行为不变
