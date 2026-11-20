@@ -82,7 +82,13 @@ export {
   ANDROID_OP_NAMES,
   AndroidUnsupportedOpError,
   AndroidUnsupportedCapabilityError,
+  DEVICE_WIRE_OPS,
   makeAndroidDriver,
+  wireActionOf,
+  wireArgsFor,
+  wireNamesFor,
+  wireOpName,
+  windowIdentity,
 } from '../replay/android-driver.ts'
 export type {
   AndroidActOutcome,
@@ -96,6 +102,8 @@ export type {
   AndroidScrollOptions,
   AndroidScrollReceipt,
   AndroidWindow,
+  DeviceWireAction,
+  DeviceWindowIdentity,
 } from '../replay/android-driver.ts'
 export { ANDROID_STEP_KINDS, validateAndroidRecipe } from '../replay/android-recipe.ts'
 export type {

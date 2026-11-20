@@ -128,8 +128,12 @@ export interface AndroidDriver {
  * agent written against the shared action vocabulary declares instead (the iOS agent declares
  * `tap`, `openApp` and `setText`, not the Android aliases). Which one is sent follows the op set
  * the device declared in its hello; a device that declares neither is refused before the wire.
+ *
+ * Exported as part of the public entry so an embedder drives a device from the same table instead
+ * of keeping a copy that can drift. Look actions up through {@link wireNamesFor} /
+ * {@link wireOpName}; the object is plain, typed data.
  */
-const WIRE = {
+export const DEVICE_WIRE_OPS = {
   tap: ['click', 'tap'],
   longPress: ['longPress'],
   swipe: ['swipe'],
@@ -146,6 +150,101 @@ const WIRE = {
   scopeWindow: ['scopeWindow'],
   readSubtree: ['readSubtree'],
 } as const
+
+/** A normalized action in {@link DEVICE_WIRE_OPS}. */
+export type DeviceWireAction = keyof typeof DEVICE_WIRE_OPS
+
+const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v)
+
+/**
+ * The canonical action for a name in either vocabulary (`tap` or `click`, `setText` or `setValue`,
+ * `openApp` or `focusApp`), or undefined for a name outside the table. Callers that keep the
+ * Android spelling internally can pass it straight through.
+ */
+export function wireActionOf(action: string): DeviceWireAction | undefined {
+  if (Object.hasOwn(DEVICE_WIRE_OPS, action)) return action as DeviceWireAction
+  for (const [canonical, names] of Object.entries(DEVICE_WIRE_OPS)) {
+    if ((names as readonly string[]).includes(action)) return canonical as DeviceWireAction
+  }
+  return undefined
+}
+
+/** Every wire spelling of an action, preferred first; `[]` = a name outside the table. Accepts
+ *  either vocabulary (`tap` / `click`, …). */
+export function wireNamesFor(action: string): readonly string[] {
+  const canonical = wireActionOf(action)
+  return canonical ? DEVICE_WIRE_OPS[canonical] : []
+}
+
+const declarationHas = (declared: ReadonlySet<string> | readonly string[]) =>
+  Array.isArray(declared)
+    ? (name: string) => declared.includes(name)
+    : (name: string) => (declared as ReadonlySet<string>).has(name)
+
+/**
+ * The wire op name to send for a normalized action: the first spelling the device declared in its
+ * hello, in preference order. Without a declaration the preferred (Android) spelling is returned;
+ * with a declaration that matches neither spelling the answer is undefined and the caller
+ * must refuse before the wire. A raw op name outside the normalized table passes through as its own
+ * spelling (and is still refused when the device did not declare it).
+ */
+export function wireOpName(
+  action: string,
+  declared?: ReadonlySet<string> | readonly string[] | undefined,
+): string | undefined {
+  const names = wireNamesFor(action)
+  // A raw op name outside the normalized table (`invoke`, `status`, …) has exactly one spelling:
+  // it passes through when the device declares it, and is refused when it does not.
+  if (names.length === 0) {
+    if (!declared) return action
+    return declarationHas(declared)(action) ? action : undefined
+  }
+  if (!declared) return names[0]!
+  const has = declarationHas(declared)
+  return names.find((name) => has(name)) ?? undefined
+}
+
+/**
+ * Arguments for the spelling chosen by {@link wireOpName}. The two open-app spellings disagree:
+ * `focusApp` names the app through `{ match: { process } }`, the normalized `openApp` takes
+ * `{ package }`. Every other action shares one argument shape and is returned untouched.
+ */
+export function wireArgsFor(
+  action: string,
+  wire: string,
+  args?: Record<string, unknown>,
+): Record<string, unknown> | undefined {
+  if (wireActionOf(action) !== 'openApp' || wire !== 'openApp' || !args) return args
+  const match = args.match
+  if (!isRecord(match) || typeof match.process !== 'string' || match.process === '') return args
+  const { match: _match, ...rest } = args
+  void _match
+  return { package: match.process, ...rest }
+}
+
+/**
+ * Window-row identity across surfaces: the Android agent names the foreground app `process` and
+ * marks the foreground row `foreground`; the iOS agent uses `app` and `focused`. Embedders read
+ * both through this one function instead of carrying their own aliases.
+ */
+export interface DeviceWindowIdentity {
+  app: string | undefined
+  foreground: boolean
+}
+
+export function windowIdentity(row: unknown): DeviceWindowIdentity {
+  const r = isRecord(row) ? row : {}
+  const app =
+    typeof r.process === 'string' && r.process !== ''
+      ? r.process
+      : typeof r.app === 'string' && r.app !== ''
+        ? r.app
+        : undefined
+  // `focused` is the iOS spelling; only trust it when the row has no `process` at all (an Android
+  // row with a stray focused flag is still not the foreground window).
+  const foreground = r.foreground === true || (r.process === undefined && r.focused === true)
+  return { app, foreground }
+}
 
 const outcome = (v: unknown): AndroidActOutcome => {
   const raw = v as
@@ -199,15 +298,14 @@ function parseFind(v: unknown): AndroidFindResult {
 export function makeAndroidDriver(ops: AndroidOps, opts: AndroidDriverOptions = {}): AndroidDriver {
   const declared = opts.ops
   const caps = opts.caps
-  const wireOf = (action: keyof typeof WIRE): string => {
-    const names = WIRE[action]
-    if (!declared) return names[0]
-    const hit = names.find((n) => declared.has(n))
+  const wireOf = (action: DeviceWireAction): string => {
+    const names = DEVICE_WIRE_OPS[action]
+    const hit = wireOpName(action, declared)
     // Name the preferred spelling: that is the one an older caller would have expected to work.
     if (!hit) throw new AndroidUnsupportedOpError(names[0])
     return hit
   }
-  const send = async (action: keyof typeof WIRE, args?: Record<string, unknown>): Promise<unknown> => {
+  const send = async (action: DeviceWireAction, args?: Record<string, unknown>): Promise<unknown> => {
     return ops(wireOf(action), args)
   }
   const requireCap = (id: string, needed: number): void => {
@@ -230,9 +328,7 @@ export function makeAndroidDriver(ops: AndroidOps, opts: AndroidDriverOptions = 
       // The Android agent names the app through `match.process`; the normalized op takes the
       // identifier itself (`package`) — on a phone that identifier is the bundle id.
       const wire = wireOf('openApp')
-      const args = wire === 'focusApp'
-        ? { match: { process: packageName }, ...(fresh ? { fresh: true } : {}) }
-        : { package: packageName, ...(fresh ? { fresh: true } : {}) }
+      const args = wireArgsFor('openApp', wire, { match: { process: packageName }, ...(fresh ? { fresh: true } : {}) })
       const r = (await ops(wire, args)) as boolean | { ok?: boolean }
       return typeof r === 'boolean' ? r : r?.ok === true
     },

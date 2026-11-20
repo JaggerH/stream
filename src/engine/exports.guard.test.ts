@@ -65,6 +65,7 @@ describe('@streamapp/engine 公开面', () => {
         'CheckResult',
         'CreateStreamOptions',
         'CredentialVerdict',
+        'DEVICE_WIRE_OPS',
         'DeviceCapability',
         'DeviceCaps',
         'DeviceChange',
@@ -72,6 +73,8 @@ describe('@streamapp/engine 公开面', () => {
         'DeviceGatewayOptions',
         'DeviceOpSemantics',
         'DeviceSnapshot',
+        'DeviceWindowIdentity',
+        'DeviceWireAction',
         'Feature',
         'FeatureTest',
         'ForwardScope',
@@ -140,6 +143,11 @@ describe('@streamapp/engine 公开面', () => {
         'type WidgetManifest',
         'validateAndroidRecipe',
         'verifyForwardCredential',
+        'windowIdentity',
+        'wireActionOf',
+        'wireArgsFor',
+        'wireNamesFor',
+        'wireOpName',
       ].sort(),
     )
   })
