@@ -6,6 +6,7 @@
  */
 export {
   runAction,
+  runActionDetailed,
   actWithConfirm,
   EXPECT_DEADLINE_MS,
   type ActStatus,

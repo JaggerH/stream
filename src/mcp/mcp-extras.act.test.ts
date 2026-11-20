@@ -13,6 +13,43 @@ function fakeBoot() {
       if (method === 'Page.navigate') return { ok: true }
       if (method !== 'Runtime.evaluate') return { ok: true }
       const expr = String((params as { expression?: string } | undefined)?.expression ?? '')
+      // 可操作性检查：fake 页面上的目标永远可见、启用，落点 (10,20)。
+      if (expr.includes('checkVisibility'))
+        return {
+          result: {
+            value: {
+              found: true,
+              tag: 'button',
+              desc: '<button#go>',
+              visible: true,
+              hiddenBy: null,
+              zeroSize: false,
+              disabled: false,
+              disabledBy: null,
+              editable: true,
+              rect: { left: 0, top: 0, width: 20, height: 40 },
+              viewport: { w: 1280, h: 720 },
+            },
+          },
+        }
+      if (expr.includes('scrollIntoView'))
+        return {
+          result: {
+            value: {
+              found: true,
+              stable: true,
+              rect: { left: 0, top: 0, width: 20, height: 40 },
+              viewport: { w: 1280, h: 720 },
+              visibleRect: { left: 0, top: 0, width: 20, height: 40 },
+            },
+          },
+        }
+      if (expr.includes('elementFromPoint')) return { result: { value: { ok: true } } }
+      if (expr.includes('window.__streamActionTap || null')) return { result: { value: { trusted: true } } }
+      if (expr.includes('__streamActionTapOff')) return { result: { value: true } }
+      if (expr.includes('__streamActionTarget') && expr.includes('el.focus()')) return { result: { value: { ok: true } } }
+      if (expr.includes('__streamActionTarget') && expr.includes('isContentEditable'))
+        return { result: { value: { ok: true } } }
       if (expr.includes('getBoundingClientRect')) return { result: { value: { x: 10, y: 20 } } }
       if (expr.includes('innerWidth')) return { result: { value: { x: 640, y: 400 } } }
       if (expr.includes('readyState')) return { result: { value: { href, state: 'complete' } } }

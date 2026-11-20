@@ -4,6 +4,7 @@ import { makeExtPageDriver, makeExtRawPage } from './browser-ext-drive.ts'
 import { actWithConfirm } from './run-action.ts'
 import { runLogin, type SecretSource } from '../../shared/browser-relay/secret-fill.ts'
 import { needsConfirmation, classifyAction, type ActResult, type LaneAction, type LaneMode } from './interactive-gate.ts'
+import { isActionFailureCode } from '../../shared/browser-relay/actionability.ts'
 import {
   evalInFrame,
   frameOfRef,
@@ -125,7 +126,7 @@ export class InteractiveLane {
     const since = Date.now()
     // action→observe：带了 expect 就点完确认它出现（confirmed / acted-unconfirmed），否则 done。
     const r = await actWithConfirm(driver, action)
-    if (!MAY_OPEN_TAB.has(action.kind) || r.status === 'not-found' || !this.relay.openedSince) return r
+    if (!MAY_OPEN_TAB.has(action.kind) || isActionFailureCode(r.status) || !this.relay.openedSince) return r
     // 预期已经在原标签里兑现 → 只看已经到了的，不再等（页面显然是就地变的）。
     const opened = await this.relay.openedSince(action.tabId, since, r.status === 'confirmed' ? 0 : OPENED_WAIT_MS)
     if (!opened.length) return r

@@ -1,5 +1,6 @@
 import type { Scene } from '../replay/scene.ts'
 import type { InventoryItem } from './explore-graph.ts'
+import { isActionFailureCode } from '../../shared/browser-relay/actionability.ts'
 
 export type CdpVerbs = {
   look(a: { target: string; js?: string; inventory?: boolean }): Promise<unknown>
@@ -11,7 +12,7 @@ export interface ExploreSurface {
   readonly side: 'browser'
   url(): Promise<string>
   inventory(): Promise<InventoryItem[]>
-  /** 真点编号 ref。返回「点着了没」（`ActResult.status` 不是 not-found）。 */
+  /** 真点编号 ref。返回「点着了没」（`ActResult.status` 不是任何一种动作前失败）。 */
   click(ref: number): Promise<boolean>
   back(): Promise<void>
   /**
@@ -61,7 +62,7 @@ export function browserSurface(cdp: CdpVerbs, target: string): ExploreSurface {
     exists,
     async click(ref) {
       const r = (await cdp.act({ target, kind: 'click', ref, domain: await domain(), confirmed: true })) as { status?: string } | null
-      return !!r && r.status !== 'not-found'
+      return !!r && !isActionFailureCode(r.status)
     },
     async back() { await cdp.act({ target, kind: 'back', domain: await domain(), confirmed: true }) },
     async settle() {

@@ -12,6 +12,14 @@
  * {@link RawPageOptions}）。往这里加一个 `if (isPlugin)` 之前先想清楚:那就是漂移的起点。
  */
 import type { PageDriver, ScrollGeometry } from './page-driver.ts'
+import {
+  clearAction,
+  prepareClick,
+  prepareType,
+  readBackValue,
+  waitForTap,
+  type ActionReceipt,
+} from './actionability.ts'
 // type-only：编译期擦除，不进运行时闭包（`closure.test.ts` 只跟 value import）。
 import type { DebugEntry } from '../../src/debug.ts'
 
@@ -207,6 +215,10 @@ function samePage(a: string, b: string): boolean {
  */
 export type ExtPageDriver = PageDriver & {
   clickAt(x: number, y: number): Promise<void>
+  /** 带原因 / 送达确认的点击；`click` 只是它的布尔投影（false = 没操作成）。 */
+  clickReceipt(selector: string, position?: { x: number; y: number }): Promise<ActionReceipt>
+  /** 带原因 / 回读确认的写入；`type` 只是它的布尔投影（false = 没写进去）。 */
+  typeReceipt(selector: string, text: string, opts?: { readBack?: boolean }): Promise<ActionReceipt>
 }
 
 /**
@@ -272,6 +284,90 @@ export function makeExtPageDriver(raw: ExtRawPage, opts: ExtDriveOptions = {}): 
     raw.evalExpr<boolean>(
       `(()=>{const el=document.querySelector(${JSON.stringify(selector)}); if(el)el.focus(); return !!el;})()`,
     )
+
+  /**
+   * 带回执的点击：先做可操作性检查（存在 → 可见 → 启用 → 滚进视口 → 命中测试 → 节点未换），
+   * 任何一步不过就返回结构化失败，**一个输入事件都不发**。通过后才走可信三连，并在页面上
+   * 等一次可信 `click`：收不到只标 `delivery:'unconfirmed'`，不判失败、不重试。
+   *
+   * 旧 `click` 的布尔语义是这里的 `ok` 投影——`false` 仍然意味着「这一下没点成」，但需要原因
+   * 的调用方应当用这个详细版本。
+   */
+  const clickReceipt = async (selector: string, position?: { x: number; y: number }): Promise<ActionReceipt> => {
+    const deadline = Date.now() + CLICK_WAIT_MS
+    for (let attempt = 0; attempt < 2; attempt++) {
+      let prep = await prepareClick(raw, selector, position)
+      // 元素迟到几轮才出现（表单的下一个控件等上一个 resolve）——轮询，别把「还没出来」
+      // 当成「不存在」。其余失败是当场结论，不轮询。
+      while (!prep.ok && prep.reason.code === 'not-found' && Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 150))
+        prep = await prepareClick(raw, selector, position)
+      }
+      if (!prep.ok) {
+        await clearAction(raw).catch(() => {})
+        if (prep.reason.code === 'detached' && attempt === 0) continue
+        return { ok: false, reason: prep.reason }
+      }
+      try {
+        await clickAt(prep.point.x, prep.point.y)
+        const delivery = await waitForTap(raw)
+        return { ok: true, delivery, point: prep.point }
+      } finally {
+        // 页面可能已经跳走（点击打开了链接）——收尾失败不该盖掉点击本身的结论。
+        await clearAction(raw).catch(() => {})
+      }
+    }
+    return { ok: false, reason: { code: 'detached', reason: `元素在动作发出前被反复替换：${selector}` } }
+  }
+
+  /**
+   * 带回执的写入。中继没有单独的 `fill` 动词：`type` 就是「聚焦 + 全选 + insertText」这条
+   * 填写路径，可操作性检查与回读都在这一个入口上。写入后回读同一节点的值，不一致即
+   * `value-mismatch`（只回比较结果，不回值本身）。
+   */
+  const typeReceipt = async (
+    selector: string,
+    text: string,
+    opts: { readBack?: boolean } = {},
+  ): Promise<ActionReceipt> => {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const prep = await prepareType(raw, selector)
+      if (!prep.ok) {
+        await clearAction(raw).catch(() => {})
+        if (prep.reason.code === 'detached' && attempt === 0) continue
+        return { ok: false, reason: prep.reason }
+      }
+      try {
+        // 先可信全选:`insertText` 替换选区,所以复用的输入框(持久 tab、第二次搜索)不会把新值
+        // 追加在旧值后面。
+        const ctrl = { key: 'Control', code: 'ControlLeft', windowsVirtualKeyCode: 17, nativeVirtualKeyCode: 17 }
+        const a = { key: 'a', code: 'KeyA', windowsVirtualKeyCode: 65, nativeVirtualKeyCode: 65, modifiers: 2 }
+        await raw.cdp('Input.dispatchKeyEvent', { type: 'keyDown', ...ctrl })
+        await raw.cdp('Input.dispatchKeyEvent', { type: 'keyDown', ...a })
+        await raw.cdp('Input.dispatchKeyEvent', { type: 'keyUp', ...a })
+        await raw.cdp('Input.dispatchKeyEvent', { type: 'keyUp', ...ctrl })
+        await raw.cdp('Input.insertText', { text })
+        // 秘密填入（login）显式关掉回读：值只许出现在 `Input.insertText` 的参数里，回读会把
+        // 它嵌进一条 Runtime.evaluate。普通 fill / type 默认回读。
+        if (opts.readBack === false) return { ok: true }
+        const read = await readBackValue(raw, selector, text)
+        if (read.detached) {
+          if (attempt === 0) continue
+          return { ok: false, reason: { code: 'detached', reason: `元素在写入过程中被替换：${selector}` } }
+        }
+        if (!read.ok) {
+          return {
+            ok: false,
+            reason: { code: 'value-mismatch', reason: `写入后回读的值与写入值不一致（${selector}）` },
+          }
+        }
+        return { ok: true }
+      } finally {
+        await clearAction(raw).catch(() => {})
+      }
+    }
+    return { ok: false, reason: { code: 'detached', reason: `元素在写入前被反复替换：${selector}` } }
+  }
 
   return {
     clickAt,
@@ -366,26 +462,9 @@ export function makeExtPageDriver(raw: ExtRawPage, opts: ExtDriveOptions = {}): 
         )) ?? { scrollY: 0, viewportH: 0, scrollHeight: 0 }
       )
     },
+    clickReceipt,
     async click(selector: string, position?: { x: number; y: number }): Promise<boolean> {
-      // 读矩形再瞄准:`position` 是相对左上角的偏移,不给就是中心。偏移在**这里**换算(不在页内),
-      // 好让同一组数字在两条 transport 上意思一样。
-      const readRect = () =>
-        raw.evalExpr<{ left: number; top: number; width: number; height: number } | null>(
-          `(()=>{const el=document.querySelector(${JSON.stringify(
-            selector,
-          )});if(!el)return null;const r=el.getBoundingClientRect();return{left:r.left,top:r.top,width:r.width,height:r.height}})()`,
-        )
-      let rect = await readRect()
-      const deadline = Date.now() + CLICK_WAIT_MS
-      while (!rect && Date.now() < deadline) {
-        await new Promise((r) => setTimeout(r, 150))
-        rect = await readRect()
-      }
-      if (!rect) return false
-      const x = Math.floor(rect.left + (position ? position.x : rect.width / 2))
-      const y = Math.floor(rect.top + (position ? position.y : rect.height / 2))
-      await clickAt(x, y)
-      return true
+      return (await clickReceipt(selector, position)).ok
     },
     /**
      * 截一个元素。**先在页内把它画出来，画不出来才去截屏。**
@@ -460,18 +539,9 @@ export function makeExtPageDriver(raw: ExtRawPage, opts: ExtDriveOptions = {}): 
       // 历史、重新加载、还会被高危门当跨站拦),而调用方要的就是浏览器那个后退键。
       await raw.evalExpr('history.back()')
     },
+    typeReceipt,
     async type(selector: string, text: string): Promise<boolean> {
-      if (!(await focusAndFound(selector))) return false
-      // 先可信全选:`insertText` 替换选区,所以复用的输入框(持久 tab、第二次搜索)不会把新值
-      // 追加在旧值后面。
-      const ctrl = { key: 'Control', code: 'ControlLeft', windowsVirtualKeyCode: 17, nativeVirtualKeyCode: 17 }
-      const a = { key: 'a', code: 'KeyA', windowsVirtualKeyCode: 65, nativeVirtualKeyCode: 65, modifiers: 2 }
-      await raw.cdp('Input.dispatchKeyEvent', { type: 'keyDown', ...ctrl })
-      await raw.cdp('Input.dispatchKeyEvent', { type: 'keyDown', ...a })
-      await raw.cdp('Input.dispatchKeyEvent', { type: 'keyUp', ...a })
-      await raw.cdp('Input.dispatchKeyEvent', { type: 'keyUp', ...ctrl })
-      await raw.cdp('Input.insertText', { text })
-      return true
+      return (await typeReceipt(selector, text)).ok
     },
     async submit(selector: string): Promise<boolean> {
       if (!(await focusAndFound(selector))) return false

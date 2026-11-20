@@ -14,6 +14,7 @@
  * 会被认出是自动化）、goto 后轮询 readyState。
  */
 import type { ActionSpec } from './interactive-gate.ts'
+import { isActionFailureCode, type ActionFailureCode, type ActionReceipt } from './actionability.ts'
 import { waitForSelector, type PageDriver } from './page-driver.ts'
 
 /** click/type/submit 的目标是一个 CSS 选择器——「没找到」是这三个动作独有的、调用方必须知道
@@ -75,12 +76,36 @@ export async function runAction(driver: PageDriver, action: ActionSpec): Promise
   }
 }
 
+/**
+ * 与 {@link runAction} 相同，但把 click / type 的详细回执一起带出来。
+ *
+ * `runAction` 的返回值保持不变（click / type 仍是布尔，`false` = 这一下没做成）；需要失败码与
+ * `delivery` 的调用方用这一格。没有回执动词的 driver（cloak / Playwright）落回旧路径。
+ */
+export async function runActionDetailed(
+  driver: PageDriver,
+  action: ActionSpec,
+): Promise<{ value: unknown; receipt?: ActionReceipt }> {
+  if (action.kind === 'click' && driver.clickReceipt) {
+    if (!action.selector) throw new Error('click 动作缺 selector')
+    const receipt = await driver.clickReceipt(action.selector)
+    return { value: receipt.ok, receipt }
+  }
+  if (action.kind === 'type' && driver.typeReceipt) {
+    if (!action.selector) throw new Error('type 动作缺 selector')
+    if (!action.text) throw new Error('type 动作缺 text')
+    const receipt = await driver.typeReceipt(action.selector, action.text)
+    return { value: receipt.ok, receipt }
+  }
+  return { value: await runAction(driver, action) }
+}
+
 /** 默认确认窗口：动作完成后最多等这么久让预期特征出现，出现即返回。 */
 export const EXPECT_DEADLINE_MS = 3000
 const EXPECT_POLL_MS = 150
 
 /** 一次动作的成败。**`done` 不是"成功"，是"没让确认，所以不假装确认"。** */
-export type ActStatus = 'confirmed' | 'acted-unconfirmed' | 'done' | 'not-found'
+export type ActStatus = 'confirmed' | 'acted-unconfirmed' | 'done' | ActionFailureCode
 
 /**
  * 动作 + observe —— 这是 action→observe 的落点，所有 transport / 宿主共用一份。
@@ -100,16 +125,23 @@ export async function actWithConfirm(
   driver: PageDriver,
   action: ActionSpec,
   opts: { deadlineMs?: number; pollMs?: number } = {},
-): Promise<{ status: ActStatus; result: unknown }> {
-  const result = await runAction(driver, action)
+): Promise<{ status: ActStatus; reason?: string; delivery?: 'confirmed' | 'unconfirmed'; result: unknown }> {
+  const { value: result, receipt } = await runActionDetailed(driver, action)
+  // 可操作性检查的失败码原样上浮：页面没收到输入，不是「点着了但没反应」。`not-found` 与旧语义
+  // 完全重合，其余几个是新增的、有稳定名字的失败。
+  if (receipt && !receipt.ok) {
+    const code = receipt.reason && isActionFailureCode(receipt.reason.code) ? receipt.reason.code : 'not-found'
+    return { status: code, reason: receipt.reason?.reason, result: receipt }
+  }
   if (SELECTOR_TARGETED.has(action.kind) && result === false) {
     return { status: 'not-found', result }
   }
-  if (!action.expect) return { status: 'done', result }
+  const delivery = receipt?.delivery
+  if (!action.expect) return { status: 'done', result, ...(delivery ? { delivery } : {}) }
   // 同一个等待原语,recipe 的 step.expect 也走它——这里本来有一份一模一样的私有 waitForFeature。
   const ok = await waitForSelector(driver, action.expect, {
     timeout: opts.deadlineMs ?? EXPECT_DEADLINE_MS,
     pollMs: opts.pollMs ?? EXPECT_POLL_MS,
   })
-  return { status: ok ? 'confirmed' : 'acted-unconfirmed', result }
+  return { status: ok ? 'confirmed' : 'acted-unconfirmed', result, ...(delivery ? { delivery } : {}) }
 }

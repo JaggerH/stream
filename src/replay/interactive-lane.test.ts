@@ -45,6 +45,44 @@ function fakeDeps() {
       }
       if (method !== 'Runtime.evaluate') return { ok: true }
       const expr = String((params as { expression?: string } | undefined)?.expression ?? '')
+      // 可操作性检查：fake 页面上的目标永远可见、启用、可编辑，落点 (100,200)。
+      if (expr.includes('checkVisibility')) {
+        return {
+          result: {
+            value: {
+              found: true,
+              tag: 'button',
+              desc: '<button#go>',
+              visible: true,
+              hiddenBy: null,
+              zeroSize: false,
+              disabled: false,
+              disabledBy: null,
+              editable: true,
+              rect: { left: 60, top: 180, width: 80, height: 40 },
+              viewport: { w: 1280, h: 720 },
+            },
+          },
+        }
+      }
+      if (expr.includes('scrollIntoView')) {
+        return {
+          result: {
+            value: {
+              found: true,
+              stable: true,
+              rect: { left: 60, top: 180, width: 80, height: 40 },
+              viewport: { w: 1280, h: 720 },
+              visibleRect: { left: 60, top: 180, width: 80, height: 40 },
+            },
+          },
+        }
+      }
+      if (expr.includes('elementFromPoint')) return { result: { value: { ok: true } } }
+      if (expr.includes('window.__streamActionTap || null')) return { result: { value: { trusted: true } } }
+      if (expr.includes('__streamActionTapOff')) return { result: { value: true } }
+      if (expr.includes('__streamActionTarget') && expr.includes('el.focus()')) return { result: { value: { ok: true } } }
+      if (expr.includes('__streamActionTarget') && expr.includes('isContentEditable')) return { result: { value: { ok: true } } }
       // openItem/openTarget 问的是"中心点在哪"({x,y})；click 问的是整个 rect（它要按 position
       // 自己算落点）。两种形状同时给，谁问什么就有什么——中心恰好也是 (100,200)。
       if (expr.includes('getBoundingClientRect'))
@@ -287,6 +325,41 @@ describe('InteractiveLane — iframe', () => {
         if (method !== 'Runtime.evaluate') return {}
         const e: string = params.expression
         if (e.startsWith('!!document.querySelector')) return { result: { value: sessionId === 'S1' } }
+        if (e.includes('checkVisibility'))
+          return {
+            result: {
+              value: {
+                found: true,
+                tag: 'button',
+                desc: '<button>',
+                visible: true,
+                hiddenBy: null,
+                zeroSize: false,
+                disabled: false,
+                disabledBy: null,
+                editable: true,
+                rect: { left: 10, top: 20, width: 40, height: 20 },
+                viewport: { w: 1280, h: 720 },
+              },
+            },
+          }
+        if (e.includes('scrollIntoView'))
+          return {
+            result: {
+              value: {
+                found: true,
+                stable: true,
+                rect: { left: 10, top: 20, width: 40, height: 20 },
+                viewport: { w: 1280, h: 720 },
+                visibleRect: { left: 10, top: 20, width: 40, height: 20 },
+              },
+            },
+          }
+        if (e.includes('elementFromPoint')) return { result: { value: { ok: true } } }
+        if (e.includes('window.__streamActionTap || null')) return { result: { value: { trusted: true } } }
+        if (e.includes('__streamActionTapOff')) return { result: { value: true } }
+        if (e.includes('__streamActionTarget') && e.includes('el.focus()')) return { result: { value: { ok: true } } }
+        if (e.includes('__streamActionTarget') && e.includes('isContentEditable')) return { result: { value: { ok: true } } }
         if (e.includes('getBoundingClientRect')) return { result: { value: { left: 10, top: 20, width: 40, height: 20 } } }
         return { result: { value: null } }
       }),
@@ -332,6 +405,42 @@ describe('InteractiveLane.login（openspec secret-fill）', () => {
         if (method !== 'Runtime.evaluate') return {}
         const expr = String((params as { expression?: string }).expression ?? '')
         if (expr === 'performance.timeOrigin') return { result: { value: doc } }
+        if (expr.includes('checkVisibility'))
+          return {
+            result: {
+              value: {
+                found: true,
+                tag: 'input',
+                desc: '<input>',
+                visible: true,
+                hiddenBy: null,
+                zeroSize: false,
+                disabled: false,
+                disabledBy: null,
+                editable: true,
+                rect: { left: 60, top: 180, width: 80, height: 40 },
+                viewport: { w: 1280, h: 720 },
+              },
+            },
+          }
+        if (expr.includes('scrollIntoView'))
+          return {
+            result: {
+              value: {
+                found: true,
+                stable: true,
+                rect: { left: 60, top: 180, width: 80, height: 40 },
+                viewport: { w: 1280, h: 720 },
+                visibleRect: { left: 60, top: 180, width: 80, height: 40 },
+              },
+            },
+          }
+        if (expr.includes('elementFromPoint')) return { result: { value: { ok: true } } }
+        if (expr.includes('window.__streamActionTap || null')) return { result: { value: { trusted: true } } }
+        if (expr.includes('__streamActionTapOff')) return { result: { value: true } }
+        if (expr.includes('__streamActionTarget') && expr.includes('el.focus()')) return { result: { value: { ok: true } } }
+        if (expr.includes('__streamActionTarget') && expr.includes('isContentEditable'))
+          return { result: { value: { ok: true } } }
         if (expr.includes('getBoundingClientRect'))
           return { result: { value: { x: 100, y: 200, left: 60, top: 180, width: 80, height: 40 } } }
         if (expr.includes('innerWidth')) return { result: { value: { x: 640, y: 400 } } }

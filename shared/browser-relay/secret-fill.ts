@@ -143,9 +143,13 @@ export async function runLogin(driver: PageDriver, action: ActionSpec, deps: Log
   }
   for (const f of fields) {
     const selector = selectorOf(action, f)!
-    if (!(await driver.type(selector, secret[f]!))) {
+    const receipt = driver.typeReceipt
+      ? await driver.typeReceipt(selector, secret[f]!, { readBack: false })
+      : { ok: await driver.type(selector, secret[f]!) }
+    if (!receipt.ok) {
       await clearAll()
-      throw new SecretFillRefused('login-field-not-found', `${f} 的选择器没有命中：${selector}`)
+      const why = 'reason' in receipt && receipt.reason ? `（${receipt.reason.code}）` : ''
+      throw new SecretFillRefused('login-field-not-found', `${f} 的字段不可操作：${selector}${why}`)
     }
     filled.push(f)
   }

@@ -13,6 +13,7 @@
  * 非高危（自主执行、不打断）：同站导航、点击非提交按钮、滚动、exists、look（读取）、
  * 往字段里 type（**未提交前**）。
  */
+import type { ActionFailureCode } from './actionability.ts'
 
 /** 动作类型。look/exists 是纯读，其余会改变页面状态（mutating）。`login` 见 `secret-fill.ts`。 */
 export type ActionKind = 'goto' | 'back' | 'click' | 'type' | 'submit' | 'scroll' | 'exists' | 'look' | 'evaluate' | 'open' | 'setFiles' | 'login'
@@ -124,9 +125,19 @@ export type LaneMode = 'act-without-asking' | 'ask-before-acting'
  * 住在门这里而不是某条 lane 里，因为这套形状两条 transport 的 act 都会拿回，谁也不该自己再定义一遍。
  */
 export interface ActResult {
-  status: 'confirmed' | 'acted-unconfirmed' | 'done' | 'not-found' | 'needs-confirmation'
-  /** needs-confirmation 时说清为什么停下来问 */
+  /**
+   * `not-found` 与旧的「选择器没命中」完全重合；`not-visible` / `disabled` / `covered` /
+   * `detached` / `outside-viewport` / `not-editable` / `value-mismatch` 是动作前的可操作性
+   * 检查给出的失败——它们意味着**页面没有收到该动作的任何输入事件**。
+   */
+  status: 'confirmed' | 'acted-unconfirmed' | 'done' | 'needs-confirmation' | ActionFailureCode
+  /** needs-confirmation 时说清为什么停下来问；可操作性失败时是同一句人话原因（可含遮挡元素简述）。 */
   reason?: string
+  /**
+   * 点击已发出、但页面上没有观察到可信 `click` 时为 `unconfirmed`。**不是失败**：没有 `expect`
+   * 的动作仍以原状态返回，由调用方决定要不要把它当作「没反应」。
+   */
+  delivery?: 'confirmed' | 'unconfirmed'
   result?: unknown
   /**
    * 这一下**开出了新标签**（`window.open` / `target=_blank`）——页面多半是在新标签里继续的，

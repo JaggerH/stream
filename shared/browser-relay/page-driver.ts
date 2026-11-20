@@ -18,6 +18,8 @@
  * {@link ExtDriveOptions} 那样加一个**参数**。
  */
 
+import type { ActionReceipt } from './actionability.ts'
+
 /** 当前滚动几何——判「还没到底」「到底了」「滚不动」用的三个数。 */
 export interface ScrollGeometry {
   scrollY: number
@@ -44,6 +46,11 @@ export interface PageDriver {
    */
   click(selector: string, position?: { x: number; y: number }): Promise<boolean>
   /**
+   * 带原因与送达确认的点击。`click` 是它的布尔投影；需要区分「没找到 / 不可见 / 被遮挡 /
+   * 视口外 / 被替换」时用这一格。失败时页面**没有收到**任何输入事件。
+   */
+  clickReceipt?(selector: string, position?: { x: number; y: number }): Promise<ActionReceipt>
+  /**
    * 只截 `selector` 那块矩形（base64），元素不在就 null。
    *
    * 目的不是给人看，是把连续两帧当字节比——这才让「这块画完了没有」对 DOM 描述不了的内容也
@@ -68,6 +75,11 @@ export interface PageDriver {
   back(): Promise<void>
   /** 聚焦并替换其文本。返回「找没找到」——与 `click` 同一条契约：往空气里打字是事实，不是空操作。 */
   type(selector: string, text: string): Promise<boolean>
+  /**
+   * 带原因与回读确认的写入。中继没有单独的 `fill` 动词——`type` 就是填写路径；写入后回读
+   * 同一节点的值，不一致返回 `value-mismatch`。失败时页面**没有收到**任何输入事件。
+   */
+  typeReceipt?(selector: string, text: string, opts?: { readBack?: boolean }): Promise<ActionReceipt>
   /** 聚焦并按下回车。返回「找没找到」——同上。 */
   submit(selector: string): Promise<boolean>
   sleep(ms: number): Promise<void>

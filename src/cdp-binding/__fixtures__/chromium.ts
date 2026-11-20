@@ -44,11 +44,14 @@ export async function chromiumExecutable(): Promise<string | null> {
 /**
  * 起一台 headless Chromium。没有浏览器 → `null`。
  *
+ * `exeOverride` 给集成测试一条退路：playwright-core 期望的版本号可能与本机缓存里的那份不同，
+ * 但 CDP 形状一致；不传就按 playwright 的默认路径。
+ *
  * `--headless=new` 是这一档唯一要的：它照样有合成器（截图能出帧）、照样有 target 事件，
  * 区别只是没有窗口——CDP 绑定不依赖窗口。
  */
-export async function launchChromium(): Promise<TestChromium | null> {
-  const exe = await chromiumExecutable()
+export async function launchChromium(exeOverride?: string): Promise<TestChromium | null> {
+  const exe = exeOverride ?? (await chromiumExecutable())
   if (!exe) return null
   const userDataDir = mkdtempSync(join(tmpdir(), 'stream-cdp-chromium-'))
   // 浏览器自己的临时文件（共享内存、socket 之类）也塞进这个目录里：Chrome 用 $TMPDIR 建

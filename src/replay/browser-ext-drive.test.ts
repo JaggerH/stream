@@ -5,10 +5,48 @@ import { makeExtPageDriver, makeExtRawPage, openTargetExpr, readStateExpr, type 
 function fakeRaw(answer: (expr: string) => unknown = () => null) {
   const cdp: { method: string; params: unknown }[] = []
   const evals: string[] = []
+  // 可操作性检查是后加的一层：老用例的 answer 只认得 getBoundingClientRect / innerWidth，
+  // 这里替它们把 probe 结果拼出来，免得每个老用例都重写一遍。
+  let lastProbe: Record<string, unknown> | null = null
   const raw: ExtRawPage = {
     tabId: 1,
     async evalExpr<T>(expression: string): Promise<T> {
       evals.push(expression)
+      if (expression.includes('window.__streamActionTap || null')) return { trusted: true } as T
+      if (expression.includes('elementFromPoint')) return { ok: true } as T
+      if (expression.includes('scrollIntoView')) {
+        const rect = (lastProbe?.rect as Record<string, number> | undefined) ?? { left: 0, top: 0, width: 10, height: 10 }
+        return { found: true, stable: true, rect, viewport: { w: 1280, h: 720 }, visibleRect: rect } as T
+      }
+      if (expression.includes('checkVisibility')) {
+        // 老用例的 answer 是按「读矩形」写的；这里直接问它要那一份，保持原有语义
+        // （null / false = 元素还没出现或没有）。
+        const a = answer('getBoundingClientRect')
+        if (!a) {
+          lastProbe = { found: false }
+          return lastProbe as T
+        }
+        const rectOf = (v: unknown) =>
+          v && typeof v === 'object' && 'left' in v ? (v as Record<string, number>) : null
+        const rect = rectOf(a) ?? { left: 0, top: 0, width: 10, height: 10 }
+        lastProbe = {
+          found: true,
+          tag: 'input',
+          desc: '<input>',
+          visible: true,
+          hiddenBy: null,
+          zeroSize: false,
+          disabled: false,
+          disabledBy: null,
+          editable: true,
+          rect,
+          viewport: { w: 1280, h: 720 },
+        }
+        return lastProbe as T
+      }
+      if (expression.includes('__streamActionTarget') && expression.includes('el.focus()')) return { ok: true } as T
+      if (expression.includes('__streamActionTarget') && expression.includes('isContentEditable')) return { ok: true } as T
+      if (expression.includes('__streamActionTapOff')) return true as T
       return answer(expression) as T
     },
     async cdp(method: string, params?: unknown) {
