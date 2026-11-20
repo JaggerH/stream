@@ -67,6 +67,19 @@ jobs:
           targets: x86_64-pc-windows-gnu
       - run: cargo check --target x86_64-pc-windows-gnu --manifest-path app/host-agent/Cargo.toml
 
+  # macOS 构建的常驻闸门，理由与上面那条同：macOS 后端（AX）与委托层的平台接线只在
+  # release-desktop 的 mac job 上真正编译，平时靠交叉 `cargo check` 守住「macOS 还能编」。
+  # 交叉 check 不链接（不需要 Apple SDK 的链接器）；依赖里没有需要 Xcode 的构建脚本。
+  host-agent-macos-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+      - run: cargo check --target aarch64-apple-darwin --manifest-path app/host-agent/Cargo.toml
+
   # `hosts/<宿主>/` 各自带一套 npm 依赖（不在 pnpm workspace 里，见 hosts/README.md），所以单开
   # 一个 job。加一个宿主目录就往 matrix 加一行——`src/hosts-boundary.guard.test.ts` 断言每个
   # `hosts/*` 都有 `test` 与 `typecheck` 两个脚本，这个 job 就按这两个固定名字调用。
