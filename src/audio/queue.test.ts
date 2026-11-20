@@ -44,6 +44,18 @@ function mockFetch(opts: { bytes?: string; totalBytes?: number; gate?: Promise<v
   })
 }
 
+/** 把队列库里排队中的行直接标成终态。有些用例只需要「终态行」这个夹具，不需要真的跑完
+ *  下载——真跑一条要落一个文件、再起一个 ffprobe 探刚写下的字节（真实子进程），几百条叠在
+ *  CI 的并行窗口里是超时级的开销。归档状态要验哪条，就单独对哪条走真实 put。 */
+function markQueuedDone(dbPath: string) {
+  const db = new Database(dbPath)
+  try {
+    db.prepare(`UPDATE download_job SET state = 'done' WHERE state = 'queued'`).run()
+  } finally {
+    db.close()
+  }
+}
+
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'q-'))
   archive = new AudioArchive(join(dir, 'a.db'), join(dir, 'files'))
@@ -95,16 +107,23 @@ describe('DownloadQueue', () => {
   // archive.status（prepare + existsSync），几千条历史任务一次就是几百毫秒的同步重活。
   // 现在活跃任务全量、终态只带最近一段；archived 一把批量查。
   it('jobs bounds the terminal tail and batches the archived lookup', async () => {
+    // 夹具直接把这 250 条标成终态，而不是真跑 250 次下载（见 markQueuedDone）：这里要验的是
+    // jobs() 的尾部边界与批量查归档，drain 回路自己的行为由本文件别的用例覆盖。归档状态只给
+    // 断言用到的 t249 与 t0 走真实 put，其余终态行是否归档不参与这里的断言。
     for (let i = 0; i < 250; i++) q.enqueue({ platform: 'netease', id: `t${i}` })
-    await q.drain()
+    markQueuedDone(join(dir, 'q.db'))
+    await archive.put({ platform: 'netease', id: 't249' }, { stream: Readable.from([Buffer.from('bytes-249')]), format: 'flac' })
+    await archive.put({ platform: 'netease', id: 't0' }, { stream: Readable.from([Buffer.from('bytes-0')]), format: 'flac' })
     q.enqueue({ platform: 'bilibili', id: 'live' }) // stays queued (never drained)
     const statusSpy = vi.spyOn(archive, 'status')
     const jobs = q.jobs()
     expect(jobs.filter((j) => j.state === 'queued')).toHaveLength(1)
     expect(jobs.filter((j) => j.state === 'done')).toHaveLength(200)
-    // 终态尾部取的是**最近**的（id 最大的一段），不是任意 200 条
-    const maxId = Math.max(...jobs.filter((j) => j.state === 'done').map((j) => j.id))
-    expect(jobs.some((j) => j.state === 'done' && j.id === maxId)).toBe(true)
+    // 终态尾部取的是**最近**的（id 最大的一段），不是任意 200 条：返回的是 id 连续的尾部
+    const doneIds = jobs.filter((j) => j.state === 'done').map((j) => j.id)
+    const maxId = Math.max(...doneIds)
+    expect(maxId).toBe(250)
+    expect(Math.min(...doneIds)).toBe(maxId - 199)
     // archived 只批量查一次，覆盖**全部返回行**（活跃行也要：一个已归档的 track 撞上
     // 重复入队的 job 时，那行该显示「已下载」而不是空）
     expect(statusSpy).toHaveBeenCalledTimes(1)
