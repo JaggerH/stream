@@ -6,6 +6,8 @@
   "cpu": ["x64"],
   "files": [
     "bin/stream-desktop",
+    "bin/agent-desktop",
+    "bin/agent-desktop-macos-helper",
     "bin/ocr-det.onnx",
     "bin/ocr-rec.onnx",
     "bin/ocr-rec-dict.txt",

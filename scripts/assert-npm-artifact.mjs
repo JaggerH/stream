@@ -92,14 +92,17 @@ const problems = []
 // 所以这里把可发行集合写成每个平台的精确名单，并同时核 manifest 与已构建目录。
 const DESKTOP_PLATFORM_FILES = {
   '@streamapp/desktop-win32-x64': [
-    'bin/stream-desktop.exe', 'bin/ocr-det.onnx', 'bin/ocr-rec.onnx', 'bin/ocr-rec-dict.txt',
+    'bin/stream-desktop.exe', 'bin/agent-desktop.exe',
+    'bin/ocr-det.onnx', 'bin/ocr-rec.onnx', 'bin/ocr-rec-dict.txt',
     'bin/onnxruntime.dll', 'bin/msvcp140.dll', 'bin/vcruntime140.dll', 'bin/vcruntime140_1.dll',
   ],
   '@streamapp/desktop-darwin-x64': [
-    'bin/stream-desktop', 'bin/ocr-det.onnx', 'bin/ocr-rec.onnx', 'bin/ocr-rec-dict.txt', 'bin/libonnxruntime.dylib',
+    'bin/stream-desktop', 'bin/agent-desktop', 'bin/agent-desktop-macos-helper',
+    'bin/ocr-det.onnx', 'bin/ocr-rec.onnx', 'bin/ocr-rec-dict.txt', 'bin/libonnxruntime.dylib',
   ],
   '@streamapp/desktop-darwin-arm64': [
-    'bin/stream-desktop', 'bin/ocr-det.onnx', 'bin/ocr-rec.onnx', 'bin/ocr-rec-dict.txt', 'bin/libonnxruntime.dylib',
+    'bin/stream-desktop', 'bin/agent-desktop', 'bin/agent-desktop-macos-helper',
+    'bin/ocr-det.onnx', 'bin/ocr-rec.onnx', 'bin/ocr-rec-dict.txt', 'bin/libonnxruntime.dylib',
   ],
 }
 const desktopFiles = DESKTOP_PLATFORM_FILES[pkg.name]

@@ -177,6 +177,27 @@ jobs:
       # 一运行就 Bad CPU type，而那要等到用户那台 Intel Mac 上才看得见。
       - run: file capabilities/desktop/platforms/${{ matrix.pkg }}/bin/stream-desktop | tee /dev/stderr | grep -q "${{ matrix.target == 'x86_64-apple-darwin' && 'x86_64' || 'arm64' }}"
 
+      # agent-desktop（内嵌）：语义 a11y 路的执行者随平台包出货，stream-desktop 按同目录
+      # 找它（定位与版本自检在 app/host-agent/src/agent_desktop.rs）。两档各下对应 target 的
+      # Release 包、按上游 checksums 核验（清单可能混着 CRLF，先剥 \r），解出 `agent-desktop`
+      # 与它的剪贴板 helper（`agent-desktop-macos-helper`，上游 macOS 包固定两件）落 bin/；
+      # 包的 files 白名单必须带这两个，否则 publish 会静默漏掉它们。
+      # 版本 pin 1.2.x：升级 = 改这一个数 + 重跑 desktop-automation-backend 的两个真机清单。
+      - name: 拉内嵌的 agent-desktop 并核校验和
+        env:
+          GH_TOKEN: ${{ github.token }}
+          AD_VERSION: 1.2.0
+        run: |
+          cd capabilities/desktop/platforms/${{ matrix.pkg }}
+          gh release download "v$AD_VERSION" --repo vercel-labs/agent-desktop \
+            --pattern "agent-desktop-v$AD_VERSION-${{ matrix.target }}.tar.gz" \
+            --pattern "checksums.txt" --dir ad-download --clobber
+          (cd ad-download && tr -d '\r' < checksums.txt | grep "agent-desktop-v$AD_VERSION-${{ matrix.target }}.tar.gz" | shasum -a 256 -c -)
+          tar xzf "ad-download/agent-desktop-v$AD_VERSION-${{ matrix.target }}.tar.gz" -C bin
+          test -f bin/agent-desktop
+          test -f bin/agent-desktop-macos-helper
+          chmod +x bin/agent-desktop bin/agent-desktop-macos-helper
+
       # 同 windows job 那一步：模型落在 exe 同目录，核的是同一份 platforms/models.sha256。模型缺席 =
       # readText / readElements 直接报 ocr-missing，靠"眼睛"的 recipe（微信 / QQ 发消息）在这台机器上
       # 一步都走不了。用系统自带的 `shasum -a 256 -c`（吃同一种清单格式），不依赖 runner 镜像有没有
