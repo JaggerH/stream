@@ -183,12 +183,16 @@ site_identities(facility TEXT, node_id TEXT, account_id TEXT, display_name TEXT,
 - 什么时候探测：
   - 节点连上时：只探测 `sessionPrecheck` 为 `PRESENT` 的 facility，按节点串行、一次一个标签。`http` 形状的 facility
     没声明会话 cookie（B 站）时照探——不开标签，代价一次 GET；`GONE` 不开标签，已有记录直接标登出。
+    `page` 形状另有节流（D15）：会话 cookie 指纹与上次核对时相同、且核对在 12 小时内 → 直接跳过，不开标签。
   - 某个 facility 的会话 cookie 在该节点上变了（扩展已有的 `cookiesChanged` 通知）。防抖后比对声明的会话 cookie
     值的指纹（拉一份该节点的新快照算），变了才探；没声明会话 cookie 的按最短间隔 10 分钟。站点每次加载都轮换一批
     cookie，按事件就开标签等于采集时每分钟一张探测标签。
   - `ctx.login` 成功之后：在登录用的那个节点上，`login` 形状直接写，其余重新探测。
   - 执行前核对（D9）。
   - 面板上手动刷新。
+- 会话 cookie 指纹随记录落盘（`cookie_fingerprint`，只存哈希），重启后节流仍有效。指纹只在探测结果真的写表时更新：
+  `unknown` 不写，下次重连照旧探。
+- 插件被停用的 facility 不探测（`facilityEnabled` 判据），`http` 与 `page` 一样。
 - `unknown` 不写表。`signed-out` 写表（保留上次的账号 id，显示为「已登出」），路由不再把它当作该身份的候选。
 
 ### D7. 路由目标与解析
@@ -360,6 +364,22 @@ profile 的 `Secure Preferences`（Windows / macOS 把扩展记在这里，Corta
 - 面板节点行：「读不到 X 的登录态——在这个 profile 里打开 Stream 扩展的弹窗，点「允许」」。
 - 弹窗：一个「允许」。`permissions.request` 只认用户手势，必须是点击后的第一个调用；给了再把本机拒掉的域并进同步域、清掉
   记录、叫后台同步一轮（Stream 随即来取）。配对绑定拒掉的域不在这里——远处的 Stream 要什么不自动给，仍在 Streams 页签逐个批准。
+
+### D15. 页面探测的节流与重连去抖
+
+自部署实例上，扩展每次重连（后端重启、MV3 后台被回收、网络抖动）都会走一遍「节点连上」探测。`page` 形状开一张后台
+标签，实测同一站点首页一天被打开 9 次，重启时成对出现（相隔约 6 秒）。用户看到的是浏览器莫名打开站点首页。
+
+- **会话 cookie 指纹落盘。** `site_identities` 加一列 `cookie_fingerprint`（哈希，不存原值），与 `verified_at` 同一行。
+  进程内只留指纹的旧做法在重启后全丢，正是重启必然重探的原因。
+- **节流判据：指纹相同 + 核对在 12 小时内（`PAGE_PROBE_TTL_MS`，可配置）。** 两条都成立才跳过；没有指纹、读不到指纹、
+  没有记录、超过窗口，一律照探。「读不到」不当作「没变」。
+- **只节流 `page`。** `http` 探测不开标签，维持原样；没有 `whoami` 的按节点身份只看会话 cookie 在场，也不受影响。
+- **重连去抖：同一节点 60 秒内（`RECONNECT_DEBOUNCE_MS`）只问一轮。** 第一轮探测照常走 5 秒 settle；窗口内的后续
+  重连直接并掉。cookie 变化是独立触发，不受它影响。
+- **可观测。** 真正开标签时记一行 info（facility、节点、原因：首次 / cookie 变化 / 过期）；跳过时记一行 debug。
+  之前探测成功一声不响，用户只能看到标签凭空打开。
+- **停用的插件不探。** facility → 它的包 → 插件描述 → 开关，只认启用中的；身份表里已有的记录保留，路由不因此减少。
 
 ## Risks / Trade-offs
 

@@ -77,3 +77,12 @@
   - 2026-10-23 Cortana（`61713d9`）：discover 的 `hasExtension` 对上了（Default、紫卡装了；另三个没装）；
     desktop agent `window:<id>` 读到指定窗、同进程两窗报 `ambiguous-window` 列出 id、未知 id 报 `no-window-match`
   - 未测：新 profile 认领后直接认出身份；弹窗「允许」（要一个新 profile）——用户决定不测，看用户反馈
+
+## 探测节流（D15）
+
+- [x] 1. 身份表加 `cookie_fingerprint`（哈希，迁移旧库），`probeState` 读核对时间与指纹；`record` 只在写表时更新
+- [x] 2. 服务：`page` 探测在「指纹相同 + 12 小时内」时跳过（`PAGE_PROBE_TTL_MS`，可配置）；`http` 不受影响
+- [x] 3. 服务：同一节点 60 秒内的重连合并为一轮（`RECONNECT_DEBOUNCE_MS`）
+- [x] 4. 可观测：开标签打 info（facility、节点、原因），跳过打 debug
+- [x] 5. 停用的插件不探测（`facilityEnabled`，`http` 与 `page` 一致）
+- [x] 6. 文档（PACKAGE 的 `whoami`、ARCHITECTURE 执行位置）
