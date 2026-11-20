@@ -1,0 +1,1193 @@
+{
+  "when": "2026-11-20T13:09:43.257Z",
+  "versions": {
+    "agentBrowser": "agent-browser 0.41.2",
+    "chrome": "Google Chrome for Testing 159.0.8154.6",
+    "node": "v22.23.4"
+  },
+  "iterations": 3,
+  "coldStartMs": 1756.2900989999998,
+  "warmCommandMs": [
+    448.884951,
+    288.9057899999989,
+    401.69875200000024,
+    306.17494799999986,
+    287.9143439999989
+  ],
+  "relayConnectMs": 787.5550370000001,
+  "sizes": [
+    {
+      "page": "search",
+      "kind": "snapshot -i",
+      "bytes": 1527,
+      "text": "- textbox \"Search\" [ref=e1]: agent-browser\n- button \"Search\" [ref=e2]\n- heading \"Result 1 — a distinctive title about topic 1\" [level=3, ref=e3]\n  - link \"Result 1 — a distinctive title about topic 1\""
+    },
+    {
+      "page": "search",
+      "kind": "snapshot",
+      "bytes": 3023,
+      "text": "- form\n  - textbox \"Search\" [ref=e1]: agent-browser\n    - StaticText \"agent-browser\"\n  - button \"Search\" [ref=e2]\n- generic\n  - heading \"Result 1 — a distinctive title about topic 1\" [level=3, ref=e3]"
+    },
+    {
+      "page": "search",
+      "kind": "snapshot -i --json",
+      "bytes": 3648,
+      "text": "{\"success\":true,\"data\":{\"lifecycle\":{\"effectiveLaunch\":{\"browserLaunched\":true,\"engine\":\"chrome\",\"launchHash\":9175899888617182442},\"launched\":false,\"relaunchedBrowser\":false,\"restartedBackground\":fals"
+    },
+    {
+      "page": "search",
+      "kind": "read",
+      "bytes": 1611,
+      "text": "Search\n\n### Result 1 — a distinctive title about topic 1\n\nSnippet 1: a two sentence summary that mentions topic 1 and a few extra words so the payload is realistic.\n\n### Result 2 — a distinctive title"
+    },
+    {
+      "page": "feed",
+      "kind": "snapshot -i",
+      "bytes": 762,
+      "text": "- link \"Note 1by author 1\" [ref=e23]\n- link \"Note 2by author 2\" [ref=e24]\n- link \"Note 3by author 3\" [ref=e25]\n- link \"Note 4by author 4\" [ref=e26]\n- link \"Note 5by author 5\" [ref=e27]\n- link \"Note 6b"
+    },
+    {
+      "page": "feed",
+      "kind": "snapshot",
+      "bytes": 2374,
+      "text": "- generic\n  - link \"Note 1by author 1\" [ref=e23]\n    - StaticText \"Note 1by author 1\"\n  - link \"Note 2by author 2\" [ref=e24]\n    - StaticText \"Note 2by author 2\"\n  - link \"Note 3by author 3\" [ref=e25]"
+    },
+    {
+      "page": "feed",
+      "kind": "snapshot -i --json",
+      "bytes": 3125,
+      "text": "{\"success\":true,\"data\":{\"lifecycle\":{\"effectiveLaunch\":{\"browserLaunched\":true,\"engine\":\"chrome\",\"launchHash\":9175899888617182442},\"launched\":false,\"relaunchedBrowser\":false,\"restartedBackground\":fals"
+    },
+    {
+      "page": "feed",
+      "kind": "read",
+      "bytes": 553,
+      "text": "Note 1by author 1Note 2by author 2Note 3by author 3Note 4by author 4Note 5by author 5Note 6by author 6Note 7by author 7Note 8by author 8Note 9by author 9Note 10by author 10Note 11by author 11Note 12by"
+    },
+    {
+      "page": "form",
+      "kind": "snapshot -i",
+      "bytes": 111,
+      "text": "- textbox \"Name\" [ref=e53]\n- textbox \"Email\" [ref=e54]\n- textbox \"Message\" [ref=e55]\n- button \"Send\" [ref=e56]\n"
+    },
+    {
+      "page": "form",
+      "kind": "snapshot",
+      "bytes": 244,
+      "text": "- form\n  - LabelText\n    - StaticText \"Name\"\n  - textbox \"Name\" [ref=e53]\n  - LabelText\n    - StaticText \"Email\"\n  - textbox \"Email\" [ref=e54]\n  - LabelText\n    - StaticText \"Message\"\n  - textbox \"Mes"
+    },
+    {
+      "page": "form",
+      "kind": "snapshot -i --json",
+      "bytes": 653,
+      "text": "{\"success\":true,\"data\":{\"lifecycle\":{\"effectiveLaunch\":{\"browserLaunched\":true,\"engine\":\"chrome\",\"launchHash\":9175899888617182442},\"launched\":false,\"relaunchedBrowser\":false,\"restartedBackground\":fals"
+    },
+    {
+      "page": "form",
+      "kind": "read",
+      "bytes": 56,
+      "text": "Name\nEmail\nMessage\nSend\n\nThanks, your message was sent.\n"
+    }
+  ],
+  "daemon": [
+    {
+      "pid": "479383",
+      "rssKb": 13028
+    }
+  ],
+  "browserSurvivedAttach": true,
+  "results": [
+    {
+      "task": "search-read",
+      "path": "relay",
+      "ok": true,
+      "steps": [
+        {
+          "name": "newTab",
+          "ms": 256.96657600000253,
+          "ok": true
+        },
+        {
+          "name": "readItems",
+          "ms": 19.868695000001026,
+          "ok": true
+        }
+      ],
+      "detail": "10 items, 1946 B of item JSON"
+    },
+    {
+      "task": "search-read",
+      "path": "delegate",
+      "ok": true,
+      "steps": [
+        {
+          "name": "open",
+          "ms": 631.9351070000012,
+          "ok": true
+        },
+        {
+          "name": "snapshot -i",
+          "ms": 242.9106009999996,
+          "ok": true
+        },
+        {
+          "name": "read",
+          "ms": 420.43587900000057,
+          "ok": true
+        }
+      ],
+      "detail": "20 result titles in snapshot"
+    },
+    {
+      "task": "form-fill",
+      "path": "relay",
+      "ok": true,
+      "steps": [
+        {
+          "name": "newTab",
+          "ms": 273.02312300000267,
+          "ok": true
+        },
+        {
+          "name": "type#name",
+          "ms": 152.94607199999882,
+          "ok": true
+        },
+        {
+          "name": "type#email",
+          "ms": 108.16373100000055,
+          "ok": true
+        },
+        {
+          "name": "type#msg",
+          "ms": 39.22310500000094,
+          "ok": true
+        },
+        {
+          "name": "click#send",
+          "ms": 159.70163799999864,
+          "ok": true
+        },
+        {
+          "name": "read#ok",
+          "ms": 25.989456000002974,
+          "ok": true
+        }
+      ],
+      "detail": "Thanks Ada Lovelace, your message was sent."
+    },
+    {
+      "task": "form-fill",
+      "path": "delegate",
+      "ok": true,
+      "steps": [
+        {
+          "name": "open",
+          "ms": 474.3704829999988,
+          "ok": true
+        },
+        {
+          "name": "fill#name",
+          "ms": 260.142957,
+          "ok": true
+        },
+        {
+          "name": "fill#email",
+          "ms": 205.7353890000013,
+          "ok": true
+        },
+        {
+          "name": "fill#msg",
+          "ms": 464.7620989999996,
+          "ok": true
+        },
+        {
+          "name": "click#send",
+          "ms": 405.3840969999983,
+          "ok": true
+        },
+        {
+          "name": "get text #ok",
+          "ms": 515.8849640000008,
+          "ok": true
+        }
+      ],
+      "detail": "Thanks Ada Lovelace, your message was sent."
+    },
+    {
+      "task": "feed-locate",
+      "path": "relay",
+      "ok": true,
+      "steps": [
+        {
+          "name": "newTab",
+          "ms": 259.53727300000173,
+          "ok": true
+        },
+        {
+          "name": "waitCard30",
+          "ms": 1365.2337000000007,
+          "ok": true
+        },
+        {
+          "name": "locateCard(27)",
+          "ms": 338.0792040000015,
+          "ok": true
+        },
+        {
+          "name": "openTarget(27)",
+          "ms": 171.91500099999757,
+          "ok": true
+        },
+        {
+          "name": "waitUrl",
+          "ms": 218.29827400000067,
+          "ok": true
+        }
+      ],
+      "detail": "http://127.0.0.1:46099/explore/000000000000001b"
+    },
+    {
+      "task": "feed-locate",
+      "path": "delegate",
+      "ok": true,
+      "steps": [
+        {
+          "name": "open",
+          "ms": 493.9933360000032,
+          "ok": true
+        },
+        {
+          "name": "wait card30",
+          "ms": 1519.425421,
+          "ok": true
+        },
+        {
+          "name": "click a[data-id=27]",
+          "ms": 239.19981499999994,
+          "ok": true
+        },
+        {
+          "name": "wait url",
+          "ms": 327.22405000000435,
+          "ok": true
+        },
+        {
+          "name": "get url",
+          "ms": 297.998013000004,
+          "ok": true
+        }
+      ],
+      "detail": "http://127.0.0.1:46099/explore/000000000000001b"
+    },
+    {
+      "task": "overlay",
+      "path": "relay",
+      "ok": false,
+      "steps": [
+        {
+          "name": "newTab",
+          "ms": 392.4155699999974,
+          "ok": true
+        },
+        {
+          "name": "click#next(covered)",
+          "ms": 186.3370980000036,
+          "ok": true
+        },
+        {
+          "name": "readTitle",
+          "ms": 43.68653500000073,
+          "ok": true
+        }
+      ],
+      "detail": "click returned true, title \"fixture overlay\""
+    },
+    {
+      "task": "overlay",
+      "path": "delegate",
+      "ok": true,
+      "steps": [
+        {
+          "name": "open",
+          "ms": 753.3236079999988,
+          "ok": true
+        },
+        {
+          "name": "click#next(covered)",
+          "ms": 569.7352469999969,
+          "ok": false,
+          "detail": "agent-browser click exited 1: ✗ Element '#next' is covered by <div inside div#consent-banner> at its click point, so the input would land on that element instead. Dismiss or interact with the covering element first (it is often a dialog, banner, or sticky header)."
+        },
+        {
+          "name": "click#accept",
+          "ms": 263.87126200000057,
+          "ok": true
+        },
+        {
+          "name": "click#next(retry)",
+          "ms": 293.04081900000165,
+          "ok": true
+        },
+        {
+          "name": "get title",
+          "ms": 387.1211739999999,
+          "ok": true
+        }
+      ],
+      "detail": "blocked once (agent-browser click exited 1: ✗ Element '#next' is covered by <div inside div#consent-bann…), then page 2"
+    },
+    {
+      "task": "churn",
+      "path": "relay",
+      "ok": true,
+      "steps": [
+        {
+          "name": "newTab",
+          "ms": 214.2624469999937,
+          "ok": true
+        },
+        {
+          "name": "click(.row[data-id=3])",
+          "ms": 136.76852299999882,
+          "ok": true
+        },
+        {
+          "name": "read#clicked",
+          "ms": 29.7232010000007,
+          "ok": true
+        }
+      ],
+      "detail": "clicked 3"
+    },
+    {
+      "task": "churn",
+      "path": "delegate",
+      "ok": true,
+      "steps": [
+        {
+          "name": "open",
+          "ms": 582.0674110000036,
+          "ok": true
+        },
+        {
+          "name": "snapshot -i --json",
+          "ms": 492.4323250000016,
+          "ok": true
+        },
+        {
+          "name": "click @e81(stale)",
+          "ms": 296.4770819999976,
+          "ok": true
+        },
+        {
+          "name": "get text #clicked",
+          "ms": 317.65958500000124,
+          "ok": true
+        },
+        {
+          "name": "snapshot -i --json (re-locate)",
+          "ms": 146.57271000000037,
+          "ok": true
+        },
+        {
+          "name": "click @e89(fresh)",
+          "ms": 307.3615159999972,
+          "ok": true
+        },
+        {
+          "name": "get text #clicked",
+          "ms": 512.656382000001,
+          "ok": true
+        }
+      ],
+      "detail": "stale ref acted; fresh ref e89"
+    },
+    {
+      "task": "states",
+      "path": "relay",
+      "ok": false,
+      "steps": [
+        {
+          "name": "newTab",
+          "ms": 251.66561999999976,
+          "ok": true
+        },
+        {
+          "name": "click#off(disabled)",
+          "ms": 194.29847300000256,
+          "ok": true
+        },
+        {
+          "name": "click#ghost(hidden)",
+          "ms": 134.47102799999993,
+          "ok": true
+        },
+        {
+          "name": "read#log",
+          "ms": 24.24636399999872,
+          "ok": true
+        }
+      ],
+      "detail": "disabled=true hidden=true log=\"\""
+    },
+    {
+      "task": "states",
+      "path": "delegate",
+      "ok": true,
+      "steps": [
+        {
+          "name": "open",
+          "ms": 766.5210969999971,
+          "ok": true
+        },
+        {
+          "name": "click#off(disabled)",
+          "ms": 372.84679799999867,
+          "ok": false,
+          "detail": "agent-browser click exited 1: ✗ Element '#off' is disabled, so the click would not reach it"
+        },
+        {
+          "name": "click#ghost(hidden)",
+          "ms": 671.1931729999997,
+          "ok": false,
+          "detail": "agent-browser click exited 1: ✗ Element '#ghost' is not visible, so the click would not reach it"
+        },
+        {
+          "name": "read#log",
+          "ms": 641.8647750000018,
+          "ok": true
+        }
+      ],
+      "detail": "disabled: failed — agent-browser click exited 1: ✗ Element '#off' is disabled, so the click would not reach it | hidden: failed — agent-browser click exited 1: ✗ Element '#ghost' is not visible, so the click would not reach it"
+    },
+    {
+      "task": "search-read",
+      "path": "relay",
+      "ok": true,
+      "steps": [
+        {
+          "name": "newTab",
+          "ms": 609.6387969999996,
+          "ok": true
+        },
+        {
+          "name": "readItems",
+          "ms": 69.23954700000468,
+          "ok": true
+        }
+      ],
+      "detail": "10 items, 1946 B of item JSON"
+    },
+    {
+      "task": "search-read",
+      "path": "delegate",
+      "ok": true,
+      "steps": [
+        {
+          "name": "open",
+          "ms": 482.06681599999865,
+          "ok": true
+        },
+        {
+          "name": "snapshot -i",
+          "ms": 257.1358570000011,
+          "ok": true
+        },
+        {
+          "name": "read",
+          "ms": 366.780276999998,
+          "ok": true
+        }
+      ],
+      "detail": "20 result titles in snapshot"
+    },
+    {
+      "task": "form-fill",
+      "path": "relay",
+      "ok": true,
+      "steps": [
+        {
+          "name": "newTab",
+          "ms": 155.2843290000019,
+          "ok": true
+        },
+        {
+          "name": "type#name",
+          "ms": 181.10610299999826,
+          "ok": true
+        },
+        {
+          "name": "type#email",
+          "ms": 237.39932299999782,
+          "ok": true
+        },
+        {
+          "name": "type#msg",
+          "ms": 86.59210500000336,
+          "ok": true
+        },
+        {
+          "name": "click#send",
+          "ms": 176.69819399999687,
+          "ok": true
+        },
+        {
+          "name": "read#ok",
+          "ms": 54.83724999999686,
+          "ok": true
+        }
+      ],
+      "detail": "Thanks Ada Lovelace, your message was sent."
+    },
+    {
+      "task": "form-fill",
+      "path": "delegate",
+      "ok": true,
+      "steps": [
+        {
+          "name": "open",
+          "ms": 1100.165869999997,
+          "ok": true
+        },
+        {
+          "name": "fill#name",
+          "ms": 302.1681200000021,
+          "ok": true
+        },
+        {
+          "name": "fill#email",
+          "ms": 264.416784999994,
+          "ok": true
+        },
+        {
+          "name": "fill#msg",
+          "ms": 627.6819600000017,
+          "ok": true
+        },
+        {
+          "name": "click#send",
+          "ms": 657.1964789999984,
+          "ok": true
+        },
+        {
+          "name": "get text #ok",
+          "ms": 438.0670790000004,
+          "ok": true
+        }
+      ],
+      "detail": "Thanks Ada Lovelace, your message was sent."
+    },
+    {
+      "task": "feed-locate",
+      "path": "relay",
+      "ok": true,
+      "steps": [
+        {
+          "name": "newTab",
+          "ms": 497.3638789999968,
+          "ok": true
+        },
+        {
+          "name": "waitCard30",
+          "ms": 1447.2046950000004,
+          "ok": true
+        },
+        {
+          "name": "locateCard(27)",
+          "ms": 353.9202299999961,
+          "ok": true
+        },
+        {
+          "name": "openTarget(27)",
+          "ms": 165.24707599999965,
+          "ok": true
+        },
+        {
+          "name": "waitUrl",
+          "ms": 170.68211300000257,
+          "ok": true
+        }
+      ],
+      "detail": "http://127.0.0.1:46099/explore/000000000000001b"
+    },
+    {
+      "task": "feed-locate",
+      "path": "delegate",
+      "ok": true,
+      "steps": [
+        {
+          "name": "open",
+          "ms": 820.3150600000008,
+          "ok": true
+        },
+        {
+          "name": "wait card30",
+          "ms": 1377.4381439999997,
+          "ok": true
+        },
+        {
+          "name": "click a[data-id=27]",
+          "ms": 544.1371960000033,
+          "ok": true
+        },
+        {
+          "name": "wait url",
+          "ms": 533.6828049999967,
+          "ok": true
+        },
+        {
+          "name": "get url",
+          "ms": 248.06591499999922,
+          "ok": true
+        }
+      ],
+      "detail": "http://127.0.0.1:46099/explore/000000000000001b"
+    },
+    {
+      "task": "overlay",
+      "path": "relay",
+      "ok": false,
+      "steps": [
+        {
+          "name": "newTab",
+          "ms": 660.0451380000013,
+          "ok": true
+        },
+        {
+          "name": "click#next(covered)",
+          "ms": 196.13608399999794,
+          "ok": true
+        },
+        {
+          "name": "readTitle",
+          "ms": 29.683641000003263,
+          "ok": true
+        }
+      ],
+      "detail": "click returned true, title \"fixture overlay\""
+    },
+    {
+      "task": "overlay",
+      "path": "delegate",
+      "ok": true,
+      "steps": [
+        {
+          "name": "open",
+          "ms": 513.5181880000018,
+          "ok": true
+        },
+        {
+          "name": "click#next(covered)",
+          "ms": 297.9703329999975,
+          "ok": false,
+          "detail": "agent-browser click exited 1: ✗ Element '#next' is covered by <div inside div#consent-banner> at its click point, so the input would land on that element instead. Dismiss or interact with the covering element first (it is often a dialog, banner, or sticky header)."
+        },
+        {
+          "name": "click#accept",
+          "ms": 604.9748469999977,
+          "ok": true
+        },
+        {
+          "name": "click#next(retry)",
+          "ms": 687.1666809999952,
+          "ok": true
+        },
+        {
+          "name": "get title",
+          "ms": 607.5970239999951,
+          "ok": true
+        }
+      ],
+      "detail": "blocked once (agent-browser click exited 1: ✗ Element '#next' is covered by <div inside div#consent-bann…), then page 2"
+    },
+    {
+      "task": "churn",
+      "path": "relay",
+      "ok": true,
+      "steps": [
+        {
+          "name": "newTab",
+          "ms": 481.9688959999985,
+          "ok": true
+        },
+        {
+          "name": "click(.row[data-id=3])",
+          "ms": 156.26985499999864,
+          "ok": true
+        },
+        {
+          "name": "read#clicked",
+          "ms": 116.44186700000137,
+          "ok": true
+        }
+      ],
+      "detail": "clicked 3"
+    },
+    {
+      "task": "churn",
+      "path": "delegate",
+      "ok": true,
+      "steps": [
+        {
+          "name": "open",
+          "ms": 565.1402970000054,
+          "ok": true
+        },
+        {
+          "name": "snapshot -i --json",
+          "ms": 300.31342900000163,
+          "ok": true
+        },
+        {
+          "name": "click @e119(stale)",
+          "ms": 403.23556400000234,
+          "ok": true
+        },
+        {
+          "name": "get text #clicked",
+          "ms": 236.55787799999234,
+          "ok": true
+        },
+        {
+          "name": "snapshot -i --json (re-locate)",
+          "ms": 251.66810000000987,
+          "ok": true
+        },
+        {
+          "name": "click @e127(fresh)",
+          "ms": 259.25867100000323,
+          "ok": true
+        },
+        {
+          "name": "get text #clicked",
+          "ms": 305.9898269999976,
+          "ok": true
+        }
+      ],
+      "detail": "stale ref acted; fresh ref e127"
+    },
+    {
+      "task": "states",
+      "path": "relay",
+      "ok": false,
+      "steps": [
+        {
+          "name": "newTab",
+          "ms": 297.68689100000483,
+          "ok": true
+        },
+        {
+          "name": "click#off(disabled)",
+          "ms": 217.25362700001278,
+          "ok": true
+        },
+        {
+          "name": "click#ghost(hidden)",
+          "ms": 142.79216499999166,
+          "ok": true
+        },
+        {
+          "name": "read#log",
+          "ms": 22.89291399999638,
+          "ok": true
+        }
+      ],
+      "detail": "disabled=true hidden=true log=\"\""
+    },
+    {
+      "task": "states",
+      "path": "delegate",
+      "ok": true,
+      "steps": [
+        {
+          "name": "open",
+          "ms": 597.065752999988,
+          "ok": true
+        },
+        {
+          "name": "click#off(disabled)",
+          "ms": 189.14951800000563,
+          "ok": false,
+          "detail": "agent-browser click exited 1: ✗ Element '#off' is disabled, so the click would not reach it"
+        },
+        {
+          "name": "click#ghost(hidden)",
+          "ms": 323.9411079999991,
+          "ok": false,
+          "detail": "agent-browser click exited 1: ✗ Element '#ghost' is not visible, so the click would not reach it"
+        },
+        {
+          "name": "read#log",
+          "ms": 462.5114040000044,
+          "ok": true
+        }
+      ],
+      "detail": "disabled: failed — agent-browser click exited 1: ✗ Element '#off' is disabled, so the click would not reach it | hidden: failed — agent-browser click exited 1: ✗ Element '#ghost' is not visible, so the click would not reach it"
+    },
+    {
+      "task": "search-read",
+      "path": "relay",
+      "ok": true,
+      "steps": [
+        {
+          "name": "newTab",
+          "ms": 182.26123099999677,
+          "ok": true
+        },
+        {
+          "name": "readItems",
+          "ms": 17.10943500000576,
+          "ok": true
+        }
+      ],
+      "detail": "10 items, 1946 B of item JSON"
+    },
+    {
+      "task": "search-read",
+      "path": "delegate",
+      "ok": true,
+      "steps": [
+        {
+          "name": "open",
+          "ms": 526.5841979999968,
+          "ok": true
+        },
+        {
+          "name": "snapshot -i",
+          "ms": 140.81007099999988,
+          "ok": true
+        },
+        {
+          "name": "read",
+          "ms": 252.2308239999984,
+          "ok": true
+        }
+      ],
+      "detail": "20 result titles in snapshot"
+    },
+    {
+      "task": "form-fill",
+      "path": "relay",
+      "ok": true,
+      "steps": [
+        {
+          "name": "newTab",
+          "ms": 243.36968400000478,
+          "ok": true
+        },
+        {
+          "name": "type#name",
+          "ms": 104.29618499999924,
+          "ok": true
+        },
+        {
+          "name": "type#email",
+          "ms": 118.424279999992,
+          "ok": true
+        },
+        {
+          "name": "type#msg",
+          "ms": 65.8298849999992,
+          "ok": true
+        },
+        {
+          "name": "click#send",
+          "ms": 152.64647100000002,
+          "ok": true
+        },
+        {
+          "name": "read#ok",
+          "ms": 18.609805999993114,
+          "ok": true
+        }
+      ],
+      "detail": "Thanks Ada Lovelace, your message was sent."
+    },
+    {
+      "task": "form-fill",
+      "path": "delegate",
+      "ok": true,
+      "steps": [
+        {
+          "name": "open",
+          "ms": 416.3338120000117,
+          "ok": true
+        },
+        {
+          "name": "fill#name",
+          "ms": 182.4468329999945,
+          "ok": true
+        },
+        {
+          "name": "fill#email",
+          "ms": 464.2840959999885,
+          "ok": true
+        },
+        {
+          "name": "fill#msg",
+          "ms": 476.23885699998937,
+          "ok": true
+        },
+        {
+          "name": "click#send",
+          "ms": 737.5141030000086,
+          "ok": true
+        },
+        {
+          "name": "get text #ok",
+          "ms": 163.24002199999813,
+          "ok": true
+        }
+      ],
+      "detail": "Thanks Ada Lovelace, your message was sent."
+    },
+    {
+      "task": "feed-locate",
+      "path": "relay",
+      "ok": true,
+      "steps": [
+        {
+          "name": "newTab",
+          "ms": 547.7619000000122,
+          "ok": true
+        },
+        {
+          "name": "waitCard30",
+          "ms": 1341.0326599999971,
+          "ok": true
+        },
+        {
+          "name": "locateCard(27)",
+          "ms": 272.3220399999991,
+          "ok": true
+        },
+        {
+          "name": "openTarget(27)",
+          "ms": 128.39330700000573,
+          "ok": true
+        },
+        {
+          "name": "waitUrl",
+          "ms": 273.0666850000125,
+          "ok": true
+        }
+      ],
+      "detail": "http://127.0.0.1:46099/explore/000000000000001b"
+    },
+    {
+      "task": "feed-locate",
+      "path": "delegate",
+      "ok": true,
+      "steps": [
+        {
+          "name": "open",
+          "ms": 528.8716529999947,
+          "ok": true
+        },
+        {
+          "name": "wait card30",
+          "ms": 1473.5111139999935,
+          "ok": true
+        },
+        {
+          "name": "click a[data-id=27]",
+          "ms": 281.1075390000042,
+          "ok": true
+        },
+        {
+          "name": "wait url",
+          "ms": 314.2787629999948,
+          "ok": true
+        },
+        {
+          "name": "get url",
+          "ms": 115.60061999999743,
+          "ok": true
+        }
+      ],
+      "detail": "http://127.0.0.1:46099/explore/000000000000001b"
+    },
+    {
+      "task": "overlay",
+      "path": "relay",
+      "ok": false,
+      "steps": [
+        {
+          "name": "newTab",
+          "ms": 269.9718639999919,
+          "ok": true
+        },
+        {
+          "name": "click#next(covered)",
+          "ms": 199.7498290000076,
+          "ok": true
+        },
+        {
+          "name": "readTitle",
+          "ms": 10.599631999997655,
+          "ok": true
+        }
+      ],
+      "detail": "click returned true, title \"fixture overlay\""
+    },
+    {
+      "task": "overlay",
+      "path": "delegate",
+      "ok": true,
+      "steps": [
+        {
+          "name": "open",
+          "ms": 918.7506069999945,
+          "ok": true
+        },
+        {
+          "name": "click#next(covered)",
+          "ms": 667.9763930000045,
+          "ok": false,
+          "detail": "agent-browser click exited 1: ✗ Element '#next' is covered by <div inside div#consent-banner> at its click point, so the input would land on that element instead. Dismiss or interact with the covering element first (it is often a dialog, banner, or sticky header)."
+        },
+        {
+          "name": "click#accept",
+          "ms": 412.595107000001,
+          "ok": true
+        },
+        {
+          "name": "click#next(retry)",
+          "ms": 426.05611799999315,
+          "ok": true
+        },
+        {
+          "name": "get title",
+          "ms": 714.0948249999929,
+          "ok": true
+        }
+      ],
+      "detail": "blocked once (agent-browser click exited 1: ✗ Element '#next' is covered by <div inside div#consent-bann…), then page 2"
+    },
+    {
+      "task": "churn",
+      "path": "relay",
+      "ok": false,
+      "steps": [
+        {
+          "name": "newTab",
+          "ms": 413.9415169999993,
+          "ok": true
+        },
+        {
+          "name": "click(.row[data-id=3])",
+          "ms": 150.77277799999865,
+          "ok": true
+        },
+        {
+          "name": "read#clicked",
+          "ms": 4.7841929999995045,
+          "ok": true
+        }
+      ],
+      "detail": ""
+    },
+    {
+      "task": "churn",
+      "path": "delegate",
+      "ok": true,
+      "steps": [
+        {
+          "name": "open",
+          "ms": 856.5411060000042,
+          "ok": true
+        },
+        {
+          "name": "snapshot -i --json",
+          "ms": 450.88128600000346,
+          "ok": true
+        },
+        {
+          "name": "click @e157(stale)",
+          "ms": 270.4596670000028,
+          "ok": true
+        },
+        {
+          "name": "get text #clicked",
+          "ms": 385.137922000009,
+          "ok": true
+        },
+        {
+          "name": "snapshot -i --json (re-locate)",
+          "ms": 321.22749000000476,
+          "ok": true
+        },
+        {
+          "name": "click @e165(fresh)",
+          "ms": 194.18119099999603,
+          "ok": true
+        },
+        {
+          "name": "get text #clicked",
+          "ms": 368.4283299999952,
+          "ok": true
+        }
+      ],
+      "detail": "stale ref acted; fresh ref e165"
+    },
+    {
+      "task": "states",
+      "path": "relay",
+      "ok": false,
+      "steps": [
+        {
+          "name": "newTab",
+          "ms": 399.46817900000315,
+          "ok": true
+        },
+        {
+          "name": "click#off(disabled)",
+          "ms": 166.03564200000255,
+          "ok": true
+        },
+        {
+          "name": "click#ghost(hidden)",
+          "ms": 175.52098600000318,
+          "ok": true
+        },
+        {
+          "name": "read#log",
+          "ms": 32.69969999999739,
+          "ok": true
+        }
+      ],
+      "detail": "disabled=true hidden=true log=\"\""
+    },
+    {
+      "task": "states",
+      "path": "delegate",
+      "ok": true,
+      "steps": [
+        {
+          "name": "open",
+          "ms": 450.6350439999951,
+          "ok": true
+        },
+        {
+          "name": "click#off(disabled)",
+          "ms": 239.6304189999937,
+          "ok": false,
+          "detail": "agent-browser click exited 1: ✗ Element '#off' is disabled, so the click would not reach it"
+        },
+        {
+          "name": "click#ghost(hidden)",
+          "ms": 304.13309400000435,
+          "ok": false,
+          "detail": "agent-browser click exited 1: ✗ Element '#ghost' is not visible, so the click would not reach it"
+        },
+        {
+          "name": "read#log",
+          "ms": 267.4140469999984,
+          "ok": true
+        }
+      ],
+      "detail": "disabled: failed — agent-browser click exited 1: ✗ Element '#off' is disabled, so the click would not reach it | hidden: failed — agent-browser click exited 1: ✗ Element '#ghost' is not visible, so the click would not reach it"
+    }
+  ]
+}
