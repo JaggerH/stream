@@ -53,6 +53,11 @@ export interface AndroidScrollReceipt {
   visible?: string[]
   timing?: Record<string, number>
   end?: boolean
+  /** The list's own content moved nowhere in this op (capability `ui.tree` v8). */
+  moved?: boolean
+  /** Why nothing moved, when it didn't: `container-at-end`, `gesture-no-effect` or
+   *  `no-container` (capability `ui.tree` v8). */
+  reason?: string
   settled?: boolean
   [key: string]: unknown
 }

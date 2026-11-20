@@ -111,6 +111,10 @@ internal class Gate(private val detect: Detect, private val categories: Categori
                 if (cat == "settings" && (root != null && hasScrollableSlider(root) || targetNode != null && isSlider(targetNode))) {
                     out += "setting"
                 }
+                // A free swipe whose start point neither tree names is judged like a blind click:
+                // in an app where money or goods change hands that is where a drawn slide-to-pay
+                // lives (the dispatcher has already let strokes that page a container through).
+                if (op == "swipe" && blindCommit) out += "commit-unrecognized"
             }
             else -> {}
         }

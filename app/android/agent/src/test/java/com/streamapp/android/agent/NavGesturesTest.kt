@@ -61,9 +61,10 @@ class NavGesturesTest {
 
     @Test fun capsAdvertiseAppLaunchV2() {
         assertEquals(2, ANDROID_CAPS.first { it.id == "app.launch" }.v)
-        // ui.act v2 adds longPress / swipe; ui.tree v7 adds viewId queries.
-        assertEquals(2, ANDROID_CAPS.first { it.id == "ui.act" }.v)
-        assertEquals(7, ANDROID_CAPS.first { it.id == "ui.tree" }.v)
+        // ui.act v3 judges a free swipe's start point like a blind click; ui.tree v8 makes the
+        // scroll receipt say whether the content is at its end and why nothing moved.
+        assertEquals(3, ANDROID_CAPS.first { it.id == "ui.act" }.v)
+        assertEquals(8, ANDROID_CAPS.first { it.id == "ui.tree" }.v)
         assertTrue(ANDROID_CAPS.filter { it.id !in setOf("app.launch", "ui.tree", "ui.act") }.all { it.v == 1 })
     }
 

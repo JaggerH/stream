@@ -6,6 +6,7 @@ import com.streamapp.android.policy.PolicyContext
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.Base64
+import kotlin.math.abs
 
 internal val ANDROID_OPS = listOf(
     "windows", "scopeWindow", "focusApp", "find", "invoke", "setValue", "type", "clearInput",
@@ -14,7 +15,7 @@ internal val ANDROID_OPS = listOf(
 
 /** The versions the hello declares; an id absent from this map is at v1. */
 private val CAP_VERSIONS = mapOf(
-    "ui.tree" to 7, "ui.act" to 2, "screen.shot" to 1, "app.launch" to 2,
+    "ui.tree" to 8, "ui.act" to 3, "screen.shot" to 1, "app.launch" to 2,
     "app.in_use" to 1, "input.text" to 1, "ui.ocr" to 1,
 )
 
@@ -39,8 +40,15 @@ private val CAP_VERSIONS = mapOf(
  *  controls carry `valueText`; a scroll step counts as moved only when the list's own content
  *  moved — a collapsing app bar that shifts the whole list is not list movement.
  *  `ui.tree` is at v7: `find` accepts `viewId` (the node's resource id) as a query key.
+ *  `ui.tree` is at v8: a scroll receipt says whether the list's own content moved (`moved`), and
+ *  when it did not, whether the content is at that direction's end (`end`) and why nothing moved
+ *  (`reason`: `container-at-end` / `gesture-no-effect` / `no-container`); `until` stops at the
+ *  first step whose receipt says the content is at its end.
  *  `ui.act` is at v2: `longPress` and `swipe` are first-class actions, both gated like `click`
  *  (long press) or through the existing slider judgment (swipe).
+ *  `ui.act` is at v3: a free swipe's start point is judged like a blind coordinate tap — in a
+ *  shopping / payment / finance app a point neither the tree nor OCR names is a possible drawn
+ *  slide-to-pay — unless the stroke pages the scrollable container under it.
  *
  *  `ui.ocr` (v1) is the on-device text tier: `find` takes `ocr` (`auto` / `on` / `off`) and
  *  returns `role: "ocr-text"` elements with `source: "ocr"` when the accessibility tree cannot
@@ -110,6 +118,9 @@ internal class Dispatcher(
     /** The last click's target had neither an accessibility name nor OCR text: the gate treats
      *  it as a blind click (see [Gate.reasons]). */
     private var clickBlind = false
+    /** The same for a free swipe's start point: no name from either tree, and the stroke does not
+     *  page a scrollable container under it. */
+    private var swipeBlind = false
     private val ocr = OcrFrames(ocrEngine, now)
 
     /** Per-connection policy state. The relay builds a fresh Dispatcher per connection, so a
@@ -125,6 +136,7 @@ internal class Dispatcher(
         ocrNote = null
         ocrMs = null
         clickBlind = false
+        swipeBlind = false
         if (op !in ANDROID_OPS) throw AgentError("unknown op: $op")
         if (op !in NO_WAKE) device.ensureAwake()
         busyReason?.let { reason ->
@@ -242,9 +254,19 @@ internal class Dispatcher(
                 }
                 // A swipe can be a slide-to-pay or a settings slider: the start point is handed to
                 // the gate, and Gate's swipe branch reuses the slider judgment `scroll` already has.
-                gated(op, args, checkCredential = false, target = { _, _ -> pointTarget(Rect(x1, y1, 0, 0)) }) { _ ->
+                // Its blindness is judged like a click's, with one more way to be recognized: a
+                // stroke that pages the scrollable container under it is a scroll, not a commit.
+                gated(
+                    op, args, checkCredential = false,
+                    target = { _, _ -> swipeStart(x1, y1, x2, y2) },
+                    blind = { swipeBlind },
+                ) { _ ->
                     device.swipe(x1, y1, x2, y2, durationMs)
-                    settle(args, "coords")
+                    // The gate may have recognized the screen to name the point; say what that cost.
+                    LinkedHashMap(settle(args, "coords")).apply {
+                        ocrNote?.let { put("ocr", it) }
+                        ocrMs?.let { put("timing", linkedMapOf<String, Any?>("ocrMs" to it)) }
+                    }
                 }
             }
             "scroll" -> {
@@ -490,7 +512,9 @@ internal class Dispatcher(
     }
 
     /** The deepest node covering [r]'s centre — what a coordinate tap would land on. */
-    private fun pointTarget(r: Rect): UiNode? {
+    private fun pointTarget(r: Rect): UiNode? = pointTargetIn(digestRoot(), r)
+
+    private fun pointTargetIn(root: UiNode?, r: Rect): UiNode? {
         val px = r.centerX
         val py = r.centerY
         var hit: UiNode? = null
@@ -501,8 +525,48 @@ internal class Dispatcher(
             }
             n.children.forEach(::consider)
         }
-        digestRoot()?.let { consider(it) }
+        root?.let { consider(it) }
         return hit
+    }
+
+    /**
+     * The node a free swipe starts on, and — for the gate's `blind` argument — whether the stroke
+     * is blind: the start point carries no name from the accessibility tree and no OCR text, and
+     * the stroke does not page the scrollable container under it ([pagesScroll]).
+     */
+    private fun swipeStart(x1: Int, y1: Int, x2: Int, y2: Int): UiNode? {
+        val start = Rect(x1, y1, 0, 0)
+        val root = digestRoot()
+        val node = pointTargetIn(root, start)
+        swipeBlind = !pagesScroll(root, x1, y1, x2, y2) &&
+            (node == null || !namesItself(node)) && ocrAt(start, root) == null
+        return node
+    }
+
+    /**
+     * Whether the stroke (x1,y1) → (x2,y2) pages the scrollable container under its start point:
+     * the deepest scrollable node covering the point, whose own axis agrees with the stroke's
+     * dominant direction. A scrollable that did not say which way it scrolls counts as agreeing —
+     * the tree did not tell, and a nameless point inside a scroll container is a page (a list, a
+     * gallery), not a commit. A stroke shorter than a touch slop is a tap, never a page.
+     */
+    private fun pagesScroll(root: UiNode?, x1: Int, y1: Int, x2: Int, y2: Int): Boolean {
+        val dx = abs(x2 - x1)
+        val dy = abs(y2 - y1)
+        if (maxOf(dx, dy) < device.touchSlop().coerceAtLeast(1)) return false
+        val axis = if (dy >= dx) AXIS_VERTICAL else AXIS_HORIZONTAL
+        var hit: UiNode? = null
+        fun walk(n: UiNode) {
+            if (n.isVisible && n.isScrollable &&
+                x1 >= n.rect.x && x1 < n.rect.x + n.rect.w && y1 >= n.rect.y && y1 < n.rect.y + n.rect.h
+            ) {
+                hit = n
+            }
+            n.children.forEach(::walk)
+        }
+        root?.let(::walk)
+        val node = hit ?: return false
+        return node.scrollAxis == null || node.scrollAxis == axis
     }
 
     /**
@@ -528,15 +592,17 @@ internal class Dispatcher(
         n.name.isNotBlank() || n.isEditable || n.isScrollable || n.role == "Tab" || n.role.contains("List")
 
     /** The OCR line covering [r]'s centre, recognizing the current frame when the catalog has no
-     *  result for it yet. Null when no line is there (or recognition cannot run — blind then). */
-    private fun ocrAt(r: Rect): OcrTextNode? {
+     *  result for it yet. Null when no line is there (or recognition cannot run — blind then).
+     *  [root], when the caller already read the scoped (else foreground) window's tree, spares it
+     *  another read. */
+    private fun ocrAt(r: Rect, root: UiNode? = null): OcrTextNode? {
         if (policy == null) return null
         val win = runCatching {
             if (scope != null) scopedWindow() else windows().firstOrNull { it.foreground }
         }.getOrNull() ?: return null
         if (!win.foreground) return null
-        val root = runCatching { device.windowRoot(win.id) }.getOrNull() ?: return null
-        val line = recognizeFrame(root).at(r.centerX, r.centerY) ?: return null
+        val tree = root ?: runCatching { device.windowRoot(win.id) }.getOrNull() ?: return null
+        val line = recognizeFrame(tree).at(r.centerX, r.centerY) ?: return null
         return OcrTextNode(line.text, line.rect, line.confidence)
     }
 
@@ -779,9 +845,12 @@ internal class Dispatcher(
      * declaring only the opposite direction is at this end: when nothing else moved, the reply is
      * `steps: 0, end: true` with no gesture. Otherwise, when none moves, a gesture, with
      * `a11y: "refused"` or `"no-effect"`. A later step refused or without effect is the end of the
-     * content: the scroll stops there, `end: true`. The whole run is bounded by [deadline]
-     * ([SCROLL_TOTAL_CAP_MS] by default): at the bound the reply carries the steps that completed
-     * and `stopped: "time"`, so the caller's op timeout does not have to end it.
+     * content: the scroll stops there, `end: true`. A fallback gesture that leaves the screen's
+     * content unchanged over a page that does have a scroll container is this direction's end too
+     * (`moved: false, end: true, reason: "gesture-no-effect"`); with no scroll container at all the
+     * reply says `moved: false, reason: "no-container"` and claims no end. The whole run is bounded
+     * by [deadline] ([SCROLL_TOTAL_CAP_MS] by default): at the bound the reply carries the steps
+     * that completed and `stopped: "time"`, so the caller's op timeout does not have to end it.
      *
      * When [only] is given (a container an earlier step confirmed), only that node is tried; this
      * is how `until` keeps the container it picked instead of re-ranking the candidates.
@@ -859,15 +928,24 @@ internal class Dispatcher(
         }
         if (timedOut) {
             timing.steps = 0
-            return ScrollRun(mutableMapOf("method" to SCROLL_A11Y, "steps" to 0, "stopped" to "time"), null)
+            return ScrollRun(mutableMapOf("method" to SCROLL_A11Y, "steps" to 0, "moved" to false, "stopped" to "time"), null)
         }
         // Nothing moved and a container says it is at this end: so is the scroll, no gesture.
         if (atEnd) {
             timing.steps = 0
-            return ScrollRun(mutableMapOf("method" to SCROLL_A11Y, "steps" to 0, "end" to true), null)
+            return ScrollRun(
+                mutableMapOf(
+                    "method" to SCROLL_A11Y, "steps" to 0, "moved" to false,
+                    "end" to true, "reason" to REASON_CONTAINER_AT_END,
+                ),
+                null,
+            )
         }
         val area = candidates.firstOrNull()?.let { visiblePart(it.rect, bounds) } ?: bounds
         val g = swipeGeometry(area, forward, device.touchSlop(), device.density())
+        // The gesture's own before/after picture: a fallback that changes nothing over a page that
+        // does have a scroll container is this direction's end.
+        val beforeGesture = win?.let { readContent(it.id, area, timing) }
         var swipes = 0
         while (swipes < steps && now() < deadline) {
             val started = now()
@@ -876,23 +954,40 @@ internal class Dispatcher(
             device.sleep(150)
             swipes++
         }
+        val afterGesture = win?.let { readContent(it.id, area, timing) }
+        val gestureMoved = beforeGesture != null && afterGesture != null && afterGesture != beforeGesture
         timing.steps = swipes
         val out = mutableMapOf<String, Any?>("method" to SCROLL_GESTURE, "steps" to swipes)
         if (candidates.isNotEmpty()) out["a11y"] = if (noEffect) "no-effect" else "refused"
         if (swipes < steps) out["stopped"] = "time"
+        if (!gestureMoved && beforeGesture != null && afterGesture != null) {
+            out["moved"] = false
+            if (candidates.isNotEmpty()) {
+                // A container existed and neither its action nor the gesture over it moved the
+                // page: there is nothing more to bring on screen this way.
+                out["end"] = true
+                out["reason"] = REASON_GESTURE_NO_EFFECT
+            } else {
+                // No container at all: the stroke may simply have been missed. Say so instead of
+                // claiming the content's end.
+                out["reason"] = REASON_NO_CONTAINER
+            }
+        }
         return ScrollRun(out, null)
     }
 
     /**
      * `scroll` with `until`: one scroll step at a time until the wanted text is visible on screen,
-     * stopping at the first of three bounds — the content's end (two steps leave the tree
-     * unchanged), `maxSteps` (default [UNTIL_DEFAULT_STEPS]) or the time bound (`timeoutMs`,
-     * default [UNTIL_DEFAULT_MS] and never past the op's [SCROLL_TOTAL_CAP_MS] deadline) — so the
-     * caller's own op timeout never has to be the thing that ends it. The first container whose
-     * step moved is remembered ([scroll]'s `only`) and used for every later step; the candidates
-     * are not re-ranked. The receipt says whether the text was found, how many steps ran, why
-     * scrolling stopped, a few labels still visible there and the phase timings. One step per
-     * check is the point, so the ordinary `amount` argument plays no part here.
+     * stopping at the first of three bounds — the content's end (a step whose receipt says the
+     * list is at its end, else two steps that leave the tree unchanged), `maxSteps` (default
+     * [UNTIL_DEFAULT_STEPS]) or the time bound (`timeoutMs`, default [UNTIL_DEFAULT_MS] and never
+     * past the op's [SCROLL_TOTAL_CAP_MS] deadline) — so the caller's own op timeout never has to
+     * be the thing that ends it. The first container whose step moved is remembered ([scroll]'s
+     * `only`) and used for every later step; the candidates are not re-ranked. The receipt says
+     * whether the text was found, how many steps ran, why scrolling stopped, a few labels still
+     * visible there, the phase timings and — when nothing moved — `moved: false` with the step's
+     * `reason` and, when decidable, `end: true`. One step per check is the point, so the ordinary
+     * `amount` argument plays no part here.
      */
     private fun scrollUntil(
         dir: String,
@@ -916,22 +1011,28 @@ internal class Dispatcher(
 
         var current = root()
         untilHit(current, until)?.let { return done(untilFound(it, 0, null)) }
+        var moved = false
+        var reason: String? = null
         while (true) {
-            if (scrolls >= maxSteps) return done(untilMiss(current, scrolls, method, "steps"))
-            if (now() >= deadline) return done(untilMiss(current, scrolls, method, "time"))
-            val before = current ?: return done(untilMiss(null, scrolls, method, "no-window"))
+            if (scrolls >= maxSteps) return done(untilMiss(current, scrolls, method, "steps", moved, false, reason))
+            if (now() >= deadline) return done(untilMiss(current, scrolls, method, "time", moved, false, reason))
+            val before = current ?: return done(untilMiss(null, scrolls, method, "no-window", moved, false, reason))
             val print = contentPrint(before, bounds)
             val step = scroll(dir, 1, timing, only = chosen, deadline = deadline)
             chosen = step.node ?: chosen
             scrolls++
             timing.steps = scrolls
             method = (step.receipt["method"] as? String) ?: method
+            if (step.receipt["moved"] != false) moved = true
+            reason = step.receipt["reason"] as? String
             val after = root()
             current = after
-            // Two consecutive steps over an unchanged tree are the end of the content.
+            // A step that says the content is at its end ends the search at once; two consecutive
+            // steps over an unchanged tree remain the fallback when the step could not tell.
+            val stepEnd = step.receipt["end"] == true
             if (contentPrint(after, bounds) == print) idle++ else idle = 0
             untilHit(after, until)?.let { return done(untilFound(it, scrolls, method)) }
-            if (idle >= 2) return done(untilMiss(after, scrolls, method, "end"))
+            if (stepEnd || idle >= 2) return done(untilMiss(after, scrolls, method, "end", moved, true, reason))
         }
     }
 
@@ -962,9 +1063,20 @@ internal class Dispatcher(
         return out
     }
 
-    private fun untilMiss(root: UiNode?, scrolls: Int, method: String?, stopped: String): Map<String, Any?> {
+    private fun untilMiss(
+        root: UiNode?,
+        scrolls: Int,
+        method: String?,
+        stopped: String,
+        moved: Boolean,
+        end: Boolean,
+        reason: String?,
+    ): Map<String, Any?> {
         val out = linkedMapOf<String, Any?>("found" to false, "scrolls" to scrolls, "stopped" to stopped)
         method?.let { out["method"] = it }
+        if (!moved) out["moved"] = false
+        if (end) out["end"] = true
+        if (!moved) reason?.let { out["reason"] = it }
         out["visible"] = visibleLabels(root)
         return out
     }
@@ -1004,6 +1116,17 @@ internal class Dispatcher(
         )
         timing.changeCheckMs += now() - started
         return read
+    }
+
+    /** The content print of [area] in a fresh read, charged to `changeCheckMs`: the fallback
+     *  gesture's own before/after picture of the page. Empty when the window is gone. */
+    private fun readContent(windowId: String, area: Rect, timing: ScrollTiming): List<String> {
+        val started = now()
+        return try {
+            contentPrint(device.windowRoot(windowId), area)
+        } finally {
+            timing.changeCheckMs += now() - started
+        }
     }
 
     /** [node] as it appears in [root] now, by class, name and id among scrollable nodes — null
@@ -1228,6 +1351,13 @@ internal fun WindowInfo.toMap(): Map<String, Any?> {
 
 internal const val SCROLL_A11Y = "a11y"
 internal const val SCROLL_GESTURE = "gesture"
+/** Why a scroll moved no list content: the container offers only the opposite direction's action
+ *  (`container-at-end`), the fallback gesture changed nothing over a page that does have a scroll
+ *  container (`gesture-no-effect`), or there was no scroll container at all (`no-container` — the
+ *  stroke may simply have been missed, so it is not evidence of the content's end). */
+internal const val REASON_CONTAINER_AT_END = "container-at-end"
+internal const val REASON_GESTURE_NO_EFFECT = "gesture-no-effect"
+internal const val REASON_NO_CONTAINER = "no-container"
 private const val SWIPE_MS = 300L
 /** The finger rests this long at the end of a scroll swipe before lifting: no fling. */
 internal const val SWIPE_HOLD_MS = 100L
