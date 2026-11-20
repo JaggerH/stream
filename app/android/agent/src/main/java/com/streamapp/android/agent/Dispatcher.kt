@@ -9,14 +9,17 @@ import java.util.Base64
 
 internal val ANDROID_OPS = listOf(
     "windows", "scopeWindow", "focusApp", "find", "invoke", "setValue", "type", "clearInput",
-    "click", "scroll", "press", "readSubtree", "screenshot", "url", "sleep", "status",
+    "click", "longPress", "swipe", "scroll", "press", "readSubtree", "screenshot", "url", "sleep", "status",
 )
 
-/** Capabilities past their first version; the rest are at v1. */
-private val CAP_VERSIONS = mapOf("ui.tree" to 6, "app.launch" to 2)
+/** The versions the hello declares; an id absent from this map is at v1. */
+private val CAP_VERSIONS = mapOf(
+    "ui.tree" to 7, "ui.act" to 2, "screen.shot" to 1, "app.launch" to 2,
+    "app.in_use" to 1, "input.text" to 1, "ui.ocr" to 1,
+)
 
 /** The capability manifest the hello declares: only what [ANDROID_OPS] actually back. `ui.tree`
- *  (windows / find / readSubtree), `ui.act` (click / invoke / scroll / press), `screen.shot`,
+ *  (windows / find / readSubtree), `ui.act` (click / longPress / swipe / invoke / scroll / press), `screen.shot`,
  *  `app.launch` (focusApp), `app.in_use` (the `app-in-use` refusal), `input.text` (setValue / type /
  *  clearInput). No notification posting or intent running: there are no ops for them.
  *
@@ -35,6 +38,9 @@ private val CAP_VERSIONS = mapOf("ui.tree" to 6, "app.launch" to 2)
  *  `ui.tree` is at v6: a `find` range carries `stepCount` for int ranges and value-bearing
  *  controls carry `valueText`; a scroll step counts as moved only when the list's own content
  *  moved — a collapsing app bar that shifts the whole list is not list movement.
+ *  `ui.tree` is at v7: `find` accepts `viewId` (the node's resource id) as a query key.
+ *  `ui.act` is at v2: `longPress` and `swipe` are first-class actions, both gated like `click`
+ *  (long press) or through the existing slider judgment (swipe).
  *
  *  `ui.ocr` (v1) is the on-device text tier: `find` takes `ocr` (`auto` / `on` / `off`) and
  *  returns `role: "ocr-text"` elements with `source: "ocr"` when the accessibility tree cannot
@@ -56,7 +62,7 @@ private val BUSY_PASS = setOf("status", "sleep")
 /** Ops the sensitive gate inspects before any device action. `press` counts through its Enter
  *  key only — the dispatcher routes just that key through the gate; Back and Home are not
  *  commits, though they still answer to deny-category visibility. */
-private val GATED = setOf("click", "invoke", "setValue", "type", "clearInput", "scroll", "press")
+private val GATED = setOf("click", "longPress", "swipe", "invoke", "setValue", "type", "clearInput", "scroll", "press")
 
 /** HyperOS's 关联启动 prompt (`com.miui.wakepath.ui.ConfirmStartActivity`) the first time one app opens
  *  another. Matched by activity; the bare package counts only when its activity is not known yet. */
@@ -203,6 +209,42 @@ internal class Dispatcher(
                         ocrNote?.let { put("ocr", it) }
                         ocrMs?.let { put("timing", linkedMapOf<String, Any?>("ocrMs" to it)) }
                     }
+                }
+            }
+            "longPress" -> {
+                refuseMessage(args)
+                val r = rect(obj(args, "rect"))
+                val durationMs = args.optLong("durationMs", 600L)
+                if (durationMs <= 0 || durationMs > 5_000) {
+                    throw AgentError("action-failed: longPress 的 durationMs 要在 1..5000 毫秒，收到 $durationMs")
+                }
+                // The same landing-point judgment as `click`: the deepest named node, else the OCR
+                // line, else blind. A long press can commit just as a tap can.
+                gated(op, args, checkCredential = false, target = { _, _ -> clickTarget(r) }, blind = { clickBlind }) { _ ->
+                    device.longPress(r.centerX, r.centerY, durationMs)
+                    LinkedHashMap(settle(args, "coords")).apply {
+                        ocrNote?.let { put("ocr", it) }
+                        ocrMs?.let { put("timing", linkedMapOf<String, Any?>("ocrMs" to it)) }
+                    }
+                }
+            }
+            "swipe" -> {
+                refuseMessage(args)
+                val (x1, y1) = point(obj(args, "from"))
+                val (x2, y2) = point(obj(args, "to"))
+                val screen = device.screenSize()
+                if (x1 !in 0..screen.w || y1 !in 0..screen.h || x2 !in 0..screen.w || y2 !in 0..screen.h) {
+                    throw AgentError("action-failed: swipe 的端点越出屏幕（${screen.w}x${screen.h}）")
+                }
+                val durationMs = args.optLong("durationMs", 300L)
+                if (durationMs <= 0 || durationMs > 10_000) {
+                    throw AgentError("action-failed: swipe 的 durationMs 要在 1..10000 毫秒，收到 $durationMs")
+                }
+                // A swipe can be a slide-to-pay or a settings slider: the start point is handed to
+                // the gate, and Gate's swipe branch reuses the slider judgment `scroll` already has.
+                gated(op, args, checkCredential = false, target = { _, _ -> pointTarget(Rect(x1, y1, 0, 0)) }) { _ ->
+                    device.swipe(x1, y1, x2, y2, durationMs)
+                    settle(args, "coords")
                 }
             }
             "scroll" -> {
@@ -1154,6 +1196,7 @@ internal class Dispatcher(
     private fun int(o: JSONObject, k: String): Int { need(o, k); return o.getInt(k) }
     private fun long(o: JSONObject, k: String): Long { need(o, k); return o.getLong(k) }
     private fun rect(o: JSONObject) = Rect(o.getInt("x"), o.getInt("y"), o.getInt("w"), o.getInt("h"))
+    private fun point(o: JSONObject): Pair<Int, Int> { need(o, "x"); need(o, "y"); return o.getInt("x") to o.getInt("y") }
 
     private companion object {
         /** The receipt's control label is masked text trimmed to this bound. */

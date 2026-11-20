@@ -1,6 +1,7 @@
 import type { PageDriver } from '../../shared/browser-relay/page-driver.ts'
 import { escapesFrom, featureKey, type Observation, type StateGraph, type StateId, type Transition } from './state-graph.ts'
 import { DomPerception } from './state-perception-dom.ts'
+import type { Perception } from './state-perception.ts'
 
 export type StateVerdict =
   | { kind: 'unknown' }
@@ -22,6 +23,21 @@ export type StateVerdict =
 export async function classifyByState(
   driver: PageDriver,
   graph: StateGraph,
+  onObserved?: (o: Observation) => void,
+): Promise<StateVerdict> {
+  return classifyWithPerception(new DomPerception(driver), graph, onObserved)
+}
+
+/**
+ * The same diagnosis over any perception (browser `dom`, desktop `a11y`, Android `a11y` +
+ * OCR + foreground window). Keeping the verdict construction here — rather than a second copy
+ * for each route — is what makes "死路 > 逃生口 > 认出来" and the observation ledger identical
+ * on every surface. A perception that throws is still a diagnostic miss, never a second failure
+ * that covers the original one.
+ */
+export async function classifyWithPerception(
+  perception: Perception,
+  graph: StateGraph,
   /**
    * 认出状态就记一笔观测（那一刻为真的特征键），喂区分度闸。**每一次成功识别都记**，不挑
    * "这一趟顺不顺"——死路和逃生口那两档同样是一次货真价实的识别，漏掉它们等于让闸只见过
@@ -32,7 +48,7 @@ export async function classifyByState(
   // 空图连一次 exists 都不该问——这条诊断挂在每一次失败上，没配图时它的开销必须是零。
   if (graph.states.length === 0) return { kind: 'unknown' }
   try {
-    const r = await new DomPerception(driver).identify(graph.states)
+    const r = await perception.identify(graph.states)
     // **记在分档之前**：下面几条分支各自 return，挂在某一条上就只记到那一档的观测。
     if (onObserved && r.states !== null) {
       const truths = r.matched.map(featureKey)

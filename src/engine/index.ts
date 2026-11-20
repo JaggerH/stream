@@ -73,6 +73,60 @@ export {
 export { startCdpBinding } from '../cdp-binding/index.ts'
 export type { CdpBinding, CdpBindingOptions } from '../cdp-binding/index.ts'
 export type { StreamCapabilities } from './capabilities.ts'
+/**
+ * Android recipes (openspec `android-recipe-replay` + `device-actions`). The embedder owns the
+ * device connection and passes an `ops(op, args)` function; Stream only replays the recipe over
+ * it. The same exports carry the state-feature half so an embedder can call `identify` itself.
+ */
+export {
+  ANDROID_OP_NAMES,
+  AndroidUnsupportedOpError,
+  AndroidUnsupportedCapabilityError,
+  makeAndroidDriver,
+} from '../replay/android-driver.ts'
+export type {
+  AndroidActOutcome,
+  AndroidCaps,
+  AndroidDriver,
+  AndroidDriverOptions,
+  AndroidElement,
+  AndroidFindResult,
+  AndroidOps,
+  AndroidQuery,
+  AndroidScrollOptions,
+  AndroidScrollReceipt,
+  AndroidWindow,
+} from '../replay/android-driver.ts'
+export { ANDROID_STEP_KINDS, validateAndroidRecipe } from '../replay/android-recipe.ts'
+export type {
+  AndroidApp,
+  AndroidExpect,
+  AndroidLocator,
+  AndroidRecipe,
+  AndroidStateSpec,
+  AndroidStep,
+} from '../replay/android-recipe.ts'
+export {
+  AndroidPerception,
+  androidProbeFromDriver,
+  androidTransport,
+  matchesAndroidQuery,
+} from '../replay/android-state-perception.ts'
+export type {
+  AndroidForeground,
+  AndroidProbe,
+  AndroidScreen,
+  AndroidTransport,
+} from '../replay/android-state-perception.ts'
+export { runAndroidRecipe } from '../replay/android-runner.ts'
+export type { AndroidRunOptions, AndroidRunOutcome } from '../replay/android-runner.ts'
+export { classifyWithPerception } from '../replay/state-classify.ts'
+export type { StateVerdict } from '../replay/state-classify.ts'
+export { identifyWith } from '../replay/state-perception.ts'
+export type { FeatureTest, IdentifyResult, Perception } from '../replay/state-perception.ts'
+export { checkDiscriminative, featureKey } from '../replay/state-graph.ts'
+export type { Feature, Observation, StateDef, StateGraph } from '../replay/state-graph.ts'
+export { ObservationLedger } from '../replay/observation-ledger.ts'
 export type { StreamTools, ToolAnnotations, ToolCallContext, ToolDescriptor, ToolProgress, ToolResult } from './tools.ts'
 import { createTools, type StreamTools } from './tools.ts'
 

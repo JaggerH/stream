@@ -5,6 +5,7 @@ import { isCanonicalBrowserRecipe } from './recipe.ts'
 import { COMPUTE_CAPABILITIES } from './compute-sandbox.ts'
 import { localSourceIdProblem } from '../registry/source-id.ts'
 import { ELSE_VALUES, validateInterrupt, validateSee, validateTarget, type Else } from './desktop-recipe.ts'
+import { validateAndroidRecipe } from './android-recipe.ts'
 import { AREA_BODY_KEYS, GROUNDING_META_KEYS, GROUNDING_PLATFORMS, STEP_TOP_ONLY_KEYS, assertTemplatesKept, groundingBody, isValidRange } from './desktop-grounding.ts'
 import { pathDerivedKeys } from './path-params.ts'
 
@@ -479,6 +480,9 @@ function validate(sourceId: string, obj: unknown): Recipe {
     ) {
       throw new Error(`recipe "${sourceId}": browser-recipe requires loginCheck.loggedIn and loginCheck.wall strings`)
     }
+    return r as Recipe
+  } else if (r?.kind === 'android') {
+    validateAndroidRecipe(sourceId, r as Record<string, unknown>)
     return r as Recipe
   } else if (r?.kind === 'desktop') {
     // kind:'desktop' — the host-desktop Engine drives a native app via the OS a11y tree.

@@ -227,6 +227,8 @@ internal class AndroidDevice(private val ctx: Context, private val onStop: () ->
 
     override fun tap(x: Int, y: Int, longPress: Boolean) =
         gesture(Path().apply { moveTo(x.coerceAtLeast(0).toFloat(), y.coerceAtLeast(0).toFloat()) }, if (longPress) 600 else 60)
+    override fun longPress(x: Int, y: Int, durationMs: Long) =
+        gesture(Path().apply { moveTo(x.coerceAtLeast(0).toFloat(), y.coerceAtLeast(0).toFloat()) }, durationMs)
 
     override fun swipe(x1: Int, y1: Int, x2: Int, y2: Int, durationMs: Long, holdMs: Long) {
         val ex = x2.coerceAtLeast(0).toFloat()

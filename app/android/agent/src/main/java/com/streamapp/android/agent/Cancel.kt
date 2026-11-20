@@ -40,6 +40,7 @@ internal class CancellableDevice(private val inner: Device, private val cancel: 
     override fun focusedInput() = guard { inner.focusedInput() }
     override fun imeEnter(node: UiNode) = guard { inner.imeEnter(node) }
     override fun tap(x: Int, y: Int, longPress: Boolean) = guard { inner.tap(x, y, longPress) }
+    override fun longPress(x: Int, y: Int, durationMs: Long) = guard { inner.longPress(x, y, durationMs) }
     override fun swipe(x1: Int, y1: Int, x2: Int, y2: Int, durationMs: Long, holdMs: Long) = guard { inner.swipe(x1, y1, x2, y2, durationMs, holdMs) }
     override fun globalBack() = guard { inner.globalBack() }
     override fun globalHome() = guard { inner.globalHome() }

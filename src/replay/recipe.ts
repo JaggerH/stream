@@ -1,5 +1,6 @@
 import type { AuthSpec, Capability, Facility, RuntimeConfigSpec, SourceType } from '../manifest/types.ts'
 import type { DesktopRecipe } from './desktop-recipe.ts'
+import type { AndroidRecipe } from './android-recipe.ts'
 
 /** One in-page fetch template. url/body/header values may contain {param} holes. */
 export interface RecipeRequest {
@@ -1343,7 +1344,7 @@ export interface BrowserRecipe {
   meta?: RecipeMeta
 }
 
-export type Recipe = FetchRecipe | HttpRecipe | HtmlRecipe | BrowserRecipe | CanonicalBrowserRecipe | DesktopRecipe
+export type Recipe = FetchRecipe | HttpRecipe | HtmlRecipe | BrowserRecipe | CanonicalBrowserRecipe | DesktopRecipe | AndroidRecipe
 
 export function isCanonicalBrowserRecipe(recipe: Recipe): recipe is CanonicalBrowserRecipe {
   return recipe.kind === 'browser' && 'steps' in recipe && 'observers' in recipe && 'output' in recipe
@@ -1359,5 +1360,5 @@ export function isCanonicalBrowserRecipe(recipe: Recipe): recipe is CanonicalBro
  * agent's a11y engine over the /api/host relay, which is not a browser either.
  */
 export function needsBrowser(recipe: Recipe): boolean {
-  return recipe.kind !== 'http' && recipe.kind !== 'html' && recipe.kind !== 'desktop'
+  return recipe.kind !== 'http' && recipe.kind !== 'html' && recipe.kind !== 'desktop' && recipe.kind !== 'android'
 }

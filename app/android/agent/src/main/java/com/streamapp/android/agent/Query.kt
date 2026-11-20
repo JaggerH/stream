@@ -7,6 +7,8 @@ internal data class A11yQuery(
     val name: String? = null,
     val nameContains: String? = null,
     val className: String? = null,
+    /** The node's resource id (e.g. `com.example:id/search`), matched exactly. `ui.tree` v7. */
+    val viewId: String? = null,
     val path: List<A11yQuery>? = null,
 ) {
     companion object {
@@ -17,6 +19,7 @@ internal data class A11yQuery(
                 name = s("name"),
                 nameContains = s("nameContains"),
                 className = s("className"),
+                viewId = s("viewId"),
                 path = o.optJSONArray("path")?.let { a -> (0 until a.length()).map { from(a.getJSONObject(it)) } },
             )
             require(q.name == null || q.nameContains == null) { "a11y query: name 与 nameContains 只能给一个（前者全等、后者包含）" }
@@ -30,6 +33,7 @@ private fun selfMatches(n: UiNode, q: A11yQuery): Boolean {
     if (q.name != null && n.name != q.name) return false
     if (q.nameContains != null && (n.name.isEmpty() || !n.name.contains(q.nameContains, ignoreCase = true))) return false
     if (q.className != null && n.className != q.className) return false
+    if (q.viewId != null && n.viewId != q.viewId) return false
     return true
 }
 

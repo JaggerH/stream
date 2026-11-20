@@ -597,4 +597,38 @@ class PolicyGateTest {
         assertEquals("approval-used", errCode("invoke", """{"ref":"$r","approval":${approvalOf(e)}}"""))
         assertEquals(1, dev.log.count { it.startsWith("click") })
     }
+    // ---- long press and swipe -------------------------------------------------------------
+
+    @Test fun longPressOnACommitButtonAsksBeforeTouchingAnything() {
+        setUpApp("com.example.shop", "商店")
+        val e = err("longPress", """{"rect":{"x":0,"y":1800,"w":1080,"h":120},"durationMs":900}""")
+        assertEquals("approval-required", e.errorCode)
+        assertTrue(reasons(e).containsAll(listOf("commit-label", "payment-label")))
+        assertFalse(dev.log.any { it.startsWith("longPress") || it.startsWith("tap") })
+    }
+
+    @Test fun aSlideToPaySwipeAsksAndDoesNotMove() {
+        setUpApp("com.example.pay", "支付", root = single(
+            FakeNode("SeekBar", "Slide to pay", className = "android.widget.SeekBar", rect = Rect(0, 1000, 1080, 90)),
+        ))
+        val e = err("swipe", """{"from":{"x":500,"y":1040},"to":{"x":1000,"y":1040},"durationMs":300}""")
+        assertEquals("approval-required", e.errorCode)
+        assertTrue(reasons(e).containsAll(listOf("commit-label", "payment-label")))
+        assertFalse(dev.log.any { it.startsWith("swipe") })
+    }
+
+    @Test fun aSwipeOnASettingsSliderAsks() {
+        setUpApp("com.android.settings", "设置", root = fontSizePage())
+        val e = err("swipe", """{"from":{"x":300,"y":1050},"to":{"x":800,"y":1050},"durationMs":300}""")
+        assertEquals("approval-required", e.errorCode)
+        assertTrue(reasons(e).contains("setting"))
+        assertFalse(dev.log.any { it.startsWith("swipe") })
+    }
+
+    @Test fun anOrdinarySwipeRunsFree() {
+        setUpApp("com.example.shop", "商店")
+        call("swipe", """{"from":{"x":500,"y":1800},"to":{"x":500,"y":600},"durationMs":300}""")
+        assertTrue(dev.log.any { it.startsWith("swipe") })
+    }
+
 }

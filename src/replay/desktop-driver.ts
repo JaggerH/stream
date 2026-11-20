@@ -140,6 +140,9 @@ export interface A11yQuery {
    */
   nameContains?: string
   className?: string
+  /** Android (`ui.tree` v7): the node's resource id, matched exactly (e.g. `com.example:id/search`).
+   *  Other backends ignore it; a device that does not declare `ui.tree` v7 must not be sent it. */
+  viewId?: string
   /** structural path from the window root; each segment is a partial match, outermost first */
   path?: Array<{ role?: string; name?: string; className?: string }>
 }

@@ -29,6 +29,13 @@ export type Feature =
    * 的固有边界，不是选错了算法。
    */
   | { kind: 'image'; png: string; minScore?: number; absent?: boolean; where?: TextWhere }
+  /**
+   * Android: the foreground window. `package` may be one name or a list of candidates; `activity`
+   * matches the last activity seen for the package (exact, or its suffix after the package), and
+   * `title` matches by containment. All given fields are AND-ed. `absent` inverts the whole match —
+   * 「登录按钮不在」 and 「不在结算页」 are both useful judgments.
+   */
+  | { kind: 'android-window'; package?: string | string[]; activity?: string; title?: string; absent?: boolean }
 
 export interface StateDef {
   id: StateId
@@ -100,6 +107,11 @@ export function featureKey(f: Feature): string {
         `text:${f.absent ? '!' : ''}${f.text}` +
         `${f.region ? `@${JSON.stringify(f.region)}` : ''}` +
         `${f.where ? `~${JSON.stringify(f.where)}` : ''}`
+      )
+    case 'android-window':
+      return (
+        `android-window:${f.absent ? '!' : ''}` +
+        JSON.stringify({ package: f.package, activity: f.activity, title: f.title })
       )
     case 'image':
       // 参考图本身进键，但只取一段摘要——整张 base64 进键会让轨迹和撞车报告没法读。

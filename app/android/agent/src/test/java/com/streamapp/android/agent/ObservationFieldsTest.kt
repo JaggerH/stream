@@ -54,9 +54,9 @@ class ObservationFieldsTest {
         assertFalse(el.containsKey("isShowingHintText"))
     }
 
-    @Test fun uiTreeIsDeclaredAtV6() {
-        // v6 adds range stepCount / valueText and the collapsing-toolbar step rule.
-        assertEquals(6, ANDROID_CAPS.first { it.id == "ui.tree" }.v)
+    @Test fun uiTreeIsDeclaredAtV7() {
+        // v7 accepts viewId as a find query key; v6 added range stepCount / valueText.
+        assertEquals(7, ANDROID_CAPS.first { it.id == "ui.tree" }.v)
     }
 
     // ---- windows fields -----------------------------------------------------------------

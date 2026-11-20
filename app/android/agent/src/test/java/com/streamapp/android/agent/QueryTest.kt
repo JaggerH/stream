@@ -69,4 +69,12 @@ class QueryTest {
         val spec = JSONObject("""{"itemQuery":{"role":"EditText"},"fields":{"v":{"read":"vlaue"}},"dedupeBy":"v"}""")
         assertThrows(IllegalArgumentException::class.java) { readSubtree(n("FrameLayout"), spec) }
     }
+    @Test fun viewIdMatchesTheResourceIdExactly() {
+        val t = n("FrameLayout", "", FakeNode("EditText", "", viewId = "com.example:id/search"))
+        assertEquals(1, findAll(t, q("""{"viewId":"com.example:id/search"}""")).size)
+        assertTrue(findAll(t, q("""{"viewId":"com.example:id/other"}""")).isEmpty())
+        // A nameless node is still addressable by its resource id; the plain name keys stay separate.
+        assertTrue(findAll(t, q("""{"name":"search"}""")).isEmpty())
+    }
+
 }

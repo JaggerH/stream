@@ -1,6 +1,7 @@
 import type { PageDriver } from '../../shared/browser-relay/page-driver.ts'
 import { inventoryExpression } from '../../shared/browser-relay/page-inventory.ts'
 import type { DesktopDriver } from './desktop-driver.ts'
+import type { AndroidProbe } from './android-state-perception.ts'
 
 export interface SceneElement {
   /** 浏览器侧的清单编号（会话级脚手架，**绝不写进 recipe**，见 page-inventory.ts 头注）。 */
@@ -18,9 +19,11 @@ export interface SceneElement {
  * 每一项独立 best-effort——现场捕获永远不许盖掉真正的失败原因。
  */
 export interface Scene {
-  side: 'browser' | 'desktop'
+  side: 'browser' | 'desktop' | 'android'
   url?: string
   title?: string
+  /** Android: the foreground app the phone reported (package + last activity). */
+  foreground?: { package: string; activity?: string; title?: string }
   text?: string
   /** `truncated` = 这张图太大，落库时被丢掉了（`base64` 留空）。**如实说而不是当没有截图**：
    *  人审提议时要能分清「引擎没抓到」和「抓到了但没存」，两者的下一步完全不同。 */
@@ -73,5 +76,32 @@ export async function captureDesktopScene(driver: DesktopDriver): Promise<Scene>
   if (els) scene.elements = els.elements.map((e) => ({ ...(e.name ? { name: e.name } : {}), kind: e.kind, rect: e.rect }))
   const txt = await driver.readText().catch(() => null)
   if (txt && txt.texts.length) scene.text = txt.texts.map((t) => t.text).join('\n').slice(0, TEXT_CAP)
+  return scene
+}
+/**
+ * Android's failure scene. Same rule as the other two: every item is best effort, and a scene
+ * capture must never cover the real failure cause. The foreground app is reported as
+ * `package/activity` in `url`, the window title in `title`, and the elements carry role / name /
+ * source so a reader can see what a renamed control became without the original run's context.
+ */
+export async function captureAndroidScene(probe: AndroidProbe): Promise<Scene> {
+  const scene: Scene = { side: 'android', elements: [] }
+  try {
+    const snap = await probe.snapshot()
+    const fg = snap.foreground
+    if (fg) {
+      scene.url = `${fg.package}/${fg.activity ?? ''}`.replace(/\/$/, '')
+      scene.foreground = fg
+      if (fg.title) scene.title = fg.title
+    }
+    scene.elements = snap.elements.map((e) => ({
+      ...(e.role ? { role: e.role } : {}),
+      ...(e.name ? { name: e.name } : {}),
+      ...(e.kind ? { kind: e.kind } : {}),
+      rect: e.rect,
+    }))
+  } catch {
+    // No scene is fine; the drift report itself is still there.
+  }
   return scene
 }

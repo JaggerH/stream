@@ -1157,6 +1157,83 @@ and no fallback to the Stream repository:
   the label cannot be found → reject. The inserted entry gets `verified.by = "contributed"` plus a `ref`.
   The script only writes files and **does not commit**: the author runs the guard tests and commits themselves.
 
+### 2.4.1 Android recipes (`kind:'android'`)
+
+A recipe that drives a **phone**. Planning and recipe storage stay on the server; the phone only
+performs ops. It uses the same `a11y` vocabulary as desktop (role / name / `viewId`), plus the
+on-device OCR text tier (`ui.ocr`) and the foreground window (`android-window`). The actions are the
+normalized device-action set (`tap`, `longPress`, `swipe`, `scroll`, `type`, `setText`, `press`,
+`find`, `windows`, `openApp`, `sleep`; `screenshot` and `url` for observation), defined in the
+openspec `device-actions` capability.
+
+**The recipe has no device connection.** The backend runs it through a driver built over an
+`ops(op, args) → reply` function supplied by the embedder — that function is the embedder's own
+device connection, and Stream never dials the phone from this path:
+
+```ts
+import { androidTransport, runAndroidRecipe } from '@streamapp/engine'
+
+const transport = androidTransport((op, args) => myDevice.request(op, args), {
+  ops: deviceHello.ops,           // declared in hello; an undeclared op is refused locally
+  caps: deviceHello.caps,         // ui.act v2 for longPress/swipe, ui.tree v7 for viewId
+})
+const out = await runAndroidRecipe(recipe, { query: '咖啡' }, transport.driver, { stateGraph })
+if (out.outcome !== 'ok') console.log(out.reason, out.state, out.scene)
+```
+
+**Targets are re-evaluable locators, never coordinates** (docs/ENGINE.md §7.5). A step's target is
+exactly one of:
+
+| Locator form | Meaning |
+|---|---|
+| `query` | an a11y query: `role`, `name` (exact) / `nameContains`, `className`, `viewId` (resource id), `path` |
+| `resourceId` | shorthand for `query: { viewId }` |
+| `text` | an accessibility name or an OCR line; `where` ({anchor, side, maxDist}) narrows it to one side of another line; `ocr: false` forbids the text tier |
+
+A `swipe` names both ends with locators (`from` / `to`), so a gesture is re-found on the next run.
+The validator rejects `x`, `y`, `rect`, `at`, `point` and any other bare coordinate in a step or
+locator.
+
+Entry and exit screens are feature sets:
+
+```jsonc
+{
+  "version": 1,
+  "kind": "android",
+  "sourceId": "example-search",
+  "app": { "package": ["com.example.app", "com.example.app.debug"] },
+  "entry": { "features": [{ "kind": "android-window", "package": "com.example.app", "activity": "Home" }] },
+  "steps": [
+    { "kind": "openApp", "label": "打开应用" },
+    { "kind": "tap", "target": { "text": "搜索" }, "label": "打开搜索" },
+    { "kind": "type", "text": "{query}", "label": "输入关键词" },
+    { "kind": "tap", "target": { "resourceId": "com.example:id/search" }, "label": "提交搜索" }
+  ],
+  "exit": { "features": [{ "kind": "text", "text": "结果" }] }
+}
+```
+
+Android feature kinds for a state graph:
+
+| Feature | Meaning |
+|---|---|
+| `a11y` | an accessibility query hits (or, with `absent`, does not); `query.viewId` is a resource id |
+| `text` | a line from the accessibility names or the on-device OCR tier appears / is absent; `where` narrows it |
+| `android-window` | foreground `package` (one or a list), `activity`, `title`; `absent` inverts |
+
+The perception reads the screen **once per `identify`** (one `find` with `ocr:"on"` when a text
+feature is asked for, plus one `windows` and one `url`) and defaults to `on-failure`, the same
+policy as desktop (docs/ENGINE.md §6.5). A failed step is classified against the supplied state
+graph and returns `outcome: "drift"`, the verdict (`unknown` / `ambiguous` / `deadEnd` /
+`escapable` / `identified`) and the failure scene (foreground app + visible elements). Every
+recognized state can be recorded through `onObserved` into `ObservationLedger`, and
+`checkDiscriminative` accepts the new feature kind unchanged.
+
+The public entry (`@streamapp/engine`) exports `runAndroidRecipe`, `androidTransport`,
+`makeAndroidDriver`, `AndroidPerception`, `androidProbeFromDriver`, `validateAndroidRecipe`,
+`classifyWithPerception`, `identifyWith`, `checkDiscriminative`, `ObservationLedger` and their
+types.
+
 ### 2.5 Silent shadow session data flow
 
 > **This section is only the conceptual contract.** The runtime model of this pipeline (where the ledger comes from, the three-tier degradation of `locate`,
@@ -1278,6 +1355,7 @@ Target control points:
 - `actions.ts`: generic trusted browser actions.
 - `observer-pipeline.ts`: Network/state/DOM observers and output merging.
 - `browser-ext*.ts`: the backend CDP driver / transport adapter.
+- `android-*.ts`: the remote-device driver over an injected `ops` function, the Android recipe validator / runner, and its state features (`android-driver.ts`, `android-recipe.ts`, `android-runner.ts`, `android-state-perception.ts`). The device connection is the embedder's.
 - `extension/src/lib/driver.ts`: owned tabs, raw CDP RPC/event transport; no Recipe business logic.
 - `repair-ledger.ts`: Recipe-level drift/quarantine/repair state.
 
@@ -2659,4 +2737,4 @@ Once added to the activation set, `pnpm plugins compose` automatically adds the 
 - **PluginDescriptor**: `{ id, name?, tagline?, description?, homepage?, repository?, docsUrl?, required?, backend?, sourceGrouping?, credentials?: string[], normalizer?, code?, capability?, sources? }` (`code?: { entry, adapters?: string[], normalizers?: string[], enrichers?: string[], connect?: string[] }` see §3; `capability?: 'dist/index.js'` see §5.9) (`src/packages/descriptor.ts` `parseStreamDescriptor` / `src/plugins/types.ts`; `presenter?` is kept as a deprecated alias for `normalizer`). `name/tagline/description/homepage/repository/docsUrl` are **catalog display fields** (§8) and the sole source of Plugin metadata. `required?: boolean` marks base plugins (`rsshub`/`builtin` use `required: true`). `sources` is merged in by the scanner from `manifests.yaml` (`stream.sources` inline and `manifests.yaml` are mutually exclusive; giving both is an error).
 - **PluginBackend**: `{ image, service?, port, health?, env?, gpu?, volumes?, mem?, user?, publish?, dev?, standby? }` (`src/packages/descriptor.ts` `backendSchema`) — `image` is the facility's own image; `service` defaults to `id`; same-network DNS goes through `http://<service>:<port>`; **secrets never go into `env`** — to get a login state, declare `credentials`, and the host dispatches it with the request (§5.1). `gpu` (nvidia reservation, optional; used by the `voiceprint`/`mineru` packages; a third-party declaration is clamped and rejected, official packages pass, §6.2), `volumes`/`mem` (resources, used by many facilities), `user` (who to run as inside the container, used by `alist`, see §4.1), `publish` (extra published host ports; present in the schema, no plugin currently uses it). `dev = { image, mount, workdir?, command }` is emitted only by `compose --dev` (base + mount + reload).
 - **Generated compose structure**: `{ networks: { stream }, services: {…} }`, keys sorted, deterministic. By default it holds only plugin containers. Only `--selfhost` appends Stream's own two pieces: `serve-backend` (`build: .`, `STREAM_PLUGIN_NETWORK: compose` + an explicit `STREAM_PORT: 4555`, i.e. the owner of `/_p`, which also serves the UI) and `gateway` (`caddy:2-alpine`, the **only port published to the host** in that tier, `127.0.0.1:8900:80`) + a top-level `volumes: { stream-data }`, and it also writes `./Caddyfile`. A single `ComposeService` may contain `image/build/command/env_file/expose/ports/volumes/deploy(GPU)/mem_limit/depends_on/networks/healthcheck/environment`. The real output is whatever `pnpm plugins compose` prints.
-- **BrowserRecipe**: `{ version, kind, sourceId, session{facility,lifecycle,visibility}, loginCheck, steps[], observers[], output, ledger?, policy?, extract? }` (§2.2). There is also the `kind:'http'` probe prototype (§2.3) and the `kind:'desktop'` desktop prototype (§2.4).
+- **BrowserRecipe**: `{ version, kind, sourceId, session{facility,lifecycle,visibility}, loginCheck, steps[], observers[], output, ledger?, policy?, extract? }` (§2.2). There is also the `kind:'http'` probe prototype (§2.3), the `kind:'desktop'` desktop prototype (§2.4) and the `kind:'android'` phone prototype (§2.4.1).

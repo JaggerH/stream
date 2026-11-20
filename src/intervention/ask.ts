@@ -21,7 +21,7 @@ export interface AskInput {
   reason: string
 }
 
-export type Side = 'browser' | 'desktop'
+export type Side = 'browser' | 'desktop' | 'android'
 
 /**
  * **每条路线只判得了自己那几种特征。** 浏览器侧的 `DomPerception` 只求值 url / dom，
@@ -36,9 +36,10 @@ export type Side = 'browser' | 'desktop'
 export const ALLOWED_FEATURE_KINDS: Record<Side, readonly Feature['kind'][]> = {
   browser: ['url', 'dom'],
   desktop: ['a11y', 'text', 'image'],
+  android: ['a11y', 'text', 'android-window'],
 }
 
-const SIDE_LABEL: Record<Side, string> = { browser: '浏览器', desktop: '桌面' }
+const SIDE_LABEL: Record<Side, string> = { browser: '浏览器', desktop: '桌面', android: '安卓' }
 
 /** 这条路线判不判得了这种特征。判据有名字，才有地方挂测试、才有第二个消费方能复用。 */
 export function featureKindAllowed(side: Side, kind: Feature['kind']): boolean {
@@ -64,6 +65,7 @@ const GRAMMAR_LINE: Record<Feature['kind'], string> = {
   a11y: `- {"kind":"a11y","query":{...},"absent":false}      // 桌面 a11y 查询`,
   text: `- {"kind":"text","text":"屏上的一串字","absent":false}`,
   image: `- {"kind":"image","png":"<base64>","absent":false}   // 仅当你手里有参考图；一般不用`,
+  'android-window': `- {"kind":"android-window","package":"com.example.app","activity":"CheckoutActivity","title":"结算","absent":false}`,
 }
 
 /**

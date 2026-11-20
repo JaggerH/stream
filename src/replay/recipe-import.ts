@@ -164,7 +164,7 @@ function parsePackage(zipPath: string, hostVersion: string | undefined, occupied
     sources.push(recipe.sourceId)
     // A kind:'desktop' recipe drives a LOCAL app via the OS a11y tree — it reaches no network
     // host, so there is nothing to disclose in the install-time domain review.
-    if (recipe.kind === 'desktop') continue
+    if (recipe.kind === 'desktop' || recipe.kind === 'android') continue
     // The domains this package will touch, for the install-time permission review. An
     // http/html recipe has no entryUrl and an optional cookieDomain — the host it actually
     // reaches is its request URL, so that is what must be disclosed. (An html recipe's

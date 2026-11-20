@@ -22,10 +22,10 @@ class DispatcherTest {
 
     @Test fun declaresExactlyTheSixteenOps() {
         assertEquals(
-            setOf("windows", "scopeWindow", "focusApp", "find", "invoke", "setValue", "type", "clearInput", "click", "scroll", "press", "readSubtree", "screenshot", "url", "sleep", "status"),
+            setOf("windows", "scopeWindow", "focusApp", "find", "invoke", "setValue", "type", "clearInput", "click", "longPress", "swipe", "scroll", "press", "readSubtree", "screenshot", "url", "sleep", "status"),
             ANDROID_OPS.toSet(),
         )
-        assertEquals(16, ANDROID_OPS.size)
+        assertEquals(18, ANDROID_OPS.size)
     }
 
     @Test fun findNeedsAScope() {
@@ -391,4 +391,21 @@ class DispatcherTest {
         assertNull(call("sleep", """{"ms":20}"""))
         assertTrue("sleep 20" in dev.log)
     }
+    @Test fun longPressUsesItsOwnOpAndDuration() {
+        call("longPress", """{"rect":{"x":100,"y":200,"w":50,"h":40},"durationMs":900}""")
+        assertTrue("longPress 125,220 duration=900" in dev.log)
+    }
+
+    @Test fun swipeUsesTheGivenEndpointsAndDuration() {
+        call("swipe", """{"from":{"x":10,"y":20},"to":{"x":30,"y":40},"durationMs":300}""")
+        assertTrue("swipe 10,20->30,40" in dev.log)
+    }
+
+    @Test fun theCapabilityManifestNamesEveryBackedCapabilityAtItsVersion() {
+        assertEquals(setOf("ui.tree", "ui.act", "screen.shot", "app.launch", "app.in_use", "input.text", "ui.ocr"), ANDROID_CAPS.map { it.id }.toSet())
+        assertEquals(7, ANDROID_CAPS.single { it.id == "ui.tree" }.v)
+        assertEquals(2, ANDROID_CAPS.single { it.id == "ui.act" }.v)
+        assertEquals(2, ANDROID_CAPS.single { it.id == "app.launch" }.v)
+    }
+
 }

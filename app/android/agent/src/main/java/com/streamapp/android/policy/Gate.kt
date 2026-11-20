@@ -45,7 +45,7 @@ internal class Gate(private val detect: Detect, private val categories: Categori
         val out = mutableListOf<String>()
         val blindCommit = blind && cat != null && cat in BLIND_CLICK_CATEGORIES
         when (op) {
-            "click", "invoke" -> {
+            "click", "invoke", "longPress" -> {
                 val t = target
                 if (t == null) {
                     // No node under the point. In a shopping / payment / finance app that is
@@ -94,18 +94,23 @@ internal class Gate(private val detect: Detect, private val categories: Categori
                 val t = target ?: return emptyList()
                 if (cat == "settings" && isSlider(t)) out += "setting"
             }
-            "scroll" -> {
+            "scroll", "swipe" -> {
                 // Sliders such as 「滑动支付」/ "Slide to pay"; a list that scrolls is no slider.
-                val slider = root?.let { findSlider(it) }
+                // A free swipe names its own start point, so a slider under that point counts too
+                // (a settings slider is usually not scrollable).
+                val targetNode = target
+                val slider = root?.let { findSlider(it) } ?: if (targetNode != null && isSlider(targetNode)) targetNode else null
                 if (slider != null) {
                     val (commit, money) = detect.commitParts(slider.name)
                     if (commit) {
                         out += "commit-label"
-                        if (money || detect.hasCurrency(slider.name) || detect.screenHasCurrency(root)) out += "payment-label"
+                        if (money || detect.hasCurrency(slider.name) || (root != null && detect.screenHasCurrency(root))) out += "payment-label"
                     }
                 }
-                // A scroll action that lands on a slider changes its value in the Settings app.
-                if (cat == "settings" && root != null && hasScrollableSlider(root)) out += "setting"
+                // A scroll or swipe that lands on a slider changes its value in the Settings app.
+                if (cat == "settings" && (root != null && hasScrollableSlider(root) || targetNode != null && isSlider(targetNode))) {
+                    out += "setting"
+                }
             }
             else -> {}
         }

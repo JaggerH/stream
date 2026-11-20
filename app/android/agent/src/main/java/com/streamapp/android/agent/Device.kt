@@ -65,6 +65,9 @@ internal interface Device {
     fun focusedInput(): UiNode?
     fun imeEnter(node: UiNode): Boolean
     fun tap(x: Int, y: Int, longPress: Boolean)
+    /** A stationary press held for [durationMs]. The normalized `longPress` action uses this so
+     *  the caller controls the duration; the default keeps older devices working via [tap]. */
+    fun longPress(x: Int, y: Int, durationMs: Long) { tap(x, y, longPress = true) }
     /** A straight swipe; with [holdMs] > 0 the finger rests at the end point that long before
      *  lifting, so the view sees no fling velocity. */
     fun swipe(x1: Int, y1: Int, x2: Int, y2: Int, durationMs: Long, holdMs: Long = 0)

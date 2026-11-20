@@ -548,6 +548,10 @@ export class ReplayAdapter implements Adapter {
     // 采集环境前置（Chrome 连着中继吗？没连就唤起）。放在 makeLauncher 之前，因为 launcher 一旦
     // 拿到就会立刻去开 tab；连不上时这里抛 EnvironmentUnavailableError，调度侧据此跳过本轮而不是
     // 判源故障。
+    if (recipe.kind === 'android') {
+      throw new Error(`android recipe "${recipe.sourceId}" needs a remote-device runner; the harvest adapter does not own a device connection`)
+    }
+
     await this.deps.ensureTransport?.()
 
     const cookieHeader = this.deps.cookieFor ? await this.deps.cookieFor(recipe.cookieDomain) : undefined

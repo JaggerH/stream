@@ -67,6 +67,7 @@ a desktop Engine can implement them **as-is** — this is where "copy UI-TARS's 
 |---|---|---|
 | `ext-cdp` | The user's own visible Chrome, driven through extension CDP. **The only harvest browser**: Stream does not ship a browser — the user's Chrome is already a real human browser, with no need to disguise, download, manage profiles, or handle fingerprints | Existing |
 | `host-desktop` | The native **Stream Desktop** process on the host machine (executable file `stream-desktop`, a thin executor: enigo sends input + per-OS `A11yBackend`), driven by the backend `DesktopDriver` through the `/api/host` WS relay (which speaks `host-relay.v2`: each connection opens with a `hello` declaring the device and its op set, and the backend keeps one relay per device), operating the real mouse, keyboard, and screen. The binary is packaged as an npm subpackage per platform, and its lifecycle is held in-process by the Stream backend itself (`src/host-agent/mount.ts`, mounted under `capabilities/desktop/`) — no desktop shell needs to be opened (constraint: it must be in the user's interactive session, not a session-0 service) | Existing |
+| `device-ops` | A phone reached through the embedder's own `ops(op, args)` function (Android a11y tree, gestures, OCR). Stream's `runAndroidRecipe` maps the normalized device actions onto it and owns no connection. | Existing (`kind:'android'`) |
 | `sandbox` | An isolated container with its own virtual desktop (cloud or local); what it controls is not the user's real environment | Target state |
 
 **Takeover indication and abort hotkey for `host-desktop`**: When Stream Desktop is actually sending keyboard/mouse input to the screen
@@ -190,6 +191,13 @@ the contract is in `docs/PACKAGE.md` §2 "`input`", and measurements are in `int
 
 This is why "leaving a seam based on the abstraction definition" and "not changing code" are not in conflict: **the contract can be nailed down on paper**. It accommodates browsers,
 UIA, and vision, and does not need a real machine first.
+
+The Android device follows the same `{rect, handle?}` shape over its own ops: `find(query)` accepts
+the a11y keys `role` / `name` / `nameContains` / `className` / `path` and, at `ui.tree` v7,
+`viewId` (the resource id). A text or OCR target resolves through the same `find` (with the
+on-device text tier); a coordinate tap is the fallback, never the stored locator. `longPress` and
+`swipe` are normalized actions alongside `tap`, so a gesture does not have to be encoded as a
+right-click or a scroll.
 
 ---
 
@@ -327,6 +335,13 @@ otherwise two tiers hit together on the challenge page.
 
 **Background color is not a feature** — it follows the system theme and is not portable across machines. The type system cannot block it; rely on review.
 
+On Android the feature vocabulary is `a11y` (an accessibility query, including `viewId`), `text`
+(accessibility names plus the on-device OCR tier, with the same `where` narrowing), and
+`android-window` (foreground `package` — one name or a list — `activity`, `title`, and `absent`).
+The last one answers the question Android screens make unavoidable: a package can show the same
+controls on two activities, so "which screen is this" is sometimes only answerable by the
+foreground component.
+
 ### 6.4 Discriminativeness Gate
 
 The check is not "can this feature describe the current page", but **"can it match only the current page"**. It is normal for two pages in the same app
@@ -355,10 +370,12 @@ a feature for which not even one part is true right now cannot even "describe th
 |---|---|---|
 | Web | approximately free (the URL is a deterministic label present at every moment, and selector checks are local too) | `every-step` |
 | Desktop | must read the screen; one 4K read takes 2.7–7.4s | **`on-failure`: do not recognize on the normal path; recognize only after `expect` misses** |
+| Android | one `windows` + one `url` + one `find` (the OCR tier runs only when a `text` feature is asked for) | **`on-failure`**, same as desktop |
 
 **The normal-path branch calls no model at all.** State recognition is a failure handler, not part of the main loop.
 **The screen is read only once in one `identify`**: reading the screen once per text feature pays the same cost several times, and different reads
 may not even see the same frame — that would make an AND check randomly false during animation.
+The Android perception obeys the same rule: one frame serves every `a11y` / `text` / `android-window` feature in the candidate set.
 
 ### 6.6 Exit Conditions
 
@@ -555,6 +572,11 @@ What is stored must be **a re-evaluable locator expression**: an a11y query, a t
 or a selector. **Never store `(x, y)`.** Coordinates drift, and they do not report errors--they click some other thing,
 which is the most expensive failure mode for this kind of system.
 
+Android recipes follow the same rule with no exception: `tap` / `longPress` target a `query`,
+`resourceId` or `text` (+ optional `where`), and a `swipe` names both ends with locators. The
+validator rejects a step carrying `x` / `y` / `rect` / `at` / `point`; a gesture written as two
+absolute points never reaches the loader.
+
 The final `point` tier of the `see` ladder (the model directly reports coordinates) is the only gap in this rule, and `pinned` exists precisely to
 close that gap: as soon as coordinates land, the control tree is read back and solidified into a handle, so **on the next trip it is no longer coordinates**.
 
@@ -635,6 +657,8 @@ Concept-to-code comparison:
 | Perception Vocabulary (Axis A) | Selector-carrying methods in `PageDriver` + observer family | Only one kind, `dom`, hard-coded in method signatures and not extracted |
 | `find -> {rect, handle?}` | Combination of `findCard` / `readViewport` / `openTarget` | dom-private; not abstracted into a unified contract |
 | Engine selection enum | `transport?: ...` | Only gates at the loading point; nobody reads it at runtime; new recipes do not write it |
+| Android remote-device Engine | `makeAndroidDriver` / `runAndroidRecipe` (`src/replay/android-driver.ts`, `android-runner.ts`) | Existing for `kind:'android'`; the embedder supplies `ops(op, args)`, Stream owns no device connection |
+| Android perception vocabulary | `AndroidPerception` (`src/replay/android-state-perception.ts`) | `a11y` (role / name / `viewId`), `text` (a11y names + on-device OCR) and `android-window`; one read per `identify` |
 
 ---
 
@@ -644,6 +668,8 @@ Concept-to-code comparison:
 process in `app/host-agent/` (UIA/AX + enigo), driven through `/api/host` WS by `DesktopDriver` + the desktop runner
 (`src/replay/desktop-*.ts`) + `kind:'desktop'` recipes. **It does not touch the browser `Transport`/`PageDriver`**
 --so the two empty cells below **are not prerequisites for landing desktop**. Do not think they must be filled first.
+
+Android follows the same precedent on the read side: the remote-device driver, the Android recipe runner and the Android state features live in `src/replay/android-*.ts` and do not touch the browser `Transport` / `PageDriver` or the desktop runner. The one shared piece is the failure diagnosis (`classifyWithPerception`), so the verdict rules and the observation ledger stay identical on every surface.
 
 - **Generalize `Transport` to non-browsers**: `resolveTransport` only produces browser `PageDriver`s. Bringing desktop in means adding a new branch
   that produces a `host-desktop` driver--the seam exists; this branch is missing.

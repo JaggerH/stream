@@ -70,6 +70,7 @@ internal class FakeDevice : Device {
     override fun focusedInput() = focused
     override fun imeEnter(node: UiNode): Boolean { rec("enter"); return true }
     override fun tap(x: Int, y: Int, longPress: Boolean) { rec("tap $x,$y long=$longPress") }
+    override fun longPress(x: Int, y: Int, durationMs: Long) { rec("longPress $x,$y duration=$durationMs") }
     override fun swipe(x1: Int, y1: Int, x2: Int, y2: Int, durationMs: Long, holdMs: Long) {
         rec(if (holdMs > 0) "swipe $x1,$y1->$x2,$y2 hold=$holdMs" else "swipe $x1,$y1->$x2,$y2")
     }
