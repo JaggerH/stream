@@ -54,9 +54,10 @@ class ObservationFieldsTest {
         assertFalse(el.containsKey("isShowingHintText"))
     }
 
-    @Test fun uiTreeIsDeclaredAtV7() {
+    @Test fun uiTreeIsDeclaredAtV8() {
+        // v8 makes a scroll receipt say whether the content is at its end and why nothing moved;
         // v7 accepts viewId as a find query key; v6 added range stepCount / valueText.
-        assertEquals(7, ANDROID_CAPS.first { it.id == "ui.tree" }.v)
+        assertEquals(8, ANDROID_CAPS.first { it.id == "ui.tree" }.v)
     }
 
     // ---- windows fields -----------------------------------------------------------------

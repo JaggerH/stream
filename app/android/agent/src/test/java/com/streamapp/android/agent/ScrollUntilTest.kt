@@ -9,8 +9,9 @@ import org.junit.Test
 
 /**
  * `scroll` with `until`: it keeps scrolling while the wanted label is not on screen, and stops on
- * the first of three bounds — the end of the content (two scrolls that leave the tree unchanged),
- * `maxSteps`, or `timeoutMs` — reporting what it saw rather than letting the caller's timeout expire.
+ * the first of three bounds — the end of the content (a step that says the list is at its end, else
+ * two steps that leave the tree unchanged), `maxSteps`, or `timeoutMs` — reporting what it saw
+ * rather than letting the caller's timeout expire.
  */
 class ScrollUntilTest {
     private lateinit var dev: FakeDevice
@@ -65,11 +66,14 @@ class ScrollUntilTest {
         assertEquals("a11y", out["method"])
     }
 
-    @Test fun twoScrollsThatLeaveTheTreeUnchangedStopAtTheEnd() {
+    @Test fun theStepThatSaysTheListIsAtItsEndStopsAtOnce() {
+        // The list accepts the action and never moves, and the fallback gesture over it does not
+        // move the screen either: the first step already says this direction is exhausted, so a
+        // second identical step would only repeat the answer.
         dev.scrollMoves = mutableListOf(false, false, false, false, false)
         val out = map(call("scroll", """{"dir":"down","amount":1,"until":"排序","maxSteps":10,"timeoutMs":60000}"""))
         assertEquals(false, out["found"])
-        assertEquals(2, out["scrolls"])
+        assertEquals(1, out["scrolls"])
         assertEquals("end", out["stopped"])
         // "Where it stopped": a few visible labels, never more than five, each bounded.
         val visible = list(out["visible"]).map { it as String }

@@ -403,8 +403,8 @@ class DispatcherTest {
 
     @Test fun theCapabilityManifestNamesEveryBackedCapabilityAtItsVersion() {
         assertEquals(setOf("ui.tree", "ui.act", "screen.shot", "app.launch", "app.in_use", "input.text", "ui.ocr"), ANDROID_CAPS.map { it.id }.toSet())
-        assertEquals(7, ANDROID_CAPS.single { it.id == "ui.tree" }.v)
-        assertEquals(2, ANDROID_CAPS.single { it.id == "ui.act" }.v)
+        assertEquals(8, ANDROID_CAPS.single { it.id == "ui.tree" }.v)
+        assertEquals(3, ANDROID_CAPS.single { it.id == "ui.act" }.v)
         assertEquals(2, ANDROID_CAPS.single { it.id == "app.launch" }.v)
     }
 

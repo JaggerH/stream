@@ -62,9 +62,10 @@ class RelayClientTest {
         assertEquals(2, caps.getJSONObject("app.launch").getInt("v"))
         // ui.ocr v1: `find` takes `ocr` and a blind coordinate tap is judged by the text under it.
         assertEquals(1, caps.getJSONObject("ui.ocr").getInt("v"))
-        // ui.tree v7 accepts viewId queries; ui.act v2 adds longPress / swipe.
-        assertEquals(7, caps.getJSONObject("ui.tree").getInt("v"))
-        assertEquals(2, caps.getJSONObject("ui.act").getInt("v"))
+        // ui.tree v8 makes a scroll receipt say whether the content is at its end and why nothing
+        // moved; ui.act v3 judges a free swipe's start point like a blind click.
+        assertEquals(8, caps.getJSONObject("ui.tree").getInt("v"))
+        assertEquals(3, caps.getJSONObject("ui.act").getInt("v"))
         assertEquals(1, JSONObject(t.sent[0]).getInt("capsVersion"))
     }
 
