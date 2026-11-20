@@ -4,6 +4,8 @@
  * - 节点连上：只问会话 cookie 在场（`sessionPrecheck` = `PRESENT`）的 facility，按节点串行（探测器保证）。
  *   `http` 形状且 facility 没声明会话 cookie 时照问——它不开标签，代价是一次 GET；`page` 形状没有在场证据就不开标签。
  *   `GONE` 是确定的「没登」：已有记录就标登出，不开标签。
+ *   `page` 形状另有节流（D15）：指纹没变且核对在 12 小时内就跳过；同一节点 60 秒内的多次重连合并成一轮。
+ *   每次真正开标签都按原因记一行日志，跳过记 debug。停用的插件一律不探。
  * - 会话 cookie 在该节点上变了（扩展的 `cookies-changed`）：防抖后，比对声明的会话 cookie 值的指纹，变了才问。
  *   没声明会话 cookie 的退到最短间隔——站点每次加载都轮换一批 cookie，按事件开标签就是采集时每分钟一张探测标签。
  * - 手动刷新（面板 / `POST /api/identities/refresh`）：在线节点上全问一遍，可按节点 / facility 收窄。
@@ -51,11 +53,34 @@ export interface IdentityServiceDeps {
   log?: (line: string) => void
   /** cookie 变化的防抖。 */
   debounceMs?: number
+  /** 页面探测的节流窗口（D15）：会话 cookie 指纹没变且核对在这之内 → 跳过。默认 12 小时。 */
+  pageProbeTtlMs?: number
+  /** 同一节点多次重连的合并窗口（D15）。默认 60 秒。 */
+  reconnectDebounceMs?: number
+  /** 该 facility 的插件此刻是否启用（停用的不探测）。缺席 = 全部启用。 */
+  facilityEnabled?: (facility: string) => boolean
+  /** debug 级一行（跳过探测之类）。缺席 = 丢弃。 */
+  debug?: (line: string) => void
 }
 
 /** 没声明会话 cookie 的 facility，cookie 变化触发的最短间隔。 */
 export const UNDECLARED_REPROBE_MS = 10 * 60_000
 export const COOKIE_CHANGE_DEBOUNCE_MS = 3_000
+/** 页面探测的默认节流窗口（D15）：核对过这么久之内、会话 cookie 指纹没变，就不再开标签。 */
+export const PAGE_PROBE_TTL_MS = 12 * 60 * 60_000
+/** 同一节点的多次重连在这么短时间内只问一轮（D15），后端重启时成对的重连不再成对开标签。 */
+export const RECONNECT_DEBOUNCE_MS = 60_000
+
+/** 一次页面探测因为什么开标签（D15 的日志口径）。 */
+export type ProbeReason = 'first' | 'cookie-change' | 'expired' | 'refresh' | 'login' | 'verify'
+const REASON_TEXT: Record<ProbeReason, string> = {
+  first: '首次',
+  'cookie-change': 'cookie 变化',
+  expired: '过期',
+  refresh: '手动刷新',
+  login: '登录之后',
+  verify: '执行前核对',
+}
 
 export interface IdentityOutcome {
   facility: string
@@ -74,8 +99,15 @@ export const nodeAccountId = (nodeId: string): string => `node:${nodeId}`
 export function makeIdentityService(deps: IdentityServiceDeps) {
   const now = deps.now ?? Date.now
   const log = deps.log ?? (() => {})
+  const debug = deps.debug ?? (() => {})
   const debounceMs = deps.debounceMs ?? COOKIE_CHANGE_DEBOUNCE_MS
-  /** （facility，节点）→ 上次见到的会话 cookie 指纹。进程内即可：重启之后节点重连，连上那次会问。 */
+  const pageProbeTtlMs = deps.pageProbeTtlMs ?? PAGE_PROBE_TTL_MS
+  const reconnectDebounceMs = deps.reconnectDebounceMs ?? RECONNECT_DEBOUNCE_MS
+  /** 停用的插件不探测（`http` 与 `page` 一致）。 */
+  const enabled = (f: IdentityFacility) => deps.facilityEnabled?.(f.facility) ?? true
+  /** 节点 → 上次「节点连上」那一轮的时刻（D15 的去抖）。 */
+  const lastConnect = new Map<string, number>()
+  /** （facility，节点）→ 上次见到的会话 cookie 指纹。页面节流用的那一份落盘在身份表里；这张表管变化比对。 */
   const fingerprints = new Map<string, string | null>()
   /** （facility，节点）→ 上次因 cookie 变化而问的时刻（没声明会话 cookie 的那条退路用）。 */
   const lastChangeProbe = new Map<string, number>()
@@ -88,23 +120,32 @@ export function makeIdentityService(deps: IdentityServiceDeps) {
   const sessionCookiesOf = (f: IdentityFacility): string[] | undefined =>
     f.session && 'sessionCookies' in f.session && f.session.sessionCookies?.length ? f.session.sessionCookies : undefined
 
-  const write = (f: string, node: ProbeNode, result: ProbeResult): IdentityOutcome => {
-    const { written, before } = deps.store.record(f, node.nodeId, result)
+  /** 写一次结果；指纹与结果一起落盘（D15）。`opts` 不给 = 保留旧指纹。 */
+  const write = (f: string, node: ProbeNode, result: ProbeResult, opts: { cookieFingerprint?: string | null } = {}): IdentityOutcome => {
+    const { written, before } = deps.store.record(f, node.nodeId, result, opts)
     if (written && result.state === 'signed-in' && before?.accountId && before.accountId !== result.accountId) {
       log(`[identity] ${f} @ ${node.nodeId}: 账号从 ${before.accountId} 换成了 ${result.accountId}`)
     }
     return { facility: f, nodeId: node.nodeId, result }
   }
   /** 确定登出（GONE）：只在已有记录时标——从没登过的站不必在表里占一行。 */
-  const markGone = (f: string, node: ProbeNode): IdentityOutcome => {
+  const markGone = (f: string, node: ProbeNode, opts: { cookieFingerprint?: string | null } = {}): IdentityOutcome => {
     const result: ProbeResult = deps.store.get(f, node.nodeId) ? { state: 'signed-out' } : { state: 'unknown', reason: '会话 cookie 不在，且没有旧记录' }
-    return write(f, node, result)
+    return write(f, node, result, opts)
   }
+  /** 指纹读到了就随结果落盘；读不到（undefined）就不带，保留表里原有那一份。 */
+  const fingerprintOpts = (fp: string | null | undefined): { cookieFingerprint?: string | null } =>
+    fp === undefined ? {} : { cookieFingerprint: fp }
   const precheck = (f: IdentityFacility, node: ProbeNode) =>
     f.session ? sessionPrecheck(f.session, (d) => deps.cookieNames(node, d)) : Promise.resolve('UNKNOWN' as const)
 
-  const probe = async (f: IdentityFacility, node: ProbeNode): Promise<IdentityOutcome> =>
-    write(f.facility, node, await deps.prober.probe(node, f.whoami!, f.hosts))
+  /** 一次探测。`page` 形状开标签的那一下是用户能看见的动作，按原因记一行（D15 的可观测）。 */
+  const probe = async (
+    f: IdentityFacility, node: ProbeNode, why: ProbeReason, opts?: { cookieFingerprint?: string | null },
+  ): Promise<IdentityOutcome> => {
+    if (f.whoami!.kind === 'page') log(`[identity] 开探测标签 ${f.facility} @ ${node.nodeId}（${REASON_TEXT[why]}）`)
+    return write(f.facility, node, await deps.prober.probe(node, f.whoami!, f.hosts), opts)
+  }
 
   /** 没有 whoami：节点就是身份，在场看会话 cookie。 */
   const identifyByNode = async (f: IdentityFacility, node: ProbeNode): Promise<IdentityOutcome | undefined> => {
@@ -124,20 +165,49 @@ export function makeIdentityService(deps: IdentityServiceDeps) {
     return fp
   }
 
+  /**
+   * 这次「节点连上」的页面探测该不该跳过（D15）。只有「记录在核对窗口内 + 指纹读过且与上次相同」
+   * 才跳过；没有记录、读不到指纹（快照失败 / 没声明会话 cookie）、超过窗口，都照探——「读不到」
+   * 不当作「没变」。
+   */
+  const pageProbeReason = (f: IdentityFacility, node: ProbeNode, fp: string | null | undefined): ProbeReason | 'skip' => {
+    const state = deps.store.probeState(f.facility, node.nodeId)
+    if (!state) return 'first'
+    if (now() - state.verifiedAt >= pageProbeTtlMs) return 'expired'
+    if (fp === undefined || fp === `undefined` || state.cookieFingerprint === `undefined`) return 'first'
+    return fp === state.cookieFingerprint ? 'skip' : 'cookie-change'
+  }
+
   /** 节点连上（含重连）。 */
   const nodeConnected = async (bindingId: string): Promise<IdentityOutcome[]> => {
     const node = deps.nodeOfBinding(bindingId)
     if (!node) return []
+    // 同一节点短时间内的多次重连合并成一轮（D15）：重启时扩展常连着报两次。
+    const last = lastConnect.get(node.nodeId)
+    if (last !== undefined && now() - last < reconnectDebounceMs) {
+      debug(`[identity] ${node.nodeId} ${Math.round((now() - last) / 1000)}s 前刚连过，这一轮重连合并掉`)
+      return []
+    }
+    lastConnect.set(node.nodeId, now())
     const out: IdentityOutcome[] = []
     for (const f of deps.facilities()) {
       try {
+        if (!enabled(f)) { debug(`[identity] ${f.facility} 的插件已停用，跳过探测`); continue }
         if (!f.whoami) { const o = await identifyByNode(f, node); if (o) out.push(o); continue }
         if (f.whoami.kind === 'login') continue
         const p = await precheck(f, node)
-        await rememberFingerprint(f, node)
-        if (p === 'GONE') { out.push(markGone(f.facility, node)); continue }
+        const fp = await rememberFingerprint(f, node)
+        if (p === 'GONE') { out.push(markGone(f.facility, node, fingerprintOpts(fp))); continue }
         // 在场才问；`http` 没有在场证据（没声明会话 cookie / 问不出来）也问——不开标签。
-        if (p === 'PRESENT' || (p === 'UNKNOWN' && f.whoami.kind === 'http')) out.push(await probe(f, node))
+        if (p === 'PRESENT' || (p === 'UNKNOWN' && f.whoami.kind === 'http')) {
+          if (f.whoami.kind !== 'page') { out.push(await probe(f, node, 'first', fingerprintOpts(fp))); continue }
+          const why = pageProbeReason(f, node, fp)
+          if (why === 'skip') {
+            debug(`[identity] ${f.facility} @ ${node.nodeId}：会话 cookie 未变且 ${Math.round(pageProbeTtlMs / 3_600_000)} 小时内核对过，跳过页面探测`)
+            continue
+          }
+          out.push(await probe(f, node, why, fingerprintOpts(fp)))
+        }
       } catch (e) {
         log(`[identity] ${f.facility} @ ${node.nodeId} 连上时没问成：${e instanceof Error ? e.message : String(e)}`)
       }
@@ -163,6 +233,7 @@ export function makeIdentityService(deps: IdentityServiceDeps) {
     for (const f of deps.facilities()) {
       if (!matchesDomain(f, domains)) continue
       try {
+        if (!enabled(f)) { debug(`[identity] ${f.facility} 的插件已停用，跳过探测`); continue }
         if (!f.whoami) { const o = await identifyByNode(f, node); if (o) out.push(o); continue }
         if (f.whoami.kind === 'login') continue
         const k = key(f.facility, node.nodeId)
@@ -172,13 +243,13 @@ export function makeIdentityService(deps: IdentityServiceDeps) {
           const fp = await rememberFingerprint(f, node)
           if (fp === undefined) continue // 读不到快照：问不出来，不动
           if (known && fp === before) continue // 会话 cookie 没变：别的 cookie 在轮换，不是换号
-          if (fp === null) { out.push(markGone(f.facility, node)); continue } // 会话 cookie 没了
-          out.push(await probe(f, node))
+          if (fp === null) { out.push(markGone(f.facility, node, { cookieFingerprint: null })); continue } // 会话 cookie 没了
+          out.push(await probe(f, node, 'cookie-change', { cookieFingerprint: fp }))
         } else {
           const last = lastChangeProbe.get(k)
           if (last !== undefined && now() - last < UNDECLARED_REPROBE_MS) continue
           lastChangeProbe.set(k, now())
-          out.push(await probe(f, node))
+          out.push(await probe(f, node, 'cookie-change'))
         }
       } catch (e) {
         log(`[identity] ${f.facility} @ ${node.nodeId} cookie 变化后没问成：${e instanceof Error ? e.message : String(e)}`)
@@ -203,14 +274,16 @@ export function makeIdentityService(deps: IdentityServiceDeps) {
   /** 手动刷新：在线节点上全问一遍。`login` 形状没有可问的，原样跳过。 */
   const refresh = async (filter: { nodeId?: string; facility?: string } = {}): Promise<IdentityOutcome[]> => {
     const nodes = deps.onlineNodes().filter((n) => filter.nodeId === undefined || n.nodeId === filter.nodeId)
-    const facilities = deps.facilities().filter((f) => filter.facility === undefined || f.facility === filter.facility)
+    const facilities = deps.facilities()
+      .filter((f) => filter.facility === undefined || f.facility === filter.facility)
+      .filter((f) => enabled(f))
     const perNode = await Promise.all(nodes.map(async (node) => {
       const out: IdentityOutcome[] = []
       for (const f of facilities) {
         if (!f.whoami) { const o = await identifyByNode(f, node).catch(() => undefined); if (o) out.push(o); continue }
         if (f.whoami.kind === 'login') continue
-        await rememberFingerprint(f, node)
-        out.push(await probe(f, node))
+        const fp = await rememberFingerprint(f, node)
+        out.push(await probe(f, node, 'refresh', fingerprintOpts(fp)))
       }
       return out
     }))
@@ -221,6 +294,7 @@ export function makeIdentityService(deps: IdentityServiceDeps) {
   const afterLogin = async (facility: string, bindingId: string): Promise<IdentityOutcome | undefined> => {
     const node = deps.nodeOfBinding(bindingId)
     if (!node) return undefined
+    if (!(deps.facilityEnabled?.(facility) ?? true)) return undefined
     const f = deps.facilities().find((x) => x.facility === facility)
     if (!f?.whoami) {
       // 刚登上：这个节点上的账号在场（不必再问 cookie）。
@@ -232,8 +306,8 @@ export function makeIdentityService(deps: IdentityServiceDeps) {
       // 明文不落库：id 存哈希、显示打码（D5）。
       return write(facility, node, { state: 'signed-in', accountId: loginAccountId(account), name: maskAccount(account) })
     }
-    await rememberFingerprint(f, node)
-    return probe(f, node)
+    const fp = await rememberFingerprint(f, node)
+    return probe(f, node, 'login', fingerprintOpts(fp))
   }
 
   /**
@@ -243,7 +317,8 @@ export function makeIdentityService(deps: IdentityServiceDeps) {
   const verify = async (facility: string, node: ProbeNode): Promise<ProbeResult | undefined> => {
     const f = deps.facilities().find((x) => x.facility === facility)
     if (!f?.whoami || f.whoami.kind === 'login') return undefined
-    return (await probe(f, node)).result
+    if (!enabled(f)) return undefined
+    return (await probe(f, node, 'verify')).result
   }
 
   /** 表 + 节点信息。`node:` 身份的显示名按此刻的 profile 名现算（认领之后名字才有）。 */

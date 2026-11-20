@@ -8,6 +8,7 @@ import { makeIdentityService, type IdentityFacility, type IdentityService } from
 import type { SiteIdentityStore } from '../../identity/identity-store.ts'
 import { makeIdentityRouter, type IdentityRouter } from '../../identity/identity-router.ts'
 import type { BrowserNode } from '../../devices/node-store.ts'
+import type { PackagesService } from './packages.ts'
 import { agentFrom } from '../../devices/profile-claim.ts'
 import { LOCAL_DEVICE } from '../../devices/run-context.ts'
 
@@ -28,6 +29,27 @@ export interface IdentityConfig {
   /** 节点表：profile 名（「工作 上的账号」）、路由要的设备 / 绑定 / 环境。缺席 = 用节点 id 顶上，路由一个候选都没有。 */
   nodes?: { get(nodeId: string): BrowserNode | undefined; setWokenAt?(nodeId: string, at: number | null): void }
   log: (...args: unknown[]) => void
+  /** debug 级一行（跳过节流、合并重连）。缺席 = 丢弃。 */
+  debug?: (line: string) => void
+  /** 页面探测的节流窗口（D15）。默认 12 小时。 */
+  pageProbeTtlMs?: number
+  /** 同一节点多次重连的合并窗口（D15）。默认 60 秒。 */
+  reconnectDebounceMs?: number
+}
+
+/**
+ * 停用的插件不探测（D15）：facility → 它的包 → 插件描述 → 开关。没有包声明、或目录里没有这个
+ * 插件描述时一律当作启用——纯 recipe 包本来就没有停用那一路。
+ */
+export function facilityEnabled(
+  packages: Pick<PackagesService, 'networkForFacility' | 'plugins' | 'isPluginEnabled'>,
+): (facility: string) => boolean {
+  return (facility) => {
+    const packageId = packages.networkForFacility(facility)?.packageId
+    if (!packageId) return true
+    const descriptor = packages.plugins.find((p) => p.id === packageId)
+    return !descriptor || packages.isPluginEnabled(descriptor)
+  }
 }
 
 /** 节点刚连上时等一会儿再问：扩展连上那一刻 cookie 还在往回拉，page 探测的标签也别和用户自己开窗挤在同一秒。 */
@@ -142,6 +164,10 @@ export const identityPlugin = {
       prober,
       store: config.store,
       log: (line) => config.log(line),
+      ...(config.debug ? { debug: config.debug } : {}),
+      facilityEnabled: facilityEnabled(ctx.packages),
+      ...(config.pageProbeTtlMs !== undefined ? { pageProbeTtlMs: config.pageProbeTtlMs } : {}),
+      ...(config.reconnectDebounceMs !== undefined ? { reconnectDebounceMs: config.reconnectDebounceMs } : {}),
     })
 
     // 节点连上：等它的 cookie 拉回来一轮再问。每条绑定只挂一次 cookie 监听（relay 连上时才建，所以挂在 registry 上）。
