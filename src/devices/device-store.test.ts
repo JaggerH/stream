@@ -144,6 +144,18 @@ describe('DeviceStore', () => {
     expect(s.list()[1].name).toBe('Linux')
   })
 
+  it('pairing an ios device returns an ios:<uuid> id and remembers the platform', () => {
+    const s = make()
+    const r = s.pair(s.createPairingCode().code, 'iPhone', 'ios')
+    expect(r.ok).toBe(true)
+    if (!r.ok) return
+    expect(r.deviceId).toMatch(/^ios:[0-9a-f-]{36}$/)
+    expect(s.list()[0]).toMatchObject({ deviceId: r.deviceId, name: 'iPhone', platform: 'ios' })
+    const r2 = s.pair(s.createPairingCode().code, '', 'ios')
+    if (!r2.ok) throw new Error('pair should succeed')
+    expect(s.list()[1].name).toBe('iOS')
+  })
+
   it('a blank name becomes "Android" and a long name is capped at 64 characters', () => {
     const s = make()
     const r = s.pair(s.createPairingCode().code, '   ')

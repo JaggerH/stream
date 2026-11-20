@@ -122,24 +122,30 @@ export interface AndroidDriver {
   readSubtree(spec: Record<string, unknown>): Promise<Record<string, string>[]>
 }
 
-/** Wire op each normalized action is sent as. */
-const WIRE: Record<string, string> = {
-  tap: 'click',
-  longPress: 'longPress',
-  swipe: 'swipe',
-  scroll: 'scroll',
-  type: 'type',
-  setText: 'setValue',
-  press: 'press',
-  screenshot: 'screenshot',
-  find: 'find',
-  windows: 'windows',
-  openApp: 'focusApp',
-  sleep: 'sleep',
-  url: 'url',
-  scopeWindow: 'scopeWindow',
-  readSubtree: 'readSubtree',
-}
+/**
+ * Wire op(s) each normalized action is sent as, in preference order. The first name is the one
+ * the Android agent has always spoken; the second is the normalized action name itself, which an
+ * agent written against the shared action vocabulary declares instead (the iOS agent declares
+ * `tap`, `openApp` and `setText`, not the Android aliases). Which one is sent follows the op set
+ * the device declared in its hello; a device that declares neither is refused before the wire.
+ */
+const WIRE = {
+  tap: ['click', 'tap'],
+  longPress: ['longPress'],
+  swipe: ['swipe'],
+  scroll: ['scroll'],
+  type: ['type'],
+  setText: ['setValue', 'setText'],
+  press: ['press'],
+  screenshot: ['screenshot'],
+  find: ['find'],
+  windows: ['windows'],
+  openApp: ['focusApp', 'openApp'],
+  sleep: ['sleep'],
+  url: ['url'],
+  scopeWindow: ['scopeWindow'],
+  readSubtree: ['readSubtree'],
+} as const
 
 const outcome = (v: unknown): AndroidActOutcome => {
   const raw = v as
@@ -193,10 +199,16 @@ function parseFind(v: unknown): AndroidFindResult {
 export function makeAndroidDriver(ops: AndroidOps, opts: AndroidDriverOptions = {}): AndroidDriver {
   const declared = opts.ops
   const caps = opts.caps
+  const wireOf = (action: keyof typeof WIRE): string => {
+    const names = WIRE[action]
+    if (!declared) return names[0]
+    const hit = names.find((n) => declared.has(n))
+    // Name the preferred spelling: that is the one an older caller would have expected to work.
+    if (!hit) throw new AndroidUnsupportedOpError(names[0])
+    return hit
+  }
   const send = async (action: keyof typeof WIRE, args?: Record<string, unknown>): Promise<unknown> => {
-    const wire = WIRE[action]
-    if (declared && !declared.has(wire)) throw new AndroidUnsupportedOpError(wire)
-    return ops(wire, args)
+    return ops(wireOf(action), args)
   }
   const requireCap = (id: string, needed: number): void => {
     if (!caps) return
@@ -215,9 +227,13 @@ export function makeAndroidDriver(ops: AndroidOps, opts: AndroidDriverOptions = 
       return r.window
     },
     async openApp(packageName, fresh) {
-      const r = (await send('openApp', { match: { process: packageName }, ...(fresh ? { fresh: true } : {}) })) as
-        | boolean
-        | { ok?: boolean }
+      // The Android agent names the app through `match.process`; the normalized op takes the
+      // identifier itself (`package`) — on a phone that identifier is the bundle id.
+      const wire = wireOf('openApp')
+      const args = wire === 'focusApp'
+        ? { match: { process: packageName }, ...(fresh ? { fresh: true } : {}) }
+        : { package: packageName, ...(fresh ? { fresh: true } : {}) }
+      const r = (await ops(wire, args)) as boolean | { ok?: boolean }
       return typeof r === 'boolean' ? r : r?.ok === true
     },
     async find(query, options) {

@@ -17,8 +17,10 @@ export const MAX_PAIR_FAILURES = 5
 export const TOUCH_INTERVAL_MS = 60_000
 const MAX_NAME = 64
 
-export type PairedPlatform = 'android' | 'linux'
-export const PAIRED_PLATFORMS: ReadonlySet<string> = new Set<PairedPlatform>(['android', 'linux'])
+export type PairedPlatform = 'android' | 'ios' | 'linux'
+export const PAIRED_PLATFORMS: ReadonlySet<string> = new Set<PairedPlatform>(['android', 'ios', 'linux'])
+/** What a paired device is called before it has a name of its own. */
+const DEFAULT_NAME: Record<PairedPlatform, string> = { android: 'Android', ios: 'iOS', linux: 'Linux' }
 
 export interface PairedDevice {
   deviceId: string
@@ -94,7 +96,7 @@ export class DeviceStore {
     this.failures = 0
     const deviceId = `${platform}:${randomUUID()}`
     const deviceToken = this.random(32).toString('hex')
-    const clean = name.trim().slice(0, MAX_NAME) || (platform === 'linux' ? 'Linux' : 'Android')
+    const clean = name.trim().slice(0, MAX_NAME) || DEFAULT_NAME[platform]
     this.rows.push({
       deviceId, name: clean, platform, pairedAt: this.now(),
       tokenHash: sha256(deviceToken).toString('hex'),

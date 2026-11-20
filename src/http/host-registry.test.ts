@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { HostRelayRegistry, parseHello, parseState, surfaceOf, type HostHello } from './host-registry.ts'
 import { HostRelayDisconnected, type HostSocket } from './host-relay.ts'
+import { AndroidUnsupportedCapabilityError, makeAndroidDriver } from '../replay/android-driver.ts'
 
 function fakeSocket() {
   const sent: string[] = []
@@ -29,6 +30,42 @@ describe('parseHello', () => {
     expect(parseHello(JSON.stringify({ type: 'hello', ...hello(), deviceId: '' }))).toBeNull()
     expect(parseHello(JSON.stringify({ type: 'hello', ...hello(), ops: 'click' }))).toBeNull()
     expect(parseHello(JSON.stringify({ type: 'hello', ...hello(), ops: ['click', 3] }))).toBeNull()
+  })
+})
+
+describe('parseHello ios', () => {
+  const iosFrame = (extra: Record<string, unknown> = {}) => JSON.stringify({
+    type: 'hello', deviceId: 'ios:00008110-000A', platform: 'ios', name: 'iPhone', agentVersion: '0.1.0', ops: ['find'],
+    iosVersion: '18.2', path: 'xctest-session', ...extra,
+  })
+  it('accepts an ios hello and keeps iosVersion and path as device info', () => {
+    expect(parseHello(iosFrame())).toEqual({
+      deviceId: 'ios:00008110-000A', platform: 'ios', name: 'iPhone', agentVersion: '0.1.0', ops: ['find'],
+      iosVersion: '18.2', path: 'xctest-session',
+    })
+  })
+  it('keeps the native path too', () => {
+    expect(parseHello(iosFrame({ path: 'native-accessibility' }))?.path).toBe('native-accessibility')
+  })
+  it('drops ios facts it cannot read without refusing the device', () => {
+    const h = parseHello(iosFrame({ iosVersion: 18, path: '' }))
+    expect(h).not.toBeNull()
+    expect(h).not.toHaveProperty('iosVersion')
+    expect(h).not.toHaveProperty('path')
+  })
+  it('a hello for another platform carries no ios facts', () => {
+    const h = parseHello(JSON.stringify({ type: 'hello', ...hello(), iosVersion: '27.0', path: 'native-accessibility' }))
+    expect(h).not.toBeNull()
+    expect(h).not.toHaveProperty('iosVersion')
+    expect(h).not.toHaveProperty('path')
+  })
+  it('the registry carries the ios facts on the online change and in devices()', () => {
+    const reg = new HostRelayRegistry()
+    const changes: Array<Record<string, unknown>> = []
+    reg.onChange((c) => void changes.push(c as unknown as Record<string, unknown>))
+    reg.connect(fakeSocket().socket, hello({ deviceId: 'ios:p1', platform: 'ios', name: 'iPhone', iosVersion: '27.0', path: 'native-accessibility' }))
+    expect(changes.at(-1)).toMatchObject({ online: true, platform: 'ios', iosVersion: '27.0', path: 'native-accessibility' })
+    expect(reg.devices()[0].hello).toMatchObject({ iosVersion: '27.0', path: 'native-accessibility' })
   })
 })
 
@@ -90,6 +127,10 @@ describe('parseHello caps (device-capability-manifest)', () => {
     expect(drops).toHaveLength(8)
     expect(drops.some((d) => d.includes('intent.run') && d.includes('sometimes'))).toBe(true)
   })
+  it('keeps capability ids whose segments carry a hyphen — the ios path capabilities do', () => {
+    const h = parseHello(frame({ capsVersion: 1, caps: { 'ios.ax-native': { v: 1 }, 'ios.xctest-session': { v: 1 } } }))
+    expect(h?.caps).toEqual({ 'ios.ax-native': { v: 1 }, 'ios.xctest-session': { v: 1 } })
+  })
   it('entries past the limit are dropped, the first ones kept', () => {
     const drops: string[] = []
     const h = parseHello(frame({ caps: Object.fromEntries(Array.from({ length: 65 }, (_, i) => [`c${i}`, { v: 1 }])) }), (w) => drops.push(w))
@@ -110,10 +151,47 @@ describe('parseHello caps (device-capability-manifest)', () => {
 })
 
 describe('surfaceOf', () => {
-  it('windows and macos are the desktop surface; android is its own', () => {
+  it('windows and macos are the desktop surface; android and ios are the one mobile surface', () => {
     expect(surfaceOf('windows')).toBe('desktop')
     expect(surfaceOf('macos')).toBe('desktop')
-    expect(surfaceOf('android')).toBe('android')
+    expect(surfaceOf('android')).toBe('mobile')
+    expect(surfaceOf('ios')).toBe('mobile')
+  })
+})
+
+describe('ios hello → device driver negotiation', () => {
+  // The op set and caps below are what the iOS agent core declares (a supported path).
+  const IOS_OPS = ['tap', 'longPress', 'swipe', 'scroll', 'invoke', 'type', 'setText', 'press', 'screenshot', 'find', 'windows', 'openApp', 'sleep', 'status']
+  const IOS_CAPS = {
+    'ui.tree': { v: 7 }, 'ui.act': { v: 2 }, 'screen.shot': { v: 1 }, 'app.launch': { v: 2 },
+    'app.in_use': { v: 1 }, 'input.text': { v: 1 }, 'ios.ax-native': { v: 1 },
+  }
+  const iosHello = (extra: Record<string, unknown> = {}) => JSON.stringify({
+    type: 'hello', deviceId: 'ios:p1', platform: 'ios', name: 'iPhone', agentVersion: '0.1.0',
+    ops: IOS_OPS, capsVersion: 1, caps: IOS_CAPS, iosVersion: '27.0', path: 'native-accessibility', ...extra,
+  })
+
+  it('an ios device is driven by the ops and caps its hello declared', async () => {
+    const h = parseHello(iosHello())!
+    expect(h.caps).toEqual(IOS_CAPS)
+    const calls: string[] = []
+    const driver = makeAndroidDriver(async (op) => { calls.push(op); return {} }, { ops: new Set(h.ops), caps: h.caps })
+    // Declared as the normalized action name, not the Android alias.
+    await expect(driver.tap({ x: 0, y: 0, w: 1, h: 1 })).resolves.toEqual({})
+    // Not declared → refused before anything reaches the wire, as unsupported-op.
+    await expect(driver.url()).rejects.toThrow(/unsupported-op: url/)
+    expect(calls).toEqual(['tap'])
+  })
+
+  it('a capability below the version the action needs is refused before the wire', async () => {
+    const h = parseHello(iosHello())!
+    const calls: string[] = []
+    const driver = makeAndroidDriver(async (op) => { calls.push(op); return {} }, {
+      ops: new Set(h.ops),
+      caps: { ...h.caps!, 'ui.act': { v: 1 } },
+    })
+    await expect(driver.swipe({ x: 0, y: 0 }, { x: 1, y: 1 }, 200)).rejects.toBeInstanceOf(AndroidUnsupportedCapabilityError)
+    expect(calls).toEqual([])
   })
 })
 
@@ -199,6 +277,19 @@ describe('HostRelayRegistry', () => {
     reg.connect(fakeSocket().socket, hello({ deviceId: 'desktop:a' }), 1)
     reg.connect(fakeSocket().socket, hello({ deviceId: 'desktop:b' }), 2)
     expect(reg.deviceFor('desktop')?.hello.deviceId).toBe('desktop:b')
+  })
+
+  it('the mobile surface picks the most recently connected phone of either platform', () => {
+    const reg = new HostRelayRegistry()
+    reg.connect(fakeSocket().socket, hello({ deviceId: 'android:k80', platform: 'android', name: 'K80' }), 1)
+    reg.connect(fakeSocket().socket, hello({ deviceId: 'ios:p1', platform: 'ios', name: 'iPhone' }), 2)
+    expect(reg.deviceFor('mobile')?.hello.deviceId).toBe('ios:p1')
+  })
+
+  it('the old android spelling of the mobile surface still selects phones', () => {
+    const reg = new HostRelayRegistry()
+    reg.connect(fakeSocket().socket, hello({ deviceId: 'android:k80', platform: 'android', name: 'K80' }))
+    expect(reg.deviceFor('android')?.hello.deviceId).toBe('android:k80')
   })
 
   it('exposes the declared ops as a set', () => {

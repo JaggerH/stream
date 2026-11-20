@@ -99,13 +99,33 @@ describe('device routes', () => {
     ] })
   })
 
-  it('pair accepts platform linux and rejects unknown platforms', async () => {
-    const { code } = await (await post('/devices/pairing-code')).json() as { code: string }
-    const bad = await post('/devices/pair', { code, name: 'x', platform: 'windows' })
+  it('pair accepts platform ios and linux and rejects unknown platforms', async () => {
+    const first = await (await post('/devices/pairing-code')).json() as { code: string }
+    const bad = await post('/devices/pair', { code: first.code, name: 'x', platform: 'windows' })
     expect(bad.status).toBe(400)
-    const ok = await post('/devices/pair', { code, name: 'NAS', platform: 'linux' })
+    expect(((await bad.json()) as { error: string }).error).toContain('ios')
+    const ok = await post('/devices/pair', { code: first.code, name: 'NAS', platform: 'linux' })
     expect(ok.status).toBe(200)
     expect(((await ok.json()) as { deviceId: string }).deviceId).toMatch(/^linux:/)
+    // A code is single-use, so the ios pairing mints its own.
+    const second = await (await post('/devices/pairing-code')).json() as { code: string }
+    const ios = await post('/devices/pair', { code: second.code, name: 'iPhone', platform: 'ios' })
+    expect(ios.status).toBe(200)
+    expect(((await ios.json()) as { deviceId: string }).deviceId).toMatch(/^ios:/)
+  })
+
+  it('lists an online ios device with the facts its hello declared', async () => {
+    const r = store.pair(store.createPairingCode().code, 'iPhone', 'ios')
+    if (!r.ok) throw new Error('pair should succeed')
+    registry.connect({ send: () => {} }, {
+      deviceId: r.deviceId, platform: 'ios', name: 'iPhone', agentVersion: '0.3.0', ops: ['find'],
+      iosVersion: '18.2', path: 'xctest-session',
+    })
+    const { devices } = await (await app.request('/devices')).json() as { devices: Array<Record<string, unknown>> }
+    expect(devices.find((d) => d.deviceId === r.deviceId)).toMatchObject({
+      deviceId: r.deviceId, name: 'iPhone', platform: 'ios', paired: true, online: true,
+      agentVersion: '0.3.0', iosVersion: '18.2', path: 'xctest-session',
+    })
   })
 
   it('only this machine can mint a pairing code; one QR names every address and the code', async () => {

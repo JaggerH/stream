@@ -24,13 +24,14 @@ export type { DeviceCaps, DeviceCapability, CapAvailability } from '../http/host
  *  hello 声明的 op 集，重连换了集合就是新事实）；offline 不带。`caps` 是该次 hello 的能力清单
  *  （openspec `device-capability-manifest`）：设备没声明（旧 agent）就没有这一格，offline 不带。 */
 export type DeviceChange =
-  | { kind: 'device'; deviceId: string; name: string; platform: string; online: boolean; at: number; ops?: string[]; caps?: DeviceCaps }
+  | { kind: 'device'; deviceId: string; name: string; platform: string; online: boolean; at: number; ops?: string[]; caps?: DeviceCaps; iosVersion?: string; path?: string }
   | { kind: 'binding'; bindingId: string; deviceId: string; nodeId?: string; online: boolean; at: number }
 
 /** `online()` 的快照：嵌入方启动时先读一次再订阅 `onChange`。`connectedAt` 是该连接的建立时刻
- *  （毫秒，可选）：嵌入方可用它区分「挂起前就在、可能已被冻死的旧连接」和「挂起后重新建立的连接」。 */
+ *  （毫秒，可选）：嵌入方可用它区分「挂起前就在、可能已被冻死的旧连接」和「挂起后重新建立的连接」。
+ *  `iosVersion` / `path` 是 iOS hello 自带的两格设备信息（其他平台没有），与 `caps` 一样只出现在在线的行上。 */
 export interface DeviceSnapshot {
-  devices: Array<{ deviceId: string; name: string; platform: string; connectedAt?: number; ops?: string[]; caps?: DeviceCaps }>
+  devices: Array<{ deviceId: string; name: string; platform: string; connectedAt?: number; ops?: string[]; caps?: DeviceCaps; iosVersion?: string; path?: string }>
   bindings: Array<{ bindingId: string; deviceId: string; nodeId?: string; connectedAt?: number }>
 }
 
@@ -74,7 +75,13 @@ export function wireDeviceChanges(devices: StreamDevices, harvest: HarvestServic
     }
   }
   harvest.hostRelays.onChange((ch) =>
-    emit({ kind: 'device', deviceId: ch.deviceId, name: ch.name, platform: ch.platform, online: ch.online, at: ch.at, ...(ch.ops ? { ops: ch.ops } : {}), ...(ch.caps ? { caps: ch.caps } : {}) }))
+    emit({
+      kind: 'device', deviceId: ch.deviceId, name: ch.name, platform: ch.platform, online: ch.online, at: ch.at,
+      ...(ch.ops ? { ops: ch.ops } : {}),
+      ...(ch.caps ? { caps: ch.caps } : {}),
+      ...(ch.iosVersion ? { iosVersion: ch.iosVersion } : {}),
+      ...(ch.path ? { path: ch.path } : {}),
+    }))
   harvest.extRelays.onChange((ch) => {
     if (ch.deviceId === undefined) return
     emit({ kind: 'binding', bindingId: ch.bindingId, deviceId: ch.deviceId, ...(ch.nodeId ? { nodeId: ch.nodeId } : {}), online: ch.online, at: ch.at })
@@ -84,7 +91,12 @@ export function wireDeviceChanges(devices: StreamDevices, harvest: HarvestServic
     return () => { listeners.delete(listener) }
   }
   devices.online = (): DeviceSnapshot => ({
-    devices: harvest.hostRelays.devices().map((d) => ({ deviceId: d.hello.deviceId, name: d.hello.name, platform: d.hello.platform, connectedAt: d.connectedAt, ops: d.hello.ops, ...(d.hello.caps ? { caps: d.hello.caps } : {}) })),
+    devices: harvest.hostRelays.devices().map((d) => ({
+      deviceId: d.hello.deviceId, name: d.hello.name, platform: d.hello.platform, connectedAt: d.connectedAt, ops: d.hello.ops,
+      ...(d.hello.caps ? { caps: d.hello.caps } : {}),
+      ...(d.hello.iosVersion ? { iosVersion: d.hello.iosVersion } : {}),
+      ...(d.hello.path ? { path: d.hello.path } : {}),
+    })),
     bindings: harvest.extRelays.statuses()
       .filter((s) => s.online && s.deviceId !== '?')
       .map((s) => ({ bindingId: s.bindingId, deviceId: s.deviceId, ...(harvest.extRelays.nodeOf(s.bindingId) ? { nodeId: harvest.extRelays.nodeOf(s.bindingId) } : {}), ...(s.connectedAt !== null ? { connectedAt: s.connectedAt } : {}) })),

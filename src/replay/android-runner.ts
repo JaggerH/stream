@@ -101,7 +101,7 @@ function substituteQuery(q: NonNullable<AndroidLocator['query']>, params: Record
   }
 }
 
-function packagesOf(v: string | string[] | undefined,): string[] {
+function idsOf(v: string | string[] | undefined,): string[] {
   if (v === undefined) return []
   return Array.isArray(v) ? v : [v]
 }
@@ -146,7 +146,8 @@ export async function runAndroidRecipe(
       const step = recipe.steps[index]
       const label = step.label ?? `step#${index}`
       if (step.kind === 'openApp') {
-        const candidates = packagesOf(step.package).length ? packagesOf(step.package) : packagesOf(recipe.app.package)
+        const named = idsOf(step.id ?? step.package)
+        const candidates = named.length ? named : idsOf(recipe.app.id ?? recipe.app.package)
         let opened = false
         for (const pkg of candidates) {
           if (await driver.openApp(pkg, step.fresh)) {

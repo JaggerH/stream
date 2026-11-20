@@ -128,6 +128,24 @@ describe('android recipe runner over injected ops', () => {
     ])
   })
 
+  it('opens the app by its neutral identifier, trying a candidate list in order', async () => {
+    const dev = device()
+    const r = recipe({ app: { id: ['com.example.ios', 'com.example.ios.debug'] } })
+    const out = await runAndroidRecipe(r, { query: '咖啡' }, makeAndroidDriver(dev.ops), { stateGraph: graph })
+    expect(out.outcome).toBe('ok')
+    const opened = dev.calls.filter((c) => c.op === 'focusApp').map((c) => (c.args?.match as { process: string }).process)
+    expect(opened).toEqual(['com.example.ios'])
+  })
+
+  it('an openApp step identifier overrides the recipe default', async () => {
+    const dev = device()
+    const steps = recipe().steps.slice()
+    steps[0] = { kind: 'openApp', id: 'com.example.other' }
+    const out = await runAndroidRecipe(recipe({ steps }), { query: '咖啡' }, makeAndroidDriver(dev.ops), { stateGraph: graph })
+    expect(out.outcome).toBe('ok')
+    expect((dev.calls.find((c) => c.op === 'focusApp')!.args?.match as { process: string }).process).toBe('com.example.other')
+  })
+
   it('returns drift with an unknown classification and a readable scene after a control is renamed', async () => {
     const dev = device({ renamed: true })
     const out = await runAndroidRecipe(recipe(), { query: '咖啡' }, makeAndroidDriver(dev.ops), { stateGraph: graph })

@@ -48,6 +48,39 @@ describe('android remote driver', () => {
     expect(calls).toEqual([])
   })
 
+  it('sends the normalized action name when that is what the device declared', async () => {
+    const { calls, ops } = recorder({ tap: { via: 'coords' }, openApp: { ok: true }, setText: {} })
+    const d = makeAndroidDriver(ops, { ops: new Set(['tap', 'openApp', 'setText']) })
+    await d.tap(RECT)
+    expect(await d.openApp('com.example.ios', true)).toBe(true)
+    await d.setText('n1', 'hi')
+    expect(calls).toEqual([
+      { op: 'tap', args: { rect: RECT, button: 'left' } },
+      { op: 'openApp', args: { package: 'com.example.ios', fresh: true } },
+      { op: 'setText', args: { ref: 'n1', text: 'hi' } },
+    ])
+  })
+
+  it('keeps the legacy Android wire names and their argument shape', async () => {
+    const { calls, ops } = recorder({ click: { via: 'coords' }, focusApp: { ok: true }, setValue: {} })
+    const d = makeAndroidDriver(ops, { ops: new Set(['click', 'focusApp', 'setValue']) })
+    await d.tap(RECT)
+    expect(await d.openApp('com.example.app')).toBe(true)
+    await d.setText('n1', 'hi')
+    expect(calls).toEqual([
+      { op: 'click', args: { rect: RECT, button: 'left' } },
+      { op: 'focusApp', args: { match: { process: 'com.example.app' } } },
+      { op: 'setValue', args: { ref: 'n1', text: 'hi' } },
+    ])
+  })
+
+  it('refuses when the device declared neither spelling of an action', async () => {
+    const { calls, ops } = recorder()
+    const d = makeAndroidDriver(ops, { ops: new Set(['find']) })
+    await expect(d.openApp('com.example.ios')).rejects.toThrow(/unsupported-op: focusApp/)
+    expect(calls).toEqual([])
+  })
+
   it('refuses long press / swipe below ui.act v2', async () => {
     const { calls, ops } = recorder()
     const d = makeAndroidDriver(ops, { caps: { 'ui.act': { v: 1 }, 'ui.tree': { v: 7 } } })

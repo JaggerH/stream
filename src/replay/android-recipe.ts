@@ -31,8 +31,13 @@ export interface AndroidRecipe {
 }
 
 export interface AndroidApp {
-  /** One package name or a non-empty list of candidates. */
-  package: string | string[]
+  /**
+   * The app to drive, by the identifier its phone uses: an Android package name or an iOS bundle
+   * id, or a non-empty list of candidates tried in order (a cross-platform recipe can list both).
+   */
+  id?: string | string[]
+  /** The pre-`id` spelling of {@link id}; still read. Give exactly one of `id` / `package`. */
+  package?: string | string[]
   /** Optional activity hint for the entry / exit features, not used to launch. */
   activity?: string
   title?: string
@@ -80,7 +85,7 @@ export interface AndroidStepCommon {
 
 export type AndroidStep = AndroidStepCommon &
   (
-    | { kind: 'openApp'; package?: string | string[]; fresh?: boolean }
+    | { kind: 'openApp'; id?: string | string[]; package?: string | string[]; fresh?: boolean }
     | { kind: 'tap'; target: AndroidLocator }
     | { kind: 'longPress'; target: AndroidLocator; durationMs?: number }
     | { kind: 'swipe'; from: AndroidLocator; to: AndroidLocator; durationMs?: number }
@@ -101,7 +106,7 @@ export const ANDROID_STEP_KINDS: ReadonlySet<string> = new Set([
 
 const COMMON_KEYS = new Set(['kind', 'label', 'intent', 'expect', 'optional'])
 const STEP_KEYS: Record<string, ReadonlySet<string>> = {
-  openApp: new Set([...COMMON_KEYS, 'package', 'fresh']),
+  openApp: new Set([...COMMON_KEYS, 'id', 'package', 'fresh']),
   tap: new Set([...COMMON_KEYS, 'target']),
   longPress: new Set([...COMMON_KEYS, 'target', 'durationMs']),
   swipe: new Set([...COMMON_KEYS, 'from', 'to', 'durationMs']),
@@ -127,6 +132,23 @@ function packageProblem(v: unknown): string | undefined {
   if (nonEmptyString(v)) return undefined
   if (Array.isArray(v) && v.length > 0 && v.every(nonEmptyString)) return undefined
   return 'app.package 要是一个包名，或一组非空包名'
+}
+
+/** `id` is the neutral spelling: an Android package name or an iOS bundle id. */
+function identifierProblem(v: unknown, field: string): string | undefined {
+  if (nonEmptyString(v)) return undefined
+  if (Array.isArray(v) && v.length > 0 && v.every(nonEmptyString)) return undefined
+  return `${field} 要是一个 app 标识（Android 包名 / iOS bundle id），或一组非空标识`
+}
+
+/** `id` with `package` as its legacy alias: at most one may be given; `required` for the app itself. */
+function identifierField(o: Record<string, unknown>, where: string, fail: (msg: string) => never, required = true): void {
+  if (o.id !== undefined && o.package !== undefined) {
+    fail(`${where}.id 与 ${where}.package 只能给一个（package 是 id 的旧拼写）`)
+  }
+  if (!required && o.id === undefined && o.package === undefined) return
+  const problem = identifierProblem(o.id ?? o.package, `${where}.id`)
+  if (problem) fail(problem)
 }
 
 function assertNoCoordinates(v: unknown, where: string): void {
@@ -267,10 +289,9 @@ export function validateAndroidRecipe(sourceId: string, r: Record<string, unknow
     }
   }
   const app = r.app
-  if (!isObject(app)) fail('android recipe requires app.package')
+  if (!isObject(app)) fail('android recipe requires app.id (or its legacy spelling app.package)')
   const appObj = app as Record<string, unknown>
-  const pkgProblem = packageProblem(appObj.package)
-  if (pkgProblem) fail(pkgProblem)
+  identifierField(appObj, 'app', fail)
   if (appObj.activity !== undefined && !nonEmptyString(appObj.activity)) fail('app.activity 要是非空字符串')
   if (appObj.title !== undefined && !nonEmptyString(appObj.title)) fail('app.title 要是非空字符串')
   if (r.entry !== undefined) checkStateSpec(r.entry, 'entry')
@@ -311,7 +332,7 @@ export function validateAndroidRecipe(sourceId: string, r: Record<string, unknow
 
     switch (kind) {
       case 'openApp':
-        if (step.package !== undefined && packageProblem(step.package)) fail(`${where}.package 要是一个包名或一组非空包名`)
+        identifierField(step, where, fail, false)
         if (step.fresh !== undefined && typeof step.fresh !== 'boolean') fail(`${where}.fresh 只认 true / false`)
         break
       case 'tap':

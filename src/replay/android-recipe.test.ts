@@ -36,11 +36,28 @@ describe('kind:android recipe validation', () => {
     expect(needsBrowser(r)).toBe(false)
   })
 
-  it('requires an app package (one name or a non-empty candidate list)', () => {
-    expect(() => validate({ app: {} })).toThrow(/app\.package/)
-    expect(() => validate({ app: { package: [] } })).toThrow(/app\.package/)
-    expect(() => validate({ app: { package: ['ok', ''] } })).toThrow(/app\.package/)
+  it('requires an app identifier (one name or a non-empty candidate list)', () => {
+    expect(() => validate({ app: {} })).toThrow(/app\.(id|package)/)
+    expect(() => validate({ app: { package: [] } })).toThrow(/app\.(id|package)/)
+    expect(() => validate({ app: { package: ['ok', ''] } })).toThrow(/app\.(id|package)/)
     expect(() => validate({ app: { package: ['com.example.app', 'com.example.app.debug'] } })).not.toThrow()
+  })
+
+  // The same recipe kind drives a phone, whichever phone it is: an Android package name and an
+  // iOS bundle id are both just "the app's identifier on the device".
+  it('accepts a neutral app identifier and keeps the legacy app.package spelling', () => {
+    expect(() => validate({ app: { id: 'com.example.app' } })).not.toThrow()
+    expect(() => validate({ app: { id: ['com.example.app', 'com.example.app.debug'] } })).not.toThrow()
+    expect(() => validate({ app: { id: [] } })).toThrow(/app\.id/)
+    expect(() => validate({ app: { id: ['ok', ''] } })).toThrow(/app\.id/)
+    expect(() => validate({ app: { id: 'com.example.app', package: 'com.example.app' } })).toThrow(/只能给一个/)
+  })
+
+  it('openApp takes the neutral identifier too, with the same one-spelling rule', () => {
+    expect(() => validate({ steps: [{ kind: 'openApp', id: 'com.example.app' }] })).not.toThrow()
+    expect(() => validate({ steps: [{ kind: 'openApp', package: 'com.example.app' }] })).not.toThrow()
+    expect(() => validate({ steps: [{ kind: 'openApp', id: [''] }] })).toThrow(/id/)
+    expect(() => validate({ steps: [{ kind: 'openApp', id: 'a', package: 'b' }] })).toThrow(/只能给一个/)
   })
 
   it('rejects bare coordinates in a target', () => {

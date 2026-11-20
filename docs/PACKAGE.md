@@ -1159,8 +1159,9 @@ and no fallback to the Stream repository:
 
 ### 2.4.1 Android recipes (`kind:'android'`)
 
-A recipe that drives a **phone**. Planning and recipe storage stay on the server; the phone only
-performs ops. It uses the same `a11y` vocabulary as desktop (role / name / `viewId`), plus the
+A recipe that drives a **phone** — Android, or iOS: both phones implement the same action
+contract, and `kind:'android'` is the device-recipe kind for either. Planning and recipe storage
+stay on the server; the phone only performs ops. It uses the same `a11y` vocabulary as desktop (role / name / `viewId`), plus the
 on-device OCR text tier (`ui.ocr`) and the foreground window (`android-window`). The actions are the
 normalized device-action set (`tap`, `longPress`, `swipe`, `scroll`, `type`, `setText`, `press`,
 `find`, `windows`, `openApp`, `sleep`; `screenshot` and `url` for observation), defined in the
@@ -1212,6 +1213,13 @@ Entry and exit screens are feature sets:
   "exit": { "features": [{ "kind": "text", "text": "结果" }] }
 }
 ```
+
+`app.package` is the legacy spelling of `app.id`: the identifier the phone's own platform uses —
+an Android package name or an iOS bundle id — or a non-empty candidate list tried in order. Give
+exactly one of `id` / `package`; an `openApp` step accepts the same step-level override. The driver
+sends whichever spelling of an action the device declared in `hello` (`tap` / `click`, `openApp` /
+`focusApp`, `setText` / `setValue`) with that spelling's argument shape, and refuses an action the
+device declared under neither spelling before anything is sent.
 
 Android feature kinds for a state graph:
 

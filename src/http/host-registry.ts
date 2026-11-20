@@ -9,9 +9,10 @@
 import { WsHostRelay, type HostSocket } from './host-relay.ts'
 import { LOCAL_DEVICE } from '../devices/run-context.ts'
 
-export type HostPlatform = 'windows' | 'macos' | 'android' | 'linux'
-/** What a recipe targets. A recipe asks for a surface, not for an OS. */
-export type HostSurface = 'desktop' | 'android'
+export type HostPlatform = 'windows' | 'macos' | 'android' | 'ios' | 'linux'
+/** What a recipe targets. A recipe asks for a surface, not for an OS: both phone platforms are the
+ *  one `mobile` surface, and the device's own ops decide what actually runs there. */
+export type HostSurface = 'desktop' | 'mobile'
 
 export interface HostHello {
   deviceId: string
@@ -33,6 +34,15 @@ export interface HostHello {
    * know); only `ops` is known about it then. Present and empty = the device declares none.
    */
   caps?: DeviceCaps
+  /** iOS only: the OS version the agent runs on (for example `18.2`). Device info, not dispatch. */
+  iosVersion?: string
+  /**
+   * iOS only: how the agent reaches the device. Three values today — `native-accessibility`
+   * (iOS 27+, the paired native services), `xctest-session` (iOS 18–26, an in-process XCTest
+   * session) and `unsupported` (below 18, no ops declared). Kept as device info and never
+   * interpreted here, so a value this backend has not seen yet is kept too.
+   */
+  path?: string
 }
 
 /** The caps schema versions this backend reads. A hello with another `capsVersion` still connects;
@@ -58,7 +68,9 @@ export type DeviceCaps = Record<string, DeviceCapability>
 
 /** At most this many capabilities per hello; the vocabulary is a handful of ids. */
 export const MAX_HELLO_CAPS = 64
-const CAP_ID = /^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)*$/
+// Dot-separated lowercase words; a segment may carry a hyphen (`ios.ax-native`,
+// `ios.xctest-session`). Widening the grammar only ever keeps ids, never refuses a device.
+const CAP_ID = /^[a-z][a-z0-9_-]*(\.[a-z][a-z0-9_-]*)*$/
 
 /**
  * `hello.caps` under `hello.capsVersion`, read leniently so an older backend never locks out a newer
@@ -161,9 +173,21 @@ export interface HostDevice {
   state?: HostDeviceState
 }
 
-const PLATFORMS: ReadonlySet<string> = new Set(['windows', 'macos', 'android', 'linux'])
+const PLATFORMS: ReadonlySet<string> = new Set(['windows', 'macos', 'android', 'ios', 'linux'])
 
 const nonEmpty = (v: unknown): v is string => typeof v === 'string' && v.length > 0
+
+/**
+ * `hello.iosVersion` / `hello.path`: short non-empty strings. They are device info, not dispatch,
+ * so a value this backend cannot read is dropped on its own — the same leniency as `caps`; a
+ * cosmetic field never refuses a device.
+ */
+function parseIosFacts(version: unknown, agentPath: unknown): Pick<HostHello, 'iosVersion' | 'path'> {
+  const fact = (v: unknown): string | undefined => (typeof v === 'string' && v.trim().length > 0 && v.length <= 64 ? v : undefined)
+  const iosVersion = fact(version)
+  const path = fact(agentPath)
+  return { ...(iosVersion !== undefined ? { iosVersion } : {}), ...(path !== undefined ? { path } : {}) }
+}
 
 /** 一台设备最多声明多少个可转发端口。配置文件是人写的，64 个足够任何合理用法。 */
 export const MAX_HELLO_PORTS = 64
@@ -206,11 +230,15 @@ export function parseHello(raw: string, onCapsDrop: (why: string) => void = () =
   // Lenient by design (unlike ports): what a device can do is a declaration for consumers, and a
   // stricter older backend would otherwise refuse every newer device that extends it.
   const caps = parseCaps(m.caps, m.capsVersion, onCapsDrop)
-  return { deviceId, platform: platform as HostPlatform, name, agentVersion, ops: ops as string[], ...(ports ? { ports } : {}), ...(caps ? { caps } : {}) }
+  // The iOS facts are device info like `caps`, not dispatch: only an ios hello carries them.
+  const ios = platform === 'ios' ? parseIosFacts(m.iosVersion, m.path) : {}
+  return { deviceId, platform: platform as HostPlatform, name, agentVersion, ops: ops as string[], ...(ports ? { ports } : {}), ...(caps ? { caps } : {}), ...ios }
 }
 
+/** Both phone platforms are the one mobile surface: whichever phone is connected answers a phone
+ *  recipe, and what it can do is decided by its ops, not by its OS. */
 export function surfaceOf(p: HostPlatform): HostSurface {
-  return p === 'android' ? 'android' : 'desktop'
+  return p === 'android' || p === 'ios' ? 'mobile' : 'desktop'
 }
 
 interface Live {
@@ -253,7 +281,12 @@ export class HostRelayRegistry {
     // **每次都发 online**，包括顶掉旧连接的重连：嵌入方按事件折在线状态，设备挂起期间它可能
     // 已经把行压成离线（厂商说挂起），重连不发事件就只能等它自己的兜底对账（一个心跳周期一拍）
     // ——那正是恢复后「重连上了但表不翻」的来源。事件幂等，消费方行已在线时无变化。
-    this.emitChange({ deviceId: hello.deviceId, name: hello.name, platform: hello.platform, online: true, at: now, ops: hello.ops, ...(hello.caps ? { caps: hello.caps } : {}) })
+    this.emitChange({
+      deviceId: hello.deviceId, name: hello.name, platform: hello.platform, online: true, at: now, ops: hello.ops,
+      ...(hello.caps ? { caps: hello.caps } : {}),
+      ...(hello.iosVersion ? { iosVersion: hello.iosVersion } : {}),
+      ...(hello.path ? { path: hello.path } : {}),
+    })
     return relay
   }
 
@@ -277,13 +310,15 @@ export class HostRelayRegistry {
     return true
   }
 
-  /** The device a recipe for `surface` runs on: the most recently connected one. */
-  deviceFor(surface: HostSurface): HostDevice | undefined {
+  /** The device a recipe for `surface` runs on: the most recently connected one. `android` is the
+   *  pre-`mobile` spelling of the same surface and stays accepted for callers written before iOS. */
+  deviceFor(surface: HostSurface | 'android'): HostDevice | undefined {
+    const want: HostSurface = surface === 'android' ? 'mobile' : surface
     let best: HostDevice | undefined
     for (const d of this.devices()) {
       // 无界面设备不承接任何 surface 的 UI recipe；它只经执行位置绑定被点名使用。
       if (d.hello.platform === 'linux') continue
-      if (surfaceOf(d.hello.platform) !== surface) continue
+      if (surfaceOf(d.hello.platform) !== want) continue
       if (!best || d.connectedAt > best.connectedAt) best = d
     }
     return best
@@ -363,4 +398,7 @@ export interface HostChange {
   at: number
   ops?: string[]
   caps?: DeviceCaps
+  /** The iOS facts of a phone's online hello (absent on other platforms and on offline changes). */
+  iosVersion?: string
+  path?: string
 }

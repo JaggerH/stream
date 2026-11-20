@@ -175,6 +175,8 @@ async function startWithDevices(
 }
 const phoneHello = (deviceId: string) =>
   ({ type: 'hello', deviceId, platform: 'android', name: 'K80', agentVersion: '0.1.0', ops: ['click'] })
+const iosHello = (deviceId: string) =>
+  ({ type: 'hello', deviceId, platform: 'ios', name: 'iPhone', agentVersion: '0.3.0', ops: ['find'], iosVersion: '18.2', path: 'xctest-session' })
 
 describe('attachHostRelay device tokens', () => {
   it('a device token connects as its bound device and is reported as seen', async () => {
@@ -186,6 +188,20 @@ describe('attachHostRelay device tokens', () => {
     await until(() => registry.deviceFor('android') !== undefined)
     expect(registry.deviceFor('android')?.hello.deviceId).toBe('android:k80')
     expect(seen).toEqual(['android:k80'])
+    ws.close()
+  })
+
+  it('a paired ios device connects with its token and keeps the ios facts its hello declared', async () => {
+    const seen: string[] = []
+    const { registry, url } = await startWithDevices({ 'ios-token': 'ios:p1' }, seen)
+    const ws = new WebSocket(url, [HOST_RELAY_PROTOCOL, 'ios-token'])
+    await new Promise((r) => ws.on('open', r))
+    ws.send(JSON.stringify(iosHello('ios:p1')))
+    await until(() => registry.devices().length === 1)
+    // A phone surface, same as android: recipe target selection finds it by surface, not by OS.
+    expect(registry.deviceFor('mobile')?.hello.deviceId).toBe('ios:p1')
+    expect(registry.devices()[0]!.hello).toMatchObject({ platform: 'ios', iosVersion: '18.2', path: 'xctest-session' })
+    expect(seen).toEqual(['ios:p1'])
     ws.close()
   })
 
@@ -330,6 +346,16 @@ describe('attachHostRelay device tokens', () => {
     await new Promise((r) => ws.on('open', r))
     const closed = new Promise<number>((r) => ws.on('close', (code) => r(code)))
     ws.send(JSON.stringify({ ...phoneHello('linux:abc'), platform: 'linux' }))
+    expect(await closed).toBe(4003)
+    expect(registry.devices()).toHaveLength(0)
+  })
+
+  it('the shared secret cannot claim the ios platform either — ios devices must pair', async () => {
+    const { registry, url } = await start()
+    const ws = new WebSocket(url, [HOST_RELAY_PROTOCOL, TOKEN])
+    await new Promise((r) => ws.on('open', r))
+    const closed = new Promise<number>((r) => ws.on('close', (code) => r(code)))
+    ws.send(JSON.stringify(iosHello('ios:abc')))
     expect(await closed).toBe(4003)
     expect(registry.devices()).toHaveLength(0)
   })

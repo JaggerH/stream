@@ -119,7 +119,7 @@ export function devicePairHandler(
     }
     if (platform !== undefined && (typeof platform !== 'string' || !PAIRED_PLATFORMS.has(platform))) {
       deps.pairingGuard?.fail(source)
-      return c.json({ error: 'platform 只能是 android 或 linux' }, 400)
+      return c.json({ error: 'platform 只能是 android、ios 或 linux' }, 400)
     }
     const r = deps.store.pair(code, name ?? '', (platform ?? 'android') as PairedPlatform)
     if (!r.ok) {
@@ -169,6 +169,8 @@ export function mountDeviceRoutes(app: Hono, deps: DeviceRoutesDeps): void {
         ...d, paired: true, online: !!live,
         ...(live ? { agentVersion: live.hello.agentVersion } : {}),
         ...(live?.hello.caps ? { caps: live.hello.caps } : {}),
+        ...(live?.hello.iosVersion ? { iosVersion: live.hello.iosVersion } : {}),
+        ...(live?.hello.path ? { path: live.hello.path } : {}),
         ...(live?.state ? { state: live.state } : {}),
       }
     })
@@ -179,6 +181,8 @@ export function mountDeviceRoutes(app: Hono, deps: DeviceRoutesDeps): void {
         deviceId: d.hello.deviceId, name: d.hello.name, platform: d.hello.platform,
         paired: false, online: true, agentVersion: d.hello.agentVersion,
         ...(d.hello.caps ? { caps: d.hello.caps } : {}),
+        ...(d.hello.iosVersion ? { iosVersion: d.hello.iosVersion } : {}),
+        ...(d.hello.path ? { path: d.hello.path } : {}),
         ...(d.state ? { state: d.state } : {}),
       }))
     return c.json({ devices: [...paired, ...others] })
