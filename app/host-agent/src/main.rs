@@ -46,9 +46,10 @@ mod see;
 mod see_detect;
 #[cfg(windows)]
 mod windows;
-// agent-desktop 委托层：平台无关的核心（envelope 解析、回落决策、snapshot 过滤）在 Linux
-// 上也要编译、被 cargo test 覆盖；只有模块内的 win 子段是 cfg(windows)。Linux 非 test 构建
-// 里核心逻辑没有非测试消费者，allow(dead_code) 只为这一件事。
+// agent-desktop 委托层：平台无关的核心（envelope 解析、回落决策、snapshot 过滤、委托 glue）
+// 在 Linux 上也要编译、被 cargo test 覆盖；只有文件末尾的平台接线是 cfg(windows) /
+// cfg(target_os = "macos")。Linux 非 test 构建里核心逻辑没有非测试消费者，allow(dead_code)
+// 只为这一件事。
 #[allow(dead_code)]
 mod agent_desktop;
 
@@ -140,10 +141,13 @@ pub const SESSION_LOOP_REPLIES: &[&str] =
 /// 别让 `NotSupported` 继续挂在 `not(windows)` 上——那样 mac 会同时匹配到两个 `type Backend`。
 /// 提示那一层（`OverlayHandleLike`）也是三档（Windows / mac 各有渲染层，其余占位），
 /// 但它和后端分档是两件独立的事，别并到一起。
+///
+/// 两个桌面平台都套同一层 agent-desktop 委托（desktop-automation-backend）：语义 a11y op
+/// 优先走 CLI、失败或不可用时回落本平台的 `Desktop` 实现；委托逻辑只有一份。
 #[cfg(windows)]
-type Backend = agent_desktop::AgentDesktopBackend;
+type Backend = agent_desktop::AgentDesktopBackend<windows::WindowsDesktop>;
 #[cfg(target_os = "macos")]
-type Backend = macos::MacDesktop;
+type Backend = agent_desktop::AgentDesktopBackend<macos::MacDesktop>;
 #[cfg(all(not(windows), not(target_os = "macos")))]
 type Backend = NotSupported;
 
@@ -731,7 +735,11 @@ async fn run_session<D: protocol::Desktop>(
     // 而后端给每台设备开了 4 个在途名额（host-relay.ts 的 DEVICE_FETCH_CONCURRENCY），本来就期待并发。
     // 每个请求一个任务，回复经 channel 交回这里写 socket——写端只有这一个所有者。
     let (out_tx, mut out_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
-    let mut fetches = tokio::task::JoinSet::new();
+    // 非 Linux 没有设备模式：out_tx 只在被 cfg 掉的 fetch / forward 分支里用，别让它在
+    // 桌面构建里变成一条没用的警告。
+    #[cfg(not(target_os = "linux"))]
+    let _ = &out_tx;
+    let mut fetches: tokio::task::JoinSet<()> = tokio::task::JoinSet::new();
     // ws.forward 会话：op id → 设备方向的收件通道。断开时清空（drop 让泵任务自己收尾）。
     // 设备模式（Linux）才有；类型引用 `forward::FwdFrame`，非 Linux 连声明都要跟着门走。
     #[cfg(target_os = "linux")]
@@ -819,6 +827,10 @@ async fn run_session<D: protocol::Desktop>(
 
         // `status` 的收件人是指示条，不是桌面：在这里拦下、不进 dispatch。没有渲染层
         // （非 Windows）也照样回 `{}`——它是提示，缺席不该让后端那一步失败。
+        //
+        // device 模块只在 Linux 构建里：这一条和下面的 http.forward / ws.forward 一样要跟门走，
+        // 否则 Windows / macOS 的交叉 check 在 `mod device` 被 cfg 掉之后找不到这个常量。
+        #[cfg(target_os = "linux")]
         if op == device::OP_HTTP_FETCH {
             if let Some(f) = &session.fetcher {
                 let (f, out) = (f.clone(), out_tx.clone());
